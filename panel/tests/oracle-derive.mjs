@@ -39,8 +39,9 @@
 // the stash, Extra packs as you approach, Pet collects relics (#124), Sleep
 // loot your filter hides - whose show-key select is derived after them, so it
 // stays last - the Satanic Zone control switch (#157, on the World
-// tab), Boss soul pieces (#197, on the Loot tab), Jump through scenery,
-// Loot announcements (#17) and Always show Chaos Pillar mods (#7)): the same
+// tab), Boss soul pieces (#197, on the Loot tab), the three flight charms'
+// drop switches (#158, on Mods > Items), Jump through scenery, Loot
+// announcements (#17) and Always show Chaos Pillar mods (#7)): the same
 // on, off, on and Turn off shape the legacy recording holds for #mod_pet_quest_pickup,
 // but nothing recorded
 // stands for them, so their contract is written out here as literals - on
@@ -149,9 +150,11 @@ export const quickDisable = (controlId) => `#enabledMods .quick-disable[data-for
 // `restate` is a line the backend sends before the verb's `1` when the switch
 // turns on (Sleep loot your filter hides restates its show key, at its
 // default in a fresh sandbox, as map reveal restates its child). The
-// Satanic Zone control switch and Boss soul pieces (on the Loot tab) sit
-// before Jump through scenery rather than last: the show key's select follows this loop without a navigation step of
-// its own, so the loop must end on Mods > Quality of Life.
+// Satanic Zone control switch, Boss soul pieces (on the Loot tab) and the
+// three flight charms' drop switches (Mods > Items, #158) sit before Jump
+// through scenery rather than last: the show key's select follows this loop
+// without a navigation step of its own, so the loop must end on Mods >
+// Quality of Life.
 export const NATIVE_BOOLEANS = [
   { key: 'mod_far_sleep', tab: 'tab:mods', sub: 'subtab:qol', verb: 'farsleep' },
   { key: 'mod_pet_loot_unstick', tab: 'tab:mods', sub: 'subtab:qol', verb: 'petunstick' },
@@ -161,6 +164,9 @@ export const NATIVE_BOOLEANS = [
   { key: 'mod_hidden_loot', tab: 'tab:mods', sub: 'subtab:qol', verb: 'hiddenloot', restate: 'hiddenloot key 164' },
   { key: 'satanic_everywhere', tab: 'tab:world', verb: 'satzone everywhere' },
   { key: 'mod_boss_soul_pieces', tab: 'tab:loot', verb: 'soulpiece' },
+  { key: 'mod_flight_elf', tab: 'tab:mods', sub: 'subtab:items', verb: 'flightcharm elf' },
+  { key: 'mod_flight_wings', tab: 'tab:mods', sub: 'subtab:items', verb: 'flightcharm wings' },
+  { key: 'mod_flight_broom', tab: 'tab:mods', sub: 'subtab:items', verb: 'flightcharm broom' },
   { key: 'mod_jump_scenery', tab: 'tab:mods', sub: 'subtab:qol', verb: 'jumpscenery' },
   { key: 'mod_loot_announce', tab: 'tab:mods', sub: 'subtab:qol', verb: 'lootann' },
   { key: 'mod_pillar_tips', tab: 'tab:mods', sub: 'subtab:qol', verb: 'pillartips' },

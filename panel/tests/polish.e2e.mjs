@@ -528,7 +528,8 @@ async function modsCardsItems({ page }) {
   await subtab(page, 'subtab-items');
   const got = await $(page, modCards, ['itemsCard', []]);
   assert(got.transparent, `#itemsCard is still drawn as a card (${got.wrapper})`);
-  assert(got.top === 4 && got.raised === 4, `Items: ${got.top} top-level cards (${got.raised} raised), not 4`);
+  // Miner's Helmet, Headhunter, Tyrant's Crown, Beacon, then the three flight-charm drop switches (#158).
+  assert(got.top === 7 && got.raised === 7, `Items: ${got.top} top-level cards (${got.raised} raised), not 7`);
   assert(got.unitsAreTops, `Items: the cards are not the column's ${got.units} mods`);
   const helmet = got.perCard.filter((p) => p.id === 'minerHelmetCard');
   assert(helmet.length === 1 && helmet[0].controls.length === 0, 'The Miner\'s Helmet is not a card of its own: ' + JSON.stringify(got.perCard));
@@ -742,20 +743,35 @@ async function tooltipViewport({ browser }) {
   }
 }
 
+// The chain the patched /api/state reports: boot reads it through openPanel's
+// route, so the first state needs no reload.
+let followChain = COMPLETE;
+const MISSING = { ...COMPLETE, patched: false, aurieCore: false, yytk: false, plugin: false };
+
+// Boot with a complete chain, then let the panel's own poll carry the plugin
+// going missing and coming back, the way it would while the panel is open.
+// It used to reload for each state, and a reload is a second and third boot:
+// boot() reads /api/state once with no retry, so a single request lost on a CI
+// runner left "Settings loaded" unwritten and the check timed out in
+// waitBooted (PR run 38405193928) with nothing to say which request failed. A
+// poll that fails is retried by the panel itself 2s later, and the wait below
+// is on the icons, the thing this check is about.
 async function followsCondition({ page }) {
-  let chain = COMPLETE;
-  await patchState(page, () => ({ chain }));
-  await reload(page);
   const shown = () => $(page, ([a, b]) => [!!document.querySelector(a)?.checkVisibility(), !!document.querySelector(b)?.checkVisibility()], [pageIcon, statusIcon]);
   let got = await shown();
   assert(!got[0] && !got[1], 'A complete chain still shows a warning icon: ' + JSON.stringify(got));
-  chain = { ...COMPLETE, patched: false, aurieCore: false, yytk: false, plugin: false };
-  await reload(page);
-  got = await shown();
-  assert(got[0] && got[1], 'A missing plugin does not show both icons: ' + JSON.stringify(got));
+  const follow = async (chain, want, message) => {
+    followChain = chain;
+    // The panel's "coming back" path: poll at once, then every 2s.
+    await $(page, () => document.dispatchEvent(new Event('visibilitychange')));
+    await page.waitForFunction(([a, b, w]) => [a, b].every((s) => !!document.querySelector(s)?.checkVisibility() === w), [pageIcon, statusIcon, want], { timeout: 10000 })
+      .catch(async () => { throw new Error(message + ': ' + JSON.stringify(await shown())); });
+    await frames(page);
+  };
+  await follow(MISSING, true, 'A missing plugin does not show both icons');
   const texts = await $(page, ([a, b]) => [a, b].map((s) => document.querySelector(s).querySelector('span')?.textContent), [tipOf(pageIcon), tipOf(statusIcon)]);
   assert(texts.every((t) => t === NOT_INSTALLED), 'The tooltips do not carry the not-installed message: ' + JSON.stringify(texts));
-  await page.unroute('**/api/state');
+  await follow(COMPLETE, false, 'A reinstalled plugin still shows a warning icon');
 }
 
 async function opensSetup({ page }) {
@@ -1133,7 +1149,7 @@ const CHECKS = [
   ['plugin-warning-tooltip-focus', tooltipFocus],
   ['plugin-warning-status-bar-tooltip', statusTooltip],
   ['plugin-warning-tooltip-in-viewport', tooltipViewport, { own: true }],
-  ['plugin-warning-follows-condition', followsCondition],
+  ['plugin-warning-follows-condition', followsCondition, { routes: (page) => patchState(page, () => ({ chain: followChain })) }],
   ['plugin-warning-opens-setup', opensSetup],
   ['modifier-groups-separated', groupsSeparated, { own: true }],
   ['helmet-stats-accent', helmetAccent],

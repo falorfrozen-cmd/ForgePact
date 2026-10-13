@@ -14,8 +14,9 @@ used to be) and `ICONS_SOURCE` is `panel/src/icons.js`, which replaced
 
 `ModsCategoryBaselineTests` pins what must survive the split: the five-tab
 sidebar, every control's card membership, the Items/Quality-of-Life
-classification rule (an Items row's description names a forged Mechanic; no
-other Mods-tab row's does), the parent/child groupings, and the three silent
+classification rule (an Items row is for a specific item: its description
+names a forged Mechanic or calls the item a ForgePact charm, and no other
+Mods-tab row's does), the parent/child groupings, and the three silent
 failure traps in the JS `preparePanelUI()` (the conversion loop's id list,
 the grouping condition's id, and the `SECTION_ICONS` key). It names no card
 id except `itemsCard`, because the other card's id changes - so the same
@@ -98,7 +99,10 @@ QOL_CONTROL_IDS = [
     "mod_gambapity",
     "gambapity",
 ]
-ITEMS_CONTROL_IDS = ["headhunter", "tyrant", "beacon"]
+# Items holds a row for a specific item: one forged with a Mechanic
+# (Headhunter, Tyrant's Crown, Beacon), or one of ForgePact's own items (the
+# three flight charms' drop switches, forgepact-158-flight-charms-mod).
+ITEMS_CONTROL_IDS = ["headhunter", "tyrant", "beacon", "mod_flight_elf", "mod_flight_wings", "mod_flight_broom"]
 # The Gameplay sub-tab holds the Bosses select (issue #44), then Dungeon chest
 # opens early's switch and range and its countdown form's child select (issue
 # #31; the select, the owner's choice of 2026-10-04), and nothing else.
@@ -118,6 +122,9 @@ PARENT_CHILD_ROWS = [
 ]
 
 FORGED_MECHANIC_TEXT = "forged with Mechanic:"
+FORGEPACT_CHARM_TEXT = "a ForgePact charm"
+# The phrases that make a row an Items row, one per row.
+ITEMS_RULE_TEXTS = (FORGED_MECHANIC_TEXT, FORGEPACT_CHARM_TEXT)
 HINT_SUFFIX = "Settings apply immediately while the game is running."
 
 _CARD_OPEN_RE = re.compile(r'<div class="card')
@@ -240,7 +247,7 @@ class ModsCategoryBaselineTests(unittest.TestCase):
                 f"{needle} is not inside any data-tab=\"mods\" card",
             )
 
-    def test_items_card_holds_exactly_headhunter_tyrant_beacon(self):
+    def test_items_card_holds_exactly_the_items_controls(self):
         cards = _mods_cards(HTML)
         items_body = _card_by_id(cards, "itemsCard")
         for control_id in ITEMS_CONTROL_IDS:
@@ -254,16 +261,17 @@ class ModsCategoryBaselineTests(unittest.TestCase):
 
     def test_classification_rule_forged_mechanic_text(self):
         # The rule, made executable: a row whose description names a forged
-        # Mechanic is an Items row, and only Items rows name one.
+        # Mechanic, or calls its item a ForgePact charm, is an Items row, and
+        # only Items rows say either.
         cards = _mods_cards(HTML)
         for cid, body in cards:
-            count = body.count(FORGED_MECHANIC_TEXT)
+            count = sum(body.count(text) for text in ITEMS_RULE_TEXTS)
             if cid == "itemsCard":
                 self.assertEqual(count, len(ITEMS_CONTROL_IDS),
-                    "itemsCard should have one forged-Mechanic row per control")
+                    "itemsCard should have one forged-Mechanic or ForgePact-charm row per control")
             else:
                 self.assertEqual(count, 0,
-                    f"{cid} has a row naming a forged Mechanic; it belongs in itemsCard")
+                    f"{cid} has a row for a specific item; it belongs in itemsCard")
 
     def test_child_rows_share_their_parents_card(self):
         cards = _mods_cards(HTML)

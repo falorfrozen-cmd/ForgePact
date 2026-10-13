@@ -149,6 +149,26 @@ class JumpSceneryBehaviorTests(unittest.TestCase):
     def test_an_unresolved_family_answers_for_nothing(self):
         self.assertScenario("failclosed/unresolved_family_or_no_callback")
 
+    # ---- the walk lever (ForgePact #158) ------------------------------------
+
+    def test_any_family_answers_whatever_object_the_player_names(self):
+        """`any`: the player's own query, whatever it names; `props` and `all` unchanged."""
+        for label in ("any/baseline_props_and_all_unchanged", "any/rule_names",
+                      "any/answers_objects_outside_collision_parent", "any/answers_objectless_rows",
+                      "any/answers_unresolved_object_arguments", "any/reads_no_object_without_the_tally",
+                      "any/other_selves_and_lever_off_pass_through", "any/still_inside_the_window_only",
+                      "any/scripts_flag_still_its_own"):
+            self.assertScenario(label)
+
+    def test_object_tally_counts_per_row_and_object(self):
+        """Per row and object index, lever on or off, capped at 64 a row, cleared by reset."""
+        for label in ("tally/off_counts_nothing", "tally/tally_alone_makes_the_probe_active",
+                      "tally/counts_per_row_and_object_lever_off", "tally/sorted_by_count",
+                      "tally/counts_with_lever_on_and_survives_pass", "tally/totals_rows_distinct_outside",
+                      "tally/family_is_collision_parent", "tally/per_row_cap_64_rest_to_other",
+                      "tally/reset_clears_it"):
+            self.assertScenario(label)
+
 
 if __name__ == "__main__":
     unittest.main()

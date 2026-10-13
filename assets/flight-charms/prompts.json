@@ -1,0 +1,67 @@
+{
+  "schema": 1,
+  "version": 2,
+  "created": "2026-10-13",
+  "tool": "built-in imagegen",
+  "style_references": {
+    "pocket_elf": "Tinker Bell",
+    "witch_broomstick": "Nimbus 2000",
+    "gabriel_wings": "classic angel wings"
+  },
+  "assets": [
+    {
+      "file": "pocket_elf.png",
+      "width": 32,
+      "height": 32,
+      "transparent_background": true,
+      "artwork_source": "separate accepted imagegen output",
+      "reference": "named style reference",
+      "prompt": "Use case: stylized-concept. Asset type: a production inventory charm sprite for Hero Siege, original pixel-art reinterpretation of the user's named visual reference. Actual transparent RGBA PNG; no background, checkerboard, ground, text, label, border or watermark. Old-school dark fantasy game pixel art, clear charcoal outline, hard square color clusters, restrained palette and upper-left highlights. No antialiasing, blur, photorealism, smooth gradients or fuzzy halo. Only one item, fully visible and centered with small transparent padding. Think in native logical pixels, enlarged only with nearest-neighbor pixel blocks. Visual reference: Tinker Bell. Pocket Elf should now be a tiny slender female fairy with golden blonde hair in a high bun, pointed ears, a simple bright leaf-green dress with a jagged petal hem, small green slippers with a light pompom, and a delicate pair of translucent-looking pale ice-blue insect fairy wings (represented by solid pixel color clusters for a crisp sprite). Friendly confident expression, a compact graceful hovering three-quarter pose, arms close to her body. This should clearly evoke the classic blonde green-dress fairy look. No green hat, long braided hair, trousers, backpack, boots, elf warrior outfit or wand. Keep whole fairy including wings and feet visible, readable at exactly 32 x 32 pixels with a one-pixel transparent margin; oversized head enough for readability but elegant fairy proportions, not a baby or broad chibi. Treat the image as a 32x32 pixel icon, not an illustration with tiny fine lines."
+    },
+    {
+      "file": "gabriel_wings.png",
+      "width": 64,
+      "height": 64,
+      "transparent_background": true,
+      "artwork_source": "separate accepted imagegen output",
+      "reference": "named style reference",
+      "prompt": "Use case: stylized-concept. Asset type: a production inventory charm sprite for Hero Siege, original pixel-art reinterpretation of the user's named visual reference. Actual transparent RGBA PNG; no background, checkerboard, ground, text, label, border or watermark. Old-school dark fantasy game pixel art, clear charcoal outline, hard square color clusters, restrained palette and upper-left highlights. No antialiasing, blur, photorealism, smooth gradients or fuzzy halo. Only one item, fully visible and centered with small transparent padding. Think in native logical pixels, enlarged only with nearest-neighbor pixel blocks. Visual reference: classic angel wings. Gabriel Wings is just a single majestic symmetrical pair of pure ivory-white feathered angel wings, gracefully spread upward in a shallow V, broad upper arches with long tapered feathers below. Cool slate-blue and pearl-gray shadow clusters define layered feathers, creamy near-white highlights from upper-left. Two small inner wing roots meet at the center naturally. No ruby, jewel, gold clasp, armor, mechanical hinge, halo, person or decorative flourish. Powerful pure angel-wing silhouette, hand-clustered elegant fantasy pixel art. Final logical canvas exactly 64 x 64 pixels, occupied art nearly fills it with one or two transparent pixels around. Make feather shapes readable in stepped pixel groups."
+    },
+    {
+      "file": "witch_broomstick.png",
+      "width": 32,
+      "height": 160,
+      "transparent_background": true,
+      "artwork_source": "separate accepted imagegen output",
+      "reference": "named style reference",
+      "prompt": "Use case: stylized-concept. Asset type: a production inventory charm sprite for Hero Siege, original pixel-art reinterpretation of the user's named visual reference. Actual transparent RGBA PNG; no background, checkerboard, ground, text, label, border or watermark. Old-school dark fantasy game pixel art, clear charcoal outline, hard square color clusters, restrained palette and upper-left highlights. No antialiasing, blur, photorealism, smooth gradients or fuzzy halo. Only one item, fully visible and centered with small transparent padding. Think in native logical pixels, enlarged only with nearest-neighbor pixel blocks. Visual reference: Nimbus 2000 flying broom. One slender upright high-quality flying broom with a long polished reddish mahogany wooden shaft, subtle ergonomic curve and gently rounded top, a simple brass/gold binding ring at the base of the shaft, and a neat elongated tapering bundle of chestnut-brown and honey-gold twigs or bristles pointing down. The wooden handle takes roughly the upper 70% of height, the streamlined bristle bundle takes the lower 30%. A classic graceful racing flying broom silhouette inspired by Nimbus 2000, warm wood, simple clean craftwork. No hooked cane handle, violet ribbon, hanging amulet, large gemstones, witch, text, branding, ornate swirls or glowing magic. Perfectly upright and narrow, all parts visible; intended canvas exactly 32 pixels wide x 160 tall. Keep its 1:5 vertical silhouette centrally in actual transparency if the source canvas is wider. One transparent logical pixel padding, crisp pixel art suitable for a 1x5-cell inventory."
+    },
+    {
+      "file": "pocket_elf_ground.png",
+      "width": 16,
+      "height": 16,
+      "transparent_background": true,
+      "artwork_source": "new pocket_elf inventory master, adapted for the ground canvas",
+      "reference": "pocket_elf inventory design",
+      "prompt": "Use case: stylized-concept. Asset type: a production inventory charm sprite for Hero Siege, original pixel-art reinterpretation of the user's named visual reference. Actual transparent RGBA PNG; no background, checkerboard, ground, text, label, border or watermark. Old-school dark fantasy game pixel art, clear charcoal outline, hard square color clusters, restrained palette and upper-left highlights. No antialiasing, blur, photorealism, smooth gradients or fuzzy halo. Only one item, fully visible and centered with small transparent padding. Think in native logical pixels, enlarged only with nearest-neighbor pixel blocks. Visual reference: Tinker Bell. Pocket Elf should now be a tiny slender female fairy with golden blonde hair in a high bun, pointed ears, a simple bright leaf-green dress with a jagged petal hem, small green slippers with a light pompom, and a delicate pair of translucent-looking pale ice-blue insect fairy wings (represented by solid pixel color clusters for a crisp sprite). Friendly confident expression, a compact graceful hovering three-quarter pose, arms close to her body. This should clearly evoke the classic blonde green-dress fairy look. No green hat, long braided hair, trousers, backpack, boots, elf warrior outfit or wand. Keep whole fairy including wings and feet visible, readable at exactly 32 x 32 pixels with a one-pixel transparent margin; oversized head enough for readability but elegant fairy proportions, not a baby or broad chibi. Treat the image as a 32x32 pixel icon, not an illustration with tiny fine lines."
+    },
+    {
+      "file": "gabriel_wings_ground.png",
+      "width": 24,
+      "height": 24,
+      "transparent_background": true,
+      "artwork_source": "separate accepted imagegen output",
+      "reference": "gabriel_wings inventory design",
+      "prompt": "Use case: stylized-concept. Asset type: an original dropped charm ground sprite for Hero Siege. The supplied image is only a design/identity reference of the new inventory icon. Generate a new intentionally simplified composition for a very tiny logical pixel canvas. Actual transparent RGBA, no background, checkerboard, ground, shadow ellipse, writing, labels, frame or watermark. Hard square pixel clusters, strong dark outline, flat solid colors, no smoothing, antialiasing, gradient, fuzzy glow or painterly detail. One single charm, whole silhouette visible with one logical pixel transparent padding, centered. Make the fewest clear color clusters necessary, with a classic game sprite aesthetic. Gabriel Wings, visual reference pure classic angel wings: a single symmetrical pair of ivory-white feather wings spreading upward, light creamy tips, cool blue-gray shadow groups. Same elegant wing shape as reference, but just three or four chunky stepped feather groups per side. Natural white wing roots touch at the center. No gem, red ruby, golden clasp, metal brace, body, halo or extra objects. Target exactly 24 x 24 logical pixels, about 22 x 22 occupied. Very readable compact angel-wing silhouette at small size; use deliberate coarse pixel clusters and no tiny decorative feathers."
+    },
+    {
+      "file": "witch_broomstick_ground.png",
+      "width": 34,
+      "height": 17,
+      "transparent_background": true,
+      "artwork_source": "separate accepted imagegen output",
+      "reference": "witch_broomstick inventory design",
+      "prompt": "Use case: stylized-concept. Asset type: an original dropped charm ground sprite for Hero Siege. The supplied image is only a design/identity reference of the new inventory icon. Generate a new intentionally simplified composition for a very tiny logical pixel canvas. Actual transparent RGBA, no background, checkerboard, ground, shadow ellipse, writing, labels, frame or watermark. Hard square pixel clusters, strong dark outline, flat solid colors, no smoothing, antialiasing, gradient, fuzzy glow or painterly detail. One single charm, whole silhouette visible with one logical pixel transparent padding, centered. Make the fewest clear color clusters necessary, with a classic game sprite aesthetic. Witch's Broomstick, visual reference Nimbus 2000: streamlined racing broom of reddish mahogany wood, a simple brass binding band and a chestnut-brown elongated teardrop twig bundle. Same design as the reference but this DROPPED ICON lies horizontally on a slight diagonal, twig bundle at lower left and the smooth gently curved rounded handle tip at upper right. Long narrow brown shaft, two warm highlight pixels, small gold binding cluster, rich brown feather-shaped bristle cluster, minimal wood grain. No hooked cane, purple ribbon, jewel, amulet, rider, branding or magic glow. Target exactly 34 pixels wide x 17 tall, whole item about 32 x 15 occupied. Crisp wide horizontal sprite for the ground, distinct from the vertical inventory art, with clear contrast at native size."
+    }
+  ]
+}

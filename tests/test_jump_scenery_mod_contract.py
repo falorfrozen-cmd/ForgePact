@@ -57,8 +57,12 @@ SIGNATURES = {
     "install_if_ready": "static void JsInstallIfReady(bool fromTick)",
     "install_field": "static std::string JsInstallField()",
     "answer": "static RValue JsAnswerValue(",
-    "holders": "static std::string JumpSceneryResearchHolders()",
+    "holders": "static std::string JumpSceneryResearchHolders(bool forFlight)",
     "held": "static std::string JumpSceneryHeldHooks()",
+    # ForgePact #158: the five builtin detours are shared with the flight
+    # charms, so their install and their detour are one each, used by both.
+    "shared_install": "static std::string CollisionBuiltinsInstall()",
+    "shared_detour": "static void CollisionBuiltinDetour(",
 }
 
 
@@ -157,8 +161,13 @@ class JumpSceneryModContract(unittest.TestCase):
         self.assertLess(tick.index("if (!g_JumpScenery.Installed())"), tick.index("JsRefreshPlayer();"))
         self.assertNotIn("JumpSceneryInstall", tick)
         install = self.body("install")
-        for call in ("HookBuiltin(", "HookOneScript("):
-            self.assertEqual(self.code.count(call), install.count(call), call + " outside JumpSceneryInstall")
+        self.assertEqual(self.code.count("HookOneScript("), install.count("HookOneScript("), "HookOneScript( outside JumpSceneryInstall")
+        # The builtins go in through the shared install, which this adapter
+        # reaches only from JumpSceneryInstall.
+        shared = self.body("shared_install")
+        self.assertEqual(self.code.count("HookBuiltin("), shared.count("HookBuiltin("), "HookBuiltin( outside the shared install")
+        self.assertIn("CollisionBuiltinsInstall()", install)
+        self.assertEqual(self.code.count("CollisionBuiltinsInstall()"), 2, "the definition and JumpSceneryInstall's call")
         self.assertNotIn("JumpSceneryInstall", strip_comments(function_body(self.plugin, "void FrameCallback(FWFrame& FrameContext)")))
         # The core decides; the header carries the rule and the 60-frame poll.
         self.assertIn("return enabled_ && !installed_ && !(fromTick && tickTried_) && setupDone && playerResolved;",
@@ -179,13 +188,17 @@ class JumpSceneryModContract(unittest.TestCase):
     def test_the_five_builtins_by_name_and_no_other(self):
         names = set(re.findall(r'\{\s*"(\w+)",\s*\d+,\s*Answer::\w+\s*\}', self.header))
         self.assertEqual(names, BUILTINS)
-        install = self.body("install")
+        install = self.body("shared_install")
         self.assertEqual(self.code.count("HookBuiltin("), 1)
         self.assertIn("HookBuiltin(name, kJsBuiltinHookIds[i], kJsBuiltinDetours[i], &g_JsOrig[i])", install)
         self.assertIn("const char* name = JsNs::kBuiltins[i].name.data();", install)
         self.assertIn("for (int i = 0; i < JsNs::kBuiltinCount; ++i)", install)
         self.assertLess(install.index("if (!AddrIsExecutableInModule(GetModuleHandleA(nullptr), p))"),
                         install.index("HookBuiltin("))
+        # A builtin that did not go in still turns the mod off, as before.
+        js_install = self.body("install")
+        self.assertIn("const std::string failed = CollisionBuiltinsInstall();", js_install)
+        self.assertIn('if (!failed.empty()) return failed + " not hooked; the mod stays off";', js_install)
         for name in BUILTINS:
             self.assertNotIn('HookBuiltin("' + name + '"', self.code)
         self.assertEqual(len(re.findall(r'"fp_jumpscenery_\w+"', self.code)), 6, "one hook id per hook")
@@ -253,14 +266,24 @@ class JumpSceneryModContract(unittest.TestCase):
     # ---- off costs nothing --------------------------------------------------------
 
     def test_each_detour_returns_the_original_first_while_off(self):
-        self.assertEqual(self.lines("builtin")[0],
-                         "if (!g_JumpScenery.Enabled() || g_JsBusy) { if (g_JsOrig[row]) g_JsOrig[row](Result, S, O, argc, Args); return; }")
+        # The shared detour runs the original first, once, whoever installed it;
+        # while the mod is off (or the adapters are busy) jumpscenery's part
+        # returns before reading anything.
+        self.assertEqual(self.lines("shared_detour")[:3],
+                         ["const TRoutine orig = g_JsOrig[row];", "if (!orig) return;", "orig(Result, S, O, argc, Args);"])
+        self.assertEqual(self.lines("shared_detour")[3], "if (g_JsBusy || g_FlightBusy) return;")
+        self.assertEqual(self.lines("builtin")[0], "if (!g_JumpScenery.Enabled()) return;")
+        # jumpscenery never runs the original a second time on the result.
+        self.assertNotIn("orig(Result, S, O, argc, Args);", self.body("builtin"))
+        self.assertIn("CollisionBuiltinDetour(I, Result, S, O, argc, Args);", self.code)
         self.assertEqual(self.lines("leap")[0],
                          "if (!g_JumpScenery.Enabled() || g_JsBusy) return g_JsOrigLeap(S, O, R, argc, A);")
 
     def test_the_original_runs_before_the_core_decides_and_only_the_local_player_counts(self):
+        detour = self.body("shared_detour")
+        self.assertLess(detour.index("orig(Result, S, O, argc, Args);"), detour.index("JsOnBuiltin(row, Result, S, O, argc, Args);"))
         builtin = self.body("builtin")
-        self.assertLess(builtin.index("orig(Result, S, O, argc, Args);"), builtin.index("g_JumpScenery.OnQuery("))
+        self.assertIn("g_JumpScenery.OnQuery(", builtin)
         self.assertIn("if (!S || S != g_JsPlayer) return;", builtin)
         self.assertIn("if (answer != JsNs::Answer::Real) Result = JsAnswerValue(answer);", builtin)
         leap = self.body("leap")
@@ -291,7 +314,7 @@ class JumpSceneryModContract(unittest.TestCase):
         self.assertIn('"citrace holds "', holders)
         self.assertIn('"jumpprobe holds "', holders)
         install = self.body("install")
-        self.assertLess(install.index("JumpSceneryResearchHolders()"), install.index("HookOneScript("))
+        self.assertLess(install.index("JumpSceneryResearchHolders(false)"), install.index("HookOneScript("))
         # Research build only: neither instrument exists in the player build.
         self.assertNotIn("JumpSceneryResearchHolders", self.shipped)
         self.assertNotIn("citrace", self.shipped_block)

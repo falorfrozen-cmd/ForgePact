@@ -120,9 +120,11 @@ class EnabledModsPanelTests(unittest.TestCase):
         # handler (both in the derived oracle). Plus 1 for Loot announcements'
         # switch (ForgePact #17; in the derived oracle too). Plus 1 for Always
         # show Chaos Pillar mods' switch (ForgePact #7; in the derived oracle
-        # too).
-        self.assertEqual(self.panel.count("j('/api/set'"), 27 + 2 + 8 + 1 + 2 + 1 + 1 + 2 + 1 + 1)
-        self.assertEqual(self.page.count("j('/api/set'"), 27 + 2 + 8 + 1 + 2 + 1 + 1 + 2 + 1 + 1)
+        # too). Plus 3 for Mods > Items' flight charms (ForgePact #158): the
+        # Pocket Elf, Gabriel Wings and Witch's Broomstick drop switches'
+        # handlers (all three in the derived oracle).
+        self.assertEqual(self.panel.count("j('/api/set'"), 27 + 2 + 8 + 1 + 2 + 1 + 1 + 2 + 1 + 1 + 3)
+        self.assertEqual(self.page.count("j('/api/set'"), 27 + 2 + 8 + 1 + 2 + 1 + 1 + 2 + 1 + 1 + 3)
         self.assertIn("section:'switches',key:box.dataset.switch,value:box.checked", self.panel)
         self.assertIn("{key:'theme',value:e.target.value}", self.panel)
         # One handler for every switch, bound by the data attribute.

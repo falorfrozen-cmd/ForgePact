@@ -558,6 +558,19 @@ static ForgePact::JumpSceneryMod::Mod g_JumpScenery;
 // adapter sits after jump through scenery's; the mod state reads the switch.
 #include <ForgePact/LootAnnounceMod.hpp>
 static ForgePact::LootAnnounceMod g_LootAnnounce;
+// Flight charms (`flightcharm`, ForgePact #158): the decision core and the
+// owner's six icons. The Custom Forge recognises and dresses the charms (what
+// it reads sits just before TryApplyCustomForge, the rest of the forge part
+// just before InstallCustomForgeItemHooks); dressing arms flight. The flight
+// adapter, which answers the collision queries and draws the flying player in
+// front, sits after jump through scenery's, whose five builtin detours it
+// shares.
+#include <ForgePact/FlightCharms.hpp>
+#include <ForgePact/FlightCharmIcons.hpp>
+namespace FcNs = ForgePact::FlightCharms;
+static ForgePact::FlightCharms::Flight g_Flight;
+static bool g_FlightBusy = false;   // game thread only: the flight adapter's own calls inside a detour
+static const char* FlightPlayerCheck();   // the trace line's ` player=`; defined with the flight adapter
 // Boss soul pieces (`soulpiece`, ForgePact #197): the decision core. The
 // research build's `soulprobe` prints its decisions; the mod's adapter uses it too.
 #include <ForgePact/SoulPieceMod.hpp>
@@ -594,6 +607,8 @@ static ForgePact::ChaosPillarTips::Core g_PillarTips;
 #include <ForgePact/IpcServer.hpp>
 #include <ForgePact/ModManager.hpp>
 #include <ForgePact/ItemTruth.hpp>
+// Where a forged item's gold rows anchor in the tooltip pass (Hook_DrawInventoryStatsNew).
+#include <ForgePact/ForgedTooltipRows.hpp>
 #include <ForgePact/ExitSafeThread.hpp>
 #include <ForgePact/FrameProfiler.hpp>
 #include <ForgePact/FrameProfilerBuiltins.hpp>
@@ -4455,6 +4470,10 @@ static bool ForgeCouldMatch(const RValue& item)
         if (!TryStructNumber(item, "itemType", t)) return false;
         RValue def = g_Yytk->CallBuiltin("variable_struct_get", { item, RValue("itemDefinitionStruct") });
         if (def.m_Kind != VALUE_OBJECT || !TryStructNumber(def, "a", a) || !TryStructNumber(def, "b", b)) return false;
+        // The flight charms are built-ins matched by seed range, not by the
+        // exact index (TryApplyCustomForge, FlightCharmForgeEntry).
+        FcNs::Rolled flight;
+        if (t == FcNs::kCharmTypeT && b == FcNs::kCharmBaseB && FcNs::DecodeSeed((long long)a, flight)) return true;
         return g_ForgeSelectorKeys.count(std::to_string((long long)t) + "|" + std::to_string((long long)a) + "|" + std::to_string((long long)b)) > 0;
     } catch (...) { return true; }
 }
@@ -4541,6 +4560,103 @@ static std::map<std::string, double> TakeForgeAdditions(const RValue& item, cons
     return add;
 }
 
+// ---- Flight charms (FlightCharms.hpp): what the Custom Forge reads ----------
+// The three charms are built-in Custom Forge entries matched by seed range
+// rather than by one exact selector: a charm is saved as a plain Small Charm
+// (type 10, b 0, c 0, j 0) whose seed `a` falls in one of FlightCharms.hpp's
+// three ranges, and its rolls are decoded from the seed. TryApplyCustomForge
+// tries the ranges only after every loaded entry missed, so a sidecar entry
+// for the same item still wins, as with the signature items. The rest of the
+// forge part (the final pass's footprint and icon, the icons, the ground icon
+// and the size guard) sits just before InstallCustomForgeItemHooks.
+
+// A field of an item or a definition. The Custom Forge's own candidates are
+// structs, but a ground item's itemInstance may come back as the reference
+// this runner hands out instead (hs_game_sdk/player.hpp, ReadGroundRelic), so
+// both are read, each through its own builtins; anything else holds nothing.
+static bool FlightField(const RValue& owner, const char* name, RValue& out)
+{
+    try {
+        if (owner.m_Kind == VALUE_OBJECT) {
+            if (!owner.m_Object || !g_Yytk->CallBuiltin("variable_struct_exists", { owner, RValue(name) }).ToBoolean()) return false;
+            out = g_Yytk->CallBuiltin("variable_struct_get", { owner, RValue(name) });
+            return true;
+        }
+        if (owner.m_Kind == VALUE_REF) {
+            if (!g_Yytk->CallBuiltin("variable_instance_exists", { owner, RValue(name) }).ToBoolean()) return false;
+            out = g_Yytk->CallBuiltin("variable_instance_get", { owner, RValue(name) });
+            return true;
+        }
+    } catch (...) {}
+    return false;
+}
+
+static bool FlightNumber(const RValue& owner, const char* name, double& value)
+{
+    RValue v;
+    if (!FlightField(owner, name, v)) return false;
+    if (v.m_Kind != VALUE_REAL && v.m_Kind != VALUE_INT32 && v.m_Kind != VALUE_INT64 && v.m_Kind != VALUE_BOOL) return false;
+    value = v.ToDouble();
+    return std::isfinite(value);
+}
+
+// The item's own fields through the core's rule. The type is read first, so
+// every other item the game builds costs one read.
+static bool FlightCharmDecode(const RValue& item, const RValue& definition, FcNs::Rolled& rolled)
+{
+    double t = 0, a = 0, b = 0, c = 0, j = 0;
+    if (!FlightNumber(item, "itemType", t) || t != FcNs::kCharmTypeT) return false;
+    if (!FlightNumber(definition, "a", a) || !FlightNumber(definition, "b", b)
+        || !FlightNumber(definition, "c", c) || !FlightNumber(definition, "j", j)) return false;
+    return FcNs::IsFlightCharm(t, a, b, c, j, rolled);
+}
+
+static bool FlightCharmOf(const RValue& item, FcNs::Rolled& rolled)
+{
+    RValue definition;
+    if (!FlightField(item, "itemDefinitionStruct", definition)) return false;
+    return FlightCharmDecode(item, definition, rolled);
+}
+
+// The built-in entry for one charm: its row's name, rarity, tier and lore, the
+// gold `Flight` row, fp_mechanic = flight and its rolled stats, with the
+// native stats removed. The selector is the item's own, so each seed gets its
+// own lore key.
+static bool FlightCharmForgeEntry(const RValue& item, const RValue& definition, CustomForgeEntry& entry, FcNs::Rolled& rolled)
+{
+    if (!FlightCharmDecode(item, definition, rolled)) return false;
+    double t = 0, a = 0, b = 0, c = 0, j = 0;
+    FlightNumber(item, "itemType", t);
+    FlightNumber(definition, "a", a);
+    FlightNumber(definition, "b", b);
+    FlightNumber(definition, "c", c);
+    FlightNumber(definition, "j", j);
+    const FcNs::CharmRow& row = FcNs::RowOf(rolled.charm);
+    entry = CustomForgeEntry{};
+    entry.selector = { {"t", t}, {"a", a}, {"b", b}, {"c", c}, {"j", j} };
+    for (const auto& [id, value] : FcNs::StatsFor(rolled)) entry.stats[id] = (double)value;
+    entry.keepNative = false;
+    entry.rarity = row.rarity;
+    entry.tier = row.tier;
+    entry.name = std::string(row.name);
+    entry.lore = std::string(row.lore);
+    entry.affix = std::string(FcNs::kAffixRow);
+    entry.mechanic = std::string(FcNs::kMechanic);
+    entry.builtin = true;   // recognition only, as the signature items' entries
+    return true;
+}
+
+// Defined with the forge part below: the footprint and our bag icon, on
+// CreateItemNew's outermost return, before the item's hash is refreshed.
+static void FlightCharmDressFinal(RValue& item, const FcNs::Rolled& rolled);
+// Whether the size guard holds this script (the research build's instruments
+// refuse it then). Defined with the guard below.
+static bool FlightGuardHolds(std::string_view runtimeName);
+// A drop of ours the game built, on CreateItemNew's own return: `built=` of the
+// `flightcharm stat` line. Defined with the drop adapter.
+static void FlightDropNoteBuilt(FcNs::Charm charm);
+// ---- end of what the Custom Forge reads for the flight charms ----------------
+
 static volatile LONG g_CustomForgeHashMisses = 0;
 #ifndef FORGEPACT_RELEASE
 // Per-route counters for `forgehash stat`. Research build only: none of these
@@ -4604,9 +4720,19 @@ static bool TryApplyCustomForge(RValue* candidate, bool finalPass = false)
 #endif
         }
 
-        for (const CustomForgeEntry& entry : g_CustomForgeEntries) {
-            if (!CustomForgeMatches(entry, *candidate, definition)) continue;
+        // The loaded entries first (sidecar lines, then the signature items);
+        // only once every one missed, the flight charms' seed ranges, so a
+        // sidecar entry for the same item still wins.
+        const size_t entryCount = g_CustomForgeEntries.size();
+        CustomForgeEntry flightEntry;
+        FcNs::Rolled flightRolled;
+        for (size_t i = 0; i <= entryCount; ++i) {
+            const bool flightMatched = i == entryCount;
+            if (flightMatched && !FlightCharmForgeEntry(*candidate, definition, flightEntry, flightRolled)) break;
+            const CustomForgeEntry& entry = flightMatched ? flightEntry : g_CustomForgeEntries[i];
+            if (!flightMatched && !CustomForgeMatches(entry, *candidate, definition)) continue;
             if (finalPass) SignatureNoteBuilt(entry.selector);   // #74: a game-built Headhunter / Tyrant's Crown
+            if (finalPass && flightMatched) FlightDropNoteBuilt(flightRolled.charm);   // #158: a game-built flight charm drop
             if (!entry.keepNative) {
                 RValue names = g_Yytk->CallBuiltin("variable_struct_get_names", { stats });
                 if (names.m_Kind == VALUE_ARRAY) {
@@ -4705,6 +4831,9 @@ static bool TryApplyCustomForge(RValue* candidate, bool finalPass = false)
                 if (entry.mechanic == "tyrant") g_TyItemTagged = true;
                 if (entry.mechanic == "beacon") g_BeItemTagged = true;
                 if (entry.mechanic == "miner") ForgePact::MinerHelmet::pending = true;
+                // Arming only sets a flag: the frame tick installs flight's
+                // hooks once a character exists, never CreateItemNew.
+                if (entry.mechanic == "flight") g_Flight.Arm();
                 if (entry.mechanic == ForgePact::SoulPieces::kMechanicTag) g_SoulPieceSeen = true;
             }
             if (finalPass) {
@@ -4724,6 +4853,9 @@ static bool TryApplyCustomForge(RValue* candidate, bool finalPass = false)
                 if ((rk || sk) && s_AddLogs < 20) { ++s_AddLogs; Out("forge additions: rune keys " + std::to_string(rk) + ", socket keys " + std::to_string(sk) + ", applied " + std::to_string(applied)); }
 #endif
             }
+            // A flight charm's footprint and bag icon: CreateItemNew's
+            // outermost return only, and before the hash below covers them.
+            if (finalPass && flightMatched) FlightCharmDressFinal(*candidate, flightRolled);
             {
                 const std::string before = ReadItemHash(*candidate);
                 std::string how;
@@ -4788,9 +4920,20 @@ static void ForgeHashStats()
 // HhResolveLocalPlayer's `how = nullptr` default is declared there now, not
 // here - a default argument may only be specified once per translation unit.
 
+#ifndef FORGEPACT_RELEASE
+// `charmprobe dress` (ForgePact #158, research build only): writes the size
+// keys of a built item whose definition `a` has a rule, at CreateItemNew's
+// outermost return. Defined with charmprobe, below; returns at once while no
+// rule is set.
+static void FcpDressBuilt(RValue& item);
+#endif
+
 static void CustomForgePostProcess(RValue& result, int argc, RValue** args, bool finalPass)
 {
     PERF_SCOPE(g_PerfForge);
+#ifndef FORGEPACT_RELEASE
+    if (finalPass) FcpDressBuilt(result);
+#endif
     if (TryApplyCustomForge(&result, finalPass)) return;
     // Some constructors mutate an argument and return undefined. Scan only a
     // small, bounded prefix; TryApply requires all three canonical item fields.
@@ -12862,6 +13005,88 @@ static volatile long g_SigStandinPicks = 0, g_SigHeldMiss = 0, g_SigTypeAgree = 
 static double g_SigHitBuiltType = -1.0;  // the current hit's built itemType, for builtType=
 static bool g_SigHitTypeNoted = false;   // the current hit's first built item was compared
 #endif
+// ---- Flight charms (FlightCharms.hpp): the drop adapter's state -----------------------------
+// The three flight charms (#158) drop from the game's own rolls, each only while its panel switch
+// (`flightcharm elf|wings|broom 1`) is on, as Headhunter and Tyrant's Crown do (#74, above).
+// Gabriel Wings and Witch's Broomstick join the Angelic roll's lootListUnique[5] beside #74's
+// rows, with a fixed stand-in each; Pocket Elf joins the ordinary unique roll (DropUniqueItems),
+// one stand-in entry on each of lootListUnique[0..4], the stand-in chosen by the core's
+// even-count rule. The typing, the hit and the rewrite point are #74's own hooks, whose "roll in
+// progress" (g_SigRollDepth) the unique roll's hook raises too. The functions sit after
+// Hook_GetUniqueRepoStruct; everything they keep is here, in one struct, game thread only.
+struct FlightDropState {
+    bool            switches[FcNs::kCharmCount] = { false, false, false };
+    bool            refused[FcNs::kCharmCount] = { false, false, false };   // the refusal latch, as #74's
+    std::string     refusedWhy[FcNs::kCharmCount];
+    FcNs::DropTally tally[FcNs::kCharmCount];               // ours = hits that fell to the charm, built = what the game built
+    int             pending[FcNs::kCharmCount] = { 0, 0, 0 };   // rewritten records not yet seen built, this roll
+    long            injected = 0, refusals = 0, anomalies = 0;
+    // Gabriel Wings' and Witch's Broomstick's fixed stand-ins: validated against the Angelic pool,
+    // and n, each one's count in lootListUnique[5], counted on the sub-list of that length and id.
+    bool            angelicOk[FcNs::kCharmCount] = { false, false, false };
+    int             angelicN[FcNs::kCharmCount] = { 0, 0, 0 };
+    int             angelicLen = -1;
+    double          angelicId = -1.0;
+    // Pocket Elf: lootListUnique[0..4] as last counted (each sub-list's length and id), every
+    // candidate's counts and filter, and the stand-in they gave (-1: refused, kElfNoStandIn).
+    bool            elfResolved = false;
+    std::string     elfWhy = "not resolved yet";
+    int             elfPick = -1;
+    std::array<FcNs::CandidateCounts, FcNs::kElfCandidateCount> elfCounts{};
+    int             elfLen[FcNs::kUniqueSubLists] = { -1, -1, -1, -1, -1 };
+    double          elfId[FcNs::kUniqueSubLists] = { -1.0, -1.0, -1.0, -1.0, -1.0 };
+    bool            elfRefusalLogged = false;
+    // DropUniqueItems' hook, by its SDK name, installed by `flightcharm elf 1` alone.
+    bool            uniqueTried = false, uniqueNative = false;
+    std::string     uniqueRoute = "not-installed";
+    // The current roll: which, the entries it carries per charm (copies on each list), the lists
+    // they went onto (their index in lootListUnique, the handle as read, the size before), and
+    // whether the held read-back's refusal was logged since it last passed.
+    bool            rollUnique = false;
+    int             rollPushed = 0;   // entries on every list together, for injected=
+    int             rollCopies[FcNs::kCharmCount] = { 0, 0, 0 };
+    // The entries of each charm that actually went onto each list: rollCopies[c] on every list
+    // after a whole push, fewer after a ds_list_add that threw partway. The tail check and the
+    // removal go by these, so a partial push comes off exactly.
+    int             rollOn[FcNs::kUniqueSubLists][FcNs::kCharmCount] = {};
+    int             rollLists = 0;
+    int             rollIndex[FcNs::kUniqueSubLists] = { -1, -1, -1, -1, -1 };
+    RValue          rollSub[FcNs::kUniqueSubLists];
+    int             rollBefore[FcNs::kUniqueSubLists] = { -1, -1, -1, -1, -1 };
+    bool            heldMissLogged = false;
+    // The current hit: the charm whose stand-in it was (-1 none), the coin (share in n + share),
+    // the charm it fell to (-1: the game's own stand-in), and whether its record was rewritten.
+    int             hitStandIn = -1, hitCharm = -1;
+    long long       hitN = 0, hitShare = 0;
+    bool            hitRewritten = false;
+    std::string     hitWhy;
+};
+static FlightDropState g_FlightDrop;
+static PFUNC_YYGMLScript g_Orig_FlightDropUnique = nullptr;
+// How many copies of its stand-in each switched-on charm pushes per roll and list: the constant 1
+// in the player build (one entry's share); the research build's `flightprobe copies <k>` sets it.
+#ifdef FORGEPACT_RELEASE
+static constexpr int g_FlightDropCopies = 1;
+#else
+static int g_FlightDropCopies = 1;
+#endif
+// Called from #74's roll machinery below; defined with the drop adapter.
+static void FlightDropHitReset();
+static void FlightDropAngelicPush();
+static void FlightDropAngelicRemove();
+static void FlightDropAttributeHit();
+static void FlightDropBeforeCreate(RValue& record, const std::string& missing);
+static void FlightDropAfterHit();
+// The shared ground-icon hook (hidden loot's one LootGroundInit detour), installed once; defined
+// after HiddenLootInstall.
+static void FlightGroundIconInstall();
+#ifndef FORGEPACT_RELEASE
+// Which research row holds DropUniqueItems now (`angelicprobe on`'s drop-unique row, gambaprobe's
+// DropUniqueItems row), or empty; each is defined with its own table.
+static bool ApRollHoldsDropUnique();
+static bool GpHoldsDropUnique();
+#endif
+// ---- end of the drop adapter's state -------------------------------------------------------
 // Which signature item's panel switch (Mods -> Items -> Tyrant's Crown / Headhunter) is on:
 // 0 = Tyrant's Crown, 1 = Headhunter.  The panel sends `tyrant force` / `headhunter force` for an
 // ON switch and `off` clears it, so the forced flags are the switch.  Owner, 2026-10-02 ("Panel
@@ -13561,8 +13786,10 @@ static void SignatureInjectRemove()
 // one invocation (extra rolls included) and come off on every way out, a throw from the game's
 // roll included.  An invocation nested inside another adds nothing.
 struct SignatureInjectGuard {
-    SignatureInjectGuard() { if (g_SigInjectDepth++ == 0) { try { SignatureInjectPush(); } catch (...) {} } }
-    ~SignatureInjectGuard() { if (--g_SigInjectDepth == 0) { try { SignatureInjectRemove(); } catch (...) {} } }
+    // #158: the flight charms' Angelic rows go on after #74's and come off before them, so each
+    // removal finds its own entries at the tail.
+    SignatureInjectGuard() { if (g_SigInjectDepth++ == 0) { try { SignatureInjectPush(); } catch (...) {} try { FlightDropAngelicPush(); } catch (...) {} } }
+    ~SignatureInjectGuard() { if (--g_SigInjectDepth == 0) { try { FlightDropAngelicRemove(); SignatureInjectRemove(); } catch (...) {} } }
     SignatureInjectGuard(const SignatureInjectGuard&) = delete;
     SignatureInjectGuard& operator=(const SignatureInjectGuard&) = delete;
 };
@@ -13694,6 +13921,8 @@ static void SignatureBeforeCreate(int argc, RValue** A)
         Out("angelic hit record: vanilla " + (missing.empty() ? SigJson(record) : "<" + missing + ">"));
     if (g_SigHitReplace) return;
 #endif
+    // #158: a hit that fell to a flight charm is rewritten to that charm's own definition here.
+    if (which < 0 && g_FlightDrop.hitCharm >= 0) { FlightDropBeforeCreate(record, missing); return; }
     if (which < 0) return;   // the game's own hit: its record is never touched
 #ifndef FORGEPACT_RELEASE
     if (g_SigHitShow) Out("angelic hit record: before " + (missing.empty() ? SigJson(record) : "<" + missing + ">"));
@@ -13762,6 +13991,7 @@ static void SignatureHitReset()
     g_SigHitReplace = false; g_SigHitShow = false;
     g_SigHitBuiltType = -1.0; g_SigHitTypeNoted = false;
 #endif
+    FlightDropHitReset();   // #158: the flight charms' share of the same hit
 }
 #ifndef FORGEPACT_RELEASE
 // Research build: Loot_Ground_obj by its SDK name, for `lootDelta=` and the replace mode.
@@ -13913,6 +14143,11 @@ static RValue& Hook_CreateDefaultParams(CInstance* S, CInstance* O, RValue& R, i
     if (g_SigRollDepth > 0 && g_SigHitTyped && g_SigRollPushed > 0) {
         try { SignatureAttributeHit(); } catch (...) {}
     }
+    // #158: the same typed hit, when the roll (the Angelic one or the unique one) carries a
+    // flight charm's stand-in entries.
+    if (g_SigRollDepth > 0 && g_SigHitTyped && g_FlightDrop.rollPushed > 0) {
+        try { FlightDropAttributeHit(); } catch (...) {}
+    }
     return r;
 }
 // GetUniqueRepoStruct, installed by name from InstallSignatureAngelicHooks beside the other two
@@ -13931,6 +14166,667 @@ static RValue& Hook_GetUniqueRepoStruct(CInstance* S, CInstance* O, RValue& R, i
     }
     return g_Orig_GetUniqueRepoStruct ? g_Orig_GetUniqueRepoStruct(S, O, R, argc, A) : R;
 }
+
+// ---- Flight charms (FlightCharms.hpp): the drop adapter ------------------------------------
+// The three drop switches (#158), on #74's machinery above; the state is FlightDropState. A
+// switch on installs #74's detection (InstallSignatureAngelicHooks), and Pocket Elf's switch also
+// the hook on DropUniqueItems, by its SDK name; with every switch off nothing is pushed and both
+// rolls are the game's own. A stand-in hit is the charm's at c in n + c, the coin #74 uses, and on
+// ours the record the item is built from is rewritten at CreateItemNew's entry to the charm's own
+// definition (type 10, a its seed for a uniformly drawn roll, b 0, c 0, j 0), so the game builds
+// and places the charm, and the Custom Forge dresses it. `sigdrop status` is #74's line alone:
+// the flight counters print on `flightcharm stat`.
+
+// The game's own calls a pool build or a repository read makes, outside a roll's scope, so no call
+// it makes is taken for the roll's read or a hit (SignatureInjectPush's rule).
+struct FlightDropOutsideRoll {
+    int depth = g_SigRollDepth;
+    FlightDropOutsideRoll() { g_SigRollDepth = 0; }
+    ~FlightDropOutsideRoll() { g_SigRollDepth = depth; }
+    FlightDropOutsideRoll(const FlightDropOutsideRoll&) = delete;
+    FlightDropOutsideRoll& operator=(const FlightDropOutsideRoll&) = delete;
+};
+
+// A charm's stand-in now: the fixed one for the Angelic two, the chosen one for Pocket Elf.
+static const FcNs::StandIn* FlightDropStandIn(FcNs::Charm c)
+{
+    if (c != FcNs::Charm::Elf) return FcNs::StandInFor(c);
+    const int pick = g_FlightDrop.elfPick;
+    return pick >= 0 && pick < FcNs::kElfCandidateCount ? &FcNs::kElfCandidates[pick] : nullptr;
+}
+
+// One charm's gate, #74's rule: on only with its switch on, no refused rewrite, every detection
+// hook inline (and DropUniqueItems' too, for Pocket Elf), and its list resolved with a validated
+// stand-in. The word is `gate=`'s, as `angelicDrops=` reads for #74's items.
+static FcNs::Gate FlightDropGate(FcNs::Charm c)
+{
+    const int i = static_cast<int>(c);
+    if (i < 0 || i >= FcNs::kCharmCount || !g_FlightDrop.switches[i]) return FcNs::Gate::Off;
+    if (g_FlightDrop.refused[i]) return FcNs::Gate::Refused;
+    if (!g_SigDetectNative) return FcNs::Gate::NoDetection;
+    if (c == FcNs::Charm::Elf) {
+        if (!g_FlightDrop.uniqueNative) return FcNs::Gate::NoDetection;
+        if (!g_FlightDrop.elfResolved) return FcNs::Gate::NotResolved;
+        return g_FlightDrop.elfPick >= 0 ? FcNs::Gate::On : FcNs::Gate::Refused;
+    }
+    return g_SigListOk && g_FlightDrop.angelicOk[i] ? FcNs::Gate::On : FcNs::Gate::NotResolved;
+}
+
+static bool FlightDropOn(FcNs::Charm c) { return FlightDropGate(c) == FcNs::Gate::On; }
+
+// Why a switched-on charm drops nothing, in words.
+static std::string FlightDropOffReason(FcNs::Charm c)
+{
+    const int i = static_cast<int>(c);
+    switch (FlightDropGate(c)) {
+    case FcNs::Gate::On:          return "on";
+    case FcNs::Gate::Off:         return "switch off";
+    case FcNs::Gate::Refused:
+        return g_FlightDrop.refused[i] ? "rewrite refused: " + g_FlightDrop.refusedWhy[i] : std::string(FcNs::kElfNoStandIn);
+    case FcNs::Gate::NoDetection:
+        if (c == FcNs::Charm::Elf && g_SigDetectNative) return "the DropUniqueItems hook is " + g_FlightDrop.uniqueRoute;
+        return "detection not installed (" + g_SigDetectRoute + ")";
+    case FcNs::Gate::NotResolved:
+        if (c == FcNs::Charm::Elf) return "lootListUnique[0..4] not resolved (" + g_FlightDrop.elfWhy + ")";
+        return !g_SigListOk ? std::string("the game's Angelic list not resolved") : std::string("stand-in not validated");
+    }
+    return "?";
+}
+
+// Gabriel Wings' and Witch's Broomstick's stand-ins against the validated Angelic pool, by their
+// whole entry; tried again while either is not validated (BuildAngelicPool throttles a retry).
+static void FlightDropResolveAngelic()
+{
+    if (g_FlightDrop.angelicOk[(int)FcNs::Charm::Wings] && g_FlightDrop.angelicOk[(int)FcNs::Charm::Broom]) return;
+    FlightDropOutsideRoll outside;
+    BuildAngelicPool(false);
+    for (FcNs::Charm c : { FcNs::Charm::Wings, FcNs::Charm::Broom }) {
+        const FcNs::StandIn* s = FcNs::StandInFor(c);
+        bool ok = false;
+        for (const AngelicCandidate& p : g_AngelicPool)
+            if (s && p.type == s->t && p.sub == s->sub && p.b == s->b) { ok = true; break; }
+        g_FlightDrop.angelicOk[(int)c] = ok;
+    }
+}
+
+// n for the two Angelic stand-ins: their count in the sub-list's vanilla entries, counted again
+// whenever its length or id differs from the last count.
+static void FlightDropCountAngelic(const RValue& sub)
+{
+    if (g_FlightDrop.angelicLen == g_SigListLen && g_FlightDrop.angelicId == g_SigListId) return;
+    int n[FcNs::kCharmCount] = { 0, 0, 0 };
+    for (int e = 0; e < g_SigListLen; ++e) {
+        double t[3] = { 0.0, 0.0, 0.0 };
+        if (!SigEntry(sub, e, t)) continue;
+        for (FcNs::Charm c : { FcNs::Charm::Wings, FcNs::Charm::Broom }) {
+            const FcNs::StandIn* s = FcNs::StandInFor(c);
+            if (s && t[0] == (double)s->t && t[1] == (double)s->sub && t[2] == (double)s->b) ++n[(int)c];
+        }
+    }
+    for (int i = 0; i < FcNs::kCharmCount; ++i) g_FlightDrop.angelicN[i] = n[i];
+    g_FlightDrop.angelicLen = g_SigListLen;
+    g_FlightDrop.angelicId = g_SigListId;
+}
+
+// lootListUnique[0..4] read lightly - each element's handle, id and size, no walk - for the
+// "has a sub-list changed" check before every unique roll. False when any is not a live ds_list.
+static bool FlightDropReadUniqueLists(RValue subs[], double ids[], int sizes[], std::string& why)
+{
+    RValue instance, outer;
+    if (!SignatureController(instance, why)) return false;
+    try {
+        outer = g_Yytk->CallBuiltin("variable_instance_get", { instance, RValue(g_SigListName) });
+        if (outer.m_Kind != VALUE_ARRAY) { why = "Controller_obj." + g_SigListName + " is not an array"; return false; }
+        const int len = (int)g_Yytk->CallBuiltin("array_length", { outer }).ToDouble();
+        if (len < FcNs::kUniqueSubLists) { why = "Controller_obj." + g_SigListName + " has " + std::to_string(len) + " elements"; return false; }
+        for (int k = 0; k < FcNs::kUniqueSubLists; ++k) {
+            subs[k] = g_Yytk->CallBuiltin("array_get", { outer, RValue((double)k) });
+            std::string step;
+            if (!SigListHandle(subs[k], ids[k], step)) { why = "Controller_obj." + g_SigListName + "[" + std::to_string(k) + "] is not a ds_list (" + step + ")"; return false; }
+            sizes[k] = (int)g_Yytk->CallBuiltin("ds_list_size", { subs[k] }).ToDouble();
+        }
+    } catch (...) { why = "reading Controller_obj." + g_SigListName + " threw"; return false; }
+    return true;
+}
+
+// Whether the ordinary unique roll keeps a candidate: its repository definition by name, rarity
+// ("27" of itemBaseInfoStruct) below 7 and not flagged hidden ("40"), RDM § 23.4 and § 23.8.
+static bool FlightDropUniquePasses(const FcNs::StandIn& s)
+{
+    try {
+        const RValue def = g_Yytk->CallGameScript(HeroSiege::Scripts::gml_Script_GetUniqueRepoStruct,
+                                                  { RValue((double)s.t), RValue((double)s.sub), RValue((double)s.b) });
+        if (def.m_Kind != VALUE_OBJECT) return false;
+        const RValue info = g_Yytk->CallBuiltin("variable_struct_get", { def, RValue("itemBaseInfoStruct") });
+        double rarity = -1.0;
+        if (!TryStructNumber(info, "27", rarity)) return false;
+        const RValue f40 = g_Yytk->CallBuiltin("variable_struct_get", { info, RValue("40") });
+        bool hidden = false;
+        try { hidden = f40.m_Kind != VALUE_UNDEFINED && f40.m_Kind != VALUE_UNSET && f40.ToBoolean(); } catch (...) { hidden = false; }
+        return FcNs::PassesUniqueFilter((int)rarity, hidden);
+    } catch (...) { return false; }
+}
+
+// Pocket Elf's stand-in: lootListUnique[0..4] each a live ds_list of at least kSigListMinSize
+// entries, every candidate counted in each (an entry that is not three numbers is skipped, as the
+// roll itself drops nothing for one) and filtered by the roll's own rule, and the first candidate
+// with the same count in all five chosen (the core's PickElfStandIn). None: the refusal is logged
+// once per change and the gate stays off.
+static void FlightDropResolveElf()
+{
+    FlightDropOutsideRoll outside;
+    FlightDropState& d = g_FlightDrop;
+    const int before = d.elfResolved ? d.elfPick : -2;
+    std::string why;
+    RValue subs[FcNs::kUniqueSubLists];
+    double ids[FcNs::kUniqueSubLists] = { -1.0, -1.0, -1.0, -1.0, -1.0 };
+    int sizes[FcNs::kUniqueSubLists] = { -1, -1, -1, -1, -1 };
+    bool ok = FlightDropReadUniqueLists(subs, ids, sizes, why);
+    std::array<FcNs::CandidateCounts, FcNs::kElfCandidateCount> counts{};
+    for (int k = 0; ok && k < FcNs::kUniqueSubLists; ++k) {
+        const RValue& sub = subs[k];
+        const int size = sizes[k];
+        if (size < kSigListMinSize) {
+            ok = false;
+            why = "Controller_obj." + g_SigListName + "[" + std::to_string(k) + "] has " + std::to_string(size)
+                + " entries, fewer than " + std::to_string(kSigListMinSize);
+            break;
+        }
+        d.elfLen[k] = size;
+        d.elfId[k] = ids[k];
+        for (int e = 0; e < size; ++e) {
+            double t[3] = { 0.0, 0.0, 0.0 };
+            if (!SigEntry(sub, e, t)) continue;
+            for (int c = 0; c < FcNs::kElfCandidateCount; ++c) {
+                const FcNs::StandIn& s = FcNs::kElfCandidates[c];
+                if (t[0] == (double)s.t && t[1] == (double)s.sub && t[2] == (double)s.b) ++counts[c].counts[k];
+            }
+        }
+    }
+    if (!ok) {
+        d.elfResolved = false;
+        d.elfPick = -1;
+        d.elfWhy = why;
+        for (int k = 0; k < FcNs::kUniqueSubLists; ++k) { d.elfLen[k] = -1; d.elfId[k] = -1.0; }
+        return;
+    }
+    for (int c = 0; c < FcNs::kElfCandidateCount; ++c) counts[c].passes = FlightDropUniquePasses(FcNs::kElfCandidates[c]);
+    d.elfCounts = counts;
+    d.elfResolved = true;
+    d.elfWhy.clear();
+    d.elfPick = FcNs::PickElfStandIn(counts);
+    if (d.elfPick >= 0) { d.elfRefusalLogged = false; return; }
+    if (before != -1 || !d.elfRefusalLogged) {
+        d.elfRefusalLogged = true;
+        if (d.switches[(int)FcNs::Charm::Elf])
+            Out(FcNs::RefusedLine(FcNs::kElfNoStandIn) + " (standin-elf=" + FcNs::ElfStandInText(true, -1, counts) + ")");
+    }
+}
+
+// Whether list k of this roll ends with exactly this roll's entries: its size before, plus each
+// charm's stand-in rollOn[k][c] times (what went onto that list), in table order (the order they
+// were pushed).
+static bool FlightDropTailHolds(int k, int& len)
+{
+    len = -1;
+    const RValue& sub = g_FlightDrop.rollSub[k];
+    const int before = g_FlightDrop.rollBefore[k];
+    try {
+        if (!g_Yytk->CallBuiltin("ds_exists", { sub, RValue(2.0) }).ToBoolean()) return false;
+        len = (int)g_Yytk->CallBuiltin("ds_list_size", { sub }).ToDouble();
+    } catch (...) { return false; }
+    int at = before;
+    for (const FcNs::CharmRow& row : FcNs::kCharms) {
+        const FcNs::StandIn* s = FlightDropStandIn(row.charm);
+        for (int n = 0; n < g_FlightDrop.rollOn[k][(int)row.charm]; ++n) {
+            double e[3] = { 0.0, 0.0, 0.0 };
+            if (!s || !SigEntry(sub, at++, e) || e[0] != (double)s->t || e[1] != (double)s->sub || e[2] != (double)s->b) return false;
+        }
+    }
+    return at == len;
+}
+
+// The held read-back, #74's: the variable read again by name off the first Controller_obj, each
+// list pushed onto must be the same ds_list at the same index and hold the push (size and tail).
+static bool FlightDropHeldReadBack(std::string& seen)
+{
+    seen = "nothing";
+    RValue instance;
+    std::string why;
+    if (!SignatureController(instance, why)) return false;
+    try {
+        const RValue held = g_Yytk->CallBuiltin("variable_instance_get", { instance, RValue(g_SigListName) });
+        if (held.m_Kind != VALUE_ARRAY) { seen = "no array"; return false; }
+        const int len = (int)g_Yytk->CallBuiltin("array_length", { held }).ToDouble();
+        for (int k = 0; k < g_FlightDrop.rollLists; ++k) {
+            const int index = g_FlightDrop.rollIndex[k];
+            double want = -1.0, got = -1.0;
+            if (index < 0 || index >= len) { seen = "no element [" + std::to_string(index) + "]"; return false; }
+            if (!SigListHandle(g_FlightDrop.rollSub[k], want, why)) { seen = "the list pushed onto: " + why; return false; }
+            const RValue sub = g_Yytk->CallBuiltin("array_get", { held, RValue((double)index) });
+            if (!SigListHandle(sub, got, why) || got != want) { seen = "another value at [" + std::to_string(index) + "]"; return false; }
+            int size = -1;
+            if (!FlightDropTailHolds(k, size)) { seen = "[" + std::to_string(index) + "] with " + std::to_string(size) + " entries"; return false; }
+        }
+        return true;
+    } catch (...) { seen = "a read that threw"; return false; }
+}
+
+// Takes this roll's entries off every list they went onto again - one ds_list_delete of the last
+// entry per entry that went onto it (rollOn, so a partial push comes off too), only while the tail
+// still holds exactly them - else leaves the list as found, says so and counts it (`anomalies=`).
+// Never throws: #74's removal runs after it.
+static void FlightDropRemove()
+{
+    FlightDropState& d = g_FlightDrop;
+    if (d.rollPushed <= 0 || d.rollLists <= 0) {
+        d.rollPushed = 0;
+        d.rollLists = 0;
+        for (int k = 0; k < FcNs::kUniqueSubLists; ++k)
+            for (int i = 0; i < FcNs::kCharmCount; ++i) d.rollOn[k][i] = 0;
+        return;
+    }
+    for (int k = 0; k < d.rollLists; ++k) {
+        int perList = 0;
+        for (int i = 0; i < FcNs::kCharmCount; ++i) perList += d.rollOn[k][i];
+        int len = -1;
+        bool tail = false;
+        try {
+            tail = FlightDropTailHolds(k, len);
+            if (tail) {
+                for (int n = 0; n < perList; ++n)
+                    g_Yytk->CallBuiltin("ds_list_delete", { d.rollSub[k], RValue((double)(len - 1 - n)) });
+                len = (int)g_Yytk->CallBuiltin("ds_list_size", { d.rollSub[k] }).ToDouble();
+                if (len == d.rollBefore[k]) continue;
+            }
+        } catch (...) {}
+        ++d.anomalies;
+        Out("flightcharm: " + g_SigListName + "[" + std::to_string(d.rollIndex[k]) + "] "
+            + (tail ? "kept entries after removal - size " + std::to_string(len) + ", expected " + std::to_string(d.rollBefore[k])
+                    : "changed during the roll, left as found (size " + std::to_string(d.rollBefore[k]) + " + "
+                      + std::to_string(perList) + " pushed, now " + std::to_string(len) + ")"));
+    }
+    d.rollPushed = 0;
+    d.rollLists = 0;
+    for (int i = 0; i < FcNs::kCharmCount; ++i) d.rollCopies[i] = 0;
+    for (int k = 0; k < FcNs::kUniqueSubLists; ++k) {
+        d.rollSub[k] = RValue();
+        for (int i = 0; i < FcNs::kCharmCount; ++i) d.rollOn[k][i] = 0;
+    }
+}
+
+// Pushes each switched-on charm's stand-in entry g_FlightDropCopies times onto every list this
+// roll reads (in table order), then the held read-back; a push it does not show comes off again,
+// is logged once per change and counted, and the roll carries nothing.
+static void FlightDropPushOnto(const RValue subs[], const int indices[], const int before[], int lists)
+{
+    FlightDropState& d = g_FlightDrop;
+    d.rollLists = lists;
+    for (int k = 0; k < lists; ++k) {
+        d.rollSub[k] = subs[k];
+        d.rollIndex[k] = indices[k];
+        d.rollBefore[k] = before[k];
+        for (int i = 0; i < FcNs::kCharmCount; ++i) d.rollOn[k][i] = 0;
+    }
+    bool threw = false;
+    for (const FcNs::CharmRow& row : FcNs::kCharms) {
+        const int i = static_cast<int>(row.charm);
+        if (threw || d.rollCopies[i] <= 0) continue;
+        const FcNs::StandIn* s = FlightDropStandIn(row.charm);
+        int pushed = 0;
+        for (int k = 0; k < lists && !threw; ++k) {
+            for (int n = 0; n < d.rollCopies[i] && !threw; ++n) {
+                try {
+                    RValue entry = g_Yytk->CallBuiltin("array_create", { RValue(3.0), RValue(0.0) });
+                    g_Yytk->CallBuiltin("array_set", { entry, RValue(0.0), RValue((double)s->t) });
+                    g_Yytk->CallBuiltin("array_set", { entry, RValue(1.0), RValue((double)s->sub) });
+                    g_Yytk->CallBuiltin("array_set", { entry, RValue(2.0), RValue((double)s->b) });
+                    g_Yytk->CallBuiltin("ds_list_add", { d.rollSub[k], entry });
+                    ++pushed;
+                    ++d.rollOn[k][i];
+                } catch (...) { threw = true; }
+            }
+        }
+        d.rollPushed += pushed;
+        if (threw) Out("flightcharm: pushing " + std::string(row.name) + "'s stand-in threw");
+    }
+    std::string seen;
+    if (!threw && FlightDropHeldReadBack(seen)) {
+        d.heldMissLogged = false;
+        d.injected += d.rollPushed;
+        return;
+    }
+    // A throw mid-push: the entries that did go on (rollOn) come off again, so neither this roll
+    // nor #74's tail check after it meets a partial push; the throw counts once.
+    const int pushed = d.rollPushed;
+    FlightDropRemove();
+    ++d.anomalies;
+    if (threw) return;
+    if (!d.heldMissLogged) {
+        d.heldMissLogged = true;
+        Out("flightcharm: push not visible through Controller_obj." + g_SigListName + " (a fresh read holds " + seen + ", expected "
+            + std::to_string(pushed) + " pushed) - taken off again; rolls carry no flight charm until a push reads back");
+    }
+}
+
+static void FlightDropHitReset()
+{
+    FlightDropState& d = g_FlightDrop;
+    d.hitStandIn = -1;
+    d.hitCharm = -1;
+    d.hitN = 0;
+    d.hitShare = 0;
+    d.hitRewritten = false;
+    d.hitWhy.clear();
+    for (int i = 0; i < FcNs::kCharmCount; ++i) d.pending[i] = 0;
+}
+
+// Before the Angelic roll (SignatureInjectGuard, after #74's own push): Gabriel Wings' and Witch's
+// Broomstick's rows onto lootListUnique[5], after any entries #74 pushed. With both switches off
+// it makes no call at all. Inside the unique roll it adds nothing.
+static void FlightDropAngelicPush()
+{
+    FlightDropState& d = g_FlightDrop;
+    if (d.rollUnique) return;
+    d.rollPushed = 0;
+    d.rollLists = 0;
+    for (int i = 0; i < FcNs::kCharmCount; ++i) d.rollCopies[i] = 0;
+    if (!g_SigDetectNative || (!d.switches[(int)FcNs::Charm::Wings] && !d.switches[(int)FcNs::Charm::Broom])) return;
+    FlightDropResolveAngelic();
+    RValue sub;
+    int before = -1;
+    if (g_SigRollPushed > 0) {
+        sub = g_SigRollListId;
+        before = g_SigRollBefore + g_SigRollPushed;
+    } else {
+        RValue list;
+        if (!SignatureListResolve(list, false, false, &sub)) return;
+        before = g_SigListLen;
+    }
+    FlightDropCountAngelic(sub);
+    int any = 0;
+    for (FcNs::Charm c : { FcNs::Charm::Wings, FcNs::Charm::Broom })
+        if (FlightDropOn(c)) any += d.rollCopies[(int)c] = g_FlightDropCopies;
+    if (!any) return;
+    const RValue subs[1] = { sub };
+    const int indices[1] = { g_SigListIndex };
+    const int befores[1] = { before };
+    FlightDropPushOnto(subs, indices, befores, 1);
+}
+
+// After the Angelic roll, before #74's own removal (SignatureInjectGuard).
+static void FlightDropAngelicRemove()
+{
+    if (g_FlightDrop.rollUnique) return;
+    try { FlightDropRemove(); } catch (...) {}
+}
+
+// Before the unique roll: Pocket Elf's stand-in onto each of lootListUnique[0..4]. The sub-lists
+// are counted again whenever one's length or id changed since the last count, so the stand-in
+// and n are always the current lists'. Runs outside the roll's scope: the filter reads the
+// repository through the typing hook.
+static void FlightDropUniquePush()
+{
+    FlightDropState& d = g_FlightDrop;
+    d.rollPushed = 0;
+    d.rollLists = 0;
+    for (int i = 0; i < FcNs::kCharmCount; ++i) d.rollCopies[i] = 0;
+    const int elf = (int)FcNs::Charm::Elf;
+    if (!d.switches[elf] || d.refused[elf] || !g_SigDetectNative || !d.uniqueNative) return;
+    RValue subs[FcNs::kUniqueSubLists];
+    double ids[FcNs::kUniqueSubLists] = { -1.0, -1.0, -1.0, -1.0, -1.0 };
+    int sizes[FcNs::kUniqueSubLists] = { -1, -1, -1, -1, -1 };
+    std::string why;
+    if (!FlightDropReadUniqueLists(subs, ids, sizes, why)) {
+        d.elfResolved = false;
+        d.elfPick = -1;
+        d.elfWhy = why;
+        return;
+    }
+    bool changed = !d.elfResolved;
+    for (int k = 0; k < FcNs::kUniqueSubLists; ++k) changed = changed || ids[k] != d.elfId[k] || sizes[k] != d.elfLen[k];
+    if (changed) FlightDropResolveElf();
+    if (!FlightDropOn(FcNs::Charm::Elf)) return;
+    d.rollCopies[elf] = g_FlightDropCopies;
+    const int indices[FcNs::kUniqueSubLists] = { 0, 1, 2, 3, 4 };
+    FlightDropPushOnto(subs, indices, sizes, FcNs::kUniqueSubLists);
+}
+
+// A typed hit inside a roll that carries flight entries (Hook_CreateDefaultParams, after the
+// game's CreateDefaultParams returned and #74's own attribution): when its whole entry is a pushed
+// charm's stand-in, it is that charm's at k in n + k (k the copies on the list, n the stand-in's
+// own count there), and handed to the rewrite point; anything else is the game's own.
+static void FlightDropAttributeHit()
+{
+    FlightDropState& d = g_FlightDrop;
+    if (d.rollPushed <= 0 || g_SigHitItem >= 0 || d.hitStandIn >= 0) return;
+    for (const FcNs::CharmRow& row : FcNs::kCharms) {
+        const int i = static_cast<int>(row.charm);
+        const int k = d.rollCopies[i];
+        const FcNs::StandIn* s = FlightDropStandIn(row.charm);
+        if (k <= 0 || !s || g_SigHitType != (double)s->t || g_SigLastSub != (double)s->sub || g_SigLastB != (double)s->b) continue;
+        long long n = 0;
+        if (row.charm == FcNs::Charm::Elf) n = d.elfPick >= 0 ? d.elfCounts[d.elfPick].counts[0] : 0;
+        else n = d.angelicN[i];
+        d.hitStandIn = i;
+        d.hitN = n;
+        d.hitShare = k;
+        const double u = std::uniform_real_distribution<double>(0.0, 1.0)(TyRng());
+        if (!FcNs::CoinOurs(n, k, u)) return;
+        d.hitCharm = i;
+        ++d.tally[i].ours;
+        return;
+    }
+}
+
+// A refused rewrite: one line with the reason and the record as it was left, `refused=` counted,
+// and the charm latched off for the session, as #74's SignatureRefuse.
+static void FlightDropRefuse(int i, const std::string& record)
+{
+    FlightDropState& d = g_FlightDrop;
+    if (i < 0 || i >= FcNs::kCharmCount) return;
+    ++d.refusals;
+    const bool first = !d.refused[i];
+    if (first) { d.refused[i] = true; d.refusedWhy[i] = d.hitWhy; }
+    const std::string name(FcNs::kCharms[i].name);
+    Out("flightcharm: " + name + " refused (" + d.hitWhy + "), the record left vanilla: " + record
+        + (first ? "; " + name + " stays off for this session (rewrite refused)" : std::string()));
+}
+
+// The rewrite point (SignatureBeforeCreate, CreateItemNew's entry): the record becomes the
+// charm's own definition - type 10's Small Charm base, a the seed of a uniformly drawn roll - read
+// back by #74's SignatureRewriteParams, which puts every field back on a refusal.
+static void FlightDropBeforeCreate(RValue& record, const std::string& missing)
+{
+    FlightDropState& d = g_FlightDrop;
+    const int i = d.hitCharm;
+    if (i < 0 || i >= FcNs::kCharmCount) return;
+    const FcNs::Charm c = static_cast<FcNs::Charm>(i);
+    std::string why = missing;
+    bool ok = false;
+    if (why.empty()) {
+        const double u = std::uniform_real_distribution<double>(0.0, 1.0)(TyRng());
+        const SignatureItem item{ "flight charm", -1, FcNs::kCharmTypeT, (double)FcNs::SeedFromUniform(c, u), (double)FcNs::kCharmBaseB, nullptr };
+        ok = SignatureRewriteParams(record, item, why);
+    }
+    d.hitRewritten = ok;
+    if (ok) { ++d.pending[i]; return; }
+    d.hitWhy = why;
+    FlightDropRefuse(i, missing.empty() ? SigJson(record) : "<" + missing + ">");
+}
+
+static void FlightDropNoteBuilt(FcNs::Charm charm)
+{
+    const int i = static_cast<int>(charm);
+    if (i < 0 || i >= FcNs::kCharmCount || g_FlightDrop.pending[i] <= 0) return;
+    --g_FlightDrop.pending[i];
+    ++g_FlightDrop.tally[i].built;
+}
+
+// After a roll returned with a hit: one `flightcharm hit:` line when the hit fell to a charm,
+// saying whether the game built it; quiet otherwise (every other hit is the game's own). Ours with
+// no CreateItemNew call at the rewrite point is a refusal, as #74's.
+static void FlightDropAfterHit()
+{
+    FlightDropState& d = g_FlightDrop;
+    const int i = d.hitCharm;
+    if (i >= 0 && i < FcNs::kCharmCount) {
+        const FcNs::CharmRow& row = FcNs::kCharms[i];
+        const FcNs::StandIn* s = FlightDropStandIn(row.charm);
+        const std::string who = std::string(row.name) + " (stand-in " + (s ? std::string(s->name) : std::string("?")) + ", "
+            + std::to_string(d.hitShare) + " in " + std::to_string(d.hitN + d.hitShare) + ")";
+        if (!g_SigHitAtPoint) {
+            d.hitWhy = "CreateItemNew did not run for it during the roll";
+            FlightDropRefuse(i, "<no record seen>");
+        }
+        std::string outcome;
+        if (!d.hitRewritten) outcome = who + " refused (" + d.hitWhy + "), the game placed its own stand-in";
+        else if (d.pending[i] == 0) outcome = who + " built by the game";
+        else outcome = who + " handed to the game, not seen built during the roll";
+        Out(std::string("flightcharm hit: ") + (d.rollUnique ? "unique" : "angelic") + " roll -> " + outcome);
+    }
+    for (int k = 0; k < FcNs::kCharmCount; ++k) d.pending[k] = 0;
+}
+
+// The unique roll's push and removal, on every way out, a throw from the game's roll included.
+struct FlightUniqueInjectGuard {
+    FlightUniqueInjectGuard() { g_FlightDrop.rollUnique = true; try { FlightDropUniquePush(); } catch (...) {} }
+    ~FlightUniqueInjectGuard() { try { FlightDropRemove(); } catch (...) {} g_FlightDrop.rollUnique = false; }
+    FlightUniqueInjectGuard(const FlightUniqueInjectGuard&) = delete;
+    FlightUniqueInjectGuard& operator=(const FlightUniqueInjectGuard&) = delete;
+};
+
+// #74's counters belong to the Angelic roll: what the unique roll's hits add to them is put back,
+// so `sigdrop status` reads exactly as before.
+struct FlightUniqueCounterScope {
+    long untyped = g_SigUntyped;
+#ifndef FORGEPACT_RELEASE
+    long picks = g_SigStandinPicks, agree = g_SigTypeAgree, disagree = g_SigTypeDisagree;
+#endif
+    FlightUniqueCounterScope() = default;
+    ~FlightUniqueCounterScope()
+    {
+        g_SigUntyped = untyped;
+#ifndef FORGEPACT_RELEASE
+        g_SigStandinPicks = picks; g_SigTypeAgree = agree; g_SigTypeDisagree = disagree;
+#endif
+    }
+    FlightUniqueCounterScope(const FlightUniqueCounterScope&) = delete;
+    FlightUniqueCounterScope& operator=(const FlightUniqueCounterScope&) = delete;
+};
+
+// DropUniqueItems, by its SDK name (FlightDropInstallUnique). With Pocket Elf's switch off, inside
+// the Angelic roll, or nested in itself, it is the game's own call untouched. Otherwise, for the
+// length of the call: the stand-in on each of lootListUnique[0..4] (outside the roll's scope),
+// then #74's roll-in-progress, so the call's GetUniqueRepoStruct read types the hit, its
+// CreateDefaultParams call is the hit, and its CreateItemNew entry is the rewrite point.
+static RValue& Hook_FlightDropUniqueItems(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    if (!g_Orig_FlightDropUnique) return R;
+    if (g_SigRollDepth > 0 || g_FlightDrop.rollUnique || !g_FlightDrop.switches[(int)FcNs::Charm::Elf])
+        return g_Orig_FlightDropUnique(S, O, R, argc, A);
+    FlightUniqueInjectGuard inject;
+    SignatureRollScope roll;
+    FlightUniqueCounterScope counters;
+    SignatureHitReset();
+    RValue& r = g_Orig_FlightDropUnique(S, O, R, argc, A);
+    if (g_SigHitSeen) {
+        g_SigHitSeen = false;
+        try { FlightDropAfterHit(); } catch (...) {}
+    }
+    return r;
+}
+
+// The hook on DropUniqueItems, once, by its SDK name; anything short of an inline detour keeps
+// Pocket Elf off and says so, since the game's compiled calls pass a table-only hook by. In the
+// research build a probe row that holds the script refuses it (and is refused in turn).
+static void FlightDropInstallUnique()
+{
+    FlightDropState& d = g_FlightDrop;
+    if (d.uniqueTried) return;
+#ifndef FORGEPACT_RELEASE
+    if (ApRollHoldsDropUnique() || GpHoldsDropUnique()) {
+        d.uniqueRoute = ApRollHoldsDropUnique() ? "held-by-angelicprobe" : "held-by-gambaprobe";
+        Out(FcNs::RefusedLine("elf: DropUniqueItems is " + d.uniqueRoute + " - relaunch without that probe"));
+        return;
+    }
+#endif
+    d.uniqueTried = true;
+    bool native = false;
+    const bool ok = HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_DropUniqueItems), "fp_flight_duniq",
+                                  (PVOID)Hook_FlightDropUniqueItems, &g_Orig_FlightDropUnique, &native);
+    d.uniqueNative = ok && native;
+    d.uniqueRoute = !ok ? "not-found" : native ? "detoured" : "TABLE-ONLY";
+    if (!d.uniqueNative)
+        Out(FcNs::RefusedLine("elf: the DropUniqueItems hook is " + d.uniqueRoute
+                              + " - the game's own calls would pass it by, so Pocket Elf stays off the unique roll"));
+}
+
+// `flightcharm elf|wings|broom 1|0`: the panel switch. On installs #74's detection, Pocket Elf's
+// DropUniqueItems hook and the shared ground-icon hook, and resolves the charm's stand-in; off
+// only stops the pushes (the hooks stay and pass through).
+static void FlightDropSwitch(FcNs::Charm c, bool on)
+{
+    const int i = static_cast<int>(c);
+    if (i < 0 || i >= FcNs::kCharmCount) return;
+    g_FlightDrop.switches[i] = on;
+    if (on) {
+        InstallSignatureAngelicHooks();
+        if (c == FcNs::Charm::Elf) {
+            FlightDropInstallUnique();
+            g_FlightDrop.elfRefusalLogged = false;
+            FlightDropResolveElf();
+        } else {
+            FlightDropResolveAngelic();
+        }
+        FlightGroundIconInstall();
+    }
+    const std::string key(FcNs::RowOf(c).key);
+    if (!on) { Out("flightcharm: " + key + " drop off"); return; }
+    Out("flightcharm: " + key + " drop " + (FlightDropOn(c) ? std::string("on") : "switched on, not dropping yet: " + FlightDropOffReason(c)));
+}
+
+// The drop fields of the `flightcharm stat` line. gate= is the first switched-on charm's that is
+// on, else the first switched-on charm's own word, else off.
+static void FlightDropFillStat(FcNs::StatFields& s)
+{
+    const FlightDropState& d = g_FlightDrop;
+    FcNs::Gate first = FcNs::Gate::Off;
+    bool on = false;
+    for (const FcNs::CharmRow& row : FcNs::kCharms) {
+        const int i = static_cast<int>(row.charm);
+        s.switches[i] = d.switches[i];
+        s.drops[i] = d.tally[i];
+        const FcNs::Gate g = FlightDropGate(row.charm);
+        if (g == FcNs::Gate::On) on = true;
+        else if (first == FcNs::Gate::Off) first = g;
+    }
+    s.gate = on ? FcNs::Gate::On : first;
+    s.injected = (uint64_t)d.injected;
+    s.refused = (uint64_t)d.refusals;
+    s.anomalies = (uint64_t)d.anomalies;
+    s.standinElf = FcNs::ElfStandInText(d.elfResolved, d.elfPick, d.elfCounts);
+}
+
+// The drops' own trace line on `flightcharm stat`: what the gate rests on, so `gate=` other than
+// on names where the drop stopped.
+static std::string FlightDropTraceLine()
+{
+    const FlightDropState& d = g_FlightDrop;
+    std::string s = "flightcharm drops: detect=" + g_SigDetectRoute + " unique-hook=" + d.uniqueRoute
+        + " angelic-list=" + SignatureListText();
+    for (FcNs::Charm c : { FcNs::Charm::Wings, FcNs::Charm::Broom }) {
+        const FcNs::StandIn* st = FcNs::StandInFor(c);
+        s += " " + std::string(FcNs::RowOf(c).key) + "=" + (st ? std::string(st->key) : std::string("?"))
+            + (d.angelicOk[(int)c] ? "(n=" + std::to_string(d.angelicN[(int)c]) + ")" : std::string("(not validated)"));
+    }
+    s += " elf=" + (d.elfResolved ? FcNs::ElfStandInText(true, d.elfPick, d.elfCounts) : "not-resolved(" + d.elfWhy + ")");
+    for (const FcNs::CharmRow& row : FcNs::kCharms)
+        if (d.switches[(int)row.charm] && !FlightDropOn(row.charm))
+            s += " | " + std::string(row.key) + ": " + FlightDropOffReason(row.charm);
+    return s;
+}
+// ---- end of the flight charms drop adapter -------------------------------------------------
 
 // Resolve through the runner rather than YYTK 4's version-dependent room layout.
 // Its stale active-list offset can make GetInstanceObject see only the last object.
@@ -16941,6 +17837,14 @@ static void PpInstall(const std::vector<std::string>& filters)
             if (!match) { ++skipped; continue; }
         }
         if (t.installed.load()) { Out(std::string("prospectprobe hook: ") + t.label + " already detoured"); ++ok; continue; }
+        // The flight charms' size guard (ForgePact #158) owns ParseItemToGrid
+        // and InventoryGridAddItemPos from setup on; a second detour would fail.
+        if (FlightGuardHolds(t.runtimeName)) {
+            Out(std::string("prospectprobe hook: ") + t.label + " refused (held by the flight charms' size guard, installed"
+                " with the Custom Forge's hooks)");
+            ++failed;
+            continue;
+        }
         std::string why;
         PVOID src = PpResolve(t, why);
         if (!src) { Out(std::string("prospectprobe hook: ") + t.label + " " + why); ++failed; continue; }
@@ -21088,6 +21992,7 @@ static PFUNC_YYGMLScript g_Orig_DrawInventoryStatsNew = nullptr;
 static int g_TipStatCallsInTooltip = 0;
 static std::vector<std::string> g_TipRows;   // rows still to draw in the current tooltip pass
 static bool g_TipRowsPending = false;
+static bool g_TipItemNoStats = false;   // the pass's item has no stats: its rows anchor at the first row call
 static bool g_TipInsideStat = false;
 static const double kTipRowHeight = 30.0;
 
@@ -21150,6 +22055,21 @@ static bool TipStatPresent(RValue** A, int argc)
         std::string key = std::to_string((long long)A[3]->ToDouble());
         RValue present = g_Yytk->CallBuiltin("variable_struct_exists", { stats, RValue(key) });
         return present.ToBoolean();
+    } catch (...) { return false; }
+}
+
+// True when the item has no stats at all: its itemStatStruct is missing or holds
+// no names (Pocket Elf). Read once a pass, where the rows are armed; a failed read
+// answers false, so the rows anchor as they always did.
+static bool TipItemHasNoStats(const RValue& item)
+{
+    try {
+        if (item.m_Kind != VALUE_OBJECT || !item.m_Object) return false;
+        RValue has = g_Yytk->CallBuiltin("variable_struct_exists", { item, RValue("itemStatStruct") });
+        if (!has.ToBoolean()) return true;
+        RValue stats = g_Yytk->CallBuiltin("variable_struct_get", { item, RValue("itemStatStruct") });
+        if (stats.m_Kind != VALUE_OBJECT || !stats.m_Object) return true;
+        return g_Yytk->CallBuiltin("variable_struct_names_count", { stats }).ToDouble() <= 0.0;
     } catch (...) { return false; }
 }
 
@@ -21290,7 +22210,8 @@ static bool TipDrawOne(CInstance* S, CInstance* O, int argc, RValue** A, const F
     g_Tip.drawnBy = TipObjectName(S);
     g_Tip.request = g_TipDraw.id;
     g_TipRows = ForgedTooltipRows(item);
-    g_TipRowsPending = !g_TipRows.empty();
+    g_TipRowsPending = ForgePact::ForgedTooltipRows::Pending(g_TipRows.size());
+    g_TipItemNoStats = g_TipRowsPending && TipItemHasNoStats(item);
     RValue result;
     try {
         TipDepthGuard depth(g_Tip.itemDepth);
@@ -21298,6 +22219,7 @@ static bool TipDrawOne(CInstance* S, CInstance* O, int argc, RValue** A, const F
     } catch (...) {}
     g_TipRows.clear();
     g_TipRowsPending = false;
+    g_TipItemNoStats = false;
     const bool drew = g_Tip.rowCount > 0;
     TipCaptureEnd();
     return drew;
@@ -21360,9 +22282,14 @@ static RValue& Hook_DrawInventoryItemV2(CInstance* S, CInstance* O, RValue& R, i
 #endif
     g_TipRows.clear();
     g_TipRowsPending = false;
+    g_TipItemNoStats = false;
     try {
-        if (argc > 3 && A && A[3]) { g_TipRows = ForgedTooltipRows(*A[3]); g_TipRowsPending = !g_TipRows.empty(); }
-    } catch (...) { g_TipRows.clear(); g_TipRowsPending = false; }
+        if (argc > 3 && A && A[3]) {
+            g_TipRows = ForgedTooltipRows(*A[3]);
+            g_TipRowsPending = ForgePact::ForgedTooltipRows::Pending(g_TipRows.size());
+            g_TipItemNoStats = g_TipRowsPending && TipItemHasNoStats(*A[3]);
+        }
+    } catch (...) { g_TipRows.clear(); g_TipRowsPending = false; g_TipItemNoStats = false; }
     g_TipStatCallsInTooltip = 0;
     const bool capturing = TipCaptureBegin(argc, A);
     if (capturing) g_Tip.drawnBy = TipObjectName(S);
@@ -21377,6 +22304,7 @@ static RValue& Hook_DrawInventoryItemV2(CInstance* S, CInstance* O, RValue& R, i
     if (trace) Out("   DrawInventoryItemV2 -> " + Describe(r) + " statLines=" + std::to_string(g_TipStatCallsInTooltip) + " forgedRows=" + std::to_string(g_TipRows.size()));
 #endif
     g_TipRowsPending = false;
+    g_TipItemNoStats = false;
     return r;
 }
 
@@ -21396,7 +22324,11 @@ static RValue& Hook_DrawInventoryStatsNew(CInstance* S, CInstance* O, RValue& R,
     if (g_Tip.active) g_Tip.statId = TipStatIdOf(argc, A);
     if (g_TipRowsPending && argc > 5 && A && isNum(A[0]) && isNum(A[1]) && isNum(A[5])) {
         double fmt = -1.0; try { fmt = A[5]->ToDouble(); } catch (...) { fmt = -1.0; }
-        if ((fmt == 2.0 || fmt == 3.0) && TipStatPresent(A, argc)) {
+        // The anchor rule (ForgedTooltipRows.hpp): the first row call whose stat
+        // the item has, or the first row call at all on an item with no stats.
+        const bool present = ForgePact::ForgedTooltipRows::NeedsStatRead(g_TipRowsPending, fmt, g_TipItemNoStats)
+            && TipStatPresent(A, argc);
+        if (ForgePact::ForgedTooltipRows::AnchorsHere(g_TipRowsPending, fmt, present, g_TipItemNoStats)) {
             try {
                 const double x = A[0]->ToDouble(), y = A[1]->ToDouble();
                 double extra = 0.0;
@@ -21597,6 +22529,357 @@ static void InstallItemInspectHooks()
 }
 #endif
 
+// ---- Flight charms (FlightCharms.hpp): the forge adapter -----------------------
+// The rest of the Custom Forge's part in the flight charms (ForgePact #158);
+// recognition and the entry sit just before TryApplyCustomForge.
+//   - The final pass: on CreateItemNew's outermost return a dressed charm also
+//     gets its true footprint under itemInfoStruct "2" (width) and "3"
+//     (height), and our bag icon under "11" (RDM § 23.2 and § 23.5, both
+//     measured), before TryApplyCustomForge refreshes the item's hash.
+//   - The icons: the owner's six PNGs, embedded (FlightCharmIcons.hpp) and
+//     loaded the pack markers' way, lazily at the first dressing that needs
+//     one, once a session. A player's own file of the same name wins. A
+//     failed icon writes nothing: the charm keeps the Small Charm's icon.
+//   - The ground icon: the game picks a ground sprite by name from the bag
+//     sprite's name, and a sprite added at runtime has no such companion, so
+//     the ground drew the error sprite (RDM § 23.7). The one LootGroundInit
+//     detour (HookHiddenLootInit, installed by HiddenLootInstall) hands each
+//     call to FlightCharmOnGroundInit after hidden loot and loot
+//     announcements, which sets our ground icon after the game's own call.
+//   - The size guard: a reload rebuilds each charm at its true footprint, and
+//     the game's grid load ignores a refused placement (RDM § 23.6), so a
+//     charm whose footprint no longer fits would vanish, and one placed early
+//     could take a cell a vanilla item needs. ParseItemToGrid opens a scope;
+//     inside it a charm larger than 1x1 is held back from
+//     InventoryGridAddItemPos until the load ends, then placed at full size,
+//     or at 1x1 in its own cell when that is refused (FlightCharms.hpp,
+//     SizeGuard). Installed with the Custom Forge's own hooks, because the
+//     dressing it protects is unconditional and a load runs before any tick.
+// Every script is named through hs-game-sdk and hooked by name through
+// HookOneScript; nothing here computes an address.
+
+static bool g_FlightIconsTried = false;
+static bool g_FlightIconsFailed = false;
+static RValue g_FlightIconSprite[ForgePact::FlightCharmIcons::kIconCount];   // sprite_add's answer, as it came
+static bool g_FlightIconOk[ForgePact::FlightCharmIcons::kIconCount] = {};
+static bool g_FlightGroundReady = false;   // at least one ground icon loaded: the ground consumer has work
+static uint64_t g_FlightGround = 0;        // ground items given our icon
+// `flightprobe dress off` (research build) suspends the footprint write alone,
+// so a charm can be saved at 1x1 for the guard's live check.
+static bool g_FlightDressFootprint = true;
+
+// The icon of one charm (its bag icon, or its ground copy); kIconCount when
+// the table has none.
+static size_t FlightIconIndex(FcNs::Charm charm, bool ground)
+{
+    const std::string_view key = FcNs::RowOf(charm).key;
+    for (size_t k = 0; k < ForgePact::FlightCharmIcons::kIconCount; ++k) {
+        const auto& icon = ForgePact::FlightCharmIcons::kIcons[k];
+        if (key == icon.charm && icon.ground == ground) return k;
+    }
+    return ForgePact::FlightCharmIcons::kIconCount;
+}
+
+// One icon as a path GameMaker can open: the embedded PNG is written to
+// bp_ipc\flightcharms\ only when no file of that name is there, so a player's
+// own design is kept and used. GameMaker reads relative paths from the game's
+// working directory, where bp_ipc lives (PackMarkerIconPath).
+static bool FlightIconPath(size_t k, std::string& gmlPath, std::string& absolutePath)
+{
+    if (k >= ForgePact::FlightCharmIcons::kIconCount) return false;
+    const auto& icon = ForgePact::FlightCharmIcons::kIcons[k];
+    const std::string dir = IPC_DIR + "\\flightcharms";
+    const std::string file = dir + "\\" + icon.file;
+    try {
+        std::error_code ec;
+        std::filesystem::create_directories(dir, ec);
+        if (!std::filesystem::exists(file, ec)) {
+            std::ofstream f(file, std::ios::binary | std::ios::trunc);
+            if (!f) return false;
+            f.write(reinterpret_cast<const char*>(icon.data), static_cast<std::streamsize>(icon.size));
+            if (!f) return false;
+        }
+    } catch (...) { return false; }
+    gmlPath = std::string("bp_ipc\\flightcharms\\") + icon.file;
+    absolutePath = file;
+    return true;
+}
+
+// All six, once a session: sprite_add with the relative path first and the
+// absolute one second, the origin at the embedded size's centre, re-centred
+// when a player's PNG is another size (PackMarkers::LoadIcons).
+static void FlightIconsLoad()
+{
+    if (g_FlightIconsTried) return;
+    g_FlightIconsTried = true;
+    std::string failed;
+    for (size_t k = 0; k < ForgePact::FlightCharmIcons::kIconCount; ++k) {
+        const auto& icon = ForgePact::FlightCharmIcons::kIcons[k];
+        std::string relative, absolute;
+        if (FlightIconPath(k, relative, absolute)) {
+            for (const std::string* path : { &relative, &absolute }) {
+                try {
+                    const RValue r = g_Yytk->CallBuiltin("sprite_add", { RValue(path->c_str()), RValue(1.0), RValue(0.0), RValue(0.0),
+                                                                         RValue(std::floor(icon.width / 2.0)), RValue(std::floor(icon.height / 2.0)) });
+                    const bool usable = r.m_Kind == VALUE_REAL || r.m_Kind == VALUE_INT32 || r.m_Kind == VALUE_INT64 || r.m_Kind == VALUE_REF;
+                    const double idx = usable ? r.ToDouble() : -1.0;
+                    if (!std::isfinite(idx) || idx < 0) continue;
+                    g_FlightIconSprite[k] = r;
+                    g_FlightIconOk[k] = true;
+                    const double w = g_Yytk->CallBuiltin("sprite_get_width", { RValue(idx) }).ToDouble();
+                    const double h = g_Yytk->CallBuiltin("sprite_get_height", { RValue(idx) }).ToDouble();
+                    if (std::isfinite(w) && std::isfinite(h) && w > 0 && h > 0 && (w != icon.width || h != icon.height))
+                        g_Yytk->CallBuiltin("sprite_set_offset", { RValue(idx), RValue(std::floor(w / 2)), RValue(std::floor(h / 2)) });
+                    break;
+                } catch (...) {}
+            }
+        }
+        if (!g_FlightIconOk[k]) {
+            g_FlightIconsFailed = true;
+            failed += (failed.empty() ? "" : ", ") + std::string(icon.file);
+        } else if (icon.ground) {
+            g_FlightGroundReady = true;
+        }
+    }
+    if (!failed.empty())
+        Out("flightcharm: icons failed - " + failed + " did not load; those charms keep the game's own icon");
+}
+
+static void FlightCharmDressFinal(RValue& item, const FcNs::Rolled& rolled)
+{
+    if (g_TruthDepth != 0) return;
+    RValue info;
+    if (!FlightField(item, "itemInfoStruct", info)) return;
+    const FcNs::CharmRow& row = FcNs::RowOf(rolled.charm);
+    try {
+        if (g_FlightDressFootprint) {
+            g_Yytk->CallBuiltin("variable_struct_set", { info, RValue("2"), RValue((double)row.w) });
+            g_Yytk->CallBuiltin("variable_struct_set", { info, RValue("3"), RValue((double)row.h) });
+        }
+        FlightIconsLoad();
+        const size_t k = FlightIconIndex(rolled.charm, false);
+        if (k >= ForgePact::FlightCharmIcons::kIconCount) return;
+        if (g_FlightIconOk[k])
+            g_Yytk->CallBuiltin("variable_struct_set", { info, RValue("11"), g_FlightIconSprite[k] });
+    } catch (...) {}
+}
+
+// The shared LootGroundInit detour's third consumer, after the game's own
+// call returned. The ground item is identified by what it is: a flight
+// charm's seed, and our own bag icon under "11", which only our dressing
+// writes (a sidecar entry that claimed the seed leaves the game's icon).
+// Argument 0 is the new ground instance (measured: hidden loot's Live 3,
+// RDM § 16.11); its kind is never checked, the runner hands a reference.
+static void FlightCharmOnGroundInit(int argc, RValue** A)
+{
+    if (!g_FlightGroundReady) return;
+    if (argc < 1 || !A || !A[0]) return;
+    try {
+        const RValue& ground = *A[0];
+        const std::string field(HeroSiege::Player::kGroundItemInstanceField);
+        if (!g_Yytk->CallBuiltin("variable_instance_exists", { ground, RValue(field) }).ToBoolean()) return;
+        const RValue item = g_Yytk->CallBuiltin("variable_instance_get", { ground, RValue(field) });
+        FcNs::Rolled rolled;
+        if (!FlightCharmOf(item, rolled)) return;
+        const size_t bag = FlightIconIndex(rolled.charm, false);
+        const size_t k = FlightIconIndex(rolled.charm, true);
+        if (bag >= ForgePact::FlightCharmIcons::kIconCount || k >= ForgePact::FlightCharmIcons::kIconCount) return;
+        if (!g_FlightIconOk[bag] || !g_FlightIconOk[k]) return;
+        RValue info, shown;
+        if (!FlightField(item, "itemInfoStruct", info) || !FlightField(info, "11", shown)) return;
+        if (shown.ToDouble() != g_FlightIconSprite[bag].ToDouble()) return;
+        g_Yytk->CallBuiltin("variable_instance_set", { ground, RValue("sprite_index"), g_FlightIconSprite[k] });
+        ++g_FlightGround;
+    } catch (...) {}
+}
+
+// ---- the size guard ----
+// What it takes to place a held-back charm again: the call's self and other,
+// its arguments as they came (the grid, the item, the cell's column and row,
+// and the flags; static reading), and the charm's name and cell for the log.
+struct FlightGuardPending {
+    CInstance* self = nullptr;
+    CInstance* other = nullptr;
+    std::vector<RValue> args;
+    RValue item;
+    std::string name;
+    long long x = -1;
+    long long y = -1;
+};
+static FcNs::SizeGuard<FlightGuardPending> g_FlightGuard;
+static PFUNC_YYGMLScript g_Orig_FlightParseItemToGrid = nullptr;
+static PFUNC_YYGMLScript g_Orig_FlightGridAddItemPos = nullptr;
+static bool g_FlightGuardTried = false;
+static bool g_FlightGuardOn = false;   // both hooks in, both routes
+static const char* g_FlightGuardRoute = "not-installed";   // on | table-only | refused, once tried
+
+static bool FlightGuardHolds(std::string_view runtimeName)
+{
+    if (runtimeName == HeroSiege::Scripts::gml_Script_ParseItemToGrid) return g_Orig_FlightParseItemToGrid != nullptr;
+    if (runtimeName == HeroSiege::Scripts::gml_Script_InventoryGridAddItemPos) return g_Orig_FlightGridAddItemPos != nullptr;
+    return false;
+}
+
+// The footprint the item carries now: "2" and "3", 1 where absent.
+static bool FlightItemFootprint(const RValue& item, int& w, int& h)
+{
+    RValue info;
+    if (!FlightField(item, "itemInfoStruct", info)) return false;
+    double dw = 1, dh = 1;
+    if (!FlightNumber(info, "2", dw)) dw = 1;
+    if (!FlightNumber(info, "3", dh)) dh = 1;
+    w = (int)dw;
+    h = (int)dh;
+    return true;
+}
+
+// The load ended: place each held-back charm at its full footprint through
+// the original, or, refused, at 1x1 in its own cell (1x1 under "2" and "3",
+// the hash refreshed, the struct tagged), and say which.
+static void FlightGuardClose()
+{
+    const auto place = [](const FlightGuardPending& p) -> bool {
+        if (!g_Orig_FlightGridAddItemPos) return false;
+        std::vector<RValue> args = p.args;
+        std::vector<RValue*> ptrs;
+        for (RValue& a : args) ptrs.push_back(&a);
+        RValue res;
+        g_Orig_FlightGridAddItemPos(p.self, p.other, res, (int)ptrs.size(), ptrs.data());
+        return res.ToBoolean();
+    };
+    const auto shrinkAndPlace = [&place](const FlightGuardPending& p) -> bool {
+        RValue info;
+        if (!FlightField(p.item, "itemInfoStruct", info)) return false;
+        g_Yytk->CallBuiltin("variable_struct_set", { info, RValue("2"), RValue(1.0) });
+        g_Yytk->CallBuiltin("variable_struct_set", { info, RValue("3"), RValue(1.0) });
+        RefreshItemHash(p.item);
+        g_Yytk->CallBuiltin("variable_struct_set", { p.item, RValue(std::string(FcNs::kGuardTag)), RValue(true) });
+        return place(p);
+    };
+    const auto report = [](const FlightGuardPending& p, FcNs::GuardOutcome o) {
+        const std::string line = FcNs::GuardLine(p.name, p.x, p.y, o);
+        if (!line.empty()) Out(line);
+    };
+    g_FlightGuard.Close(place, shrinkAndPlace, report);
+}
+
+static RValue& Hook_FlightParseItemToGrid(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    if (!g_FlightGuardOn) return g_Orig_FlightParseItemToGrid(S, O, R, argc, A);
+    g_FlightGuard.Open();
+    try {
+        RValue& r = g_Orig_FlightParseItemToGrid(S, O, R, argc, A);
+        FlightGuardClose();
+        return r;
+    } catch (...) {
+        FlightGuardClose();
+        throw;
+    }
+}
+
+// Inside a load, a flight charm whose footprint is larger than 1x1 is held
+// back and the call answers true (the load ignores the answer; RDM § 23.6).
+// Every other call, and every call outside a load, is the game's own. Each
+// call inside a load is counted, and so is each whose A[1] is a flight charm,
+// so `seen=` and `charms=` say whether the argument layout held.
+static RValue& Hook_FlightGridAddItemPos(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    if (g_FlightGuardOn && g_FlightGuard.Depth() > 0) {
+        bool charm = false;
+        try {
+            FcNs::Rolled rolled;
+            int w = 1, h = 1;
+            charm = argc >= 4 && A && A[1] && FlightCharmOf(*A[1], rolled);
+            g_FlightGuard.Saw(charm);
+            if (charm && FlightItemFootprint(*A[1], w, h)) {
+                FlightGuardPending p;
+                p.self = S;
+                p.other = O;
+                for (int i = 0; i < argc; ++i) p.args.push_back(A[i] ? *A[i] : RValue());
+                p.item = *A[1];
+                p.name = std::string(FcNs::RowOf(rolled.charm).name);
+                const double x = A[2] ? A[2]->ToDouble() : -1.0, y = A[3] ? A[3]->ToDouble() : -1.0;
+                p.x = std::isfinite(x) ? (long long)x : -1;
+                p.y = std::isfinite(y) ? (long long)y : -1;
+                if (g_FlightGuard.Defer(p, true, w, h)) {
+                    R = RValue(true);
+                    return R;
+                }
+            }
+        } catch (...) {
+            if (!charm) g_FlightGuard.Saw(false);   // a throw before the count still counts the call
+        }
+    }
+    return g_Orig_FlightGridAddItemPos(S, O, R, argc, A);
+}
+
+// Both hooks by their SDK names, with the Custom Forge's own. Anything short
+// of both routes on both turns the guard off and says so: a table-only hook
+// is passed by the game's compiled calls, so it would guard nothing.
+static void FlightGuardInstall()
+{
+    if (g_FlightGuardTried) return;
+    g_FlightGuardTried = true;
+    bool parseNative = false, addNative = false;
+    const bool parse = HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_ParseItemToGrid), "fp_flight_parsegrid",
+                                     (PVOID)Hook_FlightParseItemToGrid, &g_Orig_FlightParseItemToGrid, &parseNative);
+    const bool add = HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_InventoryGridAddItemPos), "fp_flight_gridaddpos",
+                                   (PVOID)Hook_FlightGridAddItemPos, &g_Orig_FlightGridAddItemPos, &addNative);
+    g_FlightGuardOn = parse && add && parseNative && addNative;
+    g_FlightGuardRoute = g_FlightGuardOn ? "on" : (parse && add) ? "table-only" : "refused";
+    if (g_FlightGuardOn) return;
+    const auto route = [](bool ok, bool native) { return std::string(!ok ? "not installed" : native ? "both routes" : "TABLE-ONLY"); };
+    Out("flightcharm: size guard refused - ParseItemToGrid " + route(parse, parseNative) + ", InventoryGridAddItemPos "
+        + route(add, addNative) + "; the guard stays off, so a charm whose full size does not fit after a load may be left off its grid");
+}
+
+// `flightcharm stat`: the core's line, its drop fields from the drop adapter
+// (FlightDropFillStat). The state is refreshed first, with the frame counter
+// every frame advances: a player standing still makes no hooked call, so the
+// last query's state could predate an equip. Before arming it reads nothing.
+static FcNs::StatFields FlightCharmStatFields()
+{
+    FcNs::StatFields s;
+    RValue player;
+    g_Flight.RefreshForStat((int64_t)g_RuntimeFrame, HhResolveLocalPlayer(player));
+    g_Flight.FillStat(s);
+    s.icons = !g_FlightIconsTried ? "not-loaded" : (g_FlightIconsFailed ? "failed" : "loaded");
+    s.ground = g_FlightGround;
+    g_FlightGuard.FillStat(s);
+    FlightDropFillStat(s);
+    return s;
+}
+
+// `flightcharm elf|wings|broom 1|0 | stat`, a player command in both builds.
+static void FlightCharmCommand(const std::string& rest)
+{
+    std::vector<std::string> args;
+    {
+        std::istringstream in(Lower(rest));
+        std::string word;
+        while (in >> word) args.push_back(word);
+    }
+    FcNs::Command c;
+    std::string why;
+    if (!FcNs::ParseCommand(args, c, why)) { Out(why); return; }
+    if (c.form == FcNs::CommandForm::Switch) {
+        FlightDropSwitch(c.charm, c.on);
+        return;
+    }
+    Out(FcNs::StatLine(FlightCharmStatFields()));
+    // Flight's own trace line: whether the player its hooks compare against is
+    // the local player, and how far the player's queries and UpdateDepth calls
+    // got, so `answered=0` or `depth=0` names where flight stopped.
+    Out(FcNs::TraceLine(FlightPlayerCheck(), g_Flight.Stats()));
+    // The guard's own line: its route and how far each load got, so a quiet
+    // `guard kept=0 failed=0` is told apart from a guard that saw nothing.
+    Out(FcNs::GuardStatLine(g_FlightGuardRoute, g_FlightGuard.Stats()));
+    // The drops' own line: the detection, the lists and the stand-ins the
+    // gate rests on, so a `gate=` other than on names where the drop stopped.
+    Out(FlightDropTraceLine());
+}
+// ---- end of the flight charms forge adapter ------------------------------------
+
 static void InstallCustomForgeItemHooks()
 {
     if (g_CustomForgeHooksAttempted || g_CustomForgeEntries.empty()) return;
@@ -21617,6 +22900,9 @@ static void InstallCustomForgeItemHooks()
     for (const CustomForgeEntry& entry : g_CustomForgeEntries) {
         if (!entry.affix.empty() || !entry.mechanic.empty()) { InstallForgedTooltipHooks(); break; }
     }
+    // The flight charms' size guard (ForgePact #158): the dressing it protects
+    // is unconditional, and a save loads before any tick could arm anything.
+    FlightGuardInstall();
     WriteCustomForgeStatus(g_CustomForgeHooksActive ? "runtime hooks installed"
                                                      : "runtime hook installation failed");
 }
@@ -23259,6 +24545,7 @@ static RValue& HookAngelicChance(CInstance* S, CInstance* O, RValue& R, int argc
                 x = HhReadNumber(self, "x", 0.0); y = HhReadNumber(self, "y", 0.0);
             }
             SignatureAfterHit(S, x, y);
+            FlightDropAfterHit();   // #158: a hit that fell to Gabriel Wings or Witch's Broomstick
         } catch (...) {}
     };
     // Multiplying the chance argument in place broke the game's own check (x99 -> zero
@@ -23885,6 +25172,14 @@ static bool ApRollHoldsUniqueRepo()
         if (std::string_view(r.id) == "unique-repo") return r.tramp != nullptr;
     return false;
 }
+// #158: the drop-unique row and Pocket Elf's DropUniqueItems hook, the same rule: whichever comes
+// second refuses. The question FlightDropInstallUnique asks; ApRollAttach asks the other way round.
+static bool ApRollHoldsDropUnique()
+{
+    for (const ApRollRow& r : g_ApRollRows)
+        if (std::string_view(r.id) == "drop-unique") return r.tramp != nullptr;
+    return false;
+}
 
 static std::atomic<bool> g_ApRollAttached{ false };
 // Baselines, so `reset` zeroes what `show` prints without touching the
@@ -24048,6 +25343,13 @@ static void ApRollAttach(ApRollRow& r)
     if (std::string_view(r.id) == "unique-repo" && g_Orig_GetUniqueRepoStruct) {
         ApRollSetRoute(r, kApRollBlocked, "blocked: the #74 typing hook (Hook_GetUniqueRepoStruct) already holds this script - "
             "its own counters (untyped=, typeAgree=, typeDisagree=) are the measure");
+        return;
+    }
+    // #158: Pocket Elf's hook installed first holds DropUniqueItems; this row refuses rather than
+    // stack a second detour on it (ApRollHoldsDropUnique is the other half of the rule).
+    if (std::string_view(r.id) == "drop-unique" && g_Orig_FlightDropUnique) {
+        ApRollSetRoute(r, kApRollBlocked, "blocked: the flight charms' Pocket Elf hook (Hook_FlightDropUniqueItems) already holds this script - "
+            "`flightcharm stat`'s elf= and injected= are the measure");
         return;
     }
     const std::string full = "gml_Script_" + std::string(r.script);
@@ -31220,6 +32522,14 @@ static void CpInstall(const std::vector<std::string>& filters)
         if (CmHolds(t.runtimeName)) {
             Out(std::string("craftprobe hook: ") + t.label + " held by craftmats (its install owns this function; neither"
                 " detoured nor failed here)");
+            ++held;
+            continue;
+        }
+        // The flight charms' size guard (ForgePact #158) owns ParseItemToGrid
+        // and InventoryGridAddItemPos from setup on, the same way.
+        if (FlightGuardHolds(t.runtimeName)) {
+            Out(std::string("craftprobe hook: ") + t.label + " held by the flight charms' size guard (its install owns this"
+                " function; neither detoured nor failed here)");
             ++held;
             continue;
         }
@@ -46954,8 +48264,17 @@ static bool HandleSkillProbeCommand(const std::string& lc, const std::string& re
 // against Collision_Prop_obj (or, with `all`, Collision_Parent_obj) - decided
 // through object_is_ancestor by name - is answered "no collision" without
 // running the game's function. Everything else runs the original. The one
-// per-frame piece, JpFrameTick, returns at once while nothing is armed,
-// traced or on.
+// per-frame piece, JpFrameTick, returns at once while nothing is hooked,
+// armed, traced or on.
+//
+// The walk lever (ForgePact #158, docs/flight-charms-research.md): a walk
+// into the prop a jump crossed stayed blocked under `all`, so `pass 1 ...
+// any` answers the local player's own query whatever object it names. From
+// `hook` on, the object tally counts every player-self builtin call by the
+// object it names, lever on or off (`objects`, `objects reset`), which costs
+// one object read per such call; and `free` asks the saved originals of
+// place_meeting and instance_position, never the lever, whether the player's
+// own spot is inside Collision_Parent_obj's family.
 #include <ForgePact/JumpSceneryProbe.hpp>
 
 namespace JpNs = ForgePact::JumpScenery;
@@ -47439,11 +48758,20 @@ static void JpInstall()
         t.status = "hooked";
         ++builtins;
     }
+    // The object tally counts from here on, lever on or off, so a vanilla
+    // walk can be compared with the same walk under the lever.
+    if (builtins > 0 && !g_JpCore.Tallying()) {
+        g_JpCore.SetTally(true);
+        JpRefreshPlayer();
+    }
     Out("jumpprobe hook: " + std::to_string(ok) + " detoured, " + std::to_string(failed) + " failed, " + std::to_string(held)
         + " held, " + std::to_string(builtins) + " builtins"
         + (builtinsFailed ? ", " + std::to_string(builtinsFailed) + " builtins failed" : std::string()));
     Out("  Next: `jumpprobe show` twice while walking - CheckTalentUse and position_meeting must climb, or nothing here counts."
         " Nothing is logged until `jumpprobe arm`.");
+    Out(std::string("  objects: ") + (g_JpCore.Tallying()
+        ? "the local player's builtin calls are counted by object from now on - `jumpprobe objects`, `objects reset`"
+        : "nothing counts - no collision builtin is hooked"));
 }
 
 // ---- arm, show, pass ------------------------------------------------------------
@@ -47521,7 +48849,7 @@ static void JpWarnIfInert(const std::string& prefix)
     Out(prefix + "INERT - the lever is ON but no window has opened (windows-opened=0, outside-window="
         + std::to_string(g_JpCore.OutsideWindowTotal()) + "): neither CA_playerJump nor PlayerForceJump ran with the"
         " local player as self, so every call ran the game's own function. Nothing from this run says what blocks"
-        " the jump: re-run with `jumpprobe pass 1 <frames> <props|all> hold`");
+        " the jump: re-run with `jumpprobe pass 1 <frames> <props|all|any> hold`");
 }
 
 // Every row's calls since the previous `show`, the two controls first. A
@@ -47587,10 +48915,10 @@ static void JpPassStat()
     }
 }
 
-// `pass 1 [frames] [props|all] [scripts] [hold]` / `pass 0` / `pass stat`.
+// `pass 1 [frames] [props|all|any] [scripts] [hold]` / `pass 0` / `pass stat`.
 static void JpPass(const std::vector<std::string>& tail)
 {
-    const std::string usage = "jumpprobe pass: usage -> pass 1 [frames] [props|all] [scripts] [hold] | pass 0 | pass stat";
+    const std::string usage = "jumpprobe pass: usage -> pass 1 [frames] [props|all|any] [scripts] [hold] | pass 0 | pass stat";
     if (tail.empty() || Lower(tail[0]) == "stat") { JpPassStat(); return; }
     const std::string v = Lower(tail[0]);
     if (v == "0" || v == "off") {
@@ -47607,11 +48935,12 @@ static void JpPass(const std::vector<std::string>& tail)
         const std::string a = Lower(tail[i]);
         if (a == "props") rule = JpNs::FamilyRule::Props;
         else if (a == "all") rule = JpNs::FamilyRule::All;
+        else if (a == "any") rule = JpNs::FamilyRule::Any;
         else if (a == "scripts") scripts = true;
         else if (a == "hold") hold = true;
         else {
             try { size_t used = 0; frames = std::stoll(a, &used); if (used != a.size()) throw 0; }
-            catch (...) { Out("jumpprobe pass: '" + tail[i] + "' is neither a frame count nor props|all|scripts|hold; nothing changed"); return; }
+            catch (...) { Out("jumpprobe pass: '" + tail[i] + "' is neither a frame count nor props|all|any|scripts|hold; nothing changed"); return; }
         }
     }
     JpResolveFamilies();
@@ -47644,6 +48973,172 @@ static void JpPass(const std::vector<std::string>& tail)
             " `jumpprobe hook` first");
     if (!g_JpPlayer)
         Out("jumpprobe pass: WARNING - no local player resolved, so no call counts as the player's: load a character");
+}
+
+// ---- objects, free (the walk lever, ForgePact #158) ----------------------------
+
+// `objects` / `objects reset`: the object tally, one line per builtin row the
+// local player called since `hook` (or the last reset), each object named by
+// the game's own object_get_name and labelled `family` (Collision_Parent_obj
+// or a descendant, what `all` answers for) or `outside`, most-called first.
+static void JpObjects(const std::vector<std::string>& tail)
+{
+    if (!tail.empty()) {
+        if (tail.size() == 1 && Lower(tail[0]) == "reset") {
+            g_JpCore.TallyReset();
+            Out(std::string("jumpprobe objects: reset - every row's tally cleared; ")
+                + (g_JpCore.Tallying() ? "counting goes on" : "nothing counts until `jumpprobe hook`"));
+            return;
+        }
+        Out("jumpprobe objects: usage -> objects | objects reset");
+        return;
+    }
+    if (!g_JpCore.Tallying()) {
+        Out("jumpprobe objects: nothing counted - no collision builtin is hooked by jumpprobe: `jumpprobe hook` first");
+        return;
+    }
+    JpResolveFamilies();
+    std::vector<std::string> lines;
+    JpNs::TallySummary totals;
+    g_JpBusy = true;
+    try {
+        for (int i = 0; i < JpNs::kBuiltinCount; ++i) {
+            const auto row = static_cast<JpNs::Builtin>(i);
+            const JpNs::RowTally& t = g_JpCore.TallyOf(row);
+            if (t.total == 0) continue;
+            std::string line = "jumpprobe objects " + JpBuiltinName(i) + ":";
+            for (const JpNs::ObjectCount& o : g_JpCore.TallySorted(row))
+                line += " " + JpObjectName(o.object) + "(" + std::to_string(o.object) + ")=" + std::to_string(o.n)
+                    + (g_JpCore.ObjectInFamily(o.object) ? " family" : " outside");
+            if (t.other) line += " other=" + std::to_string(t.other);
+            lines.push_back(line);
+        }
+        totals = g_JpCore.TallyTotals();
+    } catch (...) {}
+    g_JpBusy = false;
+    for (const std::string& line : lines) Out(line);
+    Out("jumpprobe objects: rows=" + std::to_string(totals.rows) + " distinct=" + std::to_string(totals.distinct)
+        + " outside=" + std::to_string(totals.outside)
+        + (g_JpCore.AllFamily() < 0 ? std::string(" (Collision_Parent_obj did not resolve by name: every object reads outside)")
+                                    : std::string()));
+}
+
+// GameMaker's `all` keyword, as an object argument: every instance.
+static constexpr double kJpAllKeyword = -3.0;
+
+// `free [dx dy] [family|all|<object name>]`: is the local player's mask,
+// moved by dx, dy (default 0 0), inside an object? Asked of the saved
+// originals of place_meeting (blocked=, the player's mask at x+dx, y+dy) and
+// instance_position (by=, the instance at that point), called directly with
+// the player as self - never through the lever, and not counted by the tally.
+// The object asked defaults to Collision_Parent_obj's family; `all` asks
+// GameMaker's `all`, and any other word is an object name, resolved by
+// asset_get_index and kept only when object_get_name gives the same name
+// back. The line names the object asked, so a `no` against the family cannot
+// be read as a `no` against whatever held the walk. The offset is what makes
+// a positive control possible: pressed against a prop in vanilla, the player
+// does not overlap it, but its mask moved toward it does. Refused before
+// `hook`: without a saved original the call would go through whatever detour
+// holds the builtin.
+static void JpFree(const std::vector<std::string>& tail)
+{
+    JpBuiltinRow& meeting = g_JpBuiltinRows[(int)JpNs::Builtin::PlaceMeeting];
+    JpBuiltinRow& position = g_JpBuiltinRows[(int)JpNs::Builtin::InstancePosition];
+    if (!meeting.installed || !meeting.orig || !position.installed || !position.orig) {
+        Out("jumpprobe free: refused - place_meeting and instance_position are not both hooked by jumpprobe, so there is"
+            " no saved original to ask: `jumpprobe hook` first");
+        return;
+    }
+    double offset[2] = { 0.0, 0.0 };
+    int numbers = 0;
+    std::string asked;
+    for (const std::string& a : tail) {
+        double v = 0.0;
+        bool number = false;
+        try { size_t used = 0; v = std::stod(a, &used); number = used == a.size() && std::isfinite(v); } catch (...) {}
+        if (number) {
+            if (numbers == 2) {
+                Out("jumpprobe free: '" + a + "' is a third number; usage -> free [dx dy] [family|all|<object name>];"
+                    " nothing asked");
+                return;
+            }
+            offset[numbers++] = v;
+            continue;
+        }
+        if (!asked.empty()) {
+            Out("jumpprobe free: '" + a + "' names a second object after '" + asked + "'; usage -> free [dx dy]"
+                " [family|all|<object name>]; nothing asked");
+            return;
+        }
+        asked = a;
+    }
+    if (numbers == 1) {
+        Out("jumpprobe free: dx and dy come as a pair; usage -> free [dx dy] [family|all|<object name>]; nothing asked");
+        return;
+    }
+    const std::string mode = Lower(asked);
+    double target = 0.0;
+    std::string askedText;
+    if (asked.empty() || mode == "family") {
+        JpResolveFamilies();
+        if (g_JpCore.AllFamily() < 0) {
+            Out("jumpprobe free: refused - Collision_Parent_obj did not resolve by name; nothing asked");
+            return;
+        }
+        const double family = (double)g_JpCore.AllFamily();
+        target = family;
+        askedText = "family:" + JpObjectName(g_JpCore.AllFamily()) + "(" + std::to_string(g_JpCore.AllFamily()) + ")";
+    } else if (mode == "all") {
+        target = kJpAllKeyword;
+        askedText = "all(-3)";
+    } else {
+        int obj = -1;
+        try {
+            obj = (int)g_Yytk->CallBuiltin("asset_get_index", { RValue(asked) }).ToDouble();
+            if (obj >= 0 && !g_Yytk->CallBuiltin("object_exists", { RValue((double)obj) }).ToBoolean()) obj = -1;
+            if (obj >= 0 && JpObjectName(obj) != asked) obj = -1;
+        } catch (...) { obj = -1; }
+        if (obj < 0) {
+            Out("jumpprobe free: refused - '" + asked + "' is not an object name (asset_get_index did not give an object"
+                " whose object_get_name reads it back); nothing asked");
+            return;
+        }
+        target = (double)obj;
+        askedText = asked + "(" + std::to_string(obj) + ")";
+    }
+    JpRefreshPlayer();
+    if (!g_JpPlayer) { Out("jumpprobe free: refused - no local player resolved: load a character"); return; }
+    std::string line;
+    g_JpBusy = true;
+    try {
+        const RValue self = g_JpPlayer->ToRValue();
+        const RValue x = g_Yytk->CallBuiltin("variable_instance_get", { self, RValue("x") });
+        const RValue y = g_Yytk->CallBuiltin("variable_instance_get", { self, RValue("y") });
+        // With no offset the player's own x, y go in unchanged, whatever kind
+        // the runtime gave them.
+        const bool moved = offset[0] != 0.0 || offset[1] != 0.0;
+        const RValue qx = moved ? RValue(x.ToDouble() + offset[0]) : x;
+        const RValue qy = moved ? RValue(y.ToDouble() + offset[1]) : y;
+        RValue meetArgs[3] = { qx, qy, RValue(target) };
+        RValue met;
+        meeting.orig(met, g_JpPlayer, g_JpPlayer, 3, meetArgs);
+        RValue posArgs[3] = { qx, qy, RValue(target) };
+        RValue at;
+        position.orig(at, g_JpPlayer, g_JpPlayer, 3, posArgs);
+        const int by = JpObjectIndexOf(at);
+        int own = -1;
+        try { N1ObjectIndex(g_Yytk->CallBuiltin("variable_instance_get", { self, RValue("object_index") }), own); } catch (...) {}
+        line = std::string("jumpprobe free: blocked=") + (met.ToBoolean() ? "yes" : "no")
+            + " by=" + (by >= 0 ? JpObjectName(by) : std::string("none"))
+            + " x=" + MenuLayoutValueText(x) + " y=" + MenuLayoutValueText(y)
+            + " dx=" + MenuLayoutValueText(RValue(offset[0])) + " dy=" + MenuLayoutValueText(RValue(offset[1]))
+            + " asked=" + askedText
+            // A point query can name the asking instance itself; place_meeting
+            // never does, so blocked= is the answer to read in that case.
+            + (by >= 0 && by == own ? " (by= is the player's own object: the point may have found the player)" : "");
+    } catch (...) { line = "jumpprobe free: unreadable (a read or a saved original threw); nothing answered"; }
+    g_JpBusy = false;
+    Out(line);
 }
 
 // ---- state and trace (hook-free) ------------------------------------------------
@@ -47767,7 +49262,8 @@ static void JpTraceSample(int64_t frame)
 
 // The one per-frame piece, from FrameCallback: closes an expired window,
 // refreshes the local player the detours compare their self against, and
-// samples the trace. Returns at once while nothing is armed, traced or on.
+// samples the trace. Returns at once while nothing is hooked (the object
+// tally), armed, traced or on.
 static void JpFrameTick()
 {
     if (!g_JpCore.Active()) return;
@@ -47794,10 +49290,16 @@ static void JpUsage()
         " land, fall, height, zpos, hover or fly");
     Out("  trace 1|0                         one line per frame in which x, y or a state variable changed (at most "
         + std::to_string(JpNs::kTraceMaxLines) + " a session)");
-    Out("  pass 1 [frames] [props|all] [scripts] [hold] | pass 0 | pass stat   the research lever: the local player's jump"
+    Out("  pass 1 [frames] [props|all|any] [scripts] [hold] | pass 0 | pass stat   the research lever: the local player's jump"
         " opens a window of frames (default " + std::to_string(JpNs::kDefaultFrames) + ") in which the player's collision"
-        " builtins against Collision_Prop_obj (all: Collision_Parent_obj) answer no collision; scripts also rewrites"
-        " CanMove, InstancePlaceTallest and TilePlaceMeeting; hold keeps the window open until pass 0, jump or no jump");
+        " builtins against Collision_Prop_obj (all: Collision_Parent_obj; any: whatever object they name) answer no"
+        " collision; scripts also rewrites CanMove, InstancePlaceTallest and TilePlaceMeeting; hold keeps the window open"
+        " until pass 0, jump or no jump");
+    Out("  objects | objects reset           from `hook` on, the local player's builtin calls per row by the object they"
+        " name (family = Collision_Parent_obj or a descendant, else outside), lever on or off; reset clears it");
+    Out("  free [dx dy] [family|all|<object>] the saved place_meeting and instance_position at the player's x+dx, y+dy"
+        " (default 0 0) against Collision_Parent_obj (family, the default), GameMaker's all, or one object by name,"
+        " never through the lever: blocked=yes|no by=<object>|none x= y= dx= dy= asked=<object> (after `hook` only)");
 }
 
 static void JpCommand(const std::string& rest)
@@ -47813,6 +49315,8 @@ static void JpCommand(const std::string& rest)
     if (sub == "state") { JpState(); return; }
     if (sub == "trace") { JpTrace(tail); return; }
     if (sub == "pass") { JpPass(tail); return; }
+    if (sub == "objects") { JpObjects(tail); return; }
+    if (sub == "free") { JpFree(tail); return; }
     JpUsage();
 }
 #endif // FORGEPACT_RELEASE (jumpprobe)
@@ -47827,6 +49331,989 @@ static bool HandleJumpProbeCommand(const std::string& lc, const std::string& res
     (void)lc; (void)rest;
     return false;
 }
+
+#ifndef FORGEPACT_RELEASE
+// ---- charmprobe: the flight-charms phase 1 instrument (ForgePact #158) ----
+// docs/flight-charms-research.md holds the static readings, the live
+// procedure and the decision this instrument serves. Research build only,
+// never in kPlayerCommands, dispatched from HandleCharmProbeCommand, which
+// sits inside this guard with its RunCommand line, so neither the verb nor
+// the handler's name reaches a player build.
+//
+// It asks what the Flight charms need settled before they are built, and
+// changes nothing until a form that spawns, dresses or drops is sent:
+//
+//   - `charms` reads the equipped charms offline from
+//     Controller_obj.inventoryData[key - 1].localCharmItemArray, the key
+//     being the relic tab's (hub RDM § 2: 1 online, global.mplr offline),
+//     reading the variables rather than calling GetPlayerCharmData (RDM
+//     § 9.4's advice for profile getters). Each charm's size comes from
+//     GetItemSize, called by name with the item, and feeds the core, which
+//     names the two itemInfoStruct keys that hold it once two sizes agree on
+//     exactly one key each (plugin/include/ForgePact/FlightCharmProbe.hpp,
+//     compiled whole by tests/flight_charm_probe_harness.cpp). No form writes
+//     a pair a scratch item's GetItemSize has not followed (FcpSizeReadBack),
+//     and `dress keys <w> <h>` names the pair by hand under the same test;
+//   - `repo` reads one unique definition through GetUniqueRepoStruct;
+//   - `spawn` builds a normal charm the way SpawnSignatureItem does (json ->
+//     InitItemFromJson -> LootGroundCreateFromItem at the player), from a
+//     research seed range of its own, optionally with the size keys, stats
+//     and our sprite written onto the built struct first;
+//   - `dress` writes the size keys at the Custom Forge's final pass
+//     (CreateItemNew's outermost return, FcpDressBuilt) onto every built item
+//     whose definition `a` has a rule - the save-safety question, since a
+//     save keeps only the compact definition;
+//   - `heroic` calls DropItemHeroic by name and reads what it placed;
+//   - `sprite` loads one PNG of our own by the pack markers' route
+//     (written under bp_ipc\ only when absent, then sprite_add relative
+//     first, absolute second) and identifies the key holding an item's
+//     sprite from samples (never a footprint key), or takes it by hand;
+//     `sprite verify` is that key's positive control, and `spawn ... sprite`
+//     writes nothing until it passed.
+//
+// Every name is an hs-game-sdk constant, every call is by name, and every
+// refusal names its reason. Nothing here runs on the frame path; the one
+// piece the game reaches by itself, FcpDressBuilt, returns at once while no
+// rule is set.
+#include <ForgePact/FlightCharmProbe.hpp>
+#include <ForgePact/FlightCharmProbeIcon.hpp>
+
+namespace FcpNs = ForgePact::FlightCharms;
+
+static constexpr int kFcpMaxCharms = 64;            // localCharmItemArray entries one read walks
+static constexpr int kFcpMaxInfoKeys = 400;         // struct keys one dump walks
+static constexpr int kFcpMaxGroundScan = 4000;      // Loot_Ground_obj instances one heroic scan walks
+static constexpr double kFcpMaxSpriteIndex = 1e6;   // a number above this is never asked about as a sprite
+
+// Game thread only, like every command.
+static FcpNs::SizeKeys g_FcpSize;
+static FcpNs::SpriteKey g_FcpSpriteKey;
+static FcpNs::DressRules g_FcpDress;
+static long g_FcpSpawns = 0;                        // research seeds used (kSeedBase + n)
+static double g_FcpSprite = -1;                     // our sprite's index once sprite_add gave one
+static RValue g_FcpSpriteValue;                     // that answer as it came (a reference or a real), what `spawn ... sprite` writes
+static int g_FcpSpriteKind = -1;                    // RValue kind of sprite_add's last answer; -1 never tried
+static std::string g_FcpSpriteCheckKey;             // the key the last `sprite verify` wrote a donor's sprite under
+static long long g_FcpSpriteCheckSeed = -1;         // that verify's charm, when it was placed; -1 none
+static int g_FcpSpriteDrew = -1;                    // the person's answer for it: 1 the donor's icon, 0 its own, -1 none yet
+static const char* g_FcpSpritePath = "none";        // which path gave the index
+static bool g_FcpSizeHand = false;                  // `dress keys <w> <h>` set the size keys, after a read-back
+static std::string g_FcpSizeReadW, g_FcpSizeReadH;  // the pair the last read-back asked about
+static bool g_FcpSizeReadOk = false;                // whether GetItemSize followed that pair
+static std::string g_FcpSizeReadText;               // what that read-back wrote and read
+
+// A scratch charm's seed: just below the spawn range, so it is never a
+// spawned charm's.
+static constexpr long long kFcpScratchSeed = FcpNs::kSeedBase - 1;
+// The footprints a read-back writes: no normal charm's, and w differs from h
+// in both, so a swapped pair reads back wrong.
+static const FcpNs::Size kFcpReadBackSizes[2] = { { 2, 3 }, { 4, 1 } };
+
+// A real or integer number, finite. A bool or a reference is not one.
+static bool FcpNumber(const RValue& v, double& out)
+{
+    out = 0;
+    if (v.m_Kind != VALUE_REAL && v.m_Kind != VALUE_INT32 && v.m_Kind != VALUE_INT64) return false;
+    const double d = v.ToDouble();
+    if (!std::isfinite(d)) return false;
+    out = d;
+    return true;
+}
+
+static bool FcpWhole(const RValue& v, double& out)
+{
+    return FcpNumber(v, out) && out == std::floor(out);
+}
+
+// s.name, only when s is a struct that has it.
+static bool FcpMember(const RValue& s, const char* name, RValue& out)
+{
+    if (s.m_Kind != VALUE_OBJECT) return false;
+    try {
+        if (!g_Yytk->CallBuiltin("variable_struct_exists", { s, RValue(name) }).ToBoolean()) return false;
+        out = g_Yytk->CallBuiltin("variable_struct_get", { s, RValue(name) });
+        return true;
+    } catch (...) { return false; }
+}
+
+static std::string FcpValueText(const RValue& v)
+{
+    double d = 0;
+    if (FcpNumber(v, d)) return FcpNs::NumberText(d);
+    if (v.m_Kind == VALUE_STRING) return v.ToString();
+    if (v.m_Kind == VALUE_BOOL) return v.ToBoolean() ? "true" : "false";
+    return Describe(v);
+}
+
+static std::string FcpMemberText(const RValue& s, const char* name)
+{
+    RValue v;
+    return FcpMember(s, name, v) ? FcpValueText(v) : std::string("missing");
+}
+
+// One struct's keys: the numbers by key, the references by key, and the
+// `info=` entries (every number, every reference as Describe gives it, and
+// every string of at most kInfoTextMax characters). An asset value comes back
+// from this runner as a VALUE_REF, so a key holding one is shown and kept
+// rather than dropped as "not a number".
+struct FcpInfo {
+    bool ok = false;
+    FcpNs::NumberInfo numbers;
+    std::map<std::string, RValue> refs;
+    std::vector<std::pair<std::string, std::string>> shown;
+};
+static FcpInfo FcpReadStruct(const RValue& s)
+{
+    FcpInfo r;
+    if (s.m_Kind != VALUE_OBJECT) return r;
+    try {
+        const RValue names = g_Yytk->CallBuiltin("variable_struct_get_names", { s });
+        if (names.m_Kind != VALUE_ARRAY) return r;
+        const int n = (int)g_Yytk->CallBuiltin("array_length", { names }).ToDouble();
+        r.ok = true;
+        for (int i = 0; i < n && i < kFcpMaxInfoKeys; ++i) {
+            const RValue name = g_Yytk->CallBuiltin("array_get", { names, RValue((double)i) });
+            if (name.m_Kind != VALUE_STRING) continue;
+            const std::string key = name.ToString();
+            const RValue v = g_Yytk->CallBuiltin("variable_struct_get", { s, name });
+            double d = 0;
+            if (FcpNumber(v, d)) { r.numbers[key] = d; r.shown.push_back({ key, FcpNs::NumberText(d) }); }
+            else if (v.m_Kind == VALUE_REF) { r.refs[key] = v; r.shown.push_back({ key, Describe(v) }); }
+            else if (v.m_Kind == VALUE_STRING && FcpNs::InfoTextFits(v.ToString())) r.shown.push_back({ key, v.ToString() });
+        }
+    } catch (...) {}
+    return r;
+}
+
+// Whether sprite_exists, called by name, calls this value a sprite: a whole
+// number in range, or a reference handed over as it is.
+static bool FcpIsSprite(const RValue& v)
+{
+    double d = -1;
+    if (v.m_Kind == VALUE_REF) { if (!ApNumber(v, d) || d < 0) return false; }
+    else if (!FcpWhole(v, d) || d < 0 || d > kFcpMaxSpriteIndex) return false;
+    try { return g_Yytk->CallBuiltin("sprite_exists", { v }).ToBoolean(); } catch (...) { return false; }
+}
+
+// `<value>(<sprite_get_name>)`, the value as the `info=` dump shows it.
+// sprite_get_name is asked only of a value FcpIsSprite accepts.
+static std::string FcpSpriteValueText(const RValue& v)
+{
+    double d = 0;
+    const std::string shown = FcpNumber(v, d) ? FcpNs::NumberText(d) : Describe(v);
+    std::string name = "not-a-sprite";
+    try {
+        if (FcpIsSprite(v)) {
+            const RValue n = g_Yytk->CallBuiltin("sprite_get_name", { v });
+            name = n.m_Kind == VALUE_STRING ? n.ToString() : Describe(n);
+        }
+    } catch (...) { name = "?"; }
+    return shown + "(" + name + ")";
+}
+
+// Whether a key is one of the size keys in force: never a sprite key, which
+// every path that takes, writes or arms one checks.
+static bool FcpIsSizeKey(const std::string& key)
+{
+    return g_FcpSize.Known() && (key == g_FcpSize.W() || key == g_FcpSize.H());
+}
+
+// The sprite key's candidates for one sample: the info keys whose value
+// FcpIsSprite accepts, a plain number or a reference (kept by its index). A
+// footprint key is never one. The size keys in force are left out, and so is
+// every number equal to a side GetItemSize answered for this sample (w, h),
+// since sprite_exists accepts a 1, 2 or 3 as readily as a sprite's index;
+// callers feed only a sample GetItemSize sized, so both sides are known.
+static FcpNs::NumberInfo FcpSpriteValues(const FcpInfo& info, int w, int h)
+{
+    FcpNs::NumberInfo out;
+    for (const auto& [key, v] : info.numbers) {
+        if (FcpIsSizeKey(key) || v == (double)w || v == (double)h) continue;
+        if (FcpIsSprite(RValue(v))) out[key] = v;
+    }
+    for (const auto& [key, ref] : info.refs) {
+        double idx = -1;
+        if (!FcpIsSizeKey(key) && ApNumber(ref, idx) && FcpIsSprite(ref)) out[key] = idx;
+    }
+    return out;
+}
+
+// FcpSpriteValueText of the sprite key on this struct; `?` while the key is
+// unknown.
+static std::string FcpSpriteText(const FcpInfo& info)
+{
+    if (!g_FcpSpriteKey.Known()) return "?";
+    const std::string key = g_FcpSpriteKey.Key();
+    if (const auto it = info.numbers.find(key); it != info.numbers.end()) return FcpSpriteValueText(RValue(it->second));
+    if (const auto it = info.refs.find(key); it != info.refs.end()) return FcpSpriteValueText(it->second);
+    return "missing";
+}
+
+// Whether the sprite key in force passed its positive control (`sprite
+// verify`, FcpSpriteVerify): a charm with another charm's own sprite value
+// written under this key was placed, and the person saw it draw that other
+// charm's icon. Inferred or set by hand, a key is only a candidate until then;
+// `why` says which step is missing. Cached only, it calls nothing.
+static bool FcpSpriteVerified(std::string& why)
+{
+    if (!g_FcpSpriteKey.Known()) { why = "sprite key unknown (" + g_FcpSpriteKey.Why() + ")"; return false; }
+    const std::string key = g_FcpSpriteKey.Key();
+    // A key that became a size key after it was taken holds the footprint,
+    // whatever its control said: our index there makes a 1xN charm.
+    if (FcpIsSizeKey(key)) { why = "sprite key " + key + " is a size key in force (" + g_FcpSize.Line() + ")"; return false; }
+    if (g_FcpSpriteCheckSeed < 0 || g_FcpSpriteCheckKey != key) {
+        why = "sprite key " + key + " unverified (no `charmprobe sprite verify` has placed a donor charm under it)";
+        return false;
+    }
+    const std::string charm = " (the donor charm a=" + std::to_string(g_FcpSpriteCheckSeed);
+    if (g_FcpSpriteDrew < 0) {
+        why = "sprite key " + key + " unverified" + charm + " was placed: `charmprobe sprite verify drew` or `verify base` once it is looked at)";
+        return false;
+    }
+    if (g_FcpSpriteDrew == 0) { why = "sprite key " + key + " is not the drawn sprite's" + charm + " drew its own icon)"; return false; }
+    return true;
+}
+
+// The `check=` value of `charmprobe sprite:`.
+static std::string FcpSpriteCheckText()
+{
+    std::string why;
+    return FcpSpriteVerified(why) ? std::string("verified") : "no (" + why + ")";
+}
+
+// ` a= b= c= j=` of the item's definition; `a` also as a number (NaN unread).
+static std::string FcpDefinitionText(const RValue& item, double& a)
+{
+    a = std::nan("");
+    RValue def;
+    const bool ok = FcpMember(item, "itemDefinitionStruct", def) && def.m_Kind == VALUE_OBJECT;
+    std::string out;
+    for (const char* field : { "a", "b", "c", "j" }) {
+        RValue v;
+        double d = 0;
+        const bool read = ok && FcpMember(def, field, v) && FcpNumber(v, d);
+        if (read && field[0] == 'a') a = d;
+        out += std::string(" ") + field + "=" + (read ? FcpNs::NumberText(d) : std::string("?"));
+    }
+    return out;
+}
+
+// GetItemSize(item) by name, with the global instance as self: the pair it
+// answers, as whole numbers.
+static bool FcpItemSize(const RValue& item, int& w, int& h, std::string& why)
+{
+    CInstance* g = nullptr;
+    g_Yytk->GetGlobalInstance(&g);
+    if (!g) { why = "no global instance"; return false; }
+    RValue res;
+    AurieStatus st = AURIE_EXTERNAL_ERROR;
+    try { st = g_Yytk->CallGameScriptEx(res, HeroSiege::Scripts::gml_Script_GetItemSize, g, g, { item }); }
+    catch (...) { why = "GetItemSize threw"; return false; }
+    if (!AurieSuccess(st)) { why = "GetItemSize st=" + std::to_string((int)st); return false; }
+    RValue first, second;
+    if (!HeroSiege::Player::Detail::ArrayAt(g_Yytk, res, 0, first) || !HeroSiege::Player::Detail::ArrayAt(g_Yytk, res, 1, second)) {
+        why = "GetItemSize gave " + Describe(res);
+        return false;
+    }
+    double dw = 0, dh = 0;
+    if (!FcpWhole(first, dw) || !FcpWhole(second, dh) || !FcpNs::ValidSize((int)dw, (int)dh) || dw > 99 || dh > 99) {
+        why = "GetItemSize gave [" + Describe(first) + ", " + Describe(second) + "]";
+        return false;
+    }
+    w = (int)dw;
+    h = (int)dh;
+    return true;
+}
+
+// Measures two size keys rather than inferring them. It builds a scratch
+// charm the way `spawn` does (json -> InitItemFromJson, b 0, a 1x1 Small
+// charm) and never places it: the collector takes a build nothing keeps (hub
+// RDM § 16.2). It then writes each of kFcpReadBackSizes under the two keys
+// and asks GetItemSize, by name, what it answers now. True only when it
+// answered every pair written; `text` names the base size and each pair
+// written and read.
+static bool FcpSizeReadBack(const std::string& wKey, const std::string& hKey, std::string& text)
+{
+    text.clear();
+    if (wKey.empty() || hKey.empty() || wKey == hKey) { text = "w and h need two different keys"; return false; }
+    CInstance* g = nullptr;
+    g_Yytk->GetGlobalInstance(&g);
+    if (!g) { text = "no global instance"; return false; }
+    try {
+        RValue parsed;
+        g_Yytk->CallBuiltinEx(parsed, "json_parse", g, g, { RValue(FcpNs::SpawnJson(kFcpScratchSeed, 0)) });
+        if (parsed.m_Kind != VALUE_OBJECT) { text = "scratch json_parse gave " + Describe(parsed); return false; }
+        const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        RValue item;
+        const AurieStatus st = g_Yytk->CallGameScriptEx(item, HeroSiege::Scripts::gml_Script_InitItemFromJson, g, g,
+                                                        { parsed, RValue(FcpNs::SpawnKey(ms)) });
+        if (!AurieSuccess(st) || !ApIsPlainStruct(item)) {
+            text = "scratch InitItemFromJson st=" + std::to_string((int)st) + " gave " + Describe(item);
+            return false;
+        }
+        RValue info;
+        if (!FcpMember(item, "itemInfoStruct", info) || info.m_Kind != VALUE_OBJECT) { text = "the scratch item has no itemInfoStruct"; return false; }
+        int w = 0, h = 0;
+        std::string why;
+        text = "scratch base=" + (FcpItemSize(item, w, h, why) ? FcpNs::SizeText({ w, h }) : "?(" + why + ")");
+        bool all = true;
+        for (const FcpNs::Size& want : kFcpReadBackSizes) {
+            g_Yytk->CallBuiltin("variable_struct_set", { info, RValue(wKey), RValue((double)want.w) });
+            g_Yytk->CallBuiltin("variable_struct_set", { info, RValue(hKey), RValue((double)want.h) });
+            const bool read = FcpItemSize(item, w, h, why);
+            text += " wrote=" + FcpNs::SizeText(want) + " read=" + (read ? FcpNs::SizeText({ w, h }) : "?(" + why + ")");
+            all = all && read && w == want.w && h == want.h;
+        }
+        return all;
+    } catch (...) { text += " (the scratch read-back threw)"; return false; }
+}
+
+// Whether the size keys in force were measured: a read-back of this very
+// pair answered every size written. Cached only, it calls nothing, so
+// FcpDressBuilt can ask it inside CreateItemNew.
+static bool FcpSizeVerified()
+{
+    return g_FcpSize.Known() && g_FcpSizeReadOk && g_FcpSizeReadW == g_FcpSize.W() && g_FcpSizeReadH == g_FcpSize.H();
+}
+
+// The size keys in force, read back before anything writes them: false with
+// the reason while they are unknown, or while GetItemSize did not follow
+// them. A pair not yet verified is read back again, and the outcome printed.
+static bool FcpSizeCheck(std::string& why)
+{
+    if (!g_FcpSize.Known()) { why = "size keys unknown (" + g_FcpSize.Why() + ")"; return false; }
+    if (!FcpSizeVerified()) {
+        g_FcpSizeReadW = g_FcpSize.W();
+        g_FcpSizeReadH = g_FcpSize.H();
+        g_FcpSizeReadOk = FcpSizeReadBack(g_FcpSizeReadW, g_FcpSizeReadH, g_FcpSizeReadText);
+        Out("charmprobe sizekeys: read back w=" + g_FcpSizeReadW + " h=" + g_FcpSizeReadH + ": " + g_FcpSizeReadText
+            + (g_FcpSizeReadOk ? " verified" : " keys-unverified"));
+    }
+    if (!g_FcpSizeReadOk) {
+        why = "size keys unverified (w=" + g_FcpSizeReadW + " h=" + g_FcpSizeReadH + ": " + g_FcpSizeReadText
+            + "; `charmprobe dress keys <w> <h>` names them by hand)";
+        return false;
+    }
+    return true;
+}
+
+// `dress keys`: the size keys in force, read back. `dress keys <w> <h>`: the
+// hand fallback, for when the samples cannot settle them (several keys hold
+// a side on every sample, or the true key is missing from one). The pair is
+// accepted only when a read-back of it answers every size written; the core
+// is then given the read-back's own answers as its samples, and `charms`
+// stops feeding it, so a later sample cannot drop the pair.
+static void FcpSizeKeys(const std::vector<std::string>& keys)
+{
+    const std::string tag = "charmprobe sizekeys: ";
+    if (keys.empty()) {
+        if (!g_FcpSize.Known()) { Out(tag + g_FcpSize.Line()); return; }
+        std::string why;
+        const bool ok = FcpSizeCheck(why);
+        Out(tag + g_FcpSize.Line() + (g_FcpSizeHand ? " by-hand" : " inferred") + (ok ? " verified" : " " + why));
+        return;
+    }
+    if (keys.size() != 2 || !FcpNs::ValidKeyName(keys[0]) || !FcpNs::ValidKeyName(keys[1])) {
+        Out(tag + "refused dress keys needs two key names (1.." + std::to_string(FcpNs::kKeyNameMax) + " letters, digits or _)");
+        return;
+    }
+    std::string text;
+    if (!FcpSizeReadBack(keys[0], keys[1], text)) {
+        Out(tag + "refused w=" + keys[0] + " h=" + keys[1] + " did not read back: " + text + "; keys in force unchanged");
+        return;
+    }
+    g_FcpSize.Reset();
+    for (const FcpNs::Size& s : kFcpReadBackSizes)
+        g_FcpSize.Add(s.w, s.h, FcpNs::NumberInfo{ { keys[0], (double)s.w }, { keys[1], (double)s.h } });
+    g_FcpSizeHand = true;
+    g_FcpSizeReadW = keys[0];
+    g_FcpSizeReadH = keys[1];
+    g_FcpSizeReadOk = true;
+    g_FcpSizeReadText = text;
+    Out(tag + g_FcpSize.Line() + " by-hand verified: " + text);
+}
+
+// The equipped charms, offline: Controller_obj.inventoryData[key - 1]
+// .localCharmItemArray, the relic tab's key rule (HeroSiege::Player's
+// ScanRelicTab reads the same entry). Variables only.
+static bool FcpCharmArray(RValue& array, std::string& why)
+{
+    const RValue mplr = HeroSiege::YYTK::GetGlobalVariable(g_Yytk, "mplr");
+    double row = -1;
+    if (!FcpWhole(mplr, row) || row < 0 || row > HeroSiege::Player::kMaxLocalPlayerIndex) { why = "mplr " + Describe(mplr); return false; }
+    const RValue onl = HeroSiege::YYTK::GetGlobalVariable(g_Yytk, HeroSiege::Player::kOnlineFlagGlobal);
+    double online = 0;
+    if ((FcpNumber(onl, online) && online == 1.0) || (onl.m_Kind == VALUE_BOOL && onl.ToBoolean())) {
+        why = "online: the charms live on Client_obj there, this read is the offline route";
+        return false;
+    }
+    const int key = (int)row;
+    if (key - 1 < 0) { why = "key " + std::to_string(key) + " (mplr 0)"; return false; }
+    double idx = -1;
+    const RValue index = g_Yytk->CallBuiltin("asset_get_index", {
+        RValue(std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Controller_obj))) });
+    if (!ApNumber(index, idx) || idx < 0) { why = "Controller_obj not resolved"; return false; }
+    const RValue controller = g_Yytk->CallBuiltin("instance_find", { RValue(idx), RValue(0.0) });
+    if (!HeroSiege::Player::IsInstanceHandle(controller)) { why = "no Controller_obj instance"; return false; }
+    if (!HeroSiege::YYTK::InstanceHasVariable(g_Yytk, controller, HeroSiege::Player::kRelicTabHolderField)) { why = "no inventoryData"; return false; }
+    const RValue profiles = HeroSiege::YYTK::GetInstanceVariable(g_Yytk, controller, HeroSiege::Player::kRelicTabHolderField);
+    RValue profile;
+    if (!HeroSiege::Player::Detail::ArrayAt(g_Yytk, profiles, key - 1, profile)) {
+        why = "inventoryData has no index " + std::to_string(key - 1) + " (" + Describe(profiles) + ")";
+        return false;
+    }
+    static constexpr std::string_view kField = "localCharmItemArray";
+    if (profile.m_Kind == VALUE_OBJECT && HeroSiege::YYTK::StructHasVariable(g_Yytk, profile, kField))
+        array = HeroSiege::YYTK::GetStructVariable(g_Yytk, profile, kField);
+    else if (profile.m_Kind == VALUE_REF && HeroSiege::YYTK::InstanceHasVariable(g_Yytk, profile, kField))
+        array = HeroSiege::YYTK::GetInstanceVariable(g_Yytk, profile, kField);
+    else { why = "inventoryData[" + std::to_string(key - 1) + "] has no localCharmItemArray (" + Describe(profile) + ")"; return false; }
+    if (array.m_Kind != VALUE_ARRAY) { why = "localCharmItemArray is " + Describe(array); return false; }
+    return true;
+}
+
+// `charms`: each worn charm read off FcpCharmArray as variables (its
+// definition, itemInfoStruct and itemStatStruct, the info= rule for both),
+// its footprint from GetItemSize by name, and that footprint fed to the size
+// keys. It writes nothing to a worn charm. Once the keys are inferred it ends
+// with FcpSizeCheck, whose read-back builds a scratch charm, never placed,
+// and writes only that.
+static void FcpCharms()
+{
+    RValue array;
+    std::string why;
+    if (!FcpCharmArray(array, why)) { Out("charmprobe charms: count=0 source=missing(" + why + ")"); return; }
+    const int count = HeroSiege::YYTK::GetArrayLength(g_Yytk, array);
+    Out("charmprobe charms: count=" + std::to_string(count) + " source=localCharmItemArray"
+        + (count > kFcpMaxCharms ? " (the first " + std::to_string(kFcpMaxCharms) + " read)" : std::string()));
+    for (int i = 0; i < count && i < kFcpMaxCharms; ++i) {
+        RValue item;
+        if (!HeroSiege::Player::Detail::ArrayAt(g_Yytk, array, i, item) || !ApIsPlainStruct(item)) {
+            Out("charmprobe charm #" + std::to_string(i) + " not an item struct: " + Describe(item));
+            continue;
+        }
+        double a = 0;
+        const std::string definition = FcpDefinitionText(item, a);
+        int w = 0, h = 0;
+        std::string sizeWhy;
+        const bool sized = FcpItemSize(item, w, h, sizeWhy);
+        RValue infoStruct;
+        const FcpInfo info = FcpMember(item, "itemInfoStruct", infoStruct) ? FcpReadStruct(infoStruct) : FcpInfo();
+        if (info.ok && sized) g_FcpSpriteKey.Add(FcpSpriteValues(info, w, h));
+        RValue statStruct;
+        const FcpInfo stats = FcpMember(item, "itemStatStruct", statStruct) ? FcpReadStruct(statStruct) : FcpInfo();
+        Out("charmprobe charm #" + std::to_string(i) + " t=" + FcpMemberText(item, "itemType") + definition
+            + " size=" + (sized ? FcpNs::SizeText({ w, h }) : "?(" + sizeWhy + ")")
+            + " rarity=" + FcpMemberText(infoStruct, "27") + " name=" + FcpMemberText(infoStruct, "28")
+            + (g_FcpSpriteKey.Known() ? " sprite=" + FcpSpriteText(info) : std::string())
+            + " itemstats=" + (stats.ok ? FcpNs::InfoDump(stats.shown) : std::string("missing(no itemStatStruct)"))
+            + " info=" + (info.ok ? FcpNs::InfoDump(info.shown) : std::string("missing(no itemInfoStruct)")));
+        // Keys set by hand were measured; a later sample is not allowed to drop them.
+        if (sized && info.ok && !g_FcpSizeHand) g_FcpSize.Add(w, h, info.numbers);
+        Out("charmprobe sizekeys: " + g_FcpSize.Line() + (g_FcpSizeHand ? " (by hand)" : ""));
+    }
+    // Inferred keys are only a candidate until a scratch item's GetItemSize
+    // follows them; FcpSizeCheck prints the read-back when it runs one.
+    if (g_FcpSize.Known()) FcpSizeCheck(why);
+}
+
+static void FcpRepo(const std::vector<std::string>& tail)
+{
+    FcpNs::RepoRequest r;
+    std::string why;
+    if (!FcpNs::ParseRepo(tail, r, why)) { Out("charmprobe repo: refused " + why); return; }
+    const std::string tag = "charmprobe repo " + std::to_string(r.type) + " " + std::to_string(r.sub) + " " + std::to_string(r.b) + ": ";
+    CInstance* g = nullptr;
+    g_Yytk->GetGlobalInstance(&g);
+    if (!g) { Out(tag + "missing (no global instance)"); return; }
+    RValue def;
+    AurieStatus st = AURIE_EXTERNAL_ERROR;
+    try {
+        st = g_Yytk->CallGameScriptEx(def, HeroSiege::Scripts::gml_Script_GetUniqueRepoStruct, g, g,
+                                      { RValue((double)r.type), RValue((double)r.sub), RValue((double)r.b) });
+    } catch (...) { Out(tag + "missing (GetUniqueRepoStruct threw)"); return; }
+    RValue info;
+    if (!AurieSuccess(st) || def.m_Kind != VALUE_OBJECT) {
+        Out(tag + "missing (GetUniqueRepoStruct st=" + std::to_string((int)st) + " gave " + Describe(def) + ")");
+        return;
+    }
+    if (!FcpMember(def, "itemBaseInfoStruct", info) || info.m_Kind != VALUE_OBJECT) { Out(tag + "missing (no itemBaseInfoStruct)"); return; }
+    std::string size = "keys-unknown";
+    if (g_FcpSize.Known())
+        size = FcpMemberText(info, g_FcpSize.W().c_str()) + "x" + FcpMemberText(info, g_FcpSize.H().c_str());
+    Out(tag + "rarity=" + FcpMemberText(info, "27") + " name=" + FcpMemberText(info, "28") + " flag40="
+        + FcpMemberText(info, "40") + " size=" + size);
+    const FcpInfo dump = FcpReadStruct(info);
+    Out("charmprobe repo info: " + (dump.ok ? FcpNs::InfoDump(dump.shown) : std::string("unreadable")));
+}
+
+// The local player as a handle and as the CInstance* a by-name call takes,
+// with its position.
+static bool FcpPlayer(RValue& player, CInstance*& self, double& x, double& y, std::string& why)
+{
+    if (!HhResolveLocalPlayer(player)) { why = "no local player"; return false; }
+    self = HhResolveInstance(player);
+    if (!self) { why = "the local player did not resolve to an instance"; return false; }
+    try {
+        if (!FcpNumber(g_Yytk->CallBuiltin("variable_instance_get", { player, RValue("x") }), x)
+            || !FcpNumber(g_Yytk->CallBuiltin("variable_instance_get", { player, RValue("y") }), y)) {
+            why = "the local player's x, y are not numbers";
+            return false;
+        }
+    } catch (...) { why = "the local player's x, y threw"; return false; }
+    return true;
+}
+
+// The Loot_Ground_obj instance with the highest id, and that id (-1 when
+// there is none): instance ids only grow, so a call that placed an item
+// leaves a higher one. `spawn` and `heroic` both read their drops this way.
+static double FcpNewestGround(double objectIndex, RValue* newest)
+{
+    double best = -1;
+    try {
+        const int n = (int)g_Yytk->CallBuiltin("instance_number", { RValue(objectIndex) }).ToDouble();
+        for (int i = 0; i < n && i < kFcpMaxGroundScan; ++i) {
+            const RValue inst = g_Yytk->CallBuiltin("instance_find", { RValue(objectIndex), RValue((double)i) });
+            if (!HeroSiege::Player::IsInstanceHandle(inst)) continue;
+            double id = -1;
+            if (!ApNumber(g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue("id") }), id) || id <= best) continue;
+            best = id;
+            if (newest) *newest = inst;
+        }
+    } catch (...) {}
+    return best;
+}
+
+static void FcpSpawn(const std::vector<std::string>& tail)
+{
+    const std::string tag = "charmprobe spawn: ";
+    FcpNs::SpawnRequest r;
+    std::string why;
+    if (!FcpNs::ParseSpawn(tail, r, why)) { Out(tag + "refused " + why); return; }
+    if (r.hasSize && !g_FcpSize.Known()) { Out(tag + "refused size keys unknown (" + g_FcpSize.Why() + ")"); return; }
+    if (r.sprite && g_FcpSprite < 0) { Out(tag + "refused sprite not loaded (`charmprobe sprite load` first)"); return; }
+    if (r.sprite && !g_FcpSpriteKey.Known()) { Out(tag + "refused sprite key unknown (" + g_FcpSpriteKey.Why() + ")"); return; }
+    // A key not shown to be the drawn one would take our index wherever it
+    // is: in a footprint key, a 1xN charm.
+    if (r.sprite && !FcpSpriteVerified(why)) { Out(tag + "refused " + why); return; }
+    if (r.hasSize && !FcpSizeCheck(why)) { Out(tag + "refused " + why); return; }
+    RValue player;
+    CInstance* self = nullptr;
+    double x = 0, y = 0;
+    if (!FcpPlayer(player, self, x, y, why)) { Out(tag + "refused " + why); return; }
+    CInstance* g = nullptr;
+    g_Yytk->GetGlobalInstance(&g);
+    if (!g) { Out(tag + "refused no global instance"); return; }
+    // `placed` is said only when a new Loot_Ground_obj appeared, found by the
+    // same newest-id scan `heroic` reads its drops with, so these spawns are
+    // that scan's positive control in the same session.
+    double ground = -1;
+    if (!ApNumber(g_Yytk->CallBuiltin("asset_get_index", {
+            RValue(std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Loot_Ground_obj))) }), ground)
+        || ground < 0) {
+        Out(tag + "refused Loot_Ground_obj not resolved; nothing was built");
+        return;
+    }
+
+    const long long seed = FcpNs::SpawnSeed(g_FcpSpawns++);   // a seed is never handed out twice
+    const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    const std::string key = FcpNs::SpawnKey(ms);
+    const std::string json = FcpNs::SpawnJson(seed, r.b);
+    const std::string what = "b=" + std::to_string(r.b) + " a=" + std::to_string(seed);
+    try {
+        RValue parsed;
+        g_Yytk->CallBuiltinEx(parsed, "json_parse", g, g, { RValue(json) });
+        if (parsed.m_Kind != VALUE_OBJECT) { Out(tag + what + " refused json_parse gave " + Describe(parsed)); return; }
+        RValue item;
+        const AurieStatus st = g_Yytk->CallGameScriptEx(item, HeroSiege::Scripts::gml_Script_InitItemFromJson, g, g, { parsed, RValue(key) });
+        if (!AurieSuccess(st) || !ApIsPlainStruct(item)) {
+            Out(tag + what + " refused InitItemFromJson (key " + key + ") st=" + std::to_string((int)st) + " gave " + Describe(item));
+            return;
+        }
+        RValue info;
+        if (!FcpMember(item, "itemInfoStruct", info) || info.m_Kind != VALUE_OBJECT) { Out(tag + what + " refused the built item has no itemInfoStruct"); return; }
+        const FcpInfo built = FcpReadStruct(info);
+        int bw = 0, bh = 0;
+        std::string builtWhy;
+        // The item as the game built it, before any write, and only with its
+        // footprint, which FcpSpriteValues leaves out.
+        if (built.ok && FcpItemSize(item, bw, bh, builtWhy)) g_FcpSpriteKey.Add(FcpSpriteValues(built, bw, bh));
+        Out("charmprobe spawn info: " + what + " info=" + (built.ok ? FcpNs::InfoDump(built.shown) : std::string("unreadable")));
+        if (r.sprite) {
+            // This item was a sample too, and may have dropped the key.
+            if (!FcpSpriteVerified(why)) { Out(tag + what + " refused " + why + "; nothing was placed"); return; }
+            const std::string spriteKey = g_FcpSpriteKey.Key();
+            if (!built.numbers.count(spriteKey) && !built.refs.count(spriteKey)) {
+                Out(tag + what + " refused the built item's " + spriteKey + " is neither a number nor a reference; nothing was placed");
+                return;
+            }
+        }
+        RValue stats;
+        if (!r.stats.empty() && (!FcpMember(item, "itemStatStruct", stats) || stats.m_Kind != VALUE_OBJECT)) {
+            Out(tag + what + " refused the built item has no itemStatStruct; nothing was placed");
+            return;
+        }
+        if (r.hasSize) {
+            g_Yytk->CallBuiltin("variable_struct_set", { info, RValue(g_FcpSize.W()), RValue((double)r.size.w) });
+            g_Yytk->CallBuiltin("variable_struct_set", { info, RValue(g_FcpSize.H()), RValue((double)r.size.h) });
+        }
+        for (const auto& [id, value] : r.stats)
+            g_Yytk->CallBuiltin("variable_struct_set", { stats, RValue(std::to_string(id)), RValue(value) });
+        if (r.sprite) g_Yytk->CallBuiltin("variable_struct_set", { info, RValue(g_FcpSpriteKey.Key()), g_FcpSpriteValue });
+
+        const double groundBefore = FcpNewestGround(ground, nullptr);
+        RValue res;
+        const AurieStatus st2 = g_Yytk->CallGameScriptEx(res, HeroSiege::Scripts::gml_Script_LootGroundCreateFromItem, self, self,
+                                                         { RValue(x), RValue(y), item });
+        if (!AurieSuccess(st2)) { Out(tag + what + " refused LootGroundCreateFromItem st=" + std::to_string((int)st2)); return; }
+        RValue newest;
+        const double groundAfter = FcpNewestGround(ground, &newest);
+        const bool appeared = groundAfter > groundBefore;
+        // The footprint as GetItemSize reads it, of the item the new ground
+        // instance holds, or of the struct handed over when none appeared. A
+        // size that does not read back as requested says so: the keys did
+        // not take, whatever the bag shows.
+        RValue onGround;
+        if (appeared) {
+            try { onGround = g_Yytk->CallBuiltin("variable_instance_get", { newest, RValue(std::string(HeroSiege::Player::kGroundItemInstanceField)) }); }
+            catch (...) {}
+        }
+        const bool fromGround = appeared && ApIsPlainStruct(onGround);
+        int gw = 0, gh = 0;
+        std::string sizeWhy;
+        const bool sizeRead = FcpItemSize(fromGround ? onGround : item, gw, gh, sizeWhy);
+        std::string itemSize = " getitemsize=" + (sizeRead ? FcpNs::SizeText({ gw, gh }) : "?(" + sizeWhy + ")")
+            + (fromGround ? "" : "(of the built struct)");
+        if (r.hasSize && !(sizeRead && gw == r.size.w && gh == r.size.h)) itemSize += " keys-unverified";
+        const FcpInfo placed = FcpReadStruct(info);
+        Out(tag + what + " size=" + (r.hasSize ? FcpNs::SizeText(r.size) : std::string("base")) + itemSize + " stats="
+            + FcpNs::StatsText(r.stats) + " sprite=" + (g_FcpSpriteKey.Known() ? FcpSpriteText(placed) : std::string("?"))
+            + (appeared ? " ground=new id=" + FcpNs::NumberText(groundAfter) + " placed"
+                        : std::string(" ground=none (no new Loot_Ground_obj appeared)"))
+            + " (LootGroundCreateFromItem returned " + Describe(res) + ")");
+    } catch (...) { Out(tag + what + " refused an exception while building or placing it"); }
+}
+
+// CustomForgePostProcess's research hook (declared above it): at
+// CreateItemNew's outermost return, an item whose definition `a` has a rule
+// gets the two size keys written into its itemInfoStruct, and nothing else.
+static void FcpDressBuilt(RValue& item)
+{
+    if (g_FcpDress.Empty() || g_TruthDepth != 0 || !g_FcpSize.Known()) return;
+    if (!FcpSizeVerified()) return;   // a pair a read-back has not followed writes nothing
+    try {
+        RValue def, a, info;
+        double seed = 0;
+        if (!FcpMember(item, "itemDefinitionStruct", def) || !FcpMember(def, "a", a) || !FcpNumber(a, seed)) return;
+        const FcpNs::DressRule* rule = g_FcpDress.Find(seed);
+        if (!rule || !FcpMember(item, "itemInfoStruct", info) || info.m_Kind != VALUE_OBJECT) return;
+        g_Yytk->CallBuiltin("variable_struct_set", { info, RValue(g_FcpSize.W()), RValue((double)rule->size.w) });
+        g_Yytk->CallBuiltin("variable_struct_set", { info, RValue(g_FcpSize.H()), RValue((double)rule->size.h) });
+        g_FcpDress.NoteDressed();
+    } catch (...) {}
+}
+
+static void FcpDress(const std::vector<std::string>& tail)
+{
+    const std::string tag = "charmprobe dress: ";
+    // `dress keys [<w> <h>]` names the keys every size write uses; it sits
+    // under `dress`, the way `sprite key <name>` sits under `sprite`.
+    if (!tail.empty() && Lower(tail[0]) == "keys") { FcpSizeKeys(std::vector<std::string>(tail.begin() + 1, tail.end())); return; }
+    FcpNs::DressRequest r;
+    std::string why;
+    if (!FcpNs::ParseDress(tail, r, why)) { Out(tag + "refused " + why); return; }
+    if (r.form == FcpNs::DressForm::Off) g_FcpDress.Clear();
+    if (r.form == FcpNs::DressForm::Add) {
+        if (!g_FcpSize.Known()) { Out(tag + "refused size keys unknown (" + g_FcpSize.Why() + ")"); return; }
+        if (!FcpSizeCheck(why)) { Out(tag + "refused " + why); return; }
+        // The research build installs CreateItemNew at setup (InstallItemInspectHooks); hook it
+        // here only when nothing did, with the same Hook_CreateItemNew.
+        if (!g_Orig_CreateItemNew)
+            HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_CreateItemNew), "fp_charmprobe_new",
+                          (PVOID)Hook_CreateItemNew, &g_Orig_CreateItemNew);
+        if (!g_Orig_CreateItemNew) { Out(tag + "refused CreateItemNew could not be hooked"); return; }
+        if (!g_FcpDress.Add(r.rule, why)) { Out(tag + "refused " + why); return; }
+    }
+    Out(tag + g_FcpDress.Line() + " keys=" + g_FcpSize.Pair());
+}
+
+static void FcpHeroic(const std::vector<std::string>& tail)
+{
+    const std::string tag = "charmprobe heroic: ";
+    int n = 0;
+    std::string why;
+    if (!FcpNs::ParseHeroic(tail, n, why)) { Out(tag + "refused " + why); return; }
+    RValue player;
+    CInstance* self = nullptr;
+    double x = 0, y = 0;
+    if (!FcpPlayer(player, self, x, y, why)) { Out(tag + "refused " + why); return; }
+    double ground = -1;
+    const RValue index = g_Yytk->CallBuiltin("asset_get_index", {
+        RValue(std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Loot_Ground_obj))) });
+    if (!ApNumber(index, ground) || ground < 0) { Out(tag + "refused Loot_Ground_obj not resolved"); return; }
+    FcpNs::HeroicTally tally;
+    for (int i = 1; i <= n; ++i) {
+        const std::string line = "charmprobe heroic #" + std::to_string(i) + ": ";
+        const double before = FcpNewestGround(ground, nullptr);
+        RValue res;
+        AurieStatus st = AURIE_EXTERNAL_ERROR;
+        try { st = g_Yytk->CallGameScriptEx(res, HeroSiege::Scripts::gml_Script_DropItemHeroic, self, self, { RValue(x), RValue(y) }); }
+        catch (...) { tally.Add(false, false, 0, false); Out(line + "DropItemHeroic threw"); continue; }
+        if (!AurieSuccess(st)) { tally.Add(false, false, 0, false); Out(line + "DropItemHeroic st=" + std::to_string((int)st)); continue; }
+        RValue newest;
+        const double after = FcpNewestGround(ground, &newest);
+        if (after <= before) { tally.Add(false, false, 0, false); Out(line + "nothing placed (returned " + Describe(res) + ")"); continue; }
+        RValue item, info, def;
+        try { item = g_Yytk->CallBuiltin("variable_instance_get", { newest, RValue(std::string(HeroSiege::Player::kGroundItemInstanceField)) }); }
+        catch (...) {}
+        FcpMember(item, "itemInfoStruct", info);
+        FcpMember(item, "itemDefinitionStruct", def);
+        RValue rarityValue, typeValue;
+        double rarity = -1, type = -1;
+        const bool rarityRead = FcpMember(info, "27", rarityValue) && FcpWhole(rarityValue, rarity);
+        const bool charm = FcpMember(item, "itemType", typeValue) && FcpWhole(typeValue, type)
+            && type == (double)static_cast<int>(HeroSiege::Items::ItemType::Charm);
+        tally.Add(true, rarityRead, rarityRead ? (int)rarity : 0, charm);
+        Out(line + "placed t=" + FcpMemberText(item, "itemType") + " b=" + FcpMemberText(def, "b") + " c="
+            + FcpMemberText(def, "c") + " rarity=" + FcpMemberText(info, "27") + " name=" + FcpMemberText(info, "28"));
+    }
+    // The game's own callers hand it a vault or an NPC as self; this one is
+    // measured with the local player, and the line says so.
+    Out(tag + tally.Line() + " self=player");
+}
+
+static void FcpSpriteShow()
+{
+    Out("charmprobe sprite: loaded=" + (g_FcpSprite >= 0 ? FcpNs::NumberText(g_FcpSprite) : std::string("no")) + " kind="
+        + (g_FcpSpriteKind < 0 ? std::string("-") : std::to_string(g_FcpSpriteKind)) + " path=" + g_FcpSpritePath
+        + " key=" + g_FcpSpriteKey.Text() + " check=" + (g_FcpSpriteKey.Known() ? FcpSpriteCheckText() : std::string("-")));
+}
+
+// The pack markers' route (PackMarkerIconPath, PackMarkers::LoadIcons),
+// mirrored here so neither changes: the embedded PNG is written to
+// bp_ipc\charmprobe\ only when no file of that name is there, then
+// sprite_add with the path relative to the game's working directory first
+// and the absolute path second, a reference or a real accepted as the index,
+// re-centred when the PNG is not the embedded size.
+static void FcpSpriteLoad()
+{
+    if (g_FcpSprite >= 0) { FcpSpriteShow(); return; }
+    namespace Icon = ForgePact::FlightCharmProbeIcon;
+    const std::string dir = IPC_DIR + "\\charmprobe";
+    const std::string file = dir + "\\" + Icon::kName + ".png";
+    try {
+        std::error_code ec;
+        std::filesystem::create_directories(dir, ec);
+        if (!std::filesystem::exists(file, ec)) {
+            std::ofstream f(file, std::ios::binary | std::ios::trunc);
+            if (f) f.write(reinterpret_cast<const char*>(Icon::kPng), static_cast<std::streamsize>(Icon::kPngSize));
+            if (!f) { Out("charmprobe sprite: refused write failed (" + file + ")"); return; }
+        }
+    } catch (...) { Out("charmprobe sprite: refused write failed (" + file + " threw)"); return; }
+    const std::string relative = std::string("bp_ipc\\charmprobe\\") + Icon::kName + ".png";
+    const double centre = Icon::kSize / 2;
+    for (const std::string* path : { &relative, &file }) {
+        try {
+            const RValue r = g_Yytk->CallBuiltin("sprite_add", { RValue(path->c_str()), RValue(1.0), RValue(0.0), RValue(0.0),
+                                                                 RValue(centre), RValue(centre) });
+            g_FcpSpriteKind = static_cast<int>(r.m_Kind);
+            double idx = -1;
+            if (!ApNumber(r, idx) || idx < 0) continue;
+            g_FcpSprite = idx;
+            g_FcpSpriteValue = r;
+            g_FcpSpritePath = path == &relative ? "relative" : "absolute";
+            const double w = g_Yytk->CallBuiltin("sprite_get_width", { RValue(idx) }).ToDouble();
+            const double h = g_Yytk->CallBuiltin("sprite_get_height", { RValue(idx) }).ToDouble();
+            if (std::isfinite(w) && std::isfinite(h) && w > 0 && h > 0 && (w != Icon::kSize || h != Icon::kSize))
+                g_Yytk->CallBuiltin("sprite_set_offset", { RValue(idx), RValue(std::floor(w / 2)), RValue(std::floor(h / 2)) });
+            break;
+        } catch (...) {}
+    }
+    if (g_FcpSprite < 0) {
+        Out("charmprobe sprite: refused both sprite_add paths answered no index (last kind="
+            + (g_FcpSpriteKind < 0 ? std::string("-") : std::to_string(g_FcpSpriteKind)) + ")");
+        return;
+    }
+    FcpSpriteShow();
+}
+
+static constexpr int kFcpSpriteCheckB = 3;          // the charm `sprite verify` places: S19's
+static constexpr int kFcpSpriteDonorB = 40;         // its default donor, a Grand charm: another icon
+
+// A charm built the way `spawn` builds one (json -> InitItemFromJson), not
+// placed, with its itemInfoStruct.
+static bool FcpBuildCharm(long long seed, int b, RValue& item, RValue& info, std::string& why)
+{
+    CInstance* g = nullptr;
+    g_Yytk->GetGlobalInstance(&g);
+    if (!g) { why = "no global instance"; return false; }
+    RValue parsed;
+    g_Yytk->CallBuiltinEx(parsed, "json_parse", g, g, { RValue(FcpNs::SpawnJson(seed, b)) });
+    if (parsed.m_Kind != VALUE_OBJECT) { why = "json_parse gave " + Describe(parsed); return false; }
+    const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    const AurieStatus st = g_Yytk->CallGameScriptEx(item, HeroSiege::Scripts::gml_Script_InitItemFromJson, g, g,
+                                                    { parsed, RValue(FcpNs::SpawnKey(ms)) });
+    if (!AurieSuccess(st) || !ApIsPlainStruct(item)) { why = "InitItemFromJson st=" + std::to_string((int)st) + " gave " + Describe(item); return false; }
+    if (!FcpMember(item, "itemInfoStruct", info) || info.m_Kind != VALUE_OBJECT) { why = "the built item has no itemInfoStruct"; return false; }
+    return true;
+}
+
+// `sprite verify [<donor b>]`: the sprite key's positive control, before
+// anything writes our icon under it. Inferred from samples or set by hand, a
+// key is only a candidate: sprite_exists accepts any small whole number, so a
+// key holding one passes the sample rule without being a sprite at all. This
+// builds a donor charm (b 40 unless named; never placed) and a b 3 charm from
+// the spawn range, writes the donor's own value, as the game built it, under
+// the key on the b 3 charm, and places that. If the grid, the ground item and
+// the tooltip draw from this key, the b 3 charm shows the donor's icon;
+// otherwise it shows its own. The draw is the person's to see: `verify drew`
+// or `verify base` records the answer, and `spawn ... sprite` is refused
+// until it is `drew`. The placed item's key is read back as well, and a value
+// the placement rebuilt is printed as `reverted`.
+static void FcpSpriteVerify(const std::vector<std::string>& tail)
+{
+    const std::string tag = "charmprobe sprite verify: ";
+    if (tail.size() == 1 && (Lower(tail[0]) == "drew" || Lower(tail[0]) == "base")) {
+        if (g_FcpSpriteCheckSeed < 0 || !g_FcpSpriteKey.Known() || g_FcpSpriteCheckKey != g_FcpSpriteKey.Key()) {
+            Out(tag + "refused no donor charm was placed under the key in force (`charmprobe sprite verify` first)");
+            return;
+        }
+        g_FcpSpriteDrew = Lower(tail[0]) == "drew" ? 1 : 0;
+        Out(tag + "key=" + g_FcpSpriteCheckKey + " a=" + std::to_string(g_FcpSpriteCheckSeed)
+            + (g_FcpSpriteDrew ? " drew the donor's icon: verified"
+                               : " drew its own icon: not the drawn sprite's key, so `spawn ... sprite` refuses it"));
+        return;
+    }
+    long long donor = kFcpSpriteDonorB;
+    if (tail.size() > 1 || (tail.size() == 1 && !FcpNs::ParseWhole(tail[0], 0, FcpNs::kNormalCharmMaxB, donor))) {
+        Out(tag + "refused usage: sprite verify [<donor b 0-" + std::to_string(FcpNs::kNormalCharmMaxB)
+            + ">] | sprite verify drew | sprite verify base");
+        return;
+    }
+    if (donor == kFcpSpriteCheckB) { Out(tag + "refused the donor must be another charm than b " + std::to_string(kFcpSpriteCheckB)); return; }
+    if (!g_FcpSpriteKey.Known()) { Out(tag + "refused sprite key unknown (" + g_FcpSpriteKey.Why() + ")"); return; }
+    const std::string key = g_FcpSpriteKey.Key();
+    if (FcpIsSizeKey(key)) { Out(tag + "refused key " + key + " is a size key in force (" + g_FcpSize.Line() + "); nothing was built"); return; }
+    std::string why;
+    RValue player;
+    CInstance* self = nullptr;
+    double x = 0, y = 0;
+    if (!FcpPlayer(player, self, x, y, why)) { Out(tag + "refused " + why); return; }
+    double ground = -1;
+    if (!ApNumber(g_Yytk->CallBuiltin("asset_get_index", {
+            RValue(std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Loot_Ground_obj))) }), ground)
+        || ground < 0) {
+        Out(tag + "refused Loot_Ground_obj not resolved; nothing was built");
+        return;
+    }
+    try {
+        RValue donorItem, donorInfo, donorValue;
+        if (!FcpBuildCharm(kFcpScratchSeed, (int)donor, donorItem, donorInfo, why)) { Out(tag + "refused the donor: " + why); return; }
+        const bool donorHas = FcpMember(donorInfo, key.c_str(), donorValue);
+        if (!donorHas || !FcpIsSprite(donorValue)) {
+            Out(tag + "refused the donor b=" + std::to_string(donor) + "'s " + key + " is not a sprite ("
+                + (donorHas ? Describe(donorValue) : std::string("missing")) + "); nothing was placed");
+            return;
+        }
+        const long long seed = FcpNs::SpawnSeed(g_FcpSpawns++);   // a seed is never handed out twice
+        const std::string what = "key=" + key + " b=" + std::to_string(kFcpSpriteCheckB) + " a=" + std::to_string(seed);
+        RValue item, info, own;
+        if (!FcpBuildCharm(seed, kFcpSpriteCheckB, item, info, why)) { Out(tag + what + " refused " + why); return; }
+        if (!FcpMember(info, key.c_str(), own) || !FcpIsSprite(own)) {
+            Out(tag + what + " refused its own " + key + " is not a sprite; nothing was placed");
+            return;
+        }
+        double ownIdx = -1, donorIdx = -1;
+        if (ApNumber(own, ownIdx) && ApNumber(donorValue, donorIdx) && ownIdx == donorIdx) {
+            Out(tag + what + " refused it and the donor b=" + std::to_string(donor) + " hold one sprite under " + key
+                + " (" + FcpSpriteValueText(own) + "); name another donor b");
+            return;
+        }
+        g_Yytk->CallBuiltin("variable_struct_set", { info, RValue(key), donorValue });
+        const double before = FcpNewestGround(ground, nullptr);
+        RValue res;
+        const AurieStatus st = g_Yytk->CallGameScriptEx(res, HeroSiege::Scripts::gml_Script_LootGroundCreateFromItem, self, self,
+                                                        { RValue(x), RValue(y), item });
+        if (!AurieSuccess(st)) { Out(tag + what + " refused LootGroundCreateFromItem st=" + std::to_string((int)st)); return; }
+        RValue newest;
+        const double after = FcpNewestGround(ground, &newest);
+        const bool appeared = after > before;
+        // What the placed item holds under the key now: the donor's value, or
+        // the item's own again when the placement rebuilt it.
+        std::string onGround = "unread";
+        if (appeared) {
+            RValue groundItem, groundInfo, now;
+            try { groundItem = g_Yytk->CallBuiltin("variable_instance_get", { newest, RValue(std::string(HeroSiege::Player::kGroundItemInstanceField)) }); }
+            catch (...) {}
+            if (FcpMember(groundItem, "itemInfoStruct", groundInfo) && FcpMember(groundInfo, key.c_str(), now)) {
+                double nowIdx = -1;
+                const bool read = ApNumber(now, nowIdx);
+                onGround = FcpSpriteValueText(now) + (read && nowIdx == donorIdx ? "" : read && nowIdx == ownIdx ? " reverted" : " changed");
+            }
+        }
+        g_FcpSpriteCheckKey = key;
+        g_FcpSpriteCheckSeed = appeared ? seed : -1;
+        g_FcpSpriteDrew = -1;
+        Out(tag + what + " own=" + FcpSpriteValueText(own) + " donor b=" + std::to_string(donor) + " value=" + FcpSpriteValueText(donorValue)
+            + (appeared ? " ground=new id=" + FcpNs::NumberText(after) + " placed key-on-ground=" + onGround
+                        : std::string(" ground=none (no new Loot_Ground_obj appeared)"))
+            + " (LootGroundCreateFromItem returned " + Describe(res) + ")"
+            + (appeared ? "; look at it on the ground, in the bag and in its tooltip, then `charmprobe sprite verify drew`"
+                          " (the donor's icon) or `charmprobe sprite verify base` (its own)"
+                        : std::string("; nothing to look at, the key stays unverified")));
+    } catch (...) { Out(tag + "refused an exception while building or placing the charm"); }
+}
+
+static void FcpSprite(const std::vector<std::string>& tail)
+{
+    // `sprite verify ...` is the key's control; it sits under `sprite` the
+    // way `dress keys` sits under `dress`.
+    if (!tail.empty() && Lower(tail[0]) == "verify") { FcpSpriteVerify(std::vector<std::string>(tail.begin() + 1, tail.end())); return; }
+    FcpNs::SpriteRequest r;
+    std::string why;
+    if (!FcpNs::ParseSprite(tail, r, why)) { Out("charmprobe sprite: refused " + why); return; }
+    if (r.form == FcpNs::SpriteForm::Load) { FcpSpriteLoad(); return; }
+    if (r.form == FcpNs::SpriteForm::Key && FcpIsSizeKey(r.key)) {
+        Out("charmprobe sprite: refused key " + r.key + " is a size key in force (" + g_FcpSize.Line() + ")");
+        return;
+    }
+    if (r.form == FcpNs::SpriteForm::Key && !g_FcpSpriteKey.SetByHand(r.key)) { Out("charmprobe sprite: refused key " + r.key); return; }
+    FcpSpriteShow();
+}
+
+static void FcpUsage()
+{
+    Out(FcpNs::MarkerLine(g_FcpSize, g_FcpDress));
+    Out("  charms | repo <t> <sub> <b> | spawn <b 0-59> [size <w> <h>] [stat <id>=<v>]... [sprite] | dress <a> <w> <h> | dress off"
+        " | dress keys [<w key> <h key>] | heroic <n 1-20> | sprite [load | key <name> | verify [<donor b>] | verify drew|base]"
+        "   research instrument for"
+        " docs/flight-charms-research.md (research build only)");
+}
+
+static void FcpCommand(const std::string& rest)
+{
+    std::vector<std::string> tok;
+    { std::stringstream ss(rest); std::string w; while (ss >> w) tok.push_back(w); }
+    if (tok.empty()) { FcpUsage(); return; }
+    const std::string sub = Lower(tok[0]);
+    const std::vector<std::string> tail(tok.begin() + 1, tok.end());
+    if (sub == "charms") { FcpCharms(); return; }
+    if (sub == "repo") { FcpRepo(tail); return; }
+    if (sub == "spawn") { FcpSpawn(tail); return; }
+    if (sub == "dress") { FcpDress(tail); return; }
+    if (sub == "heroic") { FcpHeroic(tail); return; }
+    if (sub == "sprite") { FcpSprite(tail); return; }
+    FcpUsage();
+}
+
+// Dispatched from its own function for the same C1061 reason as
+// HandleMenuLayoutCommand. Research build only, like everything above.
+static bool HandleCharmProbeCommand(const std::string& lc, const std::string& rest)
+{
+    if (lc == "charmprobe") { FcpCommand(rest); return true; }
+    return false;
+}
+#endif // FORGEPACT_RELEASE (charmprobe)
 
 #ifndef FORGEPACT_RELEASE
 // The scripts the `gambapity` mod holds, as "A, B"; gambaprobe's `hook`
@@ -48053,6 +50540,12 @@ static GpScriptRow g_GpScriptRows[] = {
 #undef GP_SCRIPT_ENTRY
 #undef GAMBAPROBE_SCRIPTS
 static_assert(sizeof(g_GpScriptRows) / sizeof(g_GpScriptRows[0]) == (size_t)kGpScriptCount, "one gambaprobe row per script");
+// #158: whether the DropUniqueItems row holds its script, in which case Pocket Elf's hook refuses
+// (GpInstallScripts refuses the row the other way round).
+static bool GpHoldsDropUnique()
+{
+    return g_GpScriptRows[kGpScript_DropUniqueItems].orig != nullptr;
+}
 
 // ---- the builtin rows, in GambaProbe.hpp's kBuiltins order ------------------------
 struct GpBuiltinRow {
@@ -49295,6 +51788,13 @@ static void GpInstallScripts(HMODULE mainMod)
     for (GpScriptRow& t : g_GpScriptRows) {
         if (t.tried && t.route != GpNs::Route::Missing) {
             Out(GpScriptRowLine(t, "already in"));
+            continue;
+        }
+        // #158: Pocket Elf's hook holds DropUniqueItems; the row refuses rather than stack a
+        // second detour on it (FlightDropInstallUnique refuses the other way round).
+        if (&t == &g_GpScriptRows[kGpScript_DropUniqueItems] && g_Orig_FlightDropUnique) {
+            t.status = "held by the flight charms' Pocket Elf hook (Hook_FlightDropUniqueItems); not hooked";
+            Out(GpScriptRowLine(t, t.status));
             continue;
         }
         t.tried = true;
@@ -50966,7 +53466,9 @@ static void FarSleepCommand(const std::string& rest)
 // script would be refused ("table entry is not code inside Hero_Siege.exe"),
 // so loot announcements install through HiddenLootInstall too, and this one
 // detour hands the call to each consumer in turn - hidden loot, then
-// LootAnnounceOnInit, which returns at once while `lootann` is off.
+// LootAnnounceOnInit, which returns at once while `lootann` is off, then
+// (ForgePact #158) FlightCharmOnGroundInit, which returns at once while no
+// flight charm's ground icon has loaded.
 static PFUNC_YYGMLScript g_Orig_LootGroundInit = nullptr;
 static bool g_HiddenLootInstallTried = false;
 static bool g_HiddenLootVisibleNoted = false;
@@ -50980,6 +53482,9 @@ static RValue& HookHiddenLootInit(CInstance* S, CInstance* O, RValue& R, int arg
         hl.OnInit(argc > 0 && A && A[0] ? *A[0] : none, argc > 1 && A && A[1] ? *A[1] : none, S ? RValue(S) : none);
     }
     LootAnnounceOnInit(S, argc, A);
+    // The third consumer (ForgePact #158): a flight charm's ground icon, set
+    // after the game picked its sprite; returns at once while none loaded.
+    FlightCharmOnGroundInit(argc, A);
     return result;
 }
 // The one install attempt, on the first switch-on after setup. Both routes
@@ -50998,6 +53503,12 @@ static void HiddenLootInstall()
     Out(std::string("hiddenloot: LootGroundInit hook ") + (ok ? "TABLE-ONLY" : "not installed")
         + " - the game's own drop calls may pass it by, so a pass every 18 frames over the awake ground items"
           " puts hidden loot to sleep instead");
+}
+// The flight charms' ground icon rides the same detour (ForgePact #158): a drop
+// switch turned on installs it once, so it is in before a charm can reach the ground.
+static void FlightGroundIconInstall()
+{
+    if (!g_HiddenLootInstallTried) HiddenLootInstall();
 }
 // The show key: the async key state, polled once a frame by the class, and
 // counted only while the foreground window belongs to this process - a key
@@ -51139,6 +53650,13 @@ static void HiddenLootCommand(const std::string& rest)
 // jumpprobe holds one (JumpSceneryResearchHolders), and `citrace 1`
 // (InstallCiTraceHooks) and `jumpprobe hook` (JpInstall) while jumpscenery
 // holds any of its six (JumpSceneryHeldHooks).
+//
+// The five builtin detours are shared with the flight charms (ForgePact #158,
+// whose adapter follows this one): one install, CollisionBuiltinsInstall,
+// which either mod runs and the second finds done, and one body,
+// CollisionBuiltinDetour, which runs the original once and then hands the
+// result to JsOnBuiltin and to FlightOnBuiltin. jumpscenery's own behaviour is
+// unchanged; neither mod refuses because of the other.
 namespace JsNs = ForgePact::JumpSceneryMod;
 
 static constexpr HeroSiege::Objects::GameObject kJsFamily = HeroSiege::Objects::GameObject::Collision_Parent_obj;
@@ -51160,10 +53678,14 @@ static std::vector<int> g_JsExcludedIdx;
 static const char* const kJsBuiltinHookIds[JsNs::kBuiltinCount] = {
     "fp_jumpscenery_pmt", "fp_jumpscenery_plm", "fp_jumpscenery_ipo", "fp_jumpscenery_cln", "fp_jumpscenery_ccr",
 };
-static void JsOnBuiltin(int row, RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args);
+// The five detours are shared with the flight charms (ForgePact #158): a
+// builtin detours once, so whichever mod goes in first installs them
+// (CollisionBuiltinsInstall), and each runs the original once and then hands
+// the result to jumpscenery and to flight in turn (CollisionBuiltinDetour).
+static void CollisionBuiltinDetour(int row, RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args);
 #define JS_BUILTIN_DETOUR(I) \
     static void JsBuiltin_##I(RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args) { \
-        JsOnBuiltin(I, Result, S, O, argc, Args); \
+        CollisionBuiltinDetour(I, Result, S, O, argc, Args); \
     }
 JS_BUILTIN_DETOUR(0) JS_BUILTIN_DETOUR(1) JS_BUILTIN_DETOUR(2) JS_BUILTIN_DETOUR(3) JS_BUILTIN_DETOUR(4)
 #undef JS_BUILTIN_DETOUR
@@ -51348,13 +53870,13 @@ static constexpr bool JsFreeAnswerReachesCore(int row)
 static_assert(JsFreeAnswerReachesCore((int)JsNs::Builtin::CollisionCircle),
               "walk-before-open= needs free collision_circle answers outside the window");
 
+// jumpscenery's part of a shared detour, after the original ran (the shared
+// detour runs it first, always: a free answer is returned as it is).
 static void JsOnBuiltin(int row, RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args)
 {
-    if (!g_JumpScenery.Enabled() || g_JsBusy) { if (g_JsOrig[row]) g_JsOrig[row](Result, S, O, argc, Args); return; }
+    if (!g_JumpScenery.Enabled()) return;
     const TRoutine orig = g_JsOrig[row];
     if (!orig) return;
-    // The original first, always: a free answer is returned as it is.
-    orig(Result, S, O, argc, Args);
     if (!S || S != g_JsPlayer) return;
     const JsNs::BuiltinRow& b = JsNs::kBuiltins[row];
     const int64_t frame = (int64_t)g_RuntimeFrame;
@@ -51383,6 +53905,24 @@ static void JsOnBuiltin(int row, RValue& Result, CInstance* S, CInstance* O, int
     if (answer != JsNs::Answer::Real) Result = JsAnswerValue(answer);
 }
 
+// flight's part, defined with the flight adapter below; it returns at once for
+// any self but the local player, and until flight's own install went in.
+static void FlightOnBuiltin(int row, RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args);
+
+// The one detour body of the five builtins: the original once, then
+// jumpscenery (when its switch is on), then flight (when it is on or
+// residual). A call the adapters make themselves inside a detour reaches
+// neither. Neither mod refuses because of the other.
+static void CollisionBuiltinDetour(int row, RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args)
+{
+    const TRoutine orig = g_JsOrig[row];
+    if (!orig) return;
+    orig(Result, S, O, argc, Args);
+    if (g_JsBusy || g_FlightBusy) return;
+    JsOnBuiltin(row, Result, S, O, argc, Args);
+    FlightOnBuiltin(row, Result, S, O, argc, Args);
+}
+
 static RValue& JsHookLeap(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
     if (!g_JumpScenery.Enabled() || g_JsBusy) return g_JsOrigLeap(S, O, R, argc, A);
@@ -51396,8 +53936,10 @@ static RValue& JsHookLeap(CInstance* S, CInstance* O, RValue& R, int argc, RValu
 
 #ifndef FORGEPACT_RELEASE
 // citrace's and jumpprobe's hooks on the builtins (and script) this mod
-// needs, by name; "" when neither holds one.
-static std::string JumpSceneryResearchHolders()
+// needs, by name; "" when neither holds one. forFlight asks for the flight
+// charms' six instead (ForgePact #158): the same five builtins, and
+// InstancePlaceTallest in place of skillsLeap.
+static std::string JumpSceneryResearchHolders(bool forFlight)
 {
     std::string citrace;
     const struct { const char* name; TRoutine* orig; } kCi[] = {
@@ -51411,12 +53953,21 @@ static std::string JumpSceneryResearchHolders()
         for (const JsNs::BuiltinRow& b : JsNs::kBuiltins)
             if (b.name == JpNs::kBuiltins[i].name) jumpprobe += (jumpprobe.empty() ? "" : ", ") + std::string(b.name);
     }
-    if (g_JpRows[kJpRow_SkillsLeap].installed)
+    if (!forFlight && g_JpRows[kJpRow_SkillsLeap].installed)
         jumpprobe += (jumpprobe.empty() ? "" : ", ") + std::string(SdkShortScriptName(HeroSiege::Scripts::gml_Script_skillsLeap));
+    if (forFlight && g_JpRows[kJpRow_InstancePlaceTallest].installed)
+        jumpprobe += (jumpprobe.empty() ? "" : ", ") + std::string(SdkShortScriptName(HeroSiege::Scripts::gml_Script_InstancePlaceTallest));
     if (!jumpprobe.empty()) return "jumpprobe holds " + jumpprobe;
     return "";
 }
 
+// The flight charms' two scripts, when their hooks went in; defined with the
+// flight adapter below.
+static std::string FlightHeldScripts();
+
+// What jumpscenery and the flight charms hold, by name: the five shared
+// builtins (whichever of the two installed them), skillsLeap, and flight's
+// InstancePlaceTallest and UpdateDepth. citrace and jumpprobe refuse on any.
 static std::string JumpSceneryHeldHooks()
 {
     std::string held;
@@ -51424,9 +53975,40 @@ static std::string JumpSceneryHeldHooks()
         if (g_JsOrig[i]) held += (held.empty() ? "" : ", ") + std::string(JsNs::kBuiltins[i].name);
     if (g_JsOrigLeap)
         held += (held.empty() ? "" : ", ") + std::string(SdkShortScriptName(HeroSiege::Scripts::gml_Script_skillsLeap));
+    const std::string flight = FlightHeldScripts();
+    if (!flight.empty()) held += (held.empty() ? "" : ", ") + flight + " (with the flight charms, which share these builtins)";
     return held;
 }
 #endif
+
+// The five builtins' one install, shared by jumpscenery and the flight charms
+// (ForgePact #158): each by name, through HookBuiltin, once its routine is
+// confirmed to be game code. A builtin already in is skipped, so the second mod
+// to install finds the first one's detours and adds nothing. Returns the
+// builtins that did not go in, "" when all five are in.
+static std::string CollisionBuiltinsInstall()
+{
+    std::string failed;
+    for (int i = 0; i < JsNs::kBuiltinCount; ++i) {
+        if (g_JsOrig[i]) continue;
+        const char* name = JsNs::kBuiltins[i].name.data();
+        PVOID p = nullptr;
+        const AurieStatus st = g_Yytk->GetNamedRoutinePointer(name, &p);
+        if (!AurieSuccess(st) || !p) {
+            failed += (failed.empty() ? "" : ", ") + std::string(name) + " (not found by name)";
+            continue;
+        }
+        if (!AddrIsExecutableInModule(GetModuleHandleA(nullptr), p)) {
+            failed += (failed.empty() ? "" : ", ") + std::string(name) + " (not game code)";
+            continue;
+        }
+        if (!HookBuiltin(name, kJsBuiltinHookIds[i], kJsBuiltinDetours[i], &g_JsOrig[i]) || !g_JsOrig[i]) {
+            g_JsOrig[i] = nullptr;
+            failed += (failed.empty() ? "" : ", ") + std::string(name) + " (HookBuiltin failed)";
+        }
+    }
+    return failed;
+}
 
 // The one install path, through JsInstallIfReady (from `jumpscenery 1` with a
 // character loaded, or the tick once one is): "" when every hook is in and
@@ -51435,7 +54017,7 @@ static std::string JumpSceneryHeldHooks()
 static std::string JumpSceneryInstall()
 {
 #ifndef FORGEPACT_RELEASE
-    const std::string holders = JumpSceneryResearchHolders();
+    const std::string holders = JumpSceneryResearchHolders(false);
     if (!holders.empty())
         return holders + " (a builtin detours once); the mod stays off. Relaunch without it to use jumpscenery.";
 #endif
@@ -51474,25 +54056,7 @@ static std::string JumpSceneryInstall()
     // Table-only, the game's own direct calls would pass the hook by and the
     // mod would report on while doing nothing.
     if (!g_JsLeapNative) return "skillsLeap is hooked table-only, so the game's own calls would pass the mod by; the mod stays off";
-    std::string failed;
-    for (int i = 0; i < JsNs::kBuiltinCount; ++i) {
-        if (g_JsOrig[i]) continue;
-        const char* name = JsNs::kBuiltins[i].name.data();
-        PVOID p = nullptr;
-        const AurieStatus st = g_Yytk->GetNamedRoutinePointer(name, &p);
-        if (!AurieSuccess(st) || !p) {
-            failed += (failed.empty() ? "" : ", ") + std::string(name) + " (not found by name)";
-            continue;
-        }
-        if (!AddrIsExecutableInModule(GetModuleHandleA(nullptr), p)) {
-            failed += (failed.empty() ? "" : ", ") + std::string(name) + " (not game code)";
-            continue;
-        }
-        if (!HookBuiltin(name, kJsBuiltinHookIds[i], kJsBuiltinDetours[i], &g_JsOrig[i]) || !g_JsOrig[i]) {
-            g_JsOrig[i] = nullptr;
-            failed += (failed.empty() ? "" : ", ") + std::string(name) + " (HookBuiltin failed)";
-        }
-    }
+    const std::string failed = CollisionBuiltinsInstall();
     if (!failed.empty()) return failed + " not hooked; the mod stays off";
     return "";
 }
@@ -51579,6 +54143,1336 @@ static void JumpSceneryCommand(const std::string& rest)
     Out("jumpscenery: usage jumpscenery 1 | 0 | stat");
 }
 // ---- end of the jump through scenery adapter
+
+// ---- Flight charms (FlightCharms.hpp): the flight adapter -------------------
+// ForgePact #158. While a flight charm is worn, the local player walks through
+// scenery (the Collision_Parent_obj family) and through monsters
+// (Enemy_Parent_obj and its descendants, on place_meeting only: the owner,
+// 2026-10-13, body collision), but not through walls (zone gates among them,
+// RDM § 19.8), locks or the room's edge, and is drawn in front of scenery.
+// FlightCharms.hpp's Flight decides every call; this adapter
+// supplies the game reads and writes, all by name.
+//
+// What it answers (docs/flight-charms-research.md, Live 1's S7): the three
+// builtins measured answering a walk into scenery (position_meeting,
+// place_meeting, collision_line), the two jumpscenery hooks beside them
+// (instance_position, collision_circle), and InstancePlaceTallest. The five
+// builtins are jumpscenery's detours, shared: one install
+// (CollisionBuiltinsInstall), one body (CollisionBuiltinDetour) that runs the
+// original once, then jumpscenery, then FlightOnBuiltin. A blocked answer
+// becomes "nothing there" only for the local player's own query, when the
+// object it names is in the family and is not a wall or a lock, a re-run of
+// the same original against Wall_Parent_obj and Lock_obj blocks nothing, and
+// every point lies inside the room. InstancePlaceTallest is hooked by its SDK
+// name through HookOneScript; the instance it answers is tested the same way,
+// never re-run.
+//
+// The state (off / on / residual) is refreshed at most once a frame, at the
+// point of use: the first blocked query of the local player in that frame, or
+// UpdateDepth. The worn charms are read off the offline charm array
+// (inventoryData[mplr - 1].localCharmItemArray, phase 1's route; online it
+// reads nothing, so flight stays off). Taking a charm off inside scenery or a
+// monster leaves flight `residual` until the saved original place_meeting at
+// the player's own position reads free of both; the player is never moved.
+//
+// Drawing in front: UpdateDepth is hooked by its SDK name. After the game's
+// own call, for the local player while flight is on, `layer` is set to the
+// front end of global.gameLayer[room] (the end with the lower layer_get_depth,
+// read once per room; which end is in front is measured live, flight-depth).
+// yDepthSet is left as the game set it.
+//
+// The install: dressing arms flight the first time it recognises a charm.
+// Before that, nothing runs per frame. While armed, FlightCharmTick looks for
+// the local player every 60 frames (HhResolveLocalPlayer, VALUE_REF-safe) and
+// installs once: hidden loot's shared LootGroundInit detour (the ground icon
+// rides it), InstancePlaceTallest, UpdateDepth and the five builtins. A
+// table-only script hook, a builtin that did not go in, or (research build) a
+// citrace or jumpprobe hook on one of the six refuses, with one line.
+// No address, no struct read.
+
+static constexpr HeroSiege::Objects::GameObject kFlightFamily = HeroSiege::Objects::GameObject::Collision_Parent_obj;
+// Monsters (Enemy_Parent_obj and its descendants): the owner, 2026-10-13,
+// "flight should ignore enemy collisions", read as body collision only. They
+// are not in the family; the core passes them on place_meeting alone, with
+// the same wall re-run, and every other row keeps the game's answer. An
+// unresolved name refuses flight with the family's one line.
+static constexpr HeroSiege::Objects::GameObject kFlightMonster = HeroSiege::Objects::GameObject::Enemy_Parent_obj;
+// The objects flight never passes, with their descendants: walls (gates are
+// walls) and locks, for the family and the monsters alike. The owner may ask
+// for walls to open after testing (2026-10-12), so this list is the one edit.
+static constexpr HeroSiege::Objects::GameObject kFlightExcluded[] = {
+    HeroSiege::Objects::GameObject::Wall_Parent_obj,
+    HeroSiege::Objects::GameObject::Lock_obj,
+};
+
+// Flight's first five rows are the shared detours' rows, in the same order.
+static constexpr bool FlightRowsMatchJumpScenery()
+{
+    if (JsNs::kBuiltinCount + 1 != FcNs::kHookedCount) return false;
+    for (int i = 0; i < JsNs::kBuiltinCount; ++i)
+        if (FcNs::kHooked[i].name != JsNs::kBuiltins[i].name || FcNs::kHooked[i].objectArg != JsNs::kBuiltins[i].objectArg)
+            return false;
+    return static_cast<int>(FcNs::Hooked::InstancePlaceTallest) == JsNs::kBuiltinCount;
+}
+static_assert(FlightRowsMatchJumpScenery(), "flight's builtin rows are the shared detours' rows, in order");
+
+static PFUNC_YYGMLScript g_FlightOrigIpt = nullptr;     // InstancePlaceTallest
+static PFUNC_YYGMLScript g_FlightOrigDepth = nullptr;   // UpdateDepth
+static bool g_FlightIptNative = false;     // each got its inline detour, not only the table swap
+static bool g_FlightDepthNative = false;
+static bool g_FlightConfigured = false;    // the objects resolved and the core's callbacks set
+static CInstance* g_FlightPlayer = nullptr;   // the local player, refreshed each frame once installed
+static int g_FlightFamilyIdx = -1;
+static int g_FlightMonsterIdx = -1;        // Enemy_Parent_obj's index, once resolved
+static std::vector<int> g_FlightExcludedIdx;
+static int g_FlightControllerIdx = -1;     // Controller_obj's index, once resolved
+// The layers the last census listed, and the flight layer, each as the
+// runtime answered it, so every later builtin call passes back the same value.
+static std::unordered_map<int64_t, RValue> g_FlightLayerArgs;
+static RValue g_FlightLayerOwn;
+static int64_t g_FlightLayerOwnId = -1;
+static unsigned long long g_FlightArmedFrames = 0;   // frames the tick ran while armed and not installed
+static constexpr int kFlightMaxCharms = 64;
+
+static RValue FlightAnswerValue(FcNs::Answer a)
+{
+    return a == FcNs::Answer::Noone ? RValue(FcNs::kNoone) : RValue(false);
+}
+
+// jumpscenery's reading of a result (JsBlocked): a meeting query's true, an
+// instance query's instance. Anything else is `unknown`.
+static bool FlightBlocked(FcNs::Answer form, const RValue& r, bool unknown = false)
+{
+    return JsBlocked(form == FcNs::Answer::False ? JsNs::Answer::False : JsNs::Answer::Noone, r, unknown);
+}
+
+// The worn charms' array, offline: Controller_obj.inventoryData[mplr - 1]
+// .localCharmItemArray (the relic tab's key rule). Variables only. Online the
+// charms live on Client_obj, so nothing is read and flight stays off.
+static bool FlightCharmArray(RValue& array)
+{
+    try {
+        const RValue onl = HeroSiege::YYTK::GetGlobalVariable(g_Yytk, HeroSiege::Player::kOnlineFlagGlobal);
+        if ((JsNumber(onl) && onl.ToDouble() == 1.0) || (onl.m_Kind == VALUE_BOOL && onl.ToBoolean())) return false;
+        const RValue mplr = HeroSiege::YYTK::GetGlobalVariable(g_Yytk, "mplr");
+        if (!JsNumber(mplr)) return false;
+        const double row = mplr.ToDouble();
+        if (!std::isfinite(row) || std::floor(row) != row || row < 1.0 || row > HeroSiege::Player::kMaxLocalPlayerIndex) return false;
+        if (g_FlightControllerIdx < 0) {
+            int idx = -1;
+            const RValue index = g_Yytk->CallBuiltin("asset_get_index", {
+                RValue(std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Controller_obj))) });
+            if (!N1ObjectIndex(index, idx)) return false;
+            g_FlightControllerIdx = idx;
+        }
+        const RValue controller = g_Yytk->CallBuiltin("instance_find", { RValue((double)g_FlightControllerIdx), RValue(0.0) });
+        if (!HeroSiege::Player::IsInstanceHandle(controller)) return false;
+        if (!HeroSiege::YYTK::InstanceHasVariable(g_Yytk, controller, HeroSiege::Player::kRelicTabHolderField)) return false;
+        const RValue profiles = HeroSiege::YYTK::GetInstanceVariable(g_Yytk, controller, HeroSiege::Player::kRelicTabHolderField);
+        RValue profile;
+        if (!HeroSiege::Player::Detail::ArrayAt(g_Yytk, profiles, (int)row - 1, profile)) return false;
+        static constexpr std::string_view kField = "localCharmItemArray";
+        if (profile.m_Kind == VALUE_OBJECT && HeroSiege::YYTK::StructHasVariable(g_Yytk, profile, kField))
+            array = HeroSiege::YYTK::GetStructVariable(g_Yytk, profile, kField);
+        else if (profile.m_Kind == VALUE_REF && HeroSiege::YYTK::InstanceHasVariable(g_Yytk, profile, kField))
+            array = HeroSiege::YYTK::GetInstanceVariable(g_Yytk, profile, kField);
+        else
+            return false;
+        return array.m_Kind == VALUE_ARRAY;
+    } catch (...) {}
+    return false;
+}
+
+// The core's EquippedFn: the flight charms worn now, as CharmBit()s. A charm is
+// identified by what it is: a flight charm's seed (FlightCharmOf), dressed by
+// us as one (fp_mechanic = flight, which a sidecar entry that claimed the same
+// item would not write).
+static bool FlightEquipped(unsigned& mask)
+{
+    mask = 0;
+    RValue array;
+    if (!FlightCharmArray(array)) return false;
+    try {
+        const int count = HeroSiege::YYTK::GetArrayLength(g_Yytk, array);
+        for (int i = 0; i < count && i < kFlightMaxCharms; ++i) {
+            RValue item;
+            if (!HeroSiege::Player::Detail::ArrayAt(g_Yytk, array, i, item)) continue;
+            FcNs::Rolled rolled;
+            if (!FlightCharmOf(item, rolled)) continue;
+            RValue mechanic;
+            if (!FlightField(item, "fp_mechanic", mechanic) || mechanic.m_Kind != VALUE_STRING) continue;
+            if (mechanic.ToString() != std::string(FcNs::kMechanic)) continue;
+            mask |= FcNs::CharmBit(rolled.charm);
+        }
+    } catch (...) { return false; }
+    return true;
+}
+
+// The core's OverlapFn: the saved original place_meeting at the player's own
+// x and y, with the player as self, against Collision_Parent_obj and then
+// Enemy_Parent_obj; overlapping when either meets, so a charm taken off inside
+// a monster lets the player walk out as from a prop. Unreadable counts as
+// free (false), so flight goes off and the game's answers stand.
+static bool FlightOverlap(bool& overlapping)
+{
+    const TRoutine orig = g_JsOrig[(int)JsNs::Builtin::PlaceMeeting];
+    if (!orig || !g_FlightPlayer || g_FlightFamilyIdx < 0 || g_FlightMonsterIdx < 0) return false;
+    try {
+        const RValue p = g_FlightPlayer->ToRValue();
+        const RValue vx = g_Yytk->CallBuiltin("variable_instance_get", { p, RValue("x") });
+        const RValue vy = g_Yytk->CallBuiltin("variable_instance_get", { p, RValue("y") });
+        if (!JsNumber(vx) || !JsNumber(vy)) return false;
+        const double x = vx.ToDouble(), y = vy.ToDouble();
+        if (!std::isfinite(x) || !std::isfinite(y)) return false;
+        // One read of the saved original against one object: false when unreadable.
+        const auto meets = [&](const RValue& object, bool& met) -> bool {
+            RValue args[3] = { RValue(x), RValue(y), object };
+            RValue r;
+            orig(r, g_FlightPlayer, g_FlightPlayer, 3, args);
+            if (r.m_Kind != VALUE_BOOL && !JsNumber(r)) return false;
+            met = r.ToBoolean();
+            return true;
+        };
+        bool family = false, monster = false;
+        if (!meets(RValue((double)g_FlightFamilyIdx), family)) return false;
+        // The family meets: the monster read would change nothing.
+        if (!family && !meets(RValue((double)g_FlightMonsterIdx), monster)) return false;
+        overlapping = family || monster;
+        return true;
+    } catch (...) {}
+    return false;
+}
+
+// The `room` built-in as a room index (the runner answers with a reference).
+static bool FlightRoom(int64_t& room)
+{
+    try {
+        RValue v;
+        if (!AurieSuccess(g_Yytk->GetBuiltin("room", nullptr, NULL_INDEX, v))) return false;
+        if (!JsNumber(v) && v.m_Kind != VALUE_REF) return false;
+        const double d = v.ToDouble();
+        if (!std::isfinite(d) || d < 0.0 || std::floor(d) != d) return false;
+        room = (int64_t)d;
+        return true;
+    } catch (...) {}
+    return false;
+}
+
+// The core's LayerEndsFn: global.gameLayer[room]'s first and last entries,
+// each with its layer_get_depth. The census reads them once per room visit,
+// for the game layers' front end (FcNs::GameFrontDepth).
+static bool FlightLayerEnds(int64_t room, FcNs::LayerEnd& first, FcNs::LayerEnd& last)
+{
+    if (room < 0 || room > INT32_MAX) return false;
+    try {
+        const RValue layers = HeroSiege::YYTK::GetGlobalVariable(g_Yytk, "gameLayer");
+        RValue row;
+        if (!HeroSiege::Player::Detail::ArrayAt(g_Yytk, layers, (int)room, row)) return false;
+        const int count = HeroSiege::YYTK::GetArrayLength(g_Yytk, row);
+        if (count < 1) return false;
+        RValue ends[2];
+        if (!HeroSiege::Player::Detail::ArrayAt(g_Yytk, row, 0, ends[0])
+            || !HeroSiege::Player::Detail::ArrayAt(g_Yytk, row, count - 1, ends[1])) return false;
+        FcNs::LayerEnd* out[2] = { &first, &last };
+        for (int k = 0; k < 2; ++k) {
+            if (!JsNumber(ends[k]) && ends[k].m_Kind != VALUE_REF) return false;
+            const double id = ends[k].ToDouble();
+            const RValue depth = g_Yytk->CallBuiltin("layer_get_depth", { ends[k] });
+            if (!std::isfinite(id) || !JsNumber(depth)) return false;
+            out[k]->layer = (int64_t)id;
+            out[k]->depth = depth.ToDouble();
+        }
+        return true;
+    } catch (...) {}
+    return false;
+}
+
+// ---- the flight layer: the core's LayerOps, each builtin called by name ----
+// Only the core calls these: the census (all, detail, effect, place), the
+// re-choice (count, move) and the check before each write (valid). Nothing
+// here runs per frame on its own, and no address is used.
+
+// A layer id as the runtime answered it (a number or a reference).
+static bool FlightLayerId(const RValue& v, int64_t& id)
+{
+    if (!JsNumber(v) && v.m_Kind != VALUE_REF) return false;
+    const double d = v.ToDouble();
+    if (!std::isfinite(d) || d < 0.0 || std::floor(d) != d) return false;
+    id = (int64_t)d;
+    return true;
+}
+
+// The value to pass back for a layer id: the one the runtime answered.
+static RValue FlightLayerArg(int64_t id)
+{
+    if (id == g_FlightLayerOwnId) return g_FlightLayerOwn;
+    const auto it = g_FlightLayerArgs.find(id);
+    return it != g_FlightLayerArgs.end() ? it->second : RValue((double)id);
+}
+
+// The kind (the RValue's m_Kind, an RValueType number) of the census's first
+// layer_get_fx answer that was not a struct, or -1 when every answer was one
+// (or none was read). The census counts such an answer as `other`, no effect;
+// this says what it was (undefined, a real, a ref...), for `flightprobe
+// depth`'s `fx-kind=`. A census starts it afresh where it lists the layers.
+// How each read landed is the core's, per visit (FlightLayerVisit::tally).
+static int g_FlightFxKind = -1;
+
+// layer_get_all, each with its layer_get_depth. The census's first read. Every
+// element of the list reaches the core: one whose id or depth does not read is
+// handed over with a non-finite depth, which the core counts as no-depth and
+// never asks about again, so only the readable ones keep their argument.
+static bool FlightLayerAll(std::vector<FcNs::LayerEnd>& all)
+{
+    g_FlightLayerArgs.clear();
+    g_FlightFxKind = -1;
+    try {
+        const RValue layers = g_Yytk->CallBuiltin("layer_get_all", {});
+        if (layers.m_Kind != VALUE_ARRAY) return false;
+        const int count = HeroSiege::YYTK::GetArrayLength(g_Yytk, layers);
+        for (int i = 0; i < count; ++i) {
+            RValue v;
+            int64_t id = -1;
+            double depth = std::numeric_limits<double>::quiet_NaN();   // unread
+            if (HeroSiege::Player::Detail::ArrayAt(g_Yytk, layers, i, v) && FlightLayerId(v, id)) {
+                try {
+                    const RValue d = g_Yytk->CallBuiltin("layer_get_depth", { v });
+                    if (JsNumber(d)) {
+                        depth = d.ToDouble();
+                        g_FlightLayerArgs[id] = v;
+                    }
+                } catch (...) {}
+            }
+            all.push_back(FcNs::LayerEnd{ id, depth });
+        }
+        return true;
+    } catch (...) {}
+    return false;
+}
+
+// A listed layer's name, visibility and element count.
+static bool FlightLayerDetail(int64_t id, FcNs::RoomLayer& layer)
+{
+    try {
+        const RValue arg = FlightLayerArg(id);
+        const RValue name = g_Yytk->CallBuiltin("layer_get_name", { arg });
+        const RValue visible = g_Yytk->CallBuiltin("layer_get_visible", { arg });
+        const RValue elements = g_Yytk->CallBuiltin("layer_get_all_elements", { arg });
+        if (name.m_Kind != VALUE_STRING || elements.m_Kind != VALUE_ARRAY) return false;
+        if (visible.m_Kind != VALUE_BOOL && !JsNumber(visible)) return false;
+        layer.name = name.ToString();
+        layer.visible = visible.ToBoolean();
+        layer.elements = HeroSiege::YYTK::GetArrayLength(g_Yytk, elements);
+        return true;
+    } catch (...) {}
+    return false;
+}
+
+// Whether the layer carries a layer effect: layer_get_fx answers a struct.
+// Anything else is none, and the first such answer's kind is kept
+// (g_FlightFxKind); a read that throws fails, which the core also counts as
+// none. The core sorts each read into the visit's tally.
+static bool FlightLayerEffect(int64_t id, bool& effect)
+{
+    try {
+        const RValue fx = g_Yytk->CallBuiltin("layer_get_fx", { FlightLayerArg(id) });
+        effect = fx.m_Kind == VALUE_OBJECT;
+        if (!effect && g_FlightFxKind < 0) g_FlightFxKind = (int)fx.m_Kind;
+        return true;
+    } catch (...) {}
+    return false;
+}
+
+// A remembered layer's visibility and element count again, for the re-choice
+// (a filter hidden at the census may be shown later).
+static bool FlightLayerCount(int64_t id, bool& visible, int64_t& elements)
+{
+    try {
+        const RValue arg = FlightLayerArg(id);
+        const RValue shown = g_Yytk->CallBuiltin("layer_get_visible", { arg });
+        const RValue all = g_Yytk->CallBuiltin("layer_get_all_elements", { arg });
+        if (all.m_Kind != VALUE_ARRAY) return false;
+        if (shown.m_Kind != VALUE_BOOL && !JsNumber(shown)) return false;
+        visible = shown.ToBoolean();
+        elements = HeroSiege::YYTK::GetArrayLength(g_Yytk, all);
+        return true;
+    } catch (...) {}
+    return false;
+}
+
+// The flight layer at `depth`: looked up by name first and moved there, so a
+// room never holds two, and created by name only when the room holds none.
+static bool FlightLayerPlace(double depth, int64_t& id)
+{
+    try {
+        const RValue name = RValue(std::string(FcNs::kFlightLayerName));
+        RValue layer = g_Yytk->CallBuiltin("layer_get_id", { name });
+        int64_t found = -1;
+        if (FlightLayerId(layer, found)) {
+            g_Yytk->CallBuiltin("layer_depth", { layer, RValue(depth) });
+        } else {
+            layer = g_Yytk->CallBuiltin("layer_create", { RValue(depth), name });
+            if (!FlightLayerId(layer, found)) return false;
+        }
+        g_FlightLayerOwn = layer;
+        g_FlightLayerOwnId = found;
+        id = found;
+        return true;
+    } catch (...) {}
+    return false;
+}
+
+// layer_depth: the re-choice moving the flight layer.
+static bool FlightLayerMove(int64_t id, double depth)
+{
+    try {
+        g_Yytk->CallBuiltin("layer_depth", { FlightLayerArg(id), RValue(depth) });
+        return true;
+    } catch (...) {}
+    return false;
+}
+
+// At the point of use, before each write: the cached layer still exists in
+// this room and carries our name. A new room may reuse the id for a layer of
+// its own, which the name check refuses.
+static bool FlightLayerValid(int64_t id)
+{
+    try {
+        const RValue arg = FlightLayerArg(id);
+        if (!g_Yytk->CallBuiltin("layer_exists", { arg }).ToBoolean()) return false;
+        const RValue name = g_Yytk->CallBuiltin("layer_get_name", { arg });
+        return name.m_Kind == VALUE_STRING && name.ToString() == std::string(FcNs::kFlightLayerName);
+    } catch (...) {}
+    return false;
+}
+
+static double FlightClockMs()
+{
+    return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+// Does a wall or a lock block this query? The same original, same arguments
+// and self, with the object argument swapped for each excluded object.
+static bool FlightExcludedBlocks(TRoutine orig, const FcNs::HookedRow& h, CInstance* S, CInstance* O, int argc, RValue* Args)
+{
+    if (!orig || !Args || h.objectArg < 0 || h.objectArg >= argc) return true;
+    std::vector<RValue> copy(Args, Args + argc);
+    for (int e : g_FlightExcludedIdx) {
+        copy[h.objectArg] = RValue((double)e);
+        RValue r;
+        orig(r, S, O, argc, copy.data());
+        if (FlightBlocked(h.answer, r, true)) return true;
+    }
+    return false;
+}
+
+// A numeric argument, NaN when it is missing or not a number (the core's room
+// check then keeps the game's answer).
+static double FlightArgNumber(const RValue* v)
+{
+    if (!v || !JsNumber(*v)) return std::numeric_limits<double>::quiet_NaN();
+    return v->ToDouble();
+}
+
+// The points a builtin query names: x, y, or collision_circle's centre, and
+// collision_line's two ends.
+static void FlightPoints(int row, int argc, RValue* Args, FcNs::Query& q)
+{
+    const auto arg = [argc, Args](int i) { return FlightArgNumber(Args && i < argc ? &Args[i] : nullptr); };
+    q.x0 = arg(0);
+    q.y0 = arg(1);
+    if (static_cast<FcNs::Hooked>(row) == FcNs::Hooked::CollisionLine) {
+        q.x1 = arg(2);
+        q.y1 = arg(3);
+    }
+}
+
+// The object of an instance InstancePlaceTallest answered; -1 when unreadable.
+static int FlightInstanceObject(const RValue& v)
+{
+    const int obj = JsObjectIndexOf(v);
+    if (obj >= 0) return obj;
+    try {
+        int n = -1;
+        if (v.m_Kind == VALUE_OBJECT && N1ObjectIndex(g_Yytk->CallBuiltin("variable_instance_get", { v, RValue("object_index") }), n))
+            return n;
+    } catch (...) {}
+    return -1;
+}
+
+// flight's part of a shared builtin detour, after the original (and
+// jumpscenery) ran. Any self but the local player costs one compare and one
+// count (NoteCall), so the trace line's `not-player=` and `free=` hold.
+static void FlightOnBuiltin(int row, RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args)
+{
+    if (!S || g_FlightBusy || !g_Flight.Installed()) return;
+    if (row < 0 || row >= JsNs::kBuiltinCount) return;
+    if (S != g_FlightPlayer) { g_Flight.NoteCall(false); return; }
+    const FcNs::HookedRow& h = FcNs::kHooked[row];
+    if (!FlightBlocked(h.answer, Result)) { g_Flight.NoteCall(true); return; }   // a free answer stands
+    const TRoutine orig = g_JsOrig[row];
+    FcNs::Answer answer = FcNs::Answer::Real;
+    g_FlightBusy = true;
+    try {
+        const int64_t frame = (int64_t)g_RuntimeFrame;
+        g_Flight.Refresh(frame);
+        FcNs::Query q{};
+        q.row = static_cast<FcNs::Hooked>(row);
+        q.frame = frame;
+        q.playerSelf = true;
+        q.object = -1;
+        q.reallyBlocked = true;
+        // Off, nothing more is read; the core still counts the query (`seen=`
+        // and `idle=`), so the trace line shows the player's queries reach it.
+        if (g_Flight.CurrentState() != FcNs::State::Off) {
+            q.object = (Args && h.objectArg < argc) ? JsObjectIndexOf(Args[h.objectArg]) : -1;
+            FlightPoints(row, argc, Args, q);
+        }
+        answer = g_Flight.OnQuery(q, [&]() { return FlightExcludedBlocks(orig, h, S, O, argc, Args); });
+    } catch (...) { answer = FcNs::Answer::Real; }
+    g_FlightBusy = false;
+    if (answer != FcNs::Answer::Real) Result = FlightAnswerValue(answer);
+}
+
+static RValue& Hook_FlightInstancePlaceTallest(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    RValue& r = g_FlightOrigIpt(S, O, R, argc, A);
+    if (!S || g_FlightBusy || !g_Flight.Installed()) return r;
+    if (S != g_FlightPlayer) { g_Flight.NoteCall(false); return r; }
+    if (!FlightBlocked(FcNs::Answer::Noone, r)) { g_Flight.NoteCall(true); return r; }   // `noone` stands
+    FcNs::Answer answer = FcNs::Answer::Real;
+    g_FlightBusy = true;
+    try {
+        const int64_t frame = (int64_t)g_RuntimeFrame;
+        g_Flight.Refresh(frame);
+        FcNs::Query q{};
+        q.row = FcNs::Hooked::InstancePlaceTallest;
+        q.frame = frame;
+        q.playerSelf = true;
+        q.object = -1;
+        q.reallyBlocked = true;
+        // As FlightOnBuiltin: off, nothing is read, and the core counts the call.
+        if (g_Flight.CurrentState() != FcNs::State::Off) {
+            q.object = FlightInstanceObject(r);
+            q.x0 = FlightArgNumber(argc > 0 && A ? A[0] : nullptr);
+            q.y0 = FlightArgNumber(argc > 1 && A ? A[1] : nullptr);
+        }
+        answer = g_Flight.OnQuery(q);
+    } catch (...) { answer = FcNs::Answer::Real; }
+    g_FlightBusy = false;
+    if (answer != FcNs::Answer::Real) r = FlightAnswerValue(answer);
+    return r;
+}
+
+// After the game's own UpdateDepth: the local player's `layer`, while flight
+// is on, to this room visit's flight layer, which the core validated just
+// before (LayerOps::valid) and placed by name at its census. Any other self
+// costs one compare and one count (NoteDepthOther), so the trace line's
+// `depth-other=` holds.
+static RValue& Hook_FlightUpdateDepth(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    RValue& r = g_FlightOrigDepth(S, O, R, argc, A);
+    if (!S || g_FlightBusy || !g_Flight.Installed()) return r;
+    if (S != g_FlightPlayer) { g_Flight.NoteDepthOther(); return r; }
+    g_FlightBusy = true;
+    try {
+        // An unreadable room still reaches the core, as -1, so the call counts
+        // in `depth-seen=` and, while on, in `no-front=`.
+        int64_t room = -1;
+        if (!FlightRoom(room)) room = -1;
+        const FcNs::DepthWrite w = g_Flight.OnUpdateDepth((int64_t)g_RuntimeFrame, true, room);
+        if (w.write) g_Yytk->CallBuiltin("variable_instance_set", { S->ToRValue(), RValue("layer"), FlightLayerArg(w.layer) });
+    } catch (...) {}
+    g_FlightBusy = false;
+    return r;
+}
+
+#ifndef FORGEPACT_RELEASE
+static std::string FlightHeldScripts()
+{
+    std::string held;
+    if (g_FlightOrigIpt) held += SdkShortScriptName(HeroSiege::Scripts::gml_Script_InstancePlaceTallest);
+    if (g_FlightOrigDepth)
+        held += (held.empty() ? "" : ", ") + std::string(SdkShortScriptName(HeroSiege::Scripts::gml_Script_UpdateDepth));
+    return held;
+}
+#endif
+
+// The one install, from FlightInstallIfReady: "" when every hook is in and the
+// core is configured, otherwise why flight stays off. Hooks that went in stay
+// in, and their detours return the game's answer until flight is installed.
+static std::string FlightInstall()
+{
+#ifndef FORGEPACT_RELEASE
+    const std::string holders = JumpSceneryResearchHolders(true);
+    if (!holders.empty())
+        return holders + " (a hook detours once); flight stays off. Relaunch without it to use the flight charms.";
+#endif
+    if (!g_FlightConfigured) {
+        int family = -1;
+        int monster = -1;
+        std::vector<int> excluded;
+        std::string missing;
+        try {
+            family = (int)g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(HeroSiege::Objects::GetObjectName(kFlightFamily))) }).ToDouble();
+            if (family < 0) missing = std::string(HeroSiege::Objects::GetObjectName(kFlightFamily));
+            monster = (int)g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(HeroSiege::Objects::GetObjectName(kFlightMonster))) }).ToDouble();
+            if (monster < 0) missing += (missing.empty() ? "" : ", ") + std::string(HeroSiege::Objects::GetObjectName(kFlightMonster));
+            for (const HeroSiege::Objects::GameObject obj : kFlightExcluded) {
+                const int idx = (int)g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(HeroSiege::Objects::GetObjectName(obj))) }).ToDouble();
+                if (idx < 0) missing += (missing.empty() ? "" : ", ") + std::string(HeroSiege::Objects::GetObjectName(obj));
+                excluded.push_back(idx);
+            }
+        } catch (...) { missing = "the objects"; }
+        if (!missing.empty()) return missing + " did not resolve by name; flight stays off";
+        g_FlightFamilyIdx = family;
+        g_FlightMonsterIdx = monster;
+        g_FlightExcludedIdx = excluded;
+        g_Flight.SetIsAncestor([](int object, int ancestor) {
+            return g_Yytk->CallBuiltin("object_is_ancestor", { RValue((double)object), RValue((double)ancestor) }).ToBoolean();
+        });
+        g_Flight.SetFamily(family, excluded);
+        g_Flight.SetMonster(monster);
+        g_Flight.SetEquipped(&FlightEquipped);
+        g_Flight.SetOverlap(&FlightOverlap);
+        g_Flight.SetRoomSize(&JsRoomSize);
+        g_Flight.SetLayerEnds(&FlightLayerEnds);
+        FcNs::Flight::LayerOps ops;
+        ops.all = &FlightLayerAll;
+        ops.detail = &FlightLayerDetail;
+        ops.effect = &FlightLayerEffect;
+        ops.count = &FlightLayerCount;
+        ops.place = &FlightLayerPlace;
+        ops.move = &FlightLayerMove;
+        ops.valid = &FlightLayerValid;
+        ops.clock = &FlightClockMs;
+        g_Flight.SetLayerOps(std::move(ops));
+        g_FlightConfigured = true;
+    }
+    if (!g_FlightOrigIpt) {
+        bool native = false;
+        HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_InstancePlaceTallest), "fp_flight_ipt",
+                      (PVOID)Hook_FlightInstancePlaceTallest, &g_FlightOrigIpt, &native);
+        g_FlightIptNative = native;
+    }
+    if (!g_FlightOrigIpt) return "InstancePlaceTallest was not found by name; flight stays off";
+    // Table-only, the game's own direct calls would pass the hook by and
+    // flight would report on while doing nothing.
+    if (!g_FlightIptNative) return "InstancePlaceTallest is hooked table-only, so the game's own calls would pass flight by; flight stays off";
+    if (!g_FlightOrigDepth) {
+        bool native = false;
+        HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_UpdateDepth), "fp_flight_depth",
+                      (PVOID)Hook_FlightUpdateDepth, &g_FlightOrigDepth, &native);
+        g_FlightDepthNative = native;
+    }
+    if (!g_FlightOrigDepth) return "UpdateDepth was not found by name; flight stays off";
+    if (!g_FlightDepthNative) return "UpdateDepth is hooked table-only, so the game's own calls would pass flight by; flight stays off";
+    const std::string failed = CollisionBuiltinsInstall();
+    if (!failed.empty()) return failed + " not hooked; flight stays off";
+    return "";
+}
+
+// Does the local player resolve, by the VALUE_REF-safe resolver? At character
+// select it does not, and the install waits.
+static bool FlightPlayerResolves()
+{
+    bool ok = false;
+    g_FlightBusy = true;
+    try {
+        RValue p;
+        ok = HhResolveLocalPlayer(p) && HhResolveInstance(p) != nullptr;
+    } catch (...) { ok = false; }
+    g_FlightBusy = false;
+    return ok;
+}
+
+static void FlightRefreshPlayer()
+{
+    CInstance* inst = nullptr;
+    g_FlightBusy = true;
+    try {
+        RValue p;
+        if (HhResolveLocalPlayer(p)) inst = HhResolveInstance(p);
+    } catch (...) { inst = nullptr; }
+    g_FlightBusy = false;
+    g_FlightPlayer = inst;
+}
+
+// ` player=` on the trace line: the pointer the hooks compare `self` against,
+// checked against the local player resolved now. `none` when either is
+// missing (before the install, or at character select); `differs` would mean
+// the hooks are comparing against a stale instance and answer nothing.
+static const char* FlightPlayerCheck()
+{
+    CInstance* now = nullptr;
+    try {
+        RValue p;
+        if (HhResolveLocalPlayer(p)) now = HhResolveInstance(p);
+    } catch (...) { now = nullptr; }
+    if (!now || !g_FlightPlayer) return "none";
+    return now == g_FlightPlayer ? "match" : "differs";
+}
+
+// Installs when the core says so (Flight::ShouldInstall): armed, not yet
+// installed or refused, setup done and the local player resolved. Hidden
+// loot's LootGroundInit detour goes in first, whatever flight's own install
+// answers, since the ground icon rides it. A refusal prints its one line and
+// is final for the session.
+static void FlightInstallIfReady()
+{
+    const bool havePlayer = g_Flight.ShouldInstall(g_Setup, true) && FlightPlayerResolves();
+    if (!g_Flight.ShouldInstall(g_Setup, havePlayer)) return;
+    if (!g_HiddenLootInstallTried) HiddenLootInstall();
+    const std::string why = FlightInstall();
+    g_Flight.NoteInstall(why.empty());
+    if (!why.empty()) { Out(FcNs::RefusedLine(why)); return; }
+    FlightRefreshPlayer();
+}
+
+// The per-frame tick. Returns at once until dressing arms flight; while armed
+// and not installed, looks for the local player every kInstallPollFrames
+// frames; once installed, refreshes the local player only. The decisions
+// happen inside the hooked calls.
+static void FlightCharmTick()
+{
+    if (!g_Flight.Armed()) return;
+    if (!g_Flight.Installed()) {
+        if (FcNs::Flight::LooksForPlayer(g_FlightArmedFrames++)) FlightInstallIfReady();
+        return;
+    }
+    FlightRefreshPlayer();
+}
+// ---- end of the flight charms flight adapter
+
+#ifndef FORGEPACT_RELEASE
+// ---- flightprobe: the flight charms' phase 2 instrument (ForgePact #158) ----
+// Research build only, never in kPlayerCommands; RunCommand's early return for
+// it sits inside the same guard, so neither the verb nor an Flp* name reaches
+// a player build. It serves the flight charms' phase 2 live session
+// (docs/flight-charms-research.md), and changes nothing until a form that
+// spawns, drops or sets a research value is sent:
+//
+//   - `spawn elf|wings|broom [<p> <m> | <s>]` builds a charm with its own seed
+//     (the top roll unless the rolls are named) by charmprobe spawn's loader
+//     route (json -> InitItemFromJson -> LootGroundCreateFromItem at the
+//     player), so the Custom Forge dresses it as it would the game's own drop.
+//     The shared ground-icon hook (hidden loot's one LootGroundInit detour)
+//     goes in first, as a drop switch turned on does;
+//   - `ground` reads the newest Loot_Ground_obj, by charmprobe's
+//     newest-id scan: its item's name, and whether its sprite is one of ours,
+//     the game's own, or the game's fallback Error_spr (RDM § 23.7);
+//   - `free [dx dy] [family|<object name>]` asks the shared collision detours'
+//     saved originals of place_meeting and instance_position, as `jumpprobe
+//     free` asks its own: no detour (jumpscenery's or flight's) answers;
+//   - `depth` reads the player's layer and its depth beside what this room
+//     visit's census chose (the flight layer, what it went in front of, the
+//     rearmost filter and how the census found layer_get_fx answering), from
+//     the flight adapter's own record; it never runs a census or creates a
+//     layer, and writes nothing;
+//   - `pool` reads the lists both rolls draw from (#74's Angelic element and
+//     lootListUnique[0..4]): their sizes, the Angelic entries the roll can drop,
+//     and the stand-ins' counts by the drop adapter's own rules; it pushes,
+//     records and writes nothing;
+//   - `dress off|on` suspends or restores the footprint write alone, so a
+//     charm can be saved at 1x1 for the size guard's live check;
+//   - `copies <k>` sets how many stand-in copies each switched-on charm pushes
+//     onto each list, on both rolls (the player build's constant 1);
+//   - `unique <n>` calls DropUniqueItems by name with the local player as
+//     self and other, at its position, and reads what each call placed by the
+//     same newest-id scan. The game's own caller is a monster's death, so
+//     this call shape is not the game's, the same caveat as `charmprobe
+//     heroic`;
+//   - `stat` prints `flightcharm stat`'s lines, then this instrument's own.
+//
+// Every game name is an hs-game-sdk constant or read back by name; nothing
+// here computes an address or installs a hook of its own.
+
+// Replan 2 moved it from flp1, and the monster scope (2026-10-13) from flp2,
+// so Live 3's `marker` check proves the installed build carries the monster
+// rule.
+static constexpr const char* kFlpMarker = "flp3";
+// The game's fallback ground sprite when an icon has no Pickup_ companion
+// (RDM § 23.7, static reading), compared by the name sprite_get_name reads.
+static constexpr const char* kFlpErrorSprite = "Error_spr";
+static constexpr int kFlpMaxCopies = 400;
+static constexpr int kFlpMaxUnique = 20;
+
+// Game thread only, like every command.
+static long g_FlpSpawned = 0;        // `spawn`s that placed a ground item
+static long g_FlpUniqueCalls = 0;    // DropUniqueItems calls `unique` made
+static long g_FlpUniquePlaced = 0;   // of those, the ones that placed a ground item
+static long g_FlpUniqueElf = 0;      // of those, the ones that placed Pocket Elf
+
+// A field as text: a number, string or bool as it reads, anything else
+// described; `missing` when the owner has no such field.
+static std::string FlpText(const RValue& owner, const char* name)
+{
+    RValue v;
+    return FlightField(owner, name, v) ? FcpValueText(v) : std::string("missing");
+}
+
+// Loot_Ground_obj's index, by its SDK name; -1 when it does not resolve.
+static double FlpGroundObject()
+{
+    double index = -1;
+    try {
+        if (!ApNumber(g_Yytk->CallBuiltin("asset_get_index", {
+                RValue(std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Loot_Ground_obj))) }), index))
+            return -1;
+    } catch (...) { return -1; }
+    return index;
+}
+
+// The item a ground instance holds; an unset value when it holds none.
+static RValue FlpGroundItem(const RValue& ground)
+{
+    try {
+        return g_Yytk->CallBuiltin("variable_instance_get", { ground, RValue(std::string(HeroSiege::Player::kGroundItemInstanceField)) });
+    } catch (...) {}
+    return RValue();
+}
+
+// An item's name, itemInfoStruct "28".
+static std::string FlpItemName(const RValue& item)
+{
+    RValue info;
+    return FlightField(item, "itemInfoStruct", info) ? FlpText(info, "28") : std::string("unreadable");
+}
+
+// An object's name as object_get_name reads it.
+static std::string FlpObjectName(int obj)
+{
+    try {
+        const RValue n = g_Yytk->CallBuiltin("object_get_name", { RValue((double)obj) });
+        if (n.m_Kind == VALUE_STRING) return n.ToString();
+    } catch (...) {}
+    return "object#" + std::to_string(obj);
+}
+
+static void FlpSpawn(const std::vector<std::string>& tail)
+{
+    const std::string tag = "flightprobe spawn: ";
+    FcNs::Charm c = FcNs::Charm::Elf;
+    if (tail.empty() || !FcNs::CharmFromKey(Lower(tail[0]), c)) {
+        Out(tag + "refused usage: spawn elf | spawn wings [<p 1-12> <m 1-12>] | spawn broom [<s 10-100>]");
+        return;
+    }
+    const FcNs::CharmRow& row = FcNs::RowOf(c);
+    const int given = (int)tail.size() - 1;
+    if (given != 0 && given != row.statCount) {
+        Out(tag + "refused " + std::string(row.key) + " takes " + std::to_string(row.statCount)
+            + " roll value(s), or none for the top roll; got " + std::to_string(given));
+        return;
+    }
+    int v[FcNs::kMaxCharmStats] = { 0, 0 };
+    for (int k = 0; k < given; ++k) {
+        const FcNs::StatRoll& s = row.stats[k];
+        long long value = 0;
+        if (!FcpNs::ParseWhole(tail[k + 1], s.lo, s.hi, value)) {
+            Out(tag + "refused stat " + std::to_string(s.id) + "'s value must be a whole number " + std::to_string(s.lo) + ".."
+                + std::to_string(s.hi) + ", not " + tail[k + 1]);
+            return;
+        }
+        v[k] = (int)value;
+    }
+    const long long seed = given == 0 ? FcNs::TopSeed(c) : FcNs::SeedFor(c, v[0], v[1]);
+    FcNs::Rolled rolled;
+    if (seed < 0 || !FcNs::DecodeSeed(seed, rolled)) { Out(tag + "refused the rolls give no seed of " + std::string(row.name)); return; }
+    std::string stats;
+    for (const auto& [id, value] : FcNs::StatsFor(rolled))
+        stats += (stats.empty() ? "" : ";") + std::to_string(id) + "=" + std::to_string(value);
+    if (stats.empty()) stats = "none";
+
+    std::string why;
+    RValue player;
+    CInstance* self = nullptr;
+    double x = 0, y = 0;
+    if (!FcpPlayer(player, self, x, y, why)) { Out(tag + "refused " + why); return; }
+    CInstance* g = nullptr;
+    g_Yytk->GetGlobalInstance(&g);
+    if (!g) { Out(tag + "refused no global instance"); return; }
+    const double ground = FlpGroundObject();
+    if (ground < 0) { Out(tag + "refused Loot_Ground_obj not resolved; nothing was built"); return; }
+    // As a drop switch turned on does: the ground icon rides hidden loot's one
+    // LootGroundInit detour, so it is in before this charm reaches the ground.
+    FlightGroundIconInstall();
+
+    const std::string what = std::string(row.name) + " a=" + std::to_string(seed);
+    const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    try {
+        RValue parsed;
+        g_Yytk->CallBuiltinEx(parsed, "json_parse", g, g, { RValue(FcpNs::SpawnJson(seed, FcNs::kCharmBaseB)) });
+        if (parsed.m_Kind != VALUE_OBJECT) { Out(tag + what + " refused json_parse gave " + Describe(parsed)); return; }
+        RValue item;
+        const AurieStatus st = g_Yytk->CallGameScriptEx(item, HeroSiege::Scripts::gml_Script_InitItemFromJson, g, g,
+                                                        { parsed, RValue(FcpNs::SpawnKey(ms)) });
+        if (!AurieSuccess(st) || !ApIsPlainStruct(item)) {
+            Out(tag + what + " refused InitItemFromJson st=" + std::to_string((int)st) + " gave " + Describe(item));
+            return;
+        }
+        // Dressed: the Custom Forge recognised the seed on CreateItemNew's way
+        // out and marked the item as a flight charm.
+        RValue mechanic;
+        const bool dressed = FlightField(item, "fp_mechanic", mechanic) && mechanic.m_Kind == VALUE_STRING
+            && mechanic.ToString() == std::string(FcNs::kMechanic);
+        int w = 0, h = 0;
+        const std::string size = FlightItemFootprint(item, w, h) ? std::to_string(w) + "x" + std::to_string(h) : std::string("unreadable");
+        const double before = FcpNewestGround(ground, nullptr);
+        RValue res;
+        const AurieStatus st2 = g_Yytk->CallGameScriptEx(res, HeroSiege::Scripts::gml_Script_LootGroundCreateFromItem, self, self,
+                                                         { RValue(x), RValue(y), item });
+        if (!AurieSuccess(st2)) { Out(tag + what + " refused LootGroundCreateFromItem st=" + std::to_string((int)st2)); return; }
+        RValue newest;
+        const double after = FcpNewestGround(ground, &newest);
+        const bool appeared = after > before;
+        if (appeared) ++g_FlpSpawned;
+        Out(tag + what + " stats=" + stats + " dressed=" + (dressed ? "yes" : "no") + " name=" + FlpItemName(item) + " size=" + size
+            + (appeared ? " ground=new id=" + FcpNs::NumberText(after) + " placed"
+                        : " ground=none (no new Loot_Ground_obj appeared; LootGroundCreateFromItem returned " + Describe(res) + ")"));
+    } catch (...) { Out(tag + what + " refused an exception while building or placing it"); }
+}
+
+static void FlpGround()
+{
+    const std::string tag = "flightprobe ground: ";
+    const double object = FlpGroundObject();
+    if (object < 0) { Out(tag + "refused Loot_Ground_obj not resolved"); return; }
+    RValue newest;
+    const double id = FcpNewestGround(object, &newest);
+    if (id < 0) { Out(tag + "none (no Loot_Ground_obj in the room)"); return; }
+    const RValue item = FlpGroundItem(newest);
+    double sprite = -1;
+    bool read = false;
+    std::string name = "unreadable";
+    try {
+        const RValue v = g_Yytk->CallBuiltin("variable_instance_get", { newest, RValue("sprite_index") });
+        if (v.m_Kind == VALUE_REAL || v.m_Kind == VALUE_INT32 || v.m_Kind == VALUE_INT64 || v.m_Kind == VALUE_REF) {
+            sprite = v.ToDouble();
+            read = std::isfinite(sprite) && sprite >= 0;
+            if (read && g_Yytk->CallBuiltin("sprite_exists", { v }).ToBoolean()) {
+                const RValue n = g_Yytk->CallBuiltin("sprite_get_name", { v });
+                if (n.m_Kind == VALUE_STRING) name = n.ToString();
+            }
+        }
+    } catch (...) { read = false; }
+    // Ours: one of the six icons sprite_add gave us (FlightIconsLoad), bag or
+    // ground; error: the game's fallback; game: any other sprite.
+    std::string verdict = read ? "game" : "unread";
+    for (size_t k = 0; read && k < ForgePact::FlightCharmIcons::kIconCount; ++k)
+        if (g_FlightIconOk[k] && g_FlightIconSprite[k].ToDouble() == sprite) verdict = "ours";
+    if (verdict == "game" && name == kFlpErrorSprite) verdict = "error";
+    Out(tag + "id=" + FcpNs::NumberText(id) + " item=" + FlpItemName(item) + " sprite=" + name + " " + verdict
+        + " index=" + (read ? FcpNs::NumberText(sprite) : std::string("?")));
+}
+
+// jumpprobe free's read, through the shared detours' saved originals: no
+// detour runs, so the answer is the game's. Refused before the detours went
+// in, since without a saved original the call would go through whatever
+// holds the builtin.
+static void FlpFree(const std::vector<std::string>& tail)
+{
+    const std::string tag = "flightprobe free: ";
+    const TRoutine meeting = g_JsOrig[(int)JsNs::Builtin::PlaceMeeting];
+    const TRoutine position = g_JsOrig[(int)JsNs::Builtin::InstancePosition];
+    if (!meeting || !position) {
+        Out(tag + "refused - place_meeting and instance_position have no saved original yet (the shared detours go in"
+            " when flight installs, or with `jumpscenery 1`); nothing asked");
+        return;
+    }
+    double offset[2] = { 0.0, 0.0 };
+    int numbers = 0;
+    std::string asked;
+    for (const std::string& a : tail) {
+        double v = 0.0;
+        bool number = false;
+        try { size_t used = 0; v = std::stod(a, &used); number = used == a.size() && std::isfinite(v); } catch (...) {}
+        if (number) {
+            if (numbers == 2) { Out(tag + "'" + a + "' is a third number; usage -> free [dx dy] [family|<object name>]; nothing asked"); return; }
+            offset[numbers++] = v;
+            continue;
+        }
+        if (!asked.empty()) {
+            Out(tag + "'" + a + "' names a second object after '" + asked + "'; usage -> free [dx dy] [family|<object name>]; nothing asked");
+            return;
+        }
+        asked = a;
+    }
+    if (numbers == 1) { Out(tag + "dx and dy come as a pair; usage -> free [dx dy] [family|<object name>]; nothing asked"); return; }
+    int target = -1;
+    std::string askedText;
+    if (asked.empty() || Lower(asked) == "family") {
+        try {
+            target = (int)g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(HeroSiege::Objects::GetObjectName(kFlightFamily))) }).ToDouble();
+        } catch (...) { target = -1; }
+        if (target < 0) { Out(tag + "refused - Collision_Parent_obj did not resolve by name; nothing asked"); return; }
+        askedText = "family:" + FlpObjectName(target) + "(" + std::to_string(target) + ")";
+    } else {
+        try {
+            target = (int)g_Yytk->CallBuiltin("asset_get_index", { RValue(asked) }).ToDouble();
+            if (target >= 0 && !g_Yytk->CallBuiltin("object_exists", { RValue((double)target) }).ToBoolean()) target = -1;
+            if (target >= 0) {
+                const RValue back = g_Yytk->CallBuiltin("object_get_name", { RValue((double)target) });
+                if (back.m_Kind != VALUE_STRING || back.ToString() != asked) target = -1;
+            }
+        } catch (...) { target = -1; }
+        if (target < 0) {
+            Out(tag + "refused - '" + asked + "' is not an object name (asset_get_index did not give an object whose"
+                " object_get_name reads it back); nothing asked");
+            return;
+        }
+        askedText = asked + "(" + std::to_string(target) + ")";
+    }
+    CInstance* inst = nullptr;
+    try {
+        RValue p;
+        if (HhResolveLocalPlayer(p)) inst = HhResolveInstance(p);
+    } catch (...) { inst = nullptr; }
+    if (!inst) { Out(tag + "refused - no local player resolved: load a character"); return; }
+    std::string line;
+    try {
+        const RValue self = inst->ToRValue();
+        const RValue x = g_Yytk->CallBuiltin("variable_instance_get", { self, RValue("x") });
+        const RValue y = g_Yytk->CallBuiltin("variable_instance_get", { self, RValue("y") });
+        if (!JsNumber(x) || !JsNumber(y)) { Out(tag + "refused - the player's x, y are not numbers; nothing asked"); return; }
+        // With no offset the player's own x, y go in unchanged, whatever kind
+        // the runtime gave them.
+        const bool moved = offset[0] != 0.0 || offset[1] != 0.0;
+        const RValue qx = moved ? RValue(x.ToDouble() + offset[0]) : x;
+        const RValue qy = moved ? RValue(y.ToDouble() + offset[1]) : y;
+        RValue meetArgs[3] = { qx, qy, RValue((double)target) };
+        RValue met;
+        meeting(met, inst, inst, 3, meetArgs);
+        RValue posArgs[3] = { qx, qy, RValue((double)target) };
+        RValue at;
+        position(at, inst, inst, 3, posArgs);
+        const int by = JsObjectIndexOf(at);
+        line = std::string("flightprobe free: blocked=") + (met.ToBoolean() ? "yes" : "no")
+            + " by=" + (by >= 0 ? FlpObjectName(by) : std::string("none"))
+            + " x=" + FcpNs::NumberText(x.ToDouble()) + " y=" + FcpNs::NumberText(y.ToDouble())
+            + " dx=" + FcpNs::NumberText(offset[0]) + " dy=" + FcpNs::NumberText(offset[1])
+            + " asked=" + askedText;
+    } catch (...) { line = tag + "unreadable (a read or a saved original threw); nothing answered"; }
+    Out(line);
+}
+
+// The player's layer and its depth beside what this room visit's census chose,
+// read from the flight adapter's own record (g_Flight.Visit(), its census
+// tally, and the adapter's first non-struct effect kind) with the core's own
+// filter rule. The game
+// layers' front end is read as the census reads it (FlightLayerEnds,
+// GameFrontDepth). A visit counts only while it is this room's and its layer
+// still exists under our name, as the check before each write asks; before a
+// census, or in a room the census has not reached yet, the visit's fields read
+// none and 0. Nothing here runs a census, creates or moves a layer, or writes.
+static void FlpDepth()
+{
+    const std::string tag = "flightprobe depth: ";
+    std::string why;
+    RValue player;
+    CInstance* self = nullptr;
+    double x = 0, y = 0;
+    if (!FcpPlayer(player, self, x, y, why)) { Out(tag + "refused " + why); return; }
+    g_Flight.RefreshForStat((int64_t)g_RuntimeFrame, true);
+    std::string layerText = "unreadable", depthText = "unreadable";
+    try {
+        const RValue layer = g_Yytk->CallBuiltin("variable_instance_get", { player, RValue("layer") });
+        if (JsNumber(layer) || layer.m_Kind == VALUE_REF) {
+            layerText = FcpNs::NumberText(layer.ToDouble());
+            const RValue d = g_Yytk->CallBuiltin("layer_get_depth", { layer });
+            if (JsNumber(d)) depthText = FcpNs::NumberText(d.ToDouble());
+        }
+    } catch (...) {}
+    int64_t room = -1;
+    const bool haveRoom = FlightRoom(room);
+    std::string gameFrontText = "unreadable";
+    FcNs::LayerEnd first, last;
+    double front = 0.0;
+    if (haveRoom && FlightLayerEnds(room, first, last) && FcNs::GameFrontDepth(first, last, front))
+        gameFrontText = FcpNs::NumberText(front);
+
+    const FcNs::FlightLayerVisit& v = g_Flight.Visit();
+    // This room's visit: the census ran here (it reached the layer list only when
+    // it read the game layers' front end, and the tally with it).
+    const bool visitHere = haveRoom && v.room >= 0 && v.room == room;
+    // Its layer still exists under our name: the question the core's check
+    // before each write asks (FlightLayerValid, which only the core calls),
+    // asked here again so a room re-entered under the same index reads none.
+    bool layerHere = false;
+    if (visitHere && v.have) {
+        try {
+            const RValue arg = FlightLayerArg(v.layer);
+            if (g_Yytk->CallBuiltin("layer_exists", { arg }).ToBoolean()) {
+                const RValue name = g_Yytk->CallBuiltin("layer_get_name", { arg });
+                layerHere = name.m_Kind == VALUE_STRING && name.ToString() == std::string(FcNs::kFlightLayerName);
+            }
+        } catch (...) { layerHere = false; }
+    }
+    std::string flightLayer = "none", flightDepth = "none", frontText = "none", filterText = "none";
+    if (layerHere) {
+        flightLayer = std::to_string(v.layer);
+        flightDepth = FcpNs::NumberText(v.depth);
+        if (v.by >= 0 && v.by < (int)v.layers.size())
+            frontText = v.layers[(size_t)v.by].name + "@" + FcpNs::NumberText(v.layers[(size_t)v.by].depth);
+        else
+            frontText = "game@" + FcpNs::NumberText(v.gameFront);
+    }
+    if (visitHere && v.gameFrontRead) {
+        // The rearmost filter in force: the one with the highest depth, as the
+        // choice takes it, on the elements the last re-choice counted.
+        const int rearmost = FcNs::RearmostFilter(v.gameFront, v.layers);
+        if (rearmost >= 0)
+            filterText = v.layers[(size_t)rearmost].name + "@" + FcpNs::NumberText(v.layers[(size_t)rearmost].depth);
+    }
+    // The census's own sort of every layer it was handed (fx= and unread=, the
+    // core's rendering), the kind of its first non-struct effect answer, and
+    // how many it was handed; before a census here, the empty tally.
+    const bool counted = visitHere && v.gameFrontRead;
+    const std::string fxKind = counted && g_FlightFxKind >= 0 ? std::to_string(g_FlightFxKind) : std::string("none");
+    char ms[32];
+    std::snprintf(ms, sizeof ms, "%.2f", visitHere && std::isfinite(v.censusMs) ? v.censusMs : 0.0);
+    Out(tag + "layer=" + layerText + " depth=" + depthText + " flight-layer=" + flightLayer + " flight-depth=" + flightDepth
+        + " front=" + frontText + " game-front=" + gameFrontText + " filter=" + filterText
+        + " " + FcNs::CensusTallyText(counted ? v.tally : FcNs::CensusTally{}) + " fx-kind=" + fxKind
+        + " layers=" + std::to_string(counted ? v.listed : 0) + " census-ms=" + ms
+        + " moves=" + std::to_string(visitHere ? v.moves : 0) + " y=" + FcpNs::NumberText(y)
+        + " state=" + std::string(FcNs::StateName(g_Flight.CurrentState()))
+        + " room=" + (haveRoom ? std::to_string(room) : std::string("unreadable")));
+}
+
+// Whether the Angelic roll can drop an entry: its repository definition, by
+// name, has rarity ("27" of itemBaseInfoStruct) 7 or 10 and is not flagged
+// hidden ("40"), the roll's own two filters (RDM § 13.4, static reading). The
+// caller holds FlightDropOutsideRoll, so #74's typing hook records nothing.
+static bool FlpAngelicDroppable(const double t[3])
+{
+    try {
+        const RValue def = g_Yytk->CallGameScript(HeroSiege::Scripts::gml_Script_GetUniqueRepoStruct,
+                                                  { RValue(t[0]), RValue(t[1]), RValue(t[2]) });
+        if (def.m_Kind != VALUE_OBJECT) return false;
+        const RValue info = g_Yytk->CallBuiltin("variable_struct_get", { def, RValue("itemBaseInfoStruct") });
+        double rarity = -1.0;
+        if (!TryStructNumber(info, "27", rarity)) return false;
+        const RValue f40 = g_Yytk->CallBuiltin("variable_struct_get", { info, RValue("40") });
+        bool hidden = false;
+        try { hidden = f40.m_Kind != VALUE_UNDEFINED && f40.m_Kind != VALUE_UNSET && f40.ToBoolean(); } catch (...) { hidden = false; }
+        return (rarity == 7.0 || rarity == 10.0) && !hidden;
+    } catch (...) { return false; }
+}
+
+// `pool`: the lists both rolls draw from, read and never written. The Angelic
+// element is the one #74's resolution names (g_SigListName[g_SigListIndex]),
+// read directly so that no resolution state is recorded; `droppable=` is T, the
+// entries the roll's re-draw can end on (each distinct entry asked once). The
+// stand-ins' counts follow the drop adapter's own rules on its own stand-ins:
+// Water Melon's and Soul Collector's as FlightDropCountAngelic counts them, and
+// Pocket Elf's stand-in as FlightDropResolveElf picks it (the core's even-count
+// rule over the candidates that pass the unique roll's filter), from the lists
+// as they are now. Refused while a roll's entries are on a list.
+static void FlpPool()
+{
+    const std::string tag = "flightprobe pool: ";
+    if (g_SigRollPushed > 0 || g_FlightDrop.rollPushed > 0) {
+        Out(tag + "refused a roll's stand-in entries are on the lists; nothing read");
+        return;
+    }
+    std::string why;
+    RValue instance;
+    if (!SignatureController(instance, why)) { Out(tag + "refused " + why); return; }
+    const std::string where = "Controller_obj." + g_SigListName + "[" + std::to_string(g_SigListIndex) + "]";
+    RValue sub;
+    double id = -1.0;
+    int size = -1;
+    try {
+        if (!g_Yytk->CallBuiltin("variable_instance_exists", { instance, RValue(g_SigListName) }).ToBoolean()) {
+            Out(tag + "refused Controller_obj has no variable " + g_SigListName);
+            return;
+        }
+        const RValue outer = g_Yytk->CallBuiltin("variable_instance_get", { instance, RValue(g_SigListName) });
+        if (outer.m_Kind != VALUE_ARRAY) { Out(tag + "refused Controller_obj." + g_SigListName + " is not an array"); return; }
+        const int len = (int)g_Yytk->CallBuiltin("array_length", { outer }).ToDouble();
+        if (g_SigListIndex < 0 || g_SigListIndex >= len) {
+            Out(tag + "refused Controller_obj." + g_SigListName + " has " + std::to_string(len) + " elements");
+            return;
+        }
+        sub = g_Yytk->CallBuiltin("array_get", { outer, RValue((double)g_SigListIndex) });
+        std::string step;
+        if (!SigListHandle(sub, id, step)) { Out(tag + "refused " + where + " is not a ds_list (" + step + ")"); return; }
+        size = (int)g_Yytk->CallBuiltin("ds_list_size", { sub }).ToDouble();
+    } catch (...) { Out(tag + "refused reading " + where + " threw"); return; }
+
+    const FcNs::StandIn* melon = FcNs::StandInFor(FcNs::Charm::Wings);
+    const FcNs::StandIn* soul = FcNs::StandInFor(FcNs::Charm::Broom);
+    const auto same = [](const double t[3], const FcNs::StandIn* s) {
+        return s && t[0] == (double)s->t && t[1] == (double)s->sub && t[2] == (double)s->b;
+    };
+    int droppable = 0, melonN = 0, soulN = 0;
+    std::array<FcNs::CandidateCounts, FcNs::kElfCandidateCount> counts{};
+    double ids[FcNs::kUniqueSubLists] = { -1.0, -1.0, -1.0, -1.0, -1.0 };
+    int sizes[FcNs::kUniqueSubLists] = { -1, -1, -1, -1, -1 };
+    bool undersized = false;   // not `small`: the Windows headers define it as a macro
+    {
+        FlightDropOutsideRoll outside;
+        std::map<std::array<double, 3>, bool> asked;
+        for (int e = 0; e < size; ++e) {
+            double t[3] = { 0.0, 0.0, 0.0 };
+            if (!SigEntry(sub, e, t)) continue;
+            if (same(t, melon)) ++melonN;
+            if (same(t, soul)) ++soulN;
+            const std::array<double, 3> key = { t[0], t[1], t[2] };
+            auto it = asked.find(key);
+            if (it == asked.end()) it = asked.emplace(key, FlpAngelicDroppable(t)).first;
+            if (it->second) ++droppable;
+        }
+
+        RValue subs[FcNs::kUniqueSubLists];
+        if (!FlightDropReadUniqueLists(subs, ids, sizes, why)) { Out(tag + "refused " + why); return; }
+        for (int k = 0; k < FcNs::kUniqueSubLists; ++k) {
+            if (sizes[k] < kSigListMinSize) undersized = true;
+            for (int e = 0; e < sizes[k]; ++e) {
+                double t[3] = { 0.0, 0.0, 0.0 };
+                if (!SigEntry(subs[k], e, t)) continue;
+                for (int c = 0; c < FcNs::kElfCandidateCount; ++c)
+                    if (same(t, &FcNs::kElfCandidates[c])) ++counts[c].counts[k];
+            }
+        }
+        for (int c = 0; c < FcNs::kElfCandidateCount; ++c) counts[c].passes = FlightDropUniquePasses(FcNs::kElfCandidates[c]);
+    }
+    // A sub-list under the adapter's minimum is one it refuses to resolve, so it
+    // names no stand-in either.
+    const int pick = undersized ? -1 : FcNs::PickElfStandIn(counts);
+    const std::string standIn = undersized ? std::string("none") : FcNs::ElfStandInText(true, pick, counts);
+    std::string countsText = "none";
+    if (pick >= 0) {
+        countsText.clear();
+        for (int k = 0; k < FcNs::kUniqueSubLists; ++k)
+            countsText += (k ? "," : "") + std::to_string(counts[pick].counts[k]);
+    }
+    std::string sizesText;
+    for (int k = 0; k < FcNs::kUniqueSubLists; ++k) sizesText += (k ? "," : "") + std::to_string(sizes[k]);
+    Out(tag + "angelic list=" + g_SigListName + "[" + std::to_string(g_SigListIndex) + "]" + " size=" + std::to_string(size)
+        + " droppable=" + std::to_string(droppable) + " water-melon=" + std::to_string(melonN) + " soul-collector=" + std::to_string(soulN)
+        + " | unique sizes=" + sizesText + " standin-elf=" + standIn + " counts=" + countsText);
+}
+
+// `dress off|on`: the footprint write of the Custom Forge's final pass
+// (FlightCharmDressFinal) alone; the icon and every other field are written
+// as before.
+static void FlpDress(const std::vector<std::string>& tail)
+{
+    const std::string tag = "flightprobe dress: ";
+    if (tail.size() > 1 || (tail.size() == 1 && Lower(tail[0]) != "off" && Lower(tail[0]) != "on")) {
+        Out(tag + "refused usage: dress off | dress on");
+        return;
+    }
+    if (tail.size() == 1) {
+        const bool on = Lower(tail[0]) == "on";
+        g_FlightDressFootprint = on;
+    }
+    Out(tag + "footprint write " + (g_FlightDressFootprint ? "on" : "off"));
+}
+
+// `copies <k>`: the stand-in copies each switched-on charm pushes onto each
+// list, read by both rolls' pushes (FlightDropUniquePush, FlightDropAngelicPush)
+// at the next roll.
+static void FlpCopies(const std::vector<std::string>& tail)
+{
+    const std::string tag = "flightprobe copies: ";
+    long long k = 0;
+    if (tail.size() != 1 || !FcpNs::ParseWhole(tail[0], 1, kFlpMaxCopies, k)) {
+        Out(tag + "refused usage: copies <k>, k a whole number 1.." + std::to_string(kFlpMaxCopies) + " (now "
+            + std::to_string(g_FlightDropCopies) + ")");
+        return;
+    }
+    const int was = g_FlightDropCopies;
+    g_FlightDropCopies = (int)k;
+    Out(tag + std::to_string(k) + " (was " + std::to_string(was) + ") stand-in copies per switched-on charm on each list,"
+        " on both rolls, from the next roll");
+}
+
+static void FlpUnique(const std::vector<std::string>& tail)
+{
+    const std::string tag = "flightprobe unique: ";
+    long long n = 0;
+    if (tail.size() != 1 || !FcpNs::ParseWhole(tail[0], 1, kFlpMaxUnique, n)) {
+        Out(tag + "refused usage: unique <n>, n a whole number 1.." + std::to_string(kFlpMaxUnique));
+        return;
+    }
+    std::string why;
+    RValue player;
+    CInstance* self = nullptr;
+    double x = 0, y = 0;
+    if (!FcpPlayer(player, self, x, y, why)) { Out(tag + "refused " + why); return; }
+    const double ground = FlpGroundObject();
+    if (ground < 0) { Out(tag + "refused Loot_Ground_obj not resolved"); return; }
+    int placed = 0, elf = 0;
+    for (int i = 1; i <= (int)n; ++i) {
+        const std::string line = "flightprobe unique #" + std::to_string(i) + ": ";
+        ++g_FlpUniqueCalls;
+        const double before = FcpNewestGround(ground, nullptr);
+        RValue res;
+        AurieStatus st = AURIE_EXTERNAL_ERROR;
+        try { st = g_Yytk->CallGameScriptEx(res, HeroSiege::Scripts::gml_Script_DropUniqueItems, self, self, { RValue(x), RValue(y) }); }
+        catch (...) { Out(line + "threw"); continue; }
+        if (!AurieSuccess(st)) { Out(line + "threw (the call answered st=" + std::to_string((int)st) + ")"); continue; }
+        RValue newest;
+        const double after = FcpNewestGround(ground, &newest);
+        if (after <= before) { Out(line + "nothing placed (returned " + Describe(res) + ")"); continue; }
+        ++placed;
+        ++g_FlpUniquePlaced;
+        const RValue item = FlpGroundItem(newest);
+        RValue info;
+        const std::string rarity = FlightField(item, "itemInfoStruct", info) ? FlpText(info, "27") : std::string("unreadable");
+        FcNs::Rolled rolled;
+        if (FlightCharmOf(item, rolled) && rolled.charm == FcNs::Charm::Elf) {
+            ++elf;
+            ++g_FlpUniqueElf;
+        }
+        Out(line + "placed " + FlpItemName(item) + " rarity=" + rarity);
+    }
+    // The game's own caller is a monster's death; this one is the local
+    // player, and the line says so.
+    Out(tag + "calls=" + std::to_string(n) + " placed=" + std::to_string(placed) + " elf=" + std::to_string(elf) + " self=player");
+}
+
+static void FlpStat()
+{
+    FlightCharmCommand("stat");
+    Out(std::string("flightprobe stat: marker=") + kFlpMarker + " copies=" + std::to_string(g_FlightDropCopies)
+        + " dress=" + (g_FlightDressFootprint ? "on" : "off") + " spawned=" + std::to_string(g_FlpSpawned)
+        + " unique-calls=" + std::to_string(g_FlpUniqueCalls) + " unique-placed=" + std::to_string(g_FlpUniquePlaced)
+        + " unique-elf=" + std::to_string(g_FlpUniqueElf)
+        + " ground-hook=" + (g_Orig_LootGroundInit ? "in" : g_HiddenLootInstallTried ? "refused" : "not-tried")
+        + " ground-icons=" + std::to_string(g_FlightGround) + " guard=" + g_FlightGuardRoute);
+}
+
+static void FlpUsage()
+{
+    Out(std::string("flightprobe: marker=") + kFlpMarker);
+    Out("  spawn elf|wings|broom [<p> <m> | <s>] | ground | free [dx dy] [family|<object name>] | depth | pool | dress off|on"
+        " | copies <k 1-" + std::to_string(kFlpMaxCopies) + "> | unique <n 1-" + std::to_string(kFlpMaxUnique) + "> | stat"
+        "   research instrument for the flight charms, docs/flight-charms-research.md (research build only)");
+}
+
+static void FlpCommand(const std::string& rest)
+{
+    std::vector<std::string> tok;
+    { std::stringstream ss(rest); std::string w; while (ss >> w) tok.push_back(w); }
+    if (tok.empty()) { FlpUsage(); return; }
+    const std::string sub = Lower(tok[0]);
+    const std::vector<std::string> tail(tok.begin() + 1, tok.end());
+    if (sub == "spawn") { FlpSpawn(tail); return; }
+    if (sub == "ground") { FlpGround(); return; }
+    if (sub == "free") { FlpFree(tail); return; }
+    if (sub == "depth") { FlpDepth(); return; }
+    if (sub == "pool") { FlpPool(); return; }
+    if (sub == "dress") { FlpDress(tail); return; }
+    if (sub == "copies") { FlpCopies(tail); return; }
+    if (sub == "unique") { FlpUnique(tail); return; }
+    if (sub == "stat") { FlpStat(); return; }
+    FlpUsage();
+}
+// ---- end of flightprobe
+#endif // FORGEPACT_RELEASE (flightprobe)
 
 // ---- Loot announcements (LootAnnounceMod.hpp): the adapter -----------------
 // `lootann 1|0|stat` (ForgePact #17, the Mods tab's switch). Offline, the game
@@ -58318,7 +62212,7 @@ static void RunCommand(const std::string& line)
         "craftmats", "gemmythic", "gemmaxroll", "gemfilter", "skillstate", "talentalloc",
         "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem", "frameprof", "farsleep",
         "stashmoveall", "stashmove", "densityroll", "hiddenloot", "bossrarity", "incident", "dungeonchest",
-        "jumpscenery", "skillslider", "gambapity", "lootann", "pillartips", "soulpiece"
+        "jumpscenery", "skillslider", "gambapity", "lootann", "pillartips", "flightcharm", "soulpiece"
     };
     if (kPlayerCommands.find(lc) == kPlayerCommands.end()) {
         Out("command unavailable in player build: " + cmd);
@@ -58404,6 +62298,9 @@ static void RunCommand(const std::string& line)
 #ifndef FORGEPACT_RELEASE
     if (HandleGambaProbeCommand(lc, rest)) return;
 #endif
+#ifndef FORGEPACT_RELEASE
+    if (HandleCharmProbeCommand(lc, rest)) return;
+#endif
     if (HandleLiveOneResearchCommand(lc, rest)) return;
     if (HandleSkillStateCommand(lc, rest)) return;
     if (HandleTalentAllocCommand(lc, rest)) return;
@@ -58478,6 +62375,13 @@ static void RunCommand(const std::string& line)
     if (lc == "farsleep") { FarSleepCommand(rest); return; }
     // Jump through scenery: the Mods tab's switch, the same early return.
     if (lc == "jumpscenery") { JumpSceneryCommand(rest); return; }
+    // Flight charms: the Items tab's drop switches and `stat`, the same early return.
+    if (lc == "flightcharm") { FlightCharmCommand(rest); return; }
+#ifndef FORGEPACT_RELEASE
+    // Flight charms' research instrument (research build only, not a player
+    // command): the same standalone early return.
+    if (lc == "flightprobe") { FlpCommand(rest); return; }
+#endif
     // Loot announcements: the Mods tab's switch, the same early return.
     if (lc == "lootann") { LootAnnounceCommand(rest); return; }
     // Always show Chaos Pillar mods: the Mods tab's switch, the same early return.
@@ -59747,7 +63651,7 @@ void FrameCallback(FWFrame& FrameContext)
 #ifndef FORGEPACT_RELEASE
     CensusTick(fc);
     CrashWatchTick(fc);   // crashwatch's heartbeat (#173); returns at once while off
-    JpFrameTick();   // jumpprobe's window and trace; returns at once while nothing is armed, traced or on
+    JpFrameTick();   // jumpprobe's window and trace; returns at once while nothing is hooked, armed, traced or on
     GpFrameTick();   // gambaprobe's live machines; returns at once while nothing is armed or on
 #endif
 
@@ -59991,6 +63895,12 @@ void FrameCallback(FWFrame& FrameContext)
     // (JumpScenery.hpp). The decisions happen inside the hooked calls, at the
     // point of use. Returns at once while it is off.
     if (g_Setup) JumpSceneryTick();
+
+    // Flight charms (ForgePact #158): returns at once until dressing first
+    // recognises a charm; then the install once a character exists, and the
+    // local player refreshed. The decisions happen inside the hooked calls, at
+    // the point of use.
+    if (g_Setup) FlightCharmTick();
 
     // Goburin's Head pity, toggled by `gambapity <count>`: the gamba machines'
     // sprites, once a frame, and each explosion's decision at its deadline
