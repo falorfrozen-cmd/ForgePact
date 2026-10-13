@@ -13045,6 +13045,10 @@ struct FlightDropState {
     bool            rollUnique = false;
     int             rollPushed = 0;   // entries on every list together, for injected=
     int             rollCopies[FcNs::kCharmCount] = { 0, 0, 0 };
+    // The entries of each charm that actually went onto each list: rollCopies[c] on every list
+    // after a whole push, fewer after a ds_list_add that threw partway. The tail check and the
+    // removal go by these, so a partial push comes off exactly.
+    int             rollOn[FcNs::kUniqueSubLists][FcNs::kCharmCount] = {};
     int             rollLists = 0;
     int             rollIndex[FcNs::kUniqueSubLists] = { -1, -1, -1, -1, -1 };
     RValue          rollSub[FcNs::kUniqueSubLists];
@@ -14360,7 +14364,8 @@ static void FlightDropResolveElf()
 }
 
 // Whether list k of this roll ends with exactly this roll's entries: its size before, plus each
-// charm's stand-in rollCopies[c] times, in table order (the order they were pushed).
+// charm's stand-in rollOn[k][c] times (what went onto that list), in table order (the order they
+// were pushed).
 static bool FlightDropTailHolds(int k, int& len)
 {
     len = -1;
@@ -14373,7 +14378,7 @@ static bool FlightDropTailHolds(int k, int& len)
     int at = before;
     for (const FcNs::CharmRow& row : FcNs::kCharms) {
         const FcNs::StandIn* s = FlightDropStandIn(row.charm);
-        for (int n = 0; n < g_FlightDrop.rollCopies[(int)row.charm]; ++n) {
+        for (int n = 0; n < g_FlightDrop.rollOn[k][(int)row.charm]; ++n) {
             double e[3] = { 0.0, 0.0, 0.0 };
             if (!s || !SigEntry(sub, at++, e) || e[0] != (double)s->t || e[1] != (double)s->sub || e[2] != (double)s->b) return false;
         }
@@ -14408,15 +14413,22 @@ static bool FlightDropHeldReadBack(std::string& seen)
 }
 
 // Takes this roll's entries off every list they went onto again - one ds_list_delete of the last
-// entry per entry, only while the tail still holds exactly them - else leaves the list as found,
-// says so and counts it (`anomalies=`). Never throws: #74's removal runs after it.
+// entry per entry that went onto it (rollOn, so a partial push comes off too), only while the tail
+// still holds exactly them - else leaves the list as found, says so and counts it (`anomalies=`).
+// Never throws: #74's removal runs after it.
 static void FlightDropRemove()
 {
     FlightDropState& d = g_FlightDrop;
-    if (d.rollPushed <= 0 || d.rollLists <= 0) { d.rollPushed = 0; d.rollLists = 0; return; }
-    int perList = 0;
-    for (int i = 0; i < FcNs::kCharmCount; ++i) perList += d.rollCopies[i];
+    if (d.rollPushed <= 0 || d.rollLists <= 0) {
+        d.rollPushed = 0;
+        d.rollLists = 0;
+        for (int k = 0; k < FcNs::kUniqueSubLists; ++k)
+            for (int i = 0; i < FcNs::kCharmCount; ++i) d.rollOn[k][i] = 0;
+        return;
+    }
     for (int k = 0; k < d.rollLists; ++k) {
+        int perList = 0;
+        for (int i = 0; i < FcNs::kCharmCount; ++i) perList += d.rollOn[k][i];
         int len = -1;
         bool tail = false;
         try {
@@ -14437,7 +14449,10 @@ static void FlightDropRemove()
     d.rollPushed = 0;
     d.rollLists = 0;
     for (int i = 0; i < FcNs::kCharmCount; ++i) d.rollCopies[i] = 0;
-    for (int k = 0; k < FcNs::kUniqueSubLists; ++k) d.rollSub[k] = RValue();
+    for (int k = 0; k < FcNs::kUniqueSubLists; ++k) {
+        d.rollSub[k] = RValue();
+        for (int i = 0; i < FcNs::kCharmCount; ++i) d.rollOn[k][i] = 0;
+    }
 }
 
 // Pushes each switched-on charm's stand-in entry g_FlightDropCopies times onto every list this
@@ -14447,7 +14462,12 @@ static void FlightDropPushOnto(const RValue subs[], const int indices[], const i
 {
     FlightDropState& d = g_FlightDrop;
     d.rollLists = lists;
-    for (int k = 0; k < lists; ++k) { d.rollSub[k] = subs[k]; d.rollIndex[k] = indices[k]; d.rollBefore[k] = before[k]; }
+    for (int k = 0; k < lists; ++k) {
+        d.rollSub[k] = subs[k];
+        d.rollIndex[k] = indices[k];
+        d.rollBefore[k] = before[k];
+        for (int i = 0; i < FcNs::kCharmCount; ++i) d.rollOn[k][i] = 0;
+    }
     bool threw = false;
     for (const FcNs::CharmRow& row : FcNs::kCharms) {
         const int i = static_cast<int>(row.charm);
@@ -14463,6 +14483,7 @@ static void FlightDropPushOnto(const RValue subs[], const int indices[], const i
                     g_Yytk->CallBuiltin("array_set", { entry, RValue(2.0), RValue((double)s->b) });
                     g_Yytk->CallBuiltin("ds_list_add", { d.rollSub[k], entry });
                     ++pushed;
+                    ++d.rollOn[k][i];
                 } catch (...) { threw = true; }
             }
         }
@@ -14475,11 +14496,12 @@ static void FlightDropPushOnto(const RValue subs[], const int indices[], const i
         d.injected += d.rollPushed;
         return;
     }
-    // A throw mid-push leaves a tail that is not the whole push: it is left as found and counted.
+    // A throw mid-push: the entries that did go on (rollOn) come off again, so neither this roll
+    // nor #74's tail check after it meets a partial push; the throw counts once.
     const int pushed = d.rollPushed;
     FlightDropRemove();
-    if (threw) return;
     ++d.anomalies;
+    if (threw) return;
     if (!d.heldMissLogged) {
         d.heldMissLogged = true;
         Out("flightcharm: push not visible through Controller_obj." + g_SigListName + " (a fresh read holds " + seen + ", expected "
@@ -54461,12 +54483,17 @@ static bool FlightLayerEffect(int64_t id, bool& effect)
     return false;
 }
 
-// A remembered layer's element count again, for the re-choice.
-static bool FlightLayerCount(int64_t id, int64_t& elements)
+// A remembered layer's visibility and element count again, for the re-choice
+// (a filter hidden at the census may be shown later).
+static bool FlightLayerCount(int64_t id, bool& visible, int64_t& elements)
 {
     try {
-        const RValue all = g_Yytk->CallBuiltin("layer_get_all_elements", { FlightLayerArg(id) });
+        const RValue arg = FlightLayerArg(id);
+        const RValue shown = g_Yytk->CallBuiltin("layer_get_visible", { arg });
+        const RValue all = g_Yytk->CallBuiltin("layer_get_all_elements", { arg });
         if (all.m_Kind != VALUE_ARRAY) return false;
+        if (shown.m_Kind != VALUE_BOOL && !JsNumber(shown)) return false;
+        visible = shown.ToBoolean();
         elements = HeroSiege::YYTK::GetArrayLength(g_Yytk, all);
         return true;
     } catch (...) {}

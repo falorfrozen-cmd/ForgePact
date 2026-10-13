@@ -291,6 +291,15 @@ class FlightCharmsCoreBehaviorTests(unittest.TestCase):
     def test_front_layer_filter_the_rearmost_filter_is_reported(self):
         self.assertScenarios("front_layer_filter/the_rearmost_filter_is_reported")
 
+    def test_front_layer_filter_a_layer_that_becomes_a_filter_after_the_census(self):
+        # PR #214 review round 1: an effect layer that empties after the census
+        # (its effect unread there, since it held instances) and a filter hidden
+        # at the census and shown later both count from the next re-choice, so
+        # the flight layer never stays in front of them. Both fail against
+        # 9b12f86, whose re-choice recounted elements only.
+        self.assertScenarios("front_layer_filter/an_effect_layer_that_empties_is_a_filter",
+                             "front_layer_filter/a_filter_shown_after_the_census_is_counted")
+
     # ---- census outcomes: every listed layer in exactly one (`flightprobe depth`) --
 
     def test_census_outcomes_town_effect_1_is_read_as_a_struct(self):

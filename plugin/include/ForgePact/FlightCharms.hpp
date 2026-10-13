@@ -319,12 +319,13 @@ inline constexpr std::string_view StateName(State s)
 //   depthCalls = depthOther + depthSeen
 //   depthSeen  = depthIdle + noFront + depth
 //
-// The census's layer_get_fx reads, over the session: each in exactly one of
+// The layer_get_fx reads, over the session (the census's, and the re-choice's
+// for a layer that became visible and empty after it): each in exactly one of
 // fxStruct (an effect), fxOther (an answer that is not a struct) and fxFailed
 // (the read threw or was refused). The last two both class the layer as no
 // effect; they are counted so a runner whose read never works shows it. A
 // layer whose effect was never read counts in none of them; each visit's
-// CensusTally (`flightprobe depth`'s `unread=`) says why.
+// CensusTally (`flightprobe depth`'s `unread=`) says why the census did not.
 //
 // The adapter hands every hooked call to the core (OnQuery, NoteCall,
 // OnUpdateDepth, NoteDepthOther) except at three returns, which count nothing:
@@ -351,9 +352,9 @@ struct FlightCounters {
     uint64_t depthSeen = 0;     // of depthCalls, the local player's
     uint64_t depthIdle = 0;     // of depthSeen, no write because flight was not on (off or residual)
     uint64_t noFront = 0;       // of depthSeen while on, no write: the room unreadable, or no flight layer (the census yielded none)
-    uint64_t fxStruct = 0;      // census effect reads that answered a struct: an effect
-    uint64_t fxOther = 0;       // census effect reads that answered anything else: no effect
-    uint64_t fxFailed = 0;      // census effect reads that failed: no effect
+    uint64_t fxStruct = 0;      // effect reads that answered a struct: an effect
+    uint64_t fxOther = 0;       // effect reads that answered anything else: no effect
+    uint64_t fxFailed = 0;      // effect reads that failed: no effect
     uint64_t monster = 0;       // of answered, a monster named on place_meeting
     uint64_t monsterKept = 0;   // of other, a monster named on another row, or an InstancePlaceTallest monster, kept
 };
@@ -413,6 +414,8 @@ inline bool GameFrontDepth(const LayerEnd& first, const LayerEnd& last, double& 
 // One room layer in front of the game layers' front end, as the census read
 // it: layer_get_name, layer_get_visible, the length of layer_get_all_elements,
 // and, for a visible empty layer only, whether layer_get_fx answered a struct.
+// The re-choice reads the visibility and the count again, and the effect of a
+// layer that has become visible and empty without it ever having been read.
 struct RoomLayer {
     int64_t     id = -1;
     double      depth = 0.0;
@@ -420,6 +423,7 @@ struct RoomLayer {
     bool        visible = false;
     int64_t     elements = 0;
     bool        effect = false;
+    bool        effectRead = false;   // layer_get_fx was asked once, whatever it answered
 };
 
 // A filter layer: visible, holding no element, carrying a layer effect, and in
@@ -655,11 +659,14 @@ public:
         // A listed layer's name, visibility and element count. The census only,
         // for a layer in front of the game layers' front end.
         std::function<bool(int64_t id, RoomLayer& layer)> detail;
-        // Whether layer_get_fx answers a struct. The census only, for a visible
-        // empty layer; a failed read is no effect.
+        // Whether layer_get_fx answers a struct, for a visible empty layer: at
+        // the census, or at the re-choice for a remembered layer that has
+        // become visible and empty since; once per layer per visit. A failed
+        // read is no effect.
         std::function<bool(int64_t id, bool& effect)> effect;
-        // A remembered layer's element count again. The re-choice only.
-        std::function<bool(int64_t id, int64_t& elements)> count;
+        // A remembered layer's visibility and element count again. The
+        // re-choice only.
+        std::function<bool(int64_t id, bool& visible, int64_t& elements)> count;
         // The layer named kFlightLayerName, looked up by name (layer_get_id)
         // and moved to `depth`, or created at `depth` by name when the room
         // holds none. The census only, so a room never holds two.
@@ -1092,12 +1099,11 @@ private:
                     // Each read in one of three counts, for the visit and the
                     // session alike; `other` and `failed` both leave the layer
                     // with no effect.
-                    bool effect = false;
-                    const bool read = Call(ops_.effect, e.layer, effect);
-                    l.effect = read && effect;
-                    if (!read) { ++t.fxFailed; ++counters_.fxFailed; }
-                    else if (l.effect) { ++t.fxStruct; ++counters_.fxStruct; }
-                    else { ++t.fxOther; ++counters_.fxOther; }
+                    switch (ReadEffect(l)) {
+                    case EffectRead::Failed: ++t.fxFailed; break;
+                    case EffectRead::Struct: ++t.fxStruct; break;
+                    case EffectRead::Other:  ++t.fxOther; break;
+                    }
                 }
                 visit_.layers.push_back(std::move(l));
             }
@@ -1119,17 +1125,42 @@ private:
         choseAt_ = now;
     }
 
-    // At most once a second while on: the remembered layers' elements again
-    // (a remembered filter that now holds one is a drawn layer), the rule
-    // re-applied, and the layer moved when the depth moves. The effect is not
-    // read again. A failed recount keeps the count the layer had.
+    // One layer_get_fx read of `l`, marked read and counted in the session's
+    // totals; `other` and `failed` both leave the layer with no effect.
+    enum class EffectRead { Struct, Other, Failed };
+    EffectRead ReadEffect(RoomLayer& l)
+    {
+        bool effect = false;
+        const bool read = Call(ops_.effect, l.id, effect);
+        l.effectRead = true;
+        l.effect = read && effect;
+        if (!read) { ++counters_.fxFailed; return EffectRead::Failed; }
+        if (l.effect) { ++counters_.fxStruct; return EffectRead::Struct; }
+        ++counters_.fxOther;
+        return EffectRead::Other;
+    }
+
+    // At most once a second while on: the remembered layers' visibility and
+    // elements again (a remembered filter that now holds one is a drawn layer),
+    // the rule re-applied, and the layer moved when the depth moves. A layer
+    // that is now visible and empty and whose effect was never read (it held
+    // an element, or was hidden, at the census: an effect-carrying
+    // Tree_Leaves that empties) has it read once here, so it counts as the
+    // filter it now is ("Never past a filter"); an effect already read is not
+    // read again. These reads count in the session's totals, not in the
+    // census's tally. A failed recount keeps what the layer had.
     void Rechoose(double now)
     {
         if (now - choseAt_ < kRechoiceMs) return;
         choseAt_ = now;
         for (RoomLayer& l : visit_.layers) {
+            bool visible = false;
             int64_t elements = 0;
-            if (Call(ops_.count, l.id, elements)) l.elements = elements;
+            if (Call(ops_.count, l.id, visible, elements)) {
+                l.visible = visible;
+                l.elements = elements;
+            }
+            if (l.visible && l.elements == 0 && !l.effectRead) ReadEffect(l);
         }
         const FlightDepthChoice c = ChooseFlightDepth(visit_.gameFront, visit_.layers);
         if (!c.ok) return;

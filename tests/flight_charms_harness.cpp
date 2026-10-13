@@ -211,10 +211,11 @@ static Flight makeFlight(FlightWorld& w)
         effect = p->effect;
         return true;
     };
-    ops.count = [&w](int64_t id, int64_t& elements) {
+    ops.count = [&w](int64_t id, bool& visible, int64_t& elements) {
         ++w.countReads;
         const WorldLayer* p = worldLayer(w, id);
         if (!p) return false;
+        visible = p->visible;
         elements = p->elements;
         return true;
     };
@@ -1393,6 +1394,45 @@ int main()
             first && after >= 0 && v.layers[(size_t)after].name == "Effect_1" && v.layers[(size_t)after].depth == -10100.0
                 && w.effectReads == 2 && f.Stats().fxStruct == 2,
             visitText(f, w, 7) + " before=" + std::to_string(before) + " after=" + std::to_string(after));
+    }
+    {
+        // PR #214 review: an effect-carrying layer that holds instances at the
+        // census (Tree_Leaves) is drawn, and its effect is not read. When it
+        // empties it is a filter, so the next re-choice reads its effect once
+        // and moves the flight layer behind it: -5501, not -10001 in front of
+        // it. Read once only: later re-choices do not read it again.
+        FlightWorld w;
+        Flight f = flightIn(w, { { 1101, -10000.0, "Invisible_walls", true, 40, false }, { 1102, -9700.0, "Tree_Leaves", true, 34, true },
+                                 { 1103, 5.0, "Objects", true, 100, false } });
+        const bool before = depthAt(f, w, 1, 7, 0.0).write && f.Visit().depth == -10001.0 && w.effectReads == 0;
+        worldLayer(w, 1102)->elements = 0;
+        const DepthWrite d = depthAt(f, w, 2, 7, 1000.0);
+        const FlightLayerVisit& v = f.Visit();
+        const int filter = RearmostFilter(v.gameFront, v.layers);
+        const bool behind = d.write && v.depth == -5501.0 && flightDepthIn(w, 7) == -5501.0 && v.moves == 1 && filter >= 0
+            && v.layers[(size_t)filter].name == "Tree_Leaves" && w.effectReads == 1 && f.Stats().fxStruct == 1;
+        depthAt(f, w, 3, 7, 2000.0);
+        check("front_layer_filter/an_effect_layer_that_empties_is_a_filter",
+            before && behind && w.effectReads == 1 && f.Visit().depth == -5501.0, visitText(f, w, 7));
+    }
+    {
+        // A filter hidden at the census and shown later: the re-choice reads
+        // each remembered layer's visibility with its count, so the shown
+        // filter (-9800) is counted and the flight layer goes behind it.
+        FlightWorld w;
+        Flight f = flightIn(w, { { 1201, -10000.0, "Invisible_walls", true, 40, false }, { 1202, -9800.0, "Effect_2", false, 0, true },
+                                 { 1203, 5.0, "Objects", true, 100, false } });
+        const bool before = depthAt(f, w, 1, 7, 0.0).write && f.Visit().depth == -10001.0 && w.effectReads == 0;
+        worldLayer(w, 1202)->visible = true;
+        const DepthWrite d = depthAt(f, w, 2, 7, 1000.0);
+        const double shown = f.Visit().depth, shownWorld = flightDepthIn(w, 7);
+        // And hidden again: no longer a filter, so the layer goes back in front.
+        worldLayer(w, 1202)->visible = false;
+        const DepthWrite e = depthAt(f, w, 3, 7, 2000.0);
+        check("front_layer_filter/a_filter_shown_after_the_census_is_counted",
+            before && d.write && shown == -5501.0 && shownWorld == -5501.0 && e.write && w.effectReads == 1
+                && f.Stats().fxStruct == 1 && f.Visit().depth == -10001.0 && f.Visit().moves == 2,
+            visitText(f, w, 7) + " shown=" + std::to_string(shown));
     }
     // ---- census outcomes: every listed layer in exactly one -------------------
     // `flightprobe depth` prints the core's rendering of the visit's tally, so a

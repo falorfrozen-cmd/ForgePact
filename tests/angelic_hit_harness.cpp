@@ -317,6 +317,9 @@ static std::map<std::string, RValue>& obj(const RValue& v) {
 // A field name the runtime will not let variable_struct_set change (empty: none): what the
 // rewrite reads back is then not what it wrote, the one refusal a created field cannot cure.
 static std::string frozenField;
+// ds_list_add throws once, after this many more calls succeed (-1: never), the way a builtin the
+// runtime refuses would; then it is -1 again. A partial push is the case it models.
+static int dsListAddThrowAfter = -1;
 struct FakeYytk {
     RValue CallBuiltin(const char* functionName, std::vector<RValue> a) {
         ++builtinCalls;
@@ -352,7 +355,12 @@ struct FakeYytk {
             const double i = num(a[1]);
             return i >= 0 && i < (double)l.size() ? l[(size_t)i] : RValue();
         }
-        if (n == "ds_list_add") { dsList(a[0]).push_back(a[1]); return RValue(); }
+        if (n == "ds_list_add") {
+            if (dsListAddThrowAfter == 0) { dsListAddThrowAfter = -1; throw std::runtime_error("ds_list_add refused"); }
+            if (dsListAddThrowAfter > 0) --dsListAddThrowAfter;
+            dsList(a[0]).push_back(a[1]);
+            return RValue();
+        }
         if (n == "ds_list_delete") {
             auto& l = dsList(a[0]);
             const double i = num(a[1]);
@@ -879,7 +887,7 @@ static void reset() {
     gameCdpCalls = 0; cdpEntry = gameCreateDefaultParams; paramsLackJ = false; lastParamsFields.clear();
     // The Custom Forge installed its CreateItemNew hook at startup, detoured, as in Live 2 (where
     // builtType= read every hit's built item inside the roll).
-    g_Orig_CreateItemNew = gameCreateItemNew; citemEntry = Hook_CreateItemNew; frozenField.clear();
+    g_Orig_CreateItemNew = gameCreateItemNew; citemEntry = Hook_CreateItemNew; frozenField.clear(); dsListAddThrowAfter = -1;
     g_SigHitAtPoint = false; g_SigRefused[0] = g_SigRefused[1] = false; g_SigRefusedWhy[0].clear(); g_SigRefusedWhy[1].clear();
     g_SigRefusals = 0; g_SigShowLeft = 0;
     gameRepoCalls = 0; repoEntry = gameGetUniqueRepoStruct; repoRead = RepoRead::Picked;
@@ -2299,6 +2307,53 @@ int main(int argc, char** argv) {
             pickPolicy = Pick::Last;
             dropUnique(monster);
             require(countFlightBuilds((int)FcNs::Charm::Elf) == 1, "after a throw, the next pick of ours was not built");
+#else
+            require(false, "this source has no flight drop switch");
+#endif
+        } else if (test == "flight_partial_push_angelic_removes_its_entries") {
+            // PR #214 review: ds_list_add refused partway through the flight push. #74's row and
+            // Gabriel Wings' went on, Witch's Broomstick's did not; the flight entries that did go
+            // on come off again before the roll, so the roll carries #74's row alone, #74's own
+            // removal still finds its tail, and the next roll carries all three again.
+#if defined(HAS_FLIGHTDROPSWITCH) && defined(HAS_FLIGHTDROPSTATE)
+            flightRepo();
+            g_HhForced = true;
+            installDetection();
+            flightSwitch(FcNs::Charm::Wings, true);
+            flightSwitch(FcNs::Charm::Broom, true);
+            dsListAddThrowAfter = 2;
+            roll(monster, { false });
+            require(listDuringCall[0] == plus(vanilla, { kBeltStandIn }),
+                    "the roll carried a partial flight push: " + describe(listDuringCall[0]));
+            require(listTriples() == vanilla, "after the roll the list kept stand-in entries: " + describe(listTriples()));
+            require(g_SigAnomalies == 0, "#74's removal no longer found its own tail");
+            require(g_FlightDrop.injected == 0 && g_FlightDrop.anomalies == 1, "the refused push was not counted once, or was counted injected");
+            require(anyLineHas("flightcharm: pushing", "threw"), "the refused push was not logged");
+            roll(monster, { false });
+            require(listDuringCall[1] == plus(vanilla, { kBeltStandIn, kWaterMelon, kSoulCollector }),
+                    "the next roll did not carry all three rows: " + describe(listDuringCall[1]));
+            require(listTriples() == vanilla && g_SigAnomalies == 0 && g_FlightDrop.anomalies == 1, "the next roll left the list changed");
+#else
+            require(false, "this source has no flight drop switch");
+#endif
+        } else if (test == "flight_partial_push_unique_removes_its_entries") {
+            // The same on the unique roll: Pocket Elf's stand-in went onto lootListUnique[0] and
+            // [1] before ds_list_add refused on [2]; both come off, so the roll reads every
+            // sub-list as the game's own and the next roll carries the stand-in on all five.
+#if defined(HAS_FLIGHTDROPSWITCH) && defined(HAS_FLIGHTDROPSTATE)
+            flightRepo();
+            setUniqueLayout({});
+            flightSwitch(FcNs::Charm::Elf, true);
+            dsListAddThrowAfter = 2;
+            dropUnique(monster);
+            require(uniqueLayoutDuringCall[0] == vanillaLayout, "the roll carried a partial push");
+            require(layoutNow() == vanillaLayout, "after the roll the sub-lists kept stand-in entries");
+            require(g_FlightDrop.injected == 0 && g_FlightDrop.anomalies == 1, "the refused push was not counted once, or was counted injected");
+            dropUnique(monster);
+            for (int k = 0; k < 5; ++k)
+                require(uniqueLayoutDuringCall[1][(size_t)k] == plus(vanillaLayout[(size_t)k], { kAimbot }),
+                        "the next roll did not carry the stand-in on sub-list " + std::to_string(k));
+            require(layoutNow() == vanillaLayout && g_FlightDrop.anomalies == 1, "the next roll left the sub-lists changed");
 #else
             require(false, "this source has no flight drop switch");
 #endif

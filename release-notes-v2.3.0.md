@@ -32,11 +32,16 @@ and each can join the game's own drops behind its own switch, off by default.
   the ground and a gold **Flight** line in its tooltip. While you wear one in
   your charm slots, you walk through rocks, fences, carts, trees and other
   scenery, and your character is drawn in front of it instead of hidden
-  behind it, tree canopies included. A room's colour filter still tints you
-  as it does on the ground. You also walk through monsters instead of being
-  held up by them, but they still hit you and you still hit them
-  (owner-confirmed in play, 2026-10-13). Walls, zone
-  gates, locked doors and the edge of the map still stop you. Take the charm
+  behind it, tree canopies included. A room's colour filter (its tint or
+  lighting overlay) still covers you as it does on the ground, so in the few
+  rooms that put scenery in front of their filter, that scenery stays in front
+  of you. You also walk through monsters instead of being held up by them, but
+  they still hit you and you still hit them (owner-confirmed in play,
+  2026-10-13). Walls (zone gates count as walls), locked doors and the edge of
+  the map still stop you. A few stone walls are built by the game as scenery
+  rather than as walls, such as the town church's, and those you would walk
+  through: a game session measured that the church wall is scenery, not a
+  wall, but nobody has walked it with a charm on yet. Take the charm
   off while you stand inside a prop or a monster and you can still walk out;
   nothing moves you on its own. The game
   itself counts only one flight charm at a time: wear two and only one of

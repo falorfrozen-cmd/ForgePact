@@ -389,7 +389,7 @@ LEVER = {
     "layer_all": "static bool FlightLayerAll(std::vector<FcNs::LayerEnd>& all)",
     "layer_detail": "static bool FlightLayerDetail(int64_t id, FcNs::RoomLayer& layer)",
     "layer_effect": "static bool FlightLayerEffect(int64_t id, bool& effect)",
-    "layer_count": "static bool FlightLayerCount(int64_t id, int64_t& elements)",
+    "layer_count": "static bool FlightLayerCount(int64_t id, bool& visible, int64_t& elements)",
     "layer_place": "static bool FlightLayerPlace(double depth, int64_t& id)",
     "layer_move": "static bool FlightLayerMove(int64_t id, double depth)",
     "layer_valid": "static bool FlightLayerValid(int64_t id)",
@@ -680,37 +680,48 @@ class FlightCharmsLeverContract(unittest.TestCase):
                 body = strip_comments(function_body(source, LEVER[which]))
                 for call in ('"layer_get_all"', '"layer_create"', '"layer_get_fx"', '"layer_depth"', "FlightLayer"):
                     self.assertNotIn(call, body, which)
-        # In the core: layer_get_all, layer_get_fx and the placement run only in
-        # the census; the recount and the move only in the re-choice, which is
-        # due once a second.
+        # In the core: layer_get_all and the placement run only in the census;
+        # the recount and the move only in the re-choice, which is due once a
+        # second; layer_get_fx only in ReadEffect, which only those two call.
         core = self.core()
         census = function_body(core, "void Census(int64_t room, double now)")
         rechoose = function_body(core, "void Rechoose(double now)")
-        for op, where in (("all", census), ("effect", census), ("place", census), ("detail", census),
+        read_effect = function_body(core, "EffectRead ReadEffect(RoomLayer& l)")
+        for op, where in (("all", census), ("effect", read_effect), ("place", census), ("detail", census),
                           ("count", rechoose), ("move", rechoose)):
             with self.subTest(core_op=op):
                 self.assertEqual(core.count("ops_." + op + ","), 1, op)
                 self.assertIn("ops_." + op + ",", where)
+        self.assertEqual(core.count("ReadEffect(l)"), 2, "the census and the re-choice, and nothing else")
+        self.assertIn("ReadEffect(l)", census)
+        self.assertIn("ReadEffect(l)", rechoose)
         self.assertIn("if (now - choseAt_ < kRechoiceMs) return;", rechoose)
         self.assertIn("inline constexpr double kRechoiceMs = 1000.0;", core)
 
-    def test_the_effect_is_read_through_layer_get_fx_by_name_inside_the_census(self):
+    def test_the_effect_is_read_through_layer_get_fx_by_name_for_a_visible_empty_layer(self):
         shipped = strip_comments(self.plugin)
         self.assertEqual(shipped.count('"layer_get_fx"'), 1)
         effect = self.body("layer_effect")
         self.assertIn('g_Yytk->CallBuiltin("layer_get_fx", { FlightLayerArg(id) })', effect)
         # A struct answer is an effect, anything else none; a throw fails the read.
         self.assertIn("effect = fx.m_Kind == VALUE_OBJECT;", effect)
-        # The core reads it for a visible, empty layer only, inside the census.
-        census = strip_comments(function_body(self.core(), "void Census(int64_t room, double now)"))
+        # The core reads it for a visible, empty layer only: in the census, and
+        # (PR #214 review) in the re-choice for a remembered layer that became
+        # visible and empty without its effect ever having been read.
+        core = self.core()
+        census = strip_comments(function_body(core, "void Census(int64_t room, double now)"))
         self.assertIn("if (l.visible && l.elements == 0) {", census)
-        self.assertIn("const bool read = Call(ops_.effect, e.layer, effect);", census)
-        self.assertLess(census.index("if (l.visible && l.elements == 0) {"), census.index("Call(ops_.effect"))
-        self.assertIn("l.effect = read && effect;", census)
+        self.assertLess(census.index("if (l.visible && l.elements == 0) {"), census.index("ReadEffect(l)"))
+        rechoose = strip_comments(function_body(core, "void Rechoose(double now)"))
+        self.assertIn("if (l.visible && l.elements == 0 && !l.effectRead) ReadEffect(l);", rechoose)
+        read_effect = strip_comments(function_body(core, "EffectRead ReadEffect(RoomLayer& l)"))
+        self.assertIn("const bool read = Call(ops_.effect, l.id, effect);", read_effect)
+        self.assertIn("l.effectRead = true;", read_effect)
+        self.assertIn("l.effect = read && effect;", read_effect)
         # Every read lands in one of the session's three counts, which end the trace line.
         for count in ("++counters_.fxFailed;", "++counters_.fxStruct;", "++counters_.fxOther;"):
-            self.assertIn(count, census)
-        self.assertEqual(self.core().count("Call(ops_.effect"), 1, "the effect is read in the census only")
+            self.assertIn(count, read_effect)
+        self.assertEqual(core.count("Call(ops_.effect"), 1, "the effect is read in ReadEffect only")
         trace = function_body(self.core(), "inline std::string TraceLine(std::string_view player, const FlightCounters& c)")
         self.assertLess(trace.index('" no-front="'), trace.index('" fx-struct="'))
         self.assertLess(trace.index('" fx-struct="'), trace.index('" fx-other="'))

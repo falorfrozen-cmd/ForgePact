@@ -1211,9 +1211,16 @@ it stay in front of the player, so he keeps every tint he has on the ground
 changes the answer against "in front of every drawn layer" in 8 rooms only.
 
 A census runs once per room visit, at the first write while flight is on, and
-remembers the layers in front of the game layers; a re-choice recounts their
-elements at most once a second, so a zone's `Tree_Leaves` that fills after
-the census (an empty one reads as a filter) moves the layer within a second.
+remembers the layers in front of the game layers; a re-choice reads their
+visibility and element count again at most once a second, so a zone's
+`Tree_Leaves` that fills after the census (an empty one reads as a filter)
+moves the layer within a second. A remembered layer that becomes visible and
+empty after the census without its effect ever having been read (it held
+instances, or was hidden, at the census) has its effect read once at that
+re-choice, so the flying player is not drawn in front of a filter that
+appears after the census (PR #214's review, round 1; the harness's
+`an_effect_layer_that_empties_is_a_filter` and
+`a_filter_shown_after_the_census_is_counted`).
 Before each write the cached layer must exist and carry our name; a failed
 check starts a new visit. A census that yields no layer writes nothing and
 counts `no-front=`. Each effect read is counted as a struct, another answer

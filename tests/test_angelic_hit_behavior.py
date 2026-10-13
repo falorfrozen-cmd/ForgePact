@@ -385,6 +385,14 @@ class AngelicHitBehaviorTests(unittest.TestCase):
             'flight_unique_throw_removes_entries',
         ))
 
+    def test_flight_partial_push(self):
+        # PR #214 review round 1: ds_list_add refused partway through a flight push. The entries
+        # that did go on come off again before the roll, on the Angelic list (where they sat
+        # after #74's row, whose own tail-checked removal they used to block) and on each of the
+        # unique roll's sub-lists, and the refused push counts one anomaly, not an injection.
+        # Fails against 9b12f86, which left a partial push on the lists as found.
+        self.run_scenarios(('flight_partial_push_angelic_removes_its_entries', 'flight_partial_push_unique_removes_its_entries'))
+
 
 if __name__ == '__main__':
     unittest.main()
