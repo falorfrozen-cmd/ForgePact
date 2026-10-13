@@ -5,8 +5,8 @@ Release date: 2026-10-16
 A new **Always show Chaos Pillar mods** switch, off by default, shows each
 Chaos Pillar's mods while the pillar is on screen, without hovering over it.
 Three new charms, **Pocket Elf**, **Gabriel Wings** and **Witch's
-Broomstick**, let you walk through scenery while you wear one, and each can
-join the game's own drops behind its own switch, off by default.
+Broomstick**, let you walk through scenery and monsters while you wear one,
+and each can join the game's own drops behind its own switch, off by default.
 
 ## New
 
@@ -29,9 +29,11 @@ join the game's own drops behind its own switch, off by default.
   your charm slots, you walk through rocks, fences, carts, trees and other
   scenery, and your character is drawn in front of it instead of hidden
   behind it, tree canopies included. A room's colour filter still tints you
-  as it does on the ground. Walls, zone gates, locked doors, monsters and the
-  edge of the map still stop you. Take the charm off while you stand inside a
-  prop and you can still walk out; nothing moves you on its own. The game
+  as it does on the ground. You also walk through monsters instead of being
+  held up by them, but they still hit you and you still hit them. Walls, zone
+  gates, locked doors and the edge of the map still stop you. Take the charm
+  off while you stand inside a prop or a monster and you can still walk out;
+  nothing moves you on its own. The game
   itself counts only one flight charm at a time: wear two and only one of
   them works.
   - **Pocket Elf** (Satanic, one cell) can drop among the game's own unique
@@ -62,7 +64,8 @@ join the game's own drops behind its own switch, off by default.
   Elf came once in 100 unique drops and Witch's Broomstick twice and Gabriel
   Wings never in 102 Angelic drops, as the shares above predict (the test
   raised the Angelic roll's chance to get that many drops, so how often that
-  roll happens in normal play was not measured).
+  roll happens in normal play was not measured). Walking through monsters
+  was added after those sessions and is not checked in a game session yet.
 
 ## How to update
 

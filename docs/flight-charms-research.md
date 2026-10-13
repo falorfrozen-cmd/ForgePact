@@ -1157,13 +1157,28 @@ original always runs first and a free answer stands. A blocked answer becomes
 "nothing there" when the object it names is `Collision_Parent_obj` or a
 descendant, is not `Wall_Parent_obj` or `Lock_obj` or a descendant of either,
 a re-run of the same query against each of those two blocks nothing, and
-every point the query names lies inside the room. Anything else, monsters
-included, keeps its real answer. `InstancePlaceTallest`'s answer is tested
-the same way, by the object of the instance it returned.
+every point the query names lies inside the room. `InstancePlaceTallest`'s
+answer is tested the same way, by the object of the instance it returned.
 
-Taking the charm off while overlapping the family leaves flight residual: the
-answers go on until the saved original `place_meeting` at the player's own
-position reads free, and then flight is off. The player is never moved.
+Monsters (the owner, 2026-10-13, "flight should ignore enemy collisions",
+read as body collision only) are not in the family. A blocked `place_meeting`
+of the player that names `Enemy_Parent_obj` or a descendant is answered
+"nothing met" under the same conditions: every point inside the room, and the
+re-run against walls and locks blocking nothing. It counts `monster=` on the
+trace line, inside `answered=`. A monster named on any other row
+(`position_meeting`, `instance_position`, `collision_line`,
+`collision_circle`), and an `InstancePlaceTallest` answer whose instance is a
+monster, keep the game's answer and count `monster-kept=`, inside `other=`: a
+point or line query at a monster may be how a target is picked, and
+`place_meeting` is the mask's own test. That is a judgement, not a reading;
+Mod live procedure 3's `monster-rows` measures it. Anything else keeps its
+real answer.
+
+Taking the charm off while overlapping the family or a monster leaves flight
+residual: the answers go on, monsters' included, until the saved original
+`place_meeting` at the player's own position reads free against
+`Collision_Parent_obj` and then against `Enemy_Parent_obj`, and then flight is
+off. The player is never moved.
 
 The five builtin detours are one shared install, used by jumpscenery and by
 flight. Each runs the original once, then lets jumpscenery decide (with its
@@ -1762,6 +1777,151 @@ its typing (RDM § 13.4, measured); the shares (hub
 `binomial_band` and `observation_within`). `zonecensus` is the guide's far
 scenery sleep command; `tiptrace` is `ModuleMain.cpp`'s research command,
 whose stat count is the stats hook's own.
+
+### Mod live procedure 3
+
+The session that answers the owner's monster scope (2026-10-13, "flight should
+ignore enemy collisions", read by the driver as body collision only): a
+flying player walks through monsters, and still attacks them. It runs on the
+research build (`build.bat dev`) at the commit where the monster rule, the
+adapter that resolves `Enemy_Parent_obj` by name, the `flp3` probe and these
+docs are done; the driver records the DLL's SHA-256 and asks the owner before
+installing it. Nothing Mod live 1 or Mod live 2 passed is run again, except
+the wall check, which shows the monster rule did not open walls. As in the
+earlier procedures, the debugger's addresses and first bytes stay out of this
+file: they are kept in the session's local notes.
+
+**Setup.** Save slot 14, "Sorak", in `Town_01_rm`. The saves are backed up
+before the launch and restored at teardown whatever happened, and the
+operator confirms that the build the debugger addresses were read from is the
+installed game, or aborts. At character select, `jumpscenery 0`. The session
+starts from the restored saves, so no flight charm is owned and Sorak's own
+charms fill the charm grid. The operator drives every person-step itself
+through hs-drive (keys, holds, clicks, `playerwarp`) and lists each in the
+capture; the bag opens with `C`, and a right-click equips and unequips. None
+of `jumpprobe hook`, `citrace 1`, `angelicprobe on`, `gambaprobe`,
+`prospectprobe` or `craftprobe` is used, and every flight drop switch stays
+off. Teardown: the debugger detached first, then the game stopped, the saves
+inspected and restored, and the lease released.
+
+**Cases.** One monster: a lone training dummy in town, walked into with
+flight off and then on, and attacked with flight off and then on. The
+training dummies are monsters by the data file's family (`Attack_Dummy_obj`
+descends from `Enemy_Child_Basic_obj`, a child of `Enemy_Parent_obj`; hub RDM
+§ 19.9), and the two that stand alone, at (1816, 704) and (1736, 544), neither
+move nor attack. One outlier on the excluded path, a wall, and one on the
+state path, the charm taken off inside the dummy. Not tried, and so "not
+observed live": live monsters in a zone, bosses, co-op, and every row but
+`place_meeting` at a monster.
+
+**Steps, in order:**
+
+- W0 `dll-hash`: the installed DLL's SHA-256 equals the build's.
+- W1 `marker`: a bare `flightprobe` begins `flightprobe: marker=flp3`, which
+  proves the installed build carries the monster rule; `control`: `ping`
+  answers `pong (YYTK 4.0.1)`. All of `flightcharm stat`'s lines are recorded.
+- W2, the charm (setup): Sorak warps to (884, 628), `flightprobe spawn elf`
+  places Pocket Elf, and `flightprobe ground`
+  reads its name and `ours`. The operator picks it up by its label and leaves
+  it in the bag; two seconds later `flightcharm stat` reads `installed` and
+  `state=off`.
+- W3 `dummy-control`: Sorak warps 96 px south of the dummy at (1816, 704) for
+  a screenshot. `flightprobe free` with no offset, against the family and
+  against `Enemy_Parent_obj`, reads `blocked=no` both times, and `flightprobe
+  free` 96 px north against `Enemy_Parent_obj` reads `blocked=yes` with `by=`
+  naming the dummy's object (any descendant of `Enemy_Parent_obj` passes, and
+  is named). If any read fails, the same reads are made 96 px south of the
+  other lone dummy, at (1736, 544). The dummy that passes is "the dummy" below,
+  its y is D, and its spot is "the start". It fails when neither spot passes;
+  the session then measures nothing about monsters, skips the debugger and
+  W4, W6, W7 and W8, and still runs W5 and W9.
+- The debugger is attached and its three logpoints armed, the control first
+  (below).
+- W4 `monster-baseline` (debugger window A), with flight off: `flightcharm
+  stat` reads `state=off` and the trace line is recorded. From the start, W is
+  held for 1500 ms; then `flightprobe free` with no offset gives `y=`, and the
+  trace line is recorded again. It passes when `y=` is greater than D (the
+  dummy held the walk), and fails when `y=` is below D − 40 (the walk crossed
+  with flight off, so a dummy does not block and W6 cannot show flight's
+  effect); a value between the two fails too, with the value recorded.
+- W5, equipping (setup): the bag is opened and Pocket Elf right-clicked into
+  the charm grid; if the grid is full, one of Sorak's own one-cell charms is
+  first right-clicked to the bag, and which one is recorded. The bag is closed
+  and `flightcharm stat` reads `state=on equipped=elf`.
+- W6 `flight-monster` (debugger window B): Sorak warps to the start and the
+  trace line is recorded; W is held for 1500 ms, `flightprobe free` gives
+  `y=`, and the trace line is recorded again. It passes when `y=` is below
+  D − 40 and the trace's `monster=` rose. It fails when `y=` is greater than
+  D, and the trace names the cause: `monster-kept=` rose (another row held the
+  walk), `monster=` rose while the walk was still held (something the hooked
+  rows do not see holds it), or `idle=` rose (flight was not on).
+  `monster-rows`, from the same two trace lines, passes when `monster=` rose
+  and `monster-kept=` did not, fails when `monster-kept=` rose, and is not
+  observed when neither rose.
+- The debugger is detached, after W6 and before W7.
+- W7, attacks, the control with flight off first. `attack-control`: Pocket
+  Elf is right-clicked to the bag (`state=off`), Sorak warps 40 px south of
+  the dummy, and the pointer is held on the dummy with the left button for
+  1500 ms, or `Q` is cast at it, as Mod live 2 attacked; a screenshot is taken
+  during the attack. It passes when the screenshot shows damage numbers on the
+  dummy and `flightprobe free`'s `x=` and `y=` moved less than 40 px, so Sorak
+  attacked rather than walked. `flight-attack`: Pocket Elf back in the grid
+  (`state=on`), the same spot and the same attack, with the same pass; it fails
+  when Sorak walks to the pointer or no damage number shows.
+- W8 `monster-ends-inside`: flying, Sorak warps onto the dummy (its x and D),
+  where `flightprobe free` against `Enemy_Parent_obj` reads `blocked=yes`.
+  Pocket Elf is right-clicked to the bag and `flightcharm stat` reads
+  `state=residual`. S is held for 1000 ms, up to three times, until
+  `flightprobe free` with no offset reads `blocked=no` against both
+  `Enemy_Parent_obj` and the family and the state reads `off`. It passes when
+  the position changes on the first walk and the state ends `off`, and fails
+  when there is no movement while `residual`; `playerwarp` recovers.
+- W9 `wall-still`: Pocket Elf back in the grid (`state=on`). Sorak warps to the
+  excluded spot at (929.9, 2031.1), where `flightprobe free` 8 px south against
+  `Wall_Parent_obj` reads `blocked=yes`; `excluded=` is recorded and S held for
+  3000 ms. It passes when the walk moved less than 20 px and `excluded=` rose,
+  fails when it moved 100 px or more, and is not observed when the wall read
+  is `no`.
+
+**The debugger.** It is attached after W3 and detached after W6, and in any
+case before the game is stopped. Its positive control is a logpoint on
+`CheckTalentUse` (`dbg-control`), which logged about 85 hits a second in town
+in Mod live 1 and Mod live 2. The two candidates are `StatPhasing`, the
+getter of item stat 26 "Movement Phasing", whose one direct call site is the
+stat dispatcher (a static reading, hub RDM § 19.9), and
+`InstancePlaceTallest`, which the player's Step calls on a blocked walk (RDM
+§ 19.6). Window A is W4's walk and window B is W6's; each name's count is
+recorded at the start and end of each window. `dbg-phasing` passes when
+`StatPhasing` rose in window A or B while the control rose, which means the
+game reads stat 26 during a walk at a monster, and is not observed when it
+stayed flat while the control rose; either way it is a finding. `dbg-ipt`
+records the rise in both windows, passes when it rose in window A while the
+control rose (a walk held at a monster reaches `InstancePlaceTallest`), and is
+not observed when it stayed flat while the control rose.
+
+**Checks**, the capture's names, in order: `dll-hash`, `marker`, `control`,
+`dummy-control`, `monster-baseline`, `dbg-control`, `dbg-phasing`, `dbg-ipt`,
+`flight-monster`, `monster-rows`, `attack-control`, `flight-attack`,
+`monster-ends-inside` and `wall-still`.
+
+- **Validity**, which must pass: `dll-hash`, `marker`, `control`,
+  `dummy-control`, `monster-baseline`, `dbg-control` and `attack-control`.
+- **Acceptance**: `flight-monster`, `flight-attack`, `monster-ends-inside` and
+  `wall-still`.
+- **Research**, where a fail or a not-observed is itself the finding:
+  `dbg-phasing`, `dbg-ipt` and `monster-rows`.
+
+**What it relies on.** `Enemy_Parent_obj`'s family and the training dummies'
+town positions, from the data file (hub RDM § 19.9); the walk's
+`place_meeting` naming `Enemy_Parent_obj` (RDM § 19.6 and this document's
+§ "Live 1 results", `walk-objects`, measured); the excluded spot, whose step
+south meets a `Wall_Parent_obj` (RDM § 19.8, measured in Mod live 1 and 2);
+`CheckTalentUse` as the debugger's control (Mod live procedure 2 and its
+results); `InstancePlaceTallest`, called from the player's Step on a blocked
+walk (RDM § 19.6 and this document's § "The walk's callers"); and `StatPhasing`'s one call
+site (RDM § 19.9, static). Nothing in the shared references says
+`StatPhasing` runs per step. That a monster in the path holds a walk at all is
+not established before this session: `monster-baseline` is its control.
 
 ### Mod live 1 results
 
