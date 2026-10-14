@@ -469,7 +469,8 @@ class CoverageTests(unittest.TestCase):
                 or runner.module_of(i).startswith("test_panel_e2e")]
         self.assertGreaterEqual(len(gone), 6)
         self.assertEqual(Counter(listed) + Counter(gone), Counter(full))
-        self.assertIn("left out 9 module(s)", run.stderr)
+        # Counted from the modules themselves, so the next e2e module is no edit here.
+        self.assertIn(f"left out {len({runner.module_of(i) for i in gone})} module(s)", run.stderr)
 
     def test_every_panel_browser_module_is_capped_or_alone(self):
         # A module that drives the panel's browser suites (through
