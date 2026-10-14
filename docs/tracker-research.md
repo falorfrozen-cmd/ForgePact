@@ -138,7 +138,10 @@ Live procedure 1 (below) measured the counters, a held bag drop and a clean
 close with the producer installed. Live procedure 2 of the toolkit workorder
 `forgepact-185-tracker-zone-fix` (below) measured that the rule above writes
 the `satanic_zone` and the name after a room change, into an act zone and
-back to town, and on a rotation with no room change, in a real session.
+back to town, and the `satanic_zone` on a rotation with no room change, in a
+real session. That rotation was ForgePact's own `satzone pin 1` writing the
+key with the arrays unchanged, not the game's own re-roll, and the name is
+not read on a rotation at all (only while owed, after a room change).
 
 ## Live procedure 1 (2026-10-13)
 
@@ -245,12 +248,18 @@ capture gives them:
     read `satanic_here: true`;
   - `zone-load-reason`: the act zone's first ticks had no player. Between
     the stats before and after the travel, `zone-unresolved=` rose 0 to 2
-    with `zone-why=no-player`, so k = 2 and the readers answered between 15
-    and 30 ticks after the room change. The `room` and the `satanic_zone`
-    after it were 2,482 ms apart, an upper bound set by `kZonePollTicks`,
-    not a measured duration. The way back to town added 3 more failed reads
-    (`zone-unresolved=5`, again `no-player`; 633 ms between its records, the
-    same kind of bound). `name-unresolved=` rose in step with them (2, then
+    with `zone-why=no-player` (which keeps only the last failure's reason,
+    so only the last of the two is known to be `no-player`; the bound needs
+    no more), so k = 2 and the readers answered between 15 and 30 ticks
+    after the room change. The `room` and the `satanic_zone` after it were
+    2,482 ms apart, an upper bound set by `kZonePollTicks`, not a measured
+    duration. Between the stat after the fighting (step 8,
+    `zone-unresolved=2`) and the one after the way back to town (step 9,
+    `zone-unresolved=5`), 3 more reads failed, the last `no-player`; that
+    window holds the end of the fighting as well as the travel, so which of
+    the 3 fell on the travel is not established (633 ms between the
+    travel's records, the same kind of bound). `name-unresolved=` rose in
+    step with them (2, then
     5) while `name-owed=` read 0 at each stat, after the name was written;
   - `deltas-flow`, `kills-vs-save` and `xp-vs-save`: 58 kills and 69,175 XP
     from the operator's fighting; the file's sums equal `gold-sum=201`,
