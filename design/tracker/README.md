@@ -201,55 +201,55 @@ overlay's three totals stay readable in every state, the drop card included.
 
 Findings, each fixed or kept:
 
-- [P1] Alert rows broke in Ember: the plain switch took Ember's
-  label-then-switch layout and wrapped the rarity row onto two lines. Fixed:
+- Fixed (P1): Alert rows broke in Ember: the plain switch took Ember's
+  label-then-switch layout and wrapped the rarity row onto two lines. The fix:
   the rows are the panel's `.setting-entry` with a `.switch.slider-switch`,
   like Monster Rarity's, and the sound's source moved to a note under the row.
-- [P1] The drop card cut through a line of counters, half-covering the
-  rates. Fixed: it now covers everything under the top line whole.
-- [P1] Over a bright game frame a transparent overlay's text failed contrast
-  below about 90% plate opacity. Fixed: the plate is translucent, not the
+- Fixed (P1): The drop card cut through a line of counters, half-covering the
+  rates. The fix: it now covers everything under the top line whole.
+- Fixed (P1): Over a bright game frame a transparent overlay's text failed contrast
+  below about 90% plate opacity. The fix: the plate is translucent, not the
   text, with a 90% floor and no faint text in the overlay.
-- [P2] The codex coloured each item by rarity without saying which (colour
-  alone). Fixed: a Rarity column.
-- [P2] The overlay's "you are here" was a green dot only. Fixed: the words
+- Fixed (P2): The codex coloured each item by rarity without saying which (colour
+  alone). The fix: a Rarity column.
+- Fixed (P2): The overlay's "you are here" was a green dot only. The fix: the words
   "· here" follow the zone.
-- [P2] A switched-off alert (Unholy) drew with the live accent body. Fixed:
+- Fixed (P2): A switched-off alert (Unholy) drew with the live accent body. The fix:
   only a switched-on alert row is live.
-- [P2] The Loot table's rarity names lost their colour to the table's text
-  colour, and the tally lists likewise. Fixed: the colour is set on the table
+- Fixed (P2): The Loot table's rarity names lost their colour to the table's text
+  colour, and the tally lists likewise. The fix: the colour is set on the table
   and the list, so a rarity class on a cell wins.
-- [P2] The sound lists' toolbar showed six actions beside the filter.
-  Fixed: New filter stays; duplicate, import, export and delete go in one
+- Fixed (P2): The sound lists' toolbar showed six actions beside the filter.
+  The fix: New filter stays; duplicate, import, export and delete go in one
   "More filter actions" menu.
-- [P2] No message for a refused sound file. Fixed: the Alerts sub-tab shows
+- Fixed (P2): No message for a refused sound file. The fix: the Alerts sub-tab shows
   one in place, with the danger icon and the reason.
-- [P2] The journal's grade sat at the far end of a wide row, away from the
-  name it grades. Fixed: the grade follows the time.
-- [P3] The run card's label was tracked mono capitals. Fixed: sentence case,
+- Fixed (P2): The journal's grade sat at the far end of a wide row, away from the
+  name it grades. The fix: the grade follows the time.
+- Fixed (P3): The run card's label was tracked mono capitals. The fix: sentence case,
   no tracking.
-- [P3] A long zone name could push the overlay's clock off its line. Fixed:
+- Fixed (P3): A long zone name could push the overlay's clock off its line. The fix:
   the zone name truncates with an ellipsis.
-- [P3] Paired switches in the buff pick and the drop-card rarities sat close
-  enough to the next column's label to be read as its switch. Fixed: the
+- Fixed (P3): Paired switches in the buff pick and the drop-card rarities sat close
+  enough to the next column's label to be read as its switch. The fix: the
   column gap is 40px.
-- [P3] The journal's time and "alerted" were faint text, which fails 4.5:1 on
-  a hovered row in Ledger (4.28). Fixed: both are muted text.
-- [P3] Gold's note said "not read offline", which read as if gold were not
-  counted. Fixed: "bank not read offline".
-- [P2] Alex, the power user: no keyboard shortcut for Pause clock or End run.
-  Kept: the Tracker's were global hotkeys, which a panel window cannot
+- Fixed (P3): The journal's time and "alerted" were faint text, which fails 4.5:1 on
+  a hovered row in Ledger (4.28). The fix: both are muted text.
+- Fixed (P3): Gold's note said "not read offline", which read as if gold were not
+  counted. The fix: "bank not read offline".
+- Kept (P2): Alex, the power user: no keyboard shortcut for Pause clock or End run.
+  Why: the Tracker's were global hotkeys, which a panel window cannot
   register while the game has focus; the sub-tabs take the Mods tab's arrow
   keys.
-- [P3] Jordan, the first-timer: "Drop card" is a name of ours. Kept: its
+- Kept (P3): Jordan, the first-timer: "Drop card" is a name of ours. Why: its
   card says what it does in its first sentence, and "flourish" (the Tracker's
   word) meant less.
-- [P3] Sam, keyboard and screen reader: a run's finds, a sound list and the
-  overlay's ticker colour names without writing the rarity. Kept: there the
+- Kept (P3): Sam, keyboard and screen reader: a run's finds, a sound list and the
+  overlay's ticker colour names without writing the rarity. Why: there the
   name is the point and the colour a redundant hint; every list where the
   rarity matters writes it.
-- [P3] No Help link from the tab. Kept: Ember's Help section covers the
+- Kept (P3): No Help link from the tab. Why: Ember's Help section covers the
   panel, and each card carries its own hint.
-- [P3] Ember's serif headings take a lot of height on six sub-tabs. Kept:
+- Kept (P3): Ember's serif headings take a lot of height on six sub-tabs. Why:
   they are Ember's approved look; Ledger, Graphite and Sigil use the panel's
   16px headings.
