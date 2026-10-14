@@ -152,9 +152,11 @@ request, at item 13,836 of 20,000. Its dump,
   `ExitProcess`, the other threads are gone before the DLL's globals are
   destroyed, and a `std::thread` still joinable at destruction calls
   `std::terminate`. `ItemTruth.hpp` avoids the same trap for its own writer
-  thread by never destroying the `Journal`. ForgePact ships this DLL
-  (`modfiles_shipped/HSOfflineTrackerProducer.dll`, pinned from the 1.3.16
-  package, a 2026-09-07-or-earlier build).
+  thread by never destroying the `Journal`. ForgePact shipped this DLL through
+  2.2.x (`modfiles_shipped/HSOfflineTrackerProducer.dll`, pinned from the
+  1.3.16 package, a 2026-09-05 build). From 2.3.0 it pins HS-Offline-Tracker
+  v0.1.4's producer, which keeps that thread out of every exit-time destructor
+  (#185, see `graceful-stop-exit-research.md`).
 - **A plain close aborts too; a missing dump hid it.** None of the five games
   this investigation closed with `CloseMainWindow` left a dump, nor did another
   session's close at about 02:15. That does not show a clean exit. The games

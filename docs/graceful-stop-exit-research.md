@@ -33,8 +33,9 @@ HS-Offline-Tracker v0.1.4's fixed build; that is a separate change.
 
 - **The tracker producer aborts at exit** (hub guide, Known Limitations
   item 25). The HS-Offline-Tracker producer shipped in every ForgePact release
-  since 1.3.10 (`modfiles_shipped/HSOfflineTrackerProducer.dll`, sha256
-  `36608aa0…b14e`, a 2026-09-05 build) keeps its publisher in a global
+  from 1.3.10 (`modfiles_shipped/HSOfflineTrackerProducer.dll`, sha256
+  `36608aa0…b14e`, a 2026-09-05 build; 1.3.8 and 1.3.9 shipped Tracker 0.1.1's
+  `8594d096…`, see the #185 section) keeps its publisher in a global
   `std::thread`. When the game leaves through `ExitProcess`, that thread is
   still joinable when the DLL's globals are destroyed, so its destructor calls
   `std::terminate`: fast fail 7, which reads as `0xC0000409`. Nine of the ten
@@ -280,3 +281,87 @@ gate in which an in-world `hs_stop_game` reads `0x00000000` with the re-pinned p
 sessions add to: an in-world stop rewrites the character file and not the bag
 file, with the producer present or absent, and the game's Save & Exit
 rewrites both.
+
+## Follow-on: the fixed producer pinned (ForgePact #185)
+
+ForgePact #185 carried out that follow-on. `tools/toolchain-pins.json` now
+takes `modfiles_shipped/HSOfflineTrackerProducer.dll` from HS-Offline-Tracker's
+own `v0.1.4` release: member `producer/HSOfflineTrackerProducer.dll` of
+`hs-offline-tracker-0.1.4-portable.zip` (archive sha256 `37b03813…9709`, the
+value the release's `SHA256SUMS-0.1.4.txt` states), member sha256
+`5f83e542f41490ec57106198cf8546ec178421961e388699ff1da5de45956f94`. It replaces
+the 1.3.16 package's `36608aa0…b14e`, a 2026-09-05 build (its PE link time).
+The 0.1.4 build carries Tracker PR #8's exit teardown; how that avoids the
+abort is written once, in the hub's `docs/RUNTIME_DATA_MODELS.md` (§15, the
+row on a plugin DLL whose global `std::thread` is still joinable at exit).
+
+Every Tracker producer released before 0.1.4, hashed from the release assets
+on 2026-10-13 (each built from source that still keeps the publisher in a
+global `std::thread`; only `36608aa0…` was measured aborting):
+
+| Tracker | Producer sha256 | Read from |
+|---|---|---|
+| 0.1.1 | `8594d096…676d` | the NSIS installer (the release has no zip); the same extraction of 0.1.2's installer gives 0.1.2's zip member, the control for the method. ForgePact 1.3.8 and 1.3.9 shipped these bytes (their release zips' `ForgePact/modfiles/` member); 1.3.7 shipped no sensor |
+| 0.1.2 | `36608aa0…b14e` | the portable zip; byte for byte the sensor ForgePact shipped from 1.3.10 through 2.2.x (1.3.10's release zip checked) |
+| 0.1.3 | `9e0c63c8…a58d` | the portable zip |
+| 0.1.4 | `5f83e542…6f94` | the portable zip; the new pin |
+
+The 0.1.4 zip's `aurie-loader/AurieCore.dll`, `YYToolkit.dll` and
+`AuriePatcher.exe` hash to ForgePact's own pins for those files (`3cf98af9…`,
+`51a393d7…`, `4d3aec43…`), so ForgePact and Tracker 0.1.4 install identical
+sensor and loader files.
+
+What changed in ForgePact around the pin:
+
+- `src/forgepact.py` names the builds: `TRACKER_SENSOR_ABORTING` (0.1.1 to
+  0.1.3) and `TRACKER_SENSOR_CLEAN` (0.1.4, measured below).
+  `tests/test_tracker_producer_pin.py` checks the pins file against them, with
+  the old entry and the 0.1.1 and 0.1.3 builds as negative controls, and
+  checks the loader hashes above.
+- The pin lists `36608aa0…` under `superseded_sha256`, so
+  `tools/fetch_toolchain.py` (run by `Prepare-Plugin.bat`) replaces that file
+  on a checkout that already holds it, where it used to refuse it as
+  hand-placed.
+- A launch from a release build of the panel replaces a game sensor whose hash
+  is in the aborting set (`refresh_stale_tracker_sensor`), under the plugin
+  refresh's gates (the game's `YYToolkit.dll` and `AurieCore.dll` must be the
+  bundled ones); otherwise the launch message asks for Install, unless the
+  package lacks the fixed sensor, when it says to extract the complete release
+  or update the Tracker instead.
+- Install Mod Plugin installs the bundled sensor when the game has none, or
+  has one the panel knows (aborting or clean); it leaves an unrecognised one,
+  such as a newer Tracker's, as it is, and never installs a bundled build that
+  is itself in the aborting set.
+- Tracker 0.1.1 to 0.1.3's own "Update live sensor" puts their build back,
+  and the two tools then swap the file; the hub guide's "Launch-Time Plugin
+  Refresh" section describes it once, and the release notes tell players.
+
+The fix ships in ForgePact 2.3.0.
+
+The live gate ran on 2026-10-13, in capture
+`forgepact-185-tracker-mod-live-1`, kept with the hub's workorder. It used the
+installed v2.2.1 plugin (`8a16a38e…4bc92`, unchanged at teardown), slot 14,
+`ping` -> `pong (YYTK 4.0.1)` in every cell, and `hs_selfcheck`'s
+`exit_code_readback` passing first. All 11 checks pass, and every reading below
+is **measured**:
+
+| Cell | Producer | Close | Exit code | Dump |
+|---|---|---|---|---|
+| A, the control | old, `36608aa0…` | main menu | `0xC0000409` | yes, `raised-in=HSOfflineTrackerProducer` (reader exit 0) |
+| B | fixed, `5f83e542…` | in the world, every mod off | `0x00000000` | none (reader waited 30 s, exit 3) |
+| C | fixed | after the pause menu's Save & Exit (`hs_exit_to_menu` reached `Chose_rm`) | `0x00000000` | none (exit 3) |
+| D | fixed | in the world, `lootann 1` on (`install=installed`) | `0x00000000` | none (exit 3) |
+
+The driver swapped the file between cells A and B, holding the old build
+aside, and both copies were hash-checked. In each of cells B, C and D the
+producer's own log shows its bridge pipe opened under that game's pid, so the
+fixed sensor armed on this game build, and `out.txt` ended on
+`==== clean shutdown ====`. Cell A's dump has the same stack as the kept dumps
+above, so dumps were written and read in this session and the three "none"
+readings are evidence. Cell D is the outlier: ForgePact's `LootGroundInit`
+detour and the producer's own detour on that script were both live at
+teardown, a pair #201 never ran together.
+
+Not covered: a main-menu close with the fixed build (Tracker PR #8 measured
+three clean ones on its test build `061fe033…`, built from the same fix
+commit, with ForgePact 1.4.7 loaded; not the released `5f83e542…`), a vanilla or ForgePact-free game, other mods, and other close paths.

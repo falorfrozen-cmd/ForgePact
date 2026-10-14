@@ -1370,8 +1370,9 @@ What counts as an incident:
   closes, and what Windows recorded about the crash in its Application log
   (the faulting module and offset), and that goes into the same report. If
   another mod file aborts while the game is closing, after ForgePact's clean
-  shutdown line (the tracker producer can, see the module guide's Known
-  Limitations), that is noted in `out.txt` and on the panel's card as an exit
+  shutdown line (the tracker producer ForgePact shipped through 2.2.x does,
+  see the module guide's Known Limitations; 2.3.0 ships a fixed one), that is
+  noted in `out.txt` and on the panel's card as an exit
   after a clean shutdown, not reported as a crash.
 
 Each report is a folder, `bp_ipc\reports\<date>-<time>_<perf|freeze|crash>\`:
@@ -1918,7 +1919,7 @@ the installation is incomplete, a warning appears on every tab with a shortcut
 to Setup. **Commands sent** means settings were handed to the plugin's command
 file; it does not claim the game has already applied them.
 
-The Install button also places the **HS Offline Tracker** live sensor (`HSOfflineTrackerProducer.dll`) beside the plugin when it ships with ForgePact. It is a separate, read-only module: it only reports gold, XP, kills, drops, room and satanic zone to the tracker and changes nothing in the game. Remove Plugin takes it away again.
+The Install button also places the **HS Offline Tracker** live sensor (`HSOfflineTrackerProducer.dll`) beside the plugin when it ships with ForgePact. It is a separate, read-only module: it only reports gold, XP, kills, drops, room and satanic zone to the tracker and changes nothing in the game. Since 2.3.0 Install decides by the file's hash: it replaces a missing sensor, a known old build that crashes the game when it closes, or a build ForgePact knows to be clean, leaves a sensor it does not recognise (such as a newer HS Offline Tracker's) as it is, and never installs a bundled copy that is itself an old build. Starting the game from ForgePact also replaces a known old build, from a release build and only when YYToolkit and AurieCore in the game are the ones this ForgePact ships (see "After a **ForgePact** update" below); otherwise it asks you to press Install. Remove Plugin takes the sensor away again, whatever build it is.
 
 1. Run `ForgePact.exe` and set the path to your Season 10 `Hero_Siege.exe`.
 2. Press **Install Mod Plugin**. ForgePact will back up your exe, copy the mod files into the
@@ -1943,8 +1944,9 @@ After a **ForgePact** update, the plugin in your game is still the old one until
 ForgePact compares it with the plugin it ships, by reading the file, never by loading it. When
 the game's plugin is older, Setup, the status bar and the warning icon say so and point at
 **Install Mod Plugin**. **Launch Modded Game** replaces an older plugin itself before the game
-starts: only with the game closed, only the plugin file, and only when YYToolkit and AurieCore in
-the game are already the ones this ForgePact ships. Otherwise it launches as before and asks you to
+starts: only with the game closed, only the plugin file and (since 2.3.0) an HS Offline Tracker
+sensor that is a known old build, never YYToolkit or AurieCore, and only when YYToolkit and
+AurieCore in the game are already the ones this ForgePact ships. Otherwise it launches as before and asks you to
 press **Install Mod Plugin**. Run from source, ForgePact only warns, since a plugin in the game
 may be your own build. Starting the game from Steam skips the launch step, so press
 **Install Mod Plugin** once after updating.
