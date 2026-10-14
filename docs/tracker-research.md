@@ -344,3 +344,113 @@ Turned down in replan 2, for the zone after Live procedure 1:
 - **A fixed delay after a room change.** The readers are asked until they
   answer, as map reveal asks its creators whether they are ready, rather
   than guessing how long a room takes to load.
+
+## The Tracker tab (part 2b)
+
+The workorder `forgepact-185-tracker-tab` (v2.3.0) builds the Tracker tab on
+the data path above: the tab, rarity and zone alerts, a compact overlay
+window and Discord presence, and it retires the producer ForgePact used to
+ship. It researches no game mechanism: everything it shows comes from the
+sensor's records and the save reader described above, and its live session
+reuses the verbs Live procedures 1 and 2 proved. What it had to find out was
+about the panel's own window, so the two probes below ran in throwaway
+pywebview windows outside the repository before anything relied on them. The
+module guide's section "HS Offline Tracker in ForgePact" describes the result.
+
+### The probes
+
+- **Overlay transparency: it does not draw through (measured 2026-10-14,
+  pywebview 6.2.1, WebView2, Windows 11).** pywebview's `create_window` takes
+  `transparent`, and on EdgeChromium it sets the WebView2 background to
+  transparent (static reading of the installed package). The probe opened a
+  transparent, frameless, on-top, `focus=False` window over a solid magenta
+  one and read a screen pixel in the overlay's empty area through `GetPixel`:
+  it was the form's grey (`#f0f0f0`), not the magenta behind (`#e83ffb`, read
+  beside it), while a solid control window read its own colour. So the
+  overlay ships solid (`OVERLAY_TRANSPARENT = False`), Q8's fallback. The
+  same probe saw clicks reach a `focus=False` window, transparent or not,
+  and neither window take the foreground.
+- **Alert autoplay: the WebView2 variable works (measured 2026-10-14,
+  WebView2, Edg/155).** pywebview 6.2.1 sets its own
+  `AdditionalBrowserArguments` (static reading), so whether
+  `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` would still take effect was open.
+  A probe page created an AudioContext and reported its state: with
+  `--autoplay-policy=no-user-gesture-required` in the variable before
+  `webview.start()` it was `running` at creation; without it, `suspended`,
+  and still `suspended` 1.5 s after a `resume()` with no gesture. The panel
+  sets the variable (`allow_alert_autoplay`), and the page's "click to let it
+  play alert sounds" note ships anyway, for a browser tab, where no flag
+  applies.
+
+Neither probe ran inside the panel itself; Live procedure 1 of
+`forgepact-185-tracker-tab` is where the panel's own window is observed (not
+established until it runs).
+
+### Decisions
+
+- **The overlay is a panel window (Q8 (b), owner 2026-10-14).** A second
+  pywebview window on the panel's own `/overlay.html`, solid because of the
+  probe above. In-game counters, Q8 (c), are ForgePact #218. The flourish
+  is a card inside that window, not a window of its own.
+- **Offline features only (Q10).** The Game Link installer, the online-only
+  views and fields (mail, purses, `resources`, MF) and the keys/resources
+  counter are not ported. The counter never counted offline, since the drop
+  filter keeps only the five tracked rarities; it is ForgePact #219.
+- **ForgePact ships no producer (Q11, owner 2026-10-14).** Its own sensor and
+  tab replace HS Offline Tracker, so `tools/toolchain-pins.json` loses the
+  producer pin, `build_release.py` packages none and Install Mod Plugin copies
+  none. Install moves a sensor whose hash is a known aborting build to
+  `%LOCALAPPDATA%\Hero_Siege\backup\` and says why; Remove leaves every
+  sensor; the launch only names an aborting one. This settles ForgePact #217:
+  Remove keeps unknown sensors, the packaging hash guard, the clean-build
+  ordering and the check-then-copy race are moot, and the persistent notice
+  and the corrupt sensor reduce to Install's step and the launch note. HS
+  Offline Tracker is frozen, pointing players here.
+- **One window plays, each alert once.** Only the main window's page plays,
+  and it claims an entry from the panel (`POST /api/tracker/announce`) before
+  playing, so two windows of the panel never both play an id. A page claims
+  only while its AudioContext runs, so nothing is marked announced while it
+  is silent. The zone alert is numbered (`seq`, rising by 1 per rotation in
+  the panel process) and claimed as `zone:<seq>`, and reading it never
+  consumes it.
+- **The page polls only when it has a reason.** `/api/tracker` is polled at
+  most once a second, only while the switch is on or the tab is open, so a
+  player who never uses the tracker sends no tracker request and the panel's
+  performance budgets and behaviour oracle do not move.
+- **The codex comes from the API.** The Tracker's 176 KB `items.js` is not
+  bundled; `/api/tracker/codex` serves one row per named item from the
+  tables part 2a generated.
+- **Presence is off by default and needs an application ID.** One daemon
+  thread, started only with an ID, which leaves the tracker lock before any
+  pipe I/O. The Tracker's own releases never embedded an ID, and ForgePact
+  ships none yet, so the switch stays hidden for players until the project
+  registers a Discord application.
+- **Tests never touch the developer's data.** The panel sandbox points the
+  tracker store, the import source and the session folder into its own temp
+  directory and answers whether a session's process is live itself; before
+  this, the first browser suite that read `/api/tracker` built the store
+  under the real `%LOCALAPPDATA%\Hero_Siege\tracker` and imported the real
+  Tracker data.
+
+### Rejected alternatives
+
+- **A separate full-screen, click-through flourish window.** It needs Win32
+  `WS_EX_TRANSPARENT` on a second transparent window, which is unmeasured on
+  pywebview and, after the probe above, unlikely to draw through; it did not
+  fit before the v2.3.0 date. The flourish is drawn inside the overlay.
+- **Consuming the zone change on read** (the ledger's `take_zone_change` as
+  it was). The first window to poll would take it from the others; a rising
+  `seq` and a claim replace it.
+- **Bundling `items.js` into the panel** for the codex: 176 KB on every load.
+- **Keeping the sensor install for clean builds.** Q11 accepted retiring it
+  entirely; keeping it would have left #217's ordering and race questions
+  open for the next Tracker release.
+- **Running the live session on the player build.** It has no drop on demand
+  and no dump control, so it could measure neither the alert path nor the
+  close. The workorder changes no plugin code; the player build is compiled
+  at its final gate instead.
+- **Building each panel item into `panel/dist`.** Parallel items would
+  clobber one `dist`; each builds into its own `panel/artifacts/dist-<item>`.
+- **`build_release.py` in an acceptance criterion.** It runs `taskkill /F
+  /IM ForgePact.exe`, which would close the owner's own panel; release CI
+  packages it.

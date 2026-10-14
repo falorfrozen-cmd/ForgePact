@@ -20,6 +20,16 @@ the current controls' labels and descriptions. Choosing one opens its section
 and focuses the original control (a disabled child focuses its row).
 **Edit pool** opens Satanic Zone Mods.
 
+**Tracker** (from 2.3.0, #185) sits in the sidebar after Mods, above Setup and
+Help. It has no illustrated icon: Ember draws its line icon, a rising count,
+at the artwork's size in the accent, since Ember's illustrations belong to
+settings and the Tracker's page is a session record. **Find a setting** finds
+the Tracker's on/off switch and none of the Tracker's own controls (sounds,
+filters, the overlay, the shopping list), which are its settings, not mods.
+The page's numbers stay in the mono face in Ember too, so a column of them
+lines up, and the overlay window takes Ember's colours but none of its
+artwork, serif or glow.
+
 The 2.0 features remain available: Enabled mods with Turn off and Undo, slider
 switches, gem search/filter/save, the plugin warning tooltips, and all four
 themes. The plugin status reports installation files, not a live connection.
@@ -56,6 +66,13 @@ An active Undo follows theme changes without losing its action or timer.
   all 372 glyph outlines, metrics and character mappings were verified equal.
 - `design/ember/`: artwork provenance and full-size reference, excluded from
   the runtime bundle. `tools/pack_ember_relief.cjs` retains the crop recipe.
+- The Tracker (#185): `#nav-tracker` is a plain rail button in `App.svelte`,
+  after Mods, so Ember's reorder (Overview first, Setup and Help last) leaves
+  it after Mods. `relief.css` hides the illustrated `:before` for it and sizes
+  its own SVG to 36x30 in `--color-accent`. `ember.js`'s search index skips
+  everything inside `#trackerSections`, as it skips the Satanic and gem lists;
+  only `#mod_tracker` is indexed. Its design is `design/tracker/` and
+  `panel/DESIGN.md` § Tracker.
 
 Run from the ForgePact directory:
 
@@ -83,7 +100,11 @@ npm --prefix panel run e2e:finish
 npm --prefix panel run e2e:motion
 npm --prefix panel run e2e:polish
 npm --prefix panel run e2e:perf
+npm --prefix panel run e2e:tracker
 ```
+
+`e2e:tracker`'s `shell` module opens the Tracker from Ember's sidebar and from
+Ledger's rail (`nav-opens-the-tab-in-ember`, `nav-opens-the-tab-in-ledger`).
 
 Tests run against the real HTTP handler with temporary configuration and IPC
 files. They never launch or install the game. Ember's additional suite covers
