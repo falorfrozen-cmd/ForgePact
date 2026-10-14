@@ -2746,7 +2746,57 @@ def tracker_state(cfg) -> dict:
             "revision": snap.get("revision", 0), "extra_revision": snap.get("extra_revision", 0),
             "catching_up": catching_up, "session": session,
             "zone_alert": service.zone_alert_state(),
-            "overlay": tracker_overlay_window().state()}
+            "overlay": tracker_overlay_window().state(),
+            "presence": tracker_presence_state()}
+
+
+# Discord Rich Presence (forgepact_tracker/presence.py): one daemon thread,
+# started by main() only when a Discord application ID is available. It reads
+# tracker_presence_view() and leaves the tracker lock before any pipe I/O.
+_PRESENCE = None
+
+
+def tracker_presence_view():
+    """What the presence thread shows: None while it should show nothing (the
+    tracker off, or its `discord` setting off), else whether the game runs and
+    a snapshot taken under the tracker lock. A player who never turned the
+    tracker on gets no store from it."""
+    cfg = load_cfg()
+    if not cfg.get("mod_tracker", False):
+        return None
+    service = tracker_service()
+    with service.lock:
+        if not service.get_settings().get("discord", False):
+            return None
+        snap = service.snapshot()
+    return {"running": game_running(cfg), "snapshot": snap}
+
+
+def start_tracker_presence():
+    """Start the presence thread when an application ID is available, once;
+    answers it, or None with no ID."""
+    global _PRESENCE
+    from forgepact_tracker import presence
+    client_id = presence.app_id()
+    if client_id is None:
+        return None
+    with _TRACKER_LOCK:
+        if _PRESENCE is None:
+            _PRESENCE = presence.Presence(client_id, lambda: tracker_presence_view(),
+                                          connect=presence.PipeTransport().connect)
+        _PRESENCE.start()
+        return _PRESENCE
+
+
+def tracker_presence_state() -> dict:
+    """/api/tracker's `presence`: `{"available": false}` with no application
+    ID (the tab hides the switch), else whether Discord is connected and
+    showing the card."""
+    from forgepact_tracker import presence
+    if not presence.available():
+        return {"available": False}
+    worker = _PRESENCE
+    return worker.state() if worker is not None else {"available": True, "connected": False, "showing": False}
 
 
 def tracker_sound_key(path: str) -> str:
@@ -3762,6 +3812,10 @@ def main():
     print(f"ForgePact running at {url}", flush=True)
     threading.Thread(target=watcher, daemon=True).start()
     threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        start_tracker_presence()
+    except Exception:
+        pass
     # Show the UI in a NATIVE desktop window (no browser, no address bar). Falls back to
     # the default browser only if pywebview/WebView2 is unavailable.
     try:
