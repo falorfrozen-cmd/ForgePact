@@ -13,7 +13,9 @@
   // beside Apply all, and a second one beside the save indicator, each with a
   // tooltip (src/lib/plugin-warning.js); status() in panel.js still decides
   // when #pluginWarning shows and what it says. The Setup and Mods rail icons
-  // are the design's ring and 2x2 grid (finish review F1).
+  // are the design's ring and 2x2 grid (finish review F1). The Tracker tab
+  // (#185) follows Mods in the rail and its cards come last in the workspace;
+  // its line icon is a rising count (design/tracker/).
   import { ICON_SPRITE, WARN_ICON } from './icons.js';
   import { openTab } from './nav.js';
   import Setup from './tabs/Setup.svelte';
@@ -21,6 +23,7 @@
   import Modifiers from './tabs/Modifiers.svelte';
   import Mods from './tabs/Mods.svelte';
   import World from './tabs/World.svelte';
+  import Tracker from './tabs/Tracker.svelte';
   import Overview from './ember/Overview.svelte';
 </script>
 
@@ -34,6 +37,7 @@
 <button class="tabbtn" data-tab="world" role="tab" id="nav-world" aria-controls="workspace"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0M3 12h18M12 3c5 5 5 13 0 18-5-5-5-13 0-18"/></svg>World</button>
 <button class="tabbtn" data-tab="loot" role="tab" id="nav-loot" aria-controls="workspace"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h16v12H4zM3 8l3-5h12l3 5M9 8v5h6V8"/></svg>Loot</button>
 <button class="tabbtn" data-tab="mods" role="tab" id="nav-mods" aria-controls="workspace"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 4.5h6v6h-6zM13.5 4.5h6v6h-6zM4.5 13.5h6v6h-6zM13.5 13.5h6v6h-6z"/></svg>Mods</button>
+<button class="tabbtn" data-tab="tracker" role="tab" id="nav-tracker" aria-controls="workspace"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 20h18M5 16l4.5-5 4 3L20 6M15.5 6H20v4.5"/></svg>Tracker</button>
 </nav>
 </aside>
 <main id="wrap" tabindex="0" aria-labelledby="pageTitle">
@@ -55,6 +59,7 @@
 <Modifiers />
 <Mods />
 <World />
+<Tracker />
 </div>
 </main></div>
 <div id="toast" role="status"></div>

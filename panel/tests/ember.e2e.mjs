@@ -1,9 +1,12 @@
 // Ember's shortcuts drive the real 2.0 controls and API in a throwaway sandbox.
 // No game process, saves or user configuration are touched.
+//
+//   node tests/ember.e2e.mjs [--dist <dir>]    (npm run e2e:ember)
 import assert from 'node:assert/strict';
 import { mkdirSync } from 'node:fs';
-import { startSandbox, launchBrowser, openPanel, openTab, waitSaved } from './lib/browser.mjs';
-const sandbox=await startSandbox({offline:true});
+import { startSandbox, launchBrowser, openPanel, openTab, parseArgs, waitSaved } from './lib/browser.mjs';
+const args=parseArgs(process.argv.slice(2));
+const sandbox=await startSandbox({offline:true,dist:typeof args.dist==='string'?args.dist:null});
 const browser=await launchBrowser();
 const errors=[];
 const checks=[];
@@ -193,7 +196,7 @@ try {
 
   for(const width of [1600,1280,900,390]) {
     await page.setViewportSize({width,height:width===1600?1000:850});
-    for(const tab of ['overview','modifiers','world','loot','mods','setup','help']) {
+    for(const tab of ['overview','modifiers','world','loot','mods','tracker','setup','help']) {
       await openTab(page,tab);
       const size=await page.evaluate(()=>({page:document.documentElement.scrollWidth,viewport:innerWidth}));
       assert.ok(size.page<=size.viewport+1,`${width} ${tab}: horizontal overflow ${size.page}`);
@@ -201,7 +204,7 @@ try {
       if(tab==='overview'||width===1280) await page.screenshot({path:`artifacts/ember/${width}-${tab}.png`});
     }
   }
-  checks.push('All seven pages fit at 1600, 1280, 900 and 390 px; Apply remains reachable');
+  checks.push('All eight pages fit at 1600, 1280, 900 and 390 px; Apply remains reachable');
   assert.deepEqual(errors,[]);
   checks.push('No JavaScript errors or missing application assets');
   console.log(JSON.stringify({passed:checks.length,checks},null,2));

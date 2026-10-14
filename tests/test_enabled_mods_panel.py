@@ -34,10 +34,10 @@ from test_panel_performance import run_node  # noqa: E402
 
 FIXED_COPY = ("Enabled mods", "Nothing is on", "Turn off", "Theme", "Ledger", "Graphite", "Sigil")
 LIST_FILES = ("enabled-mods.js", "lib/enabled-mods-list.js")
-# Settings the backend has before the page has a control for them. HS Offline
-# Tracker's `mod_tracker` (#185) gets its row, and its place in the fixture,
-# with the Tracker tab (workorder forgepact-185-tracker-tab).
-BACKEND_ONLY_KEYS = ("mod_tracker",)
+# Settings the backend has before the page has a control for them. None now:
+# HS Offline Tracker's `mod_tracker` (#185) got its row, heading the Tracker
+# tab, and its place in the fixture with that tab.
+BACKEND_ONLY_KEYS = ()
 
 
 def _opening_tag(text, marker):

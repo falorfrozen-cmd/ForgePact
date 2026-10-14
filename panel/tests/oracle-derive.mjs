@@ -150,11 +150,11 @@ export const quickDisable = (controlId) => `#enabledMods .quick-disable[data-for
 // `restate` is a line the backend sends before the verb's `1` when the switch
 // turns on (Sleep loot your filter hides restates its show key, at its
 // default in a fresh sandbox, as map reveal restates its child). The
-// Satanic Zone control switch, Boss soul pieces (on the Loot tab) and the
-// three flight charms' drop switches (Mods > Items, #158) sit before Jump
-// through scenery rather than last: the show key's select follows this loop
-// without a navigation step of its own, so the loop must end on Mods >
-// Quality of Life.
+// Satanic Zone control switch, Boss soul pieces (on the Loot tab), the
+// Tracker tab's switch (#185) and the three flight charms' drop switches
+// (Mods > Items, #158) sit before Jump through scenery rather than last: the
+// show key's select follows this loop without a navigation step of its own,
+// so the loop must end on Mods > Quality of Life.
 export const NATIVE_BOOLEANS = [
   { key: 'mod_far_sleep', tab: 'tab:mods', sub: 'subtab:qol', verb: 'farsleep' },
   { key: 'mod_pet_loot_unstick', tab: 'tab:mods', sub: 'subtab:qol', verb: 'petunstick' },
@@ -164,6 +164,7 @@ export const NATIVE_BOOLEANS = [
   { key: 'mod_hidden_loot', tab: 'tab:mods', sub: 'subtab:qol', verb: 'hiddenloot', restate: 'hiddenloot key 164' },
   { key: 'satanic_everywhere', tab: 'tab:world', verb: 'satzone everywhere' },
   { key: 'mod_boss_soul_pieces', tab: 'tab:loot', verb: 'soulpiece' },
+  { key: 'mod_tracker', tab: 'tab:tracker', verb: 'tracker' },
   { key: 'mod_flight_elf', tab: 'tab:mods', sub: 'subtab:items', verb: 'flightcharm elf' },
   { key: 'mod_flight_wings', tab: 'tab:mods', sub: 'subtab:items', verb: 'flightcharm wings' },
   { key: 'mod_flight_broom', tab: 'tab:mods', sub: 'subtab:items', verb: 'flightcharm broom' },

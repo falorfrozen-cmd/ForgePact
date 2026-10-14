@@ -464,7 +464,9 @@ function indexEmberSearch() {
     )) {
       // Slider switches already have their range entry; the two pools have
       // dedicated search/filter destinations instead of hundreds of duplicates.
-      if (input.id.startsWith("sw_") || input.closest(".sat-list,#gemfilter_panel")) continue;
+      // The Tracker tab's sections (#185) are the tracker's own settings, not
+      // mods: only its switch is found.
+      if (input.id.startsWith("sw_") || input.closest(".sat-list,#gemfilter_panel,#trackerSections")) continue;
       const row = input.closest(".row"),
         rowLabel =
           row

@@ -26,6 +26,7 @@
  "mod_hidden_loot_key": 164,
  "mod_jump_scenery": false,
  "mod_loot_announce": false,
+ "mod_tracker": false,
  "mod_pillar_tips": false,
  "mod_flight_elf": false,
  "mod_flight_wings": false,

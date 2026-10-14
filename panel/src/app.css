@@ -388,6 +388,29 @@ select.style-select:disabled{opacity:.45;cursor:not-allowed}
 .theme-picker-swatches>span{flex:1;background-color:var(--swatch,transparent)}
 .theme-picker-native{position:absolute;left:0;top:0;width:1px;height:1px;margin:0;padding:0;border:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;pointer-events:none}
 
+/* ---- Tracker (#185): the tab's frame, ported from design/tracker/tracker.css (panel/DESIGN.md § Tracker). The tab's
+   container draws no surface; the switch card and each section are cards of their own. #trackerSections only groups
+   the sub-tabs and the open section for the oracle and Ember's search, so it lays out as if it were not there.
+   The sections' own styles live with their components. ---- */
+.tab-card.trk-tab.active{grid-column:1/-1;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:var(--space-7) var(--space-9);align-items:start;min-width:0}
+.trk-sections{display:contents}
+.trk-tab>.card,.trk-tab .trk-subtabs,.trk-tab .trk-panel{grid-column:1/-1}
+.trk-subtabs{flex-wrap:wrap}
+.trk-panel{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:var(--space-7) var(--space-9);align-items:start;min-width:0}
+.trk-panel>.trk-section{display:contents}
+.trk-panel .card{grid-column:1/-1}.trk-panel .card.trk-half{grid-column:auto}
+.trk-stack{display:flex;flex-direction:column;gap:var(--space-7);min-width:0}
+.trk-state{display:flex;margin:0;align-items:center;gap:var(--space-4);color:var(--color-text-muted);font-size:var(--font-size-xs)}
+.trk-dot{flex:none;width:6px;height:6px;border-radius:var(--radius-pill);background-color:var(--color-text-faint)}
+.trk-dot.on{background-color:var(--color-ok)}.trk-dot.warn{background-color:var(--color-warn)}
+.trk-head{display:flex;align-items:center;justify-content:space-between;gap:var(--space-7);min-width:0}.trk-head h2{min-width:0}
+.trk-head-side{display:flex;align-items:center;gap:var(--space-4);flex:none}
+.trk-count{color:var(--color-text-muted);font-family:var(--font-mono-family),Consolas,monospace;font-size:var(--font-size-xs)}
+.trk-sub{margin:calc(var(--space-6) * -1) 0 0;color:var(--color-text-muted);font-size:var(--font-size-sm)}
+.trk-subhead{margin:0;font-family:inherit;color:var(--color-text-muted);font-size:var(--font-size-xs);font-weight:var(--font-weight-medium)}
+.r-satanic{color:var(--color-rarity-satanic)}.r-set{color:var(--color-rarity-set)}.r-heroic{color:var(--color-rarity-heroic)}.r-angelic{color:var(--color-rarity-angelic)}.r-unholy{color:var(--color-rarity-unholy)}
+@media(max-width:1100px){.tab-card.trk-tab.active,.trk-panel{grid-template-columns:minmax(0,1fr)}.trk-panel .card.trk-half{grid-column:1/-1}}
+
 /* ---- Toasts: #toast, and the undo toast above it in a band the page makes room for ---- */
 #toast{position:fixed;right:var(--space-9);bottom:calc(var(--space-10) + 1px + var(--space-6));z-index:40;max-width:min(560px,calc(100vw - 2 * var(--space-9)));min-height:var(--toast-h);display:flex;align-items:center;padding:0 var(--space-7);border-radius:var(--radius-md);background-color:var(--color-bg-hover);color:var(--color-text-primary);font-size:var(--font-size-sm);box-shadow:0 8px 24px color-mix(in srgb,var(--color-bg-sunken) 80%,transparent);opacity:0;pointer-events:none;
   transform:translateY(var(--space-4));transition:opacity var(--motion-duration-fast) var(--motion-easing-standard),transform var(--motion-duration-fast) var(--motion-easing-standard)}
