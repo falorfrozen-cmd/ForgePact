@@ -19,6 +19,7 @@ import { PANEL_DIR } from '../lib/browser.mjs';
 export const EXPECTED = [
   'first-load-plays-nothing-it-already-had',
   'switch-off-polls-and-claims-nothing',
+  'switch-turned-on-elsewhere-arms-the-alerts',
   'heroic-drop-claimed-once-and-played-once',
   'mythic-drop-neither-claimed-nor-played',
   'two-pages-play-it-once',
@@ -197,6 +198,25 @@ export default async function (t) {
     t.appendSession([groundDrop('Heroic', next)]);
     const filed = await journalEntry(t, next);
     await until(async () => (await plays(p)).length === 1, 6000, 'the drop after the switch went on to play');
+    assert(p.claims.map((c) => c.id).join() === filed.id, `claims: ${JSON.stringify(p.claims)}`);
+  });
+
+  // The switch turned on outside this window (another window, the hub, a
+  // script), with the page on another tab: its status poll picks the change
+  // up and the alerts follow. #185 Live 1 found a window that stayed silent.
+  await t.check('switch-turned-on-elsewhere-arms-the-alerts', async () => {
+    await setSwitch(t, false);
+    const p = await armed(t, { tab: 'loot', expectExtra: false });
+    const extra = p.page.waitForResponse((r) => new URL(r.url()).pathname === '/api/tracker/extra', { timeout: 40000 });
+    await setSwitch(t, true);
+    await extra;
+    await until(() => p.page.evaluate(() => document.getElementById('mod_tracker')?.checked === true), 5000, 'the switch to show on');
+    await wait(1500);
+    assert(p.claims.length === 0, `picking up the switch claimed what was already there: ${JSON.stringify(p.claims)}`);
+    const name = 'Alerts Switch Elsewhere Heroic';
+    t.appendSession([groundDrop('Heroic', name)]);
+    const filed = await journalEntry(t, name);
+    await until(async () => (await plays(p)).length === 1, 8000, 'the drop after the switch went on elsewhere to play');
     assert(p.claims.map((c) => c.id).join() === filed.id, `claims: ${JSON.stringify(p.claims)}`);
   });
 

@@ -1451,13 +1451,23 @@ async function pluginModsAfterSet(){
   await new Promise(r=>setTimeout(r,700));
   try{const s=await j("/api/state");if(ST)ST.pluginMods=s.pluginMods;applyPluginModState(s.pluginMods);return s.pluginMods}catch(_){return null}
 }
+// The Tracker's switch can change outside this window (another panel window,
+// the hub, a script's POST /api/set), and the Tracker tab's alerts and polling
+// follow ST.cfg.mod_tracker, so a window that missed the change stayed silent
+// for the whole session (#185 Live 1, 2026-10-14). Take the saved value from
+// each status poll, unless this window has a write of its own in flight.
+function syncTrackerSwitch(cfg){
+  if(pendingWrites||!cfg||!ST?.cfg||!!cfg.mod_tracker===!!ST.cfg.mod_tracker)return;
+  ST.cfg.mod_tracker=cfg.mod_tracker;
+  refreshSavedControls();renderEnabledMods(ST.cfg);
+}
 async function pollOnce(){
   pollTimer=null;
   try{
     const s=await j('/api/state');
     pollLastChange=pollNextChangeAt(pollPrev,s,false,Date.now(),pollLastChange);
     pollPrev=s;
-    if(ST){ST.gameRunning=s.gameRunning;ST.lastApplied=s.lastApplied;ST.queued=s.queued;ST.ipcOk=s.ipcOk;ST.chain=s.chain;ST.pluginBuild=s.pluginBuild;ST.eacStatus=s.eacStatus;ST.launch=s.launch;ST.pluginMods=s.pluginMods;ST.stash_move_all_session=s.stash_move_all_session;ST.incidents=s.incidents;status();applyPluginModState(s.pluginMods);applyStashMoveAllSession();paintIncidents(s.incidents);document.dispatchEvent?.(new Event('forgepact:status'))}
+    if(ST){ST.gameRunning=s.gameRunning;ST.lastApplied=s.lastApplied;ST.queued=s.queued;ST.ipcOk=s.ipcOk;ST.chain=s.chain;ST.pluginBuild=s.pluginBuild;ST.eacStatus=s.eacStatus;ST.launch=s.launch;ST.pluginMods=s.pluginMods;ST.stash_move_all_session=s.stash_move_all_session;ST.incidents=s.incidents;status();applyPluginModState(s.pluginMods);applyStashMoveAllSession();paintIncidents(s.incidents);syncTrackerSwitch(s.cfg);document.dispatchEvent?.(new Event('forgepact:status'))}
   }catch(e){}
   schedulePoll();
 }
