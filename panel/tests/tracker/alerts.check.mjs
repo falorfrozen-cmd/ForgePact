@@ -238,15 +238,17 @@ export default async function (t) {
     const a = await armed(t);
     const b = await armed(t);
     // A page that polls after the other's claim sees the entry announced and
-    // never claims it, so the server's refusal would go untested. Page b
-    // therefore reads every entry as unannounced: both pages claim, and only
-    // the server's answer keeps the second one quiet.
-    await b.page.route('**/api/tracker/extra', async (route) => {
-      const response = await route.fetch();
-      const json = await response.json();
-      json.drops = (json.drops ?? []).map((d) => ({ ...d, announced: false }));
-      await route.fulfill({ response, json });
-    });
+    // never claims it, so the server's refusal would go untested (and which
+    // page claims is a race). Both pages therefore read every entry as
+    // unannounced: both claim, and only the server's answer keeps one quiet.
+    for (const p of [a, b]) {
+      await p.page.route('**/api/tracker/extra', async (route) => {
+        const response = await route.fetch();
+        const json = await response.json();
+        json.drops = (json.drops ?? []).map((d) => ({ ...d, announced: false }));
+        await route.fulfill({ response, json });
+      });
+    }
     const name = 'Alerts Two Pages Heroic';
     t.appendSession([groundDrop('Heroic', name)]);
     const filed = await journalEntry(t, name);
