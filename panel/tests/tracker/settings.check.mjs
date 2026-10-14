@@ -390,8 +390,15 @@ export default async function (t) {
     // Export: the filter, its lists and the chase list's sound, inlined.
     await page.click('#trkFilterMore');
     await page.click('#trkFilterExport');
-    await page.waitForFunction(async () => (await navigator.clipboard.readText()) !== 'before', null, { timeout: 8000 });
-    const text = await page.evaluate(() => navigator.clipboard.readText());
+    // Headless Edge shares the machine's clipboard, and a failed read can come
+    // back empty, so the poll that sees the export is the one that keeps it:
+    // a second read could still return 'before'.
+    const seen = await page.waitForFunction(async () => {
+      let text = null;
+      try { text = await navigator.clipboard.readText(); } catch (e) { return null; }
+      try { return JSON.parse(text)?.name === 'Hell farming' ? text : null; } catch (e) { return null; }
+    }, null, { timeout: 8000 });
+    const text = await seen.jsonValue();
     const exported = JSON.parse(text);
     assert(exported.name === 'Hell farming' && exported.lists.length === 2, `the export is ${text.slice(0, 300)}`);
     for (const [i, list] of seeded.filters[0].lists.entries()) {
