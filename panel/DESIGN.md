@@ -23,6 +23,11 @@ colors:
   warn: "#e8c06a"
   warn-tint: "#261f14"
   danger: "#f29ba6"
+  rarity-satanic: "#ff6e78"
+  rarity-set: "#86d877"
+  rarity-heroic: "#5cc8ee"
+  rarity-angelic: "#f2da8a"
+  rarity-unholy: "#cc8dff"
 typography:
   ember-display:
     fontFamily: "EmberFell, IM Fell English, Georgia, serif"
@@ -513,10 +518,95 @@ the pools have their own filter destinations. A hidden theme select resolves
 to the visible theme-picker trigger.
 Segoe UI is Ember's body face, with Arial as the system fallback; the existing
 arrow/check glyphs explicitly use Arial. No Arial font file is bundled. The
-existing Figma export and generated `tokens.css` are unchanged; shared Figma
+existing Figma export and generated `tokens.css` are unchanged by Ember (the
+Tracker's rarity colours were added to them later, § Tracker); shared Figma
 design-library work is deferred. See `../docs/ember-ui.md` for provenance and
 tests. `e2e:finish` retains Ledger's gutter/type baseline and exercises all
 four picker options; `e2e:ember` verifies the new layout at four widths.
+
+## Tracker
+
+The Tracker tab and its overlay window (#185) follow the rules above, in every
+palette, Ember included. The direction comps, their decisions and their review
+are in [`../design/tracker/`](../design/tracker/README.md); its `tracker.css`
+holds the proposed styles, tokens only.
+
+**Layout.**
+- The `mod_tracker` switch heads the tab, in its own card above everything
+  else ("Session tracker", the switch, one sentence, one state line).
+- Below it, sub-tabs as the Mods tab's: Session, Runs, Alerts, Overlay,
+  Shopping list, Item codex, one per component (`Session.svelte`,
+  `Runs.svelte`, `AlertSettings.svelte`, `OverlaySettings.svelte`,
+  `Shop.svelte`, `Codex.svelte`). Arrow keys move between them, as on Mods.
+- The tab's container draws no surface; each section is its own card (the No
+  Nested Card Rule). Two columns at 1280, one at 1100 and below.
+- Session: the session card (character line, clock, Pause clock, End run, then
+  gold, experience, kills and drops with their rates) across both columns;
+  Loot (by rarity, then Notable) and Killed and opened on the left; the
+  Satanic zone and the two series charts on the right; the journal across
+  both. Runs: the list left, the picked run right.
+- Settings inside the tab are the panel's rows: `.setting-entry` with a
+  `.switch.slider-switch`, a range and a stepper for a volume, a plain switch
+  row otherwise.
+- End run and Clear history open a confirmation in place, its primary button
+  repeating the action and a secondary keeping things as they are.
+
+**Numbers.**
+- Every count, rate, clock and duration is Plex Mono, Ember included: totals
+  `--font-size-2xl`, the clock `--font-size-xl`, rates, counts and times
+  `--font-size-xs`.
+- Values are written in the game's dialect: `1,234` below ten thousand, then
+  `12.3k`, `1.23kk`, `1.23kkk`; rates end in `/h`; grades are D, C, B, A, S,
+  SS.
+- Nothing a poll repaints moves: no count-up, flash or transition on a total,
+  a rate, the clock, a journal row or a chart.
+
+**Rarity colours.** `--color-rarity-satanic`, `-set`, `-heroic`, `-angelic`
+and `-unholy`, one value per palette, from the export (Ember inherits
+Ledger's). They follow the game's hues: Satanic red, Set green, Heroic cyan,
+Angelic gold, Unholy violet. Sigil's Satanic is a purer red, apart from its
+rose accent.
+- A rarity colour goes on text only, an item's name or the rarity's word:
+  never a fill, a bar, a border or a chart line.
+- Where the rarity is the point it is written beside the colour: the loot
+  table, the journal, the codex, the alert rows, the drop card. Elsewhere (a
+  run's finds, a sound list, the overlay's newest drops) the name alone is the
+  point and the colour is a redundant hint.
+- Each is in `contrastPairs` on raised, hover and base, 4.5:1 or more in all
+  three palettes.
+- The accent keeps meaning on: no total, bar or chart line is drawn in it.
+  Series lines are primary text, 2px, on a subtle grid; time bars are muted
+  text on sunken.
+
+**Charts.** One counter per chart, each with its own axis and a caption
+holding its latest value: gold and experience are two small charts, never one
+chart with two scales. No legend, fill or point markers.
+
+**The overlay's look.**
+- One plate, 444 x 147 at scale 1 (444 x 211 with the newest drops, 444 x 104
+  with counters only): the state and clock, the zone; gold, experience and
+  kills with rates; the five rarity counts and SS.
+- Flat in every palette: the palette's colours and none of Ember's artwork,
+  serif or glow.
+- Solid by default. With a transparent window only the plate's background is
+  translucent, never the text, and its opacity has a 90% floor: over a white
+  game frame every overlay text token still passes 4.5:1 there. The overlay
+  uses no faint text.
+- The drop card (the flourish) covers everything under the top line for its
+  seconds, so no line of counters is cut and the state, clock and zone stay.
+  It carries a 3px edge in the drop's rarity colour, the name in that colour,
+  the rarity, grade and Magic Find in muted text, and a count (`×2`) when the
+  same drop repeats. It casts the Float shadow, as a toast does.
+
+**What does not animate.** Totals, rates, counts, the clock, the journal, the
+charts, the zone chip and every switch. The drop card is the Tracker's only
+motion: it enters over `--motion-duration-base` on the emphasized easing
+(opacity and an 8px rise) and leaves over `fast` on the standard easing
+(opacity). Under reduced motion it fades only.
+
+**Edges.** Two new allowlisted borders: `.trk-field`, the tab's text fields'
+1px strong edge, and `.ovl-ticker`, the 1px subtle rule above the overlay's
+newest drops.
 
 ## Do's and Don'ts
 

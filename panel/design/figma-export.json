@@ -439,6 +439,41 @@
     },
     {
       "collection": "tokens",
+      "mode": "ledger",
+      "name": "color/rarity/satanic",
+      "type": "COLOR",
+      "value": "#ff6e78"
+    },
+    {
+      "collection": "tokens",
+      "mode": "ledger",
+      "name": "color/rarity/set",
+      "type": "COLOR",
+      "value": "#86d877"
+    },
+    {
+      "collection": "tokens",
+      "mode": "ledger",
+      "name": "color/rarity/heroic",
+      "type": "COLOR",
+      "value": "#5cc8ee"
+    },
+    {
+      "collection": "tokens",
+      "mode": "ledger",
+      "name": "color/rarity/angelic",
+      "type": "COLOR",
+      "value": "#f2da8a"
+    },
+    {
+      "collection": "tokens",
+      "mode": "ledger",
+      "name": "color/rarity/unholy",
+      "type": "COLOR",
+      "value": "#cc8dff"
+    },
+    {
+      "collection": "tokens",
       "mode": "graphite",
       "name": "color/track",
       "type": "COLOR",
@@ -453,6 +488,41 @@
     },
     {
       "collection": "tokens",
+      "mode": "graphite",
+      "name": "color/rarity/satanic",
+      "type": "COLOR",
+      "value": "#ff6e78"
+    },
+    {
+      "collection": "tokens",
+      "mode": "graphite",
+      "name": "color/rarity/set",
+      "type": "COLOR",
+      "value": "#86d877"
+    },
+    {
+      "collection": "tokens",
+      "mode": "graphite",
+      "name": "color/rarity/heroic",
+      "type": "COLOR",
+      "value": "#5cc8ee"
+    },
+    {
+      "collection": "tokens",
+      "mode": "graphite",
+      "name": "color/rarity/angelic",
+      "type": "COLOR",
+      "value": "#f2da8a"
+    },
+    {
+      "collection": "tokens",
+      "mode": "graphite",
+      "name": "color/rarity/unholy",
+      "type": "COLOR",
+      "value": "#cc8dff"
+    },
+    {
+      "collection": "tokens",
       "mode": "sigil",
       "name": "color/track",
       "type": "COLOR",
@@ -464,6 +534,41 @@
       "name": "color/switch/idle",
       "type": "COLOR",
       "value": "#79818d"
+    },
+    {
+      "collection": "tokens",
+      "mode": "sigil",
+      "name": "color/rarity/satanic",
+      "type": "COLOR",
+      "value": "#ff5c5c"
+    },
+    {
+      "collection": "tokens",
+      "mode": "sigil",
+      "name": "color/rarity/set",
+      "type": "COLOR",
+      "value": "#86d877"
+    },
+    {
+      "collection": "tokens",
+      "mode": "sigil",
+      "name": "color/rarity/heroic",
+      "type": "COLOR",
+      "value": "#5cc8ee"
+    },
+    {
+      "collection": "tokens",
+      "mode": "sigil",
+      "name": "color/rarity/angelic",
+      "type": "COLOR",
+      "value": "#f2da8a"
+    },
+    {
+      "collection": "tokens",
+      "mode": "sigil",
+      "name": "color/rarity/unholy",
+      "type": "COLOR",
+      "value": "#cc8dff"
     },
     {
       "collection": "tokens",
@@ -1103,6 +1208,14 @@
     {
       "selector": ".theme-picker-list",
       "why": "the theme picker's open list has a 1px color/border/subtle edge, so it reads as a layer over the Setup card it opens across, like the tray popover and the tooltips (finish review F2)"
+    },
+    {
+      "selector": ".trk-field",
+      "why": "the Tracker tab's text fields (the shopping list's entry, the codex search, a sound list's add field) show their edit area with the same 1px color/border/strong edge as the search field, 3:1 or more on raised and sunken"
+    },
+    {
+      "selector": ".ovl-ticker",
+      "why": "a 1px color/border/subtle top rule separates the overlay's newest drops from its counters, like the Modifiers group divider; decorative, so no contrast pair"
     }
   ],
   "contrastPairs": [
@@ -1500,6 +1613,226 @@
         "ledger": 7.2,
         "graphite": 6.78,
         "sigil": 5.54
+      }
+    },
+    {
+      "fg": "color/rarity/satanic",
+      "bg": "color/bg/raised",
+      "minRatio": 4.5,
+      "where": "Satanic: an item name in the Tracker tab: the journal, the run card, the codex and the alert rows",
+      "measured": {
+        "ledger": 6.07,
+        "graphite": 5.92,
+        "sigil": 5.47
+      }
+    },
+    {
+      "fg": "color/rarity/satanic",
+      "bg": "color/bg/hover",
+      "minRatio": 4.5,
+      "where": "Satanic: an item name on a hovered journal or codex row",
+      "measured": {
+        "ledger": 5.62,
+        "graphite": 5.47,
+        "sigil": 5.01
+      }
+    },
+    {
+      "fg": "color/rarity/satanic",
+      "bg": "color/bg/base",
+      "minRatio": 4.5,
+      "where": "Satanic: an item name on the overlay's plate (its ticker and flourish)",
+      "measured": {
+        "ledger": 6.94,
+        "graphite": 6.76,
+        "sigil": 6.29
+      }
+    },
+    {
+      "fg": "color/rarity/set",
+      "bg": "color/bg/raised",
+      "minRatio": 4.5,
+      "where": "Set: an item name in the Tracker tab: the journal, the run card, the codex and the alert rows",
+      "measured": {
+        "ledger": 9.48,
+        "graphite": 9.23,
+        "sigil": 9.53
+      }
+    },
+    {
+      "fg": "color/rarity/set",
+      "bg": "color/bg/hover",
+      "minRatio": 4.5,
+      "where": "Set: an item name on a hovered journal or codex row",
+      "measured": {
+        "ledger": 8.77,
+        "graphite": 8.54,
+        "sigil": 8.74
+      }
+    },
+    {
+      "fg": "color/rarity/set",
+      "bg": "color/bg/base",
+      "minRatio": 4.5,
+      "where": "Set: an item name on the overlay's plate (its ticker and flourish)",
+      "measured": {
+        "ledger": 10.83,
+        "graphite": 10.55,
+        "sigil": 10.98
+      }
+    },
+    {
+      "fg": "color/rarity/heroic",
+      "bg": "color/bg/raised",
+      "minRatio": 4.5,
+      "where": "Heroic: an item name in the Tracker tab: the journal, the run card, the codex and the alert rows",
+      "measured": {
+        "ledger": 8.58,
+        "graphite": 8.36,
+        "sigil": 8.63
+      }
+    },
+    {
+      "fg": "color/rarity/heroic",
+      "bg": "color/bg/hover",
+      "minRatio": 4.5,
+      "where": "Heroic: an item name on a hovered journal or codex row",
+      "measured": {
+        "ledger": 7.93,
+        "graphite": 7.73,
+        "sigil": 7.91
+      }
+    },
+    {
+      "fg": "color/rarity/heroic",
+      "bg": "color/bg/base",
+      "minRatio": 4.5,
+      "where": "Heroic: an item name on the overlay's plate (its ticker and flourish)",
+      "measured": {
+        "ledger": 9.8,
+        "graphite": 9.55,
+        "sigil": 9.94
+      }
+    },
+    {
+      "fg": "color/rarity/angelic",
+      "bg": "color/bg/raised",
+      "minRatio": 4.5,
+      "where": "Angelic: an item name in the Tracker tab: the journal, the run card, the codex and the alert rows",
+      "measured": {
+        "ledger": 11.88,
+        "graphite": 11.57,
+        "sigil": 11.95
+      }
+    },
+    {
+      "fg": "color/rarity/angelic",
+      "bg": "color/bg/hover",
+      "minRatio": 4.5,
+      "where": "Angelic: an item name on a hovered journal or codex row",
+      "measured": {
+        "ledger": 10.99,
+        "graphite": 10.71,
+        "sigil": 10.96
+      }
+    },
+    {
+      "fg": "color/rarity/angelic",
+      "bg": "color/bg/base",
+      "minRatio": 4.5,
+      "where": "Angelic: an item name on the overlay's plate (its ticker and flourish)",
+      "measured": {
+        "ledger": 13.57,
+        "graphite": 13.22,
+        "sigil": 13.76
+      }
+    },
+    {
+      "fg": "color/rarity/unholy",
+      "bg": "color/bg/raised",
+      "minRatio": 4.5,
+      "where": "Unholy: an item name in the Tracker tab: the journal, the run card, the codex and the alert rows",
+      "measured": {
+        "ledger": 6.91,
+        "graphite": 6.73,
+        "sigil": 6.95
+      }
+    },
+    {
+      "fg": "color/rarity/unholy",
+      "bg": "color/bg/hover",
+      "minRatio": 4.5,
+      "where": "Unholy: an item name on a hovered journal or codex row",
+      "measured": {
+        "ledger": 6.39,
+        "graphite": 6.23,
+        "sigil": 6.37
+      }
+    },
+    {
+      "fg": "color/rarity/unholy",
+      "bg": "color/bg/base",
+      "minRatio": 4.5,
+      "where": "Unholy: an item name on the overlay's plate (its ticker and flourish)",
+      "measured": {
+        "ledger": 7.89,
+        "graphite": 7.69,
+        "sigil": 8.0
+      }
+    },
+    {
+      "fg": "color/text/primary",
+      "bg": "color/warn/tint",
+      "minRatio": 4.5,
+      "where": "the Tracker's \"click to let it play alert sounds\" note",
+      "measured": {
+        "ledger": 12.97,
+        "graphite": 13.57,
+        "sigil": 14.09
+      }
+    },
+    {
+      "fg": "color/warn",
+      "bg": "color/warn/tint",
+      "minRatio": 3,
+      "where": "the warning icon in that note (non-text)",
+      "measured": {
+        "ledger": 9.45,
+        "graphite": 8.9,
+        "sigil": 11.31
+      }
+    },
+    {
+      "fg": "color/ok",
+      "bg": "color/bg/raised",
+      "minRatio": 3,
+      "where": "a Satanic zone buff's plus sign in the Tracker tab (non-text)",
+      "measured": {
+        "ledger": 9.37,
+        "graphite": 8.89,
+        "sigil": 9.17
+      }
+    },
+    {
+      "fg": "color/danger",
+      "bg": "color/bg/raised",
+      "minRatio": 3,
+      "where": "a Satanic zone debuff's minus sign and a refused sound file's icon in the Tracker tab (non-text)",
+      "measured": {
+        "ledger": 7.84,
+        "graphite": 6.69,
+        "sigil": 7.4
+      }
+    },
+    {
+      "fg": "color/text/muted",
+      "bg": "color/bg/sunken",
+      "minRatio": 3,
+      "where": "a run's time-in-zone bar on its sunken track (non-text)",
+      "measured": {
+        "ledger": 8.23,
+        "graphite": 8.61,
+        "sigil": 9.02
       }
     }
   ],

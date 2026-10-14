@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<!-- Direction comp: ForgePact's Tracker tab (#185). Static markup over the
+     panel's own stylesheets, linked by relative path; nothing is downloaded.
+     ?theme=ember (the default) or ?theme=ledger picks the palette; ?board shows
+     both palettes at 1280 and 1100 wide, each in its own frame. README.md in
+     this folder lists the screens, the decisions and the review. Sample values
+     are invented for the comp; nothing here is read from the game. -->
+<html lang="en" data-theme="ember">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Comp: Tracker tab</title>
+  <link rel="stylesheet" href="../../panel/src/tokens.css">
+  <link rel="stylesheet" href="../../panel/src/fonts.css">
+  <link rel="stylesheet" href="../../panel/src/app.css">
+  <link rel="stylesheet" href="../../panel/src/ember/palette.css">
+  <link rel="stylesheet" href="../../panel/src/ember/ember.css">
+  <link rel="stylesheet" href="../../panel/src/ember/relief.css">
+  <link rel="stylesheet" href="../../panel/src/ember/compat.css">
+  <link rel="stylesheet" href="tracker.css">
+  <script>
+    // Comp only: the palette from ?theme=, before anything paints.
+    (function () {
+      var t = new URLSearchParams(location.search).get('theme');
+      if (t === 'ledger' || t === 'graphite' || t === 'sigil') document.documentElement.dataset.theme = t;
+    })();
+  </script>
+  <style>
+    /* Comp chrome only: the switcher and the notes between screens. Not part of the design. */
+    .comp-bar { position: fixed; left: var(--space-6); bottom: var(--space-6); z-index: 100; display: flex; gap: var(--space-4); padding: var(--space-3) var(--space-5); border-radius: var(--radius-md); background-color: var(--color-bg-hover); font: 12px/1.4 var(--font-body-family), sans-serif; }
+    .comp-bar a { color: var(--color-text-primary); }
+    .comp-note { grid-column: 1 / -1; margin: var(--space-6) 0 0; color: var(--color-text-faint); font: 12px/1.4 var(--font-mono-family), monospace; }
+    .comp-board { display: flex; flex-direction: column; gap: var(--space-9); padding: var(--space-9); background-color: var(--color-bg-sunken); }
+    .comp-board h2 { margin: 0; color: var(--color-text-muted); font: 13px var(--font-mono-family), monospace; }
+    .comp-board iframe { display: block; height: 1000px; border: 0; }
+  </style>
+</head>
+<body data-ember-tab="tracker">
+<div id="app">
+<div id="appShell">
+<aside class="sidebar" aria-label="ForgePact navigation">
+  <div class="brand"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.5 21.5 12 12 21.5 2.5 12Z"/><path d="M12 7.5 16.5 12 12 16.5 7.5 12Z"/></svg><div><div class="brand-name">ForgePact</div><div class="brand-sub">HERO SIEGE · OFFLINE</div></div></div>
+  <nav class="tabbar" role="tablist" aria-label="ForgePact categories" aria-orientation="vertical">
+    <button type="button" class="tabbtn" id="nav-overview" data-tab="overview" role="tab" aria-controls="workspace" aria-selected="false" tabindex="-1"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11 12 3l9 8M5 10v11h5v-7h4v7h5V10"/></svg>Overview</button>
+    <button class="tabbtn" data-tab="modifiers" role="tab" id="nav-modifiers" aria-controls="workspace" aria-selected="false" tabindex="-1"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18M7 3v6M16 9v6M10 15v6"/></svg>Character</button>
+    <button class="tabbtn" data-tab="world" role="tab" id="nav-world" aria-controls="workspace" aria-selected="false" tabindex="-1"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0M3 12h18M12 3c5 5 5 13 0 18-5-5-5-13 0-18"/></svg>World</button>
+    <button class="tabbtn" data-tab="loot" role="tab" id="nav-loot" aria-controls="workspace" aria-selected="false" tabindex="-1"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h16v12H4zM3 8l3-5h12l3 5M9 8v5h6V8"/></svg>Loot</button>
+    <button class="tabbtn" data-tab="mods" role="tab" id="nav-mods" aria-controls="workspace" aria-selected="false" tabindex="-1"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 4.5h6v6h-6zM13.5 4.5h6v6h-6zM4.5 13.5h6v6h-6zM13.5 13.5h6v6h-6z"/></svg>Mods</button>
+    <!-- New: the Tracker tab. A line drawing of a rising count; Ember shows it at its artwork's size (tracker.css). -->
+    <button class="tabbtn active" data-tab="tracker" role="tab" id="nav-tracker" aria-controls="workspace" aria-selected="true" tabindex="0"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 20h18M5 16l4.5-5 4 3L20 6M15.5 6H20v4.5"/></svg>Tracker</button>
+    <button class="tabbtn" data-tab="setup" role="tab" id="nav-setup" aria-controls="workspace" aria-selected="false" tabindex="-1"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-16 0 8 8 0 0 1 16 0M14.5 12a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0"/></svg>Setup</button>
+    <button type="button" class="tabbtn" id="nav-help" data-tab="help" role="tab" aria-controls="workspace" aria-selected="false" tabindex="-1"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 4c4-1 6 0 9 2 3-2 5-3 9-2v16c-4-1-6 0-9 2-3-2-5-3-9-2ZM12 6v16"/></svg>Help</button>
+  </nav>
+  <div class="status-foot sidebar-foot"><span class="status-offline">Offline tools</span><span>Created by Falor and ST4H<span id="panelver"> · v2.3.0</span></span></div>
+</aside>
+<main id="wrap" tabindex="0" aria-labelledby="pageTitle">
+  <div class="control-dock"><div class="topline">
+    <div class="breadcrumb">ForgePact / <strong id="breadcrumbPage">Tracker</strong></div>
+    <div id="statusbar"><span class="chip on" id="chipGame">Game open · plugin ready</span><span id="emberPluginStatus" class="chip on">Plugin ready</span></div>
+    <button type="button" class="ember-search-button" data-ember-search="" aria-label="Find a setting">Find a setting… <kbd>Ctrl K</kbd></button>
+  </div></div>
+  <section id="enabledMods" aria-label="Enabled mods" data-form="inline"><h2 tabindex="-1">Enabled mods</h2><span id="enabledModsCount">1 on</span><ul><li class="enabled-mod"><span class="enabled-mod-name">Tracker</span> <span class="enabled-mod-value">on</span> <button type="button" class="quick-disable">Turn off</button></li></ul></section>
+  <div class="page-heading"><div><h1 id="pageTitle">Tracker</h1><p id="pageDescription">What this session earns and drops, your past runs, and the alerts you hear.</p></div></div>
+  <div id="workspace" role="tabpanel" aria-labelledby="nav-tracker">
+  <div class="tab-card trk-tab active" data-tab="tracker">
+
+    <!-- 1. The switch heads the tab. It is the one control the coverage walk counts (#mod_tracker). -->
+    <section class="card" aria-labelledby="trkSwitchTitle">
+      <div class="density-top">
+        <h2 id="trkSwitchTitle">Session tracker</h2>
+        <div class="row"><span class="lbl">Enabled</span><label class="switch"><input type="checkbox" id="mod_tracker" checked aria-label="Session tracker"><span class="sl"></span></label></div>
+      </div>
+      <p class="hint">Counts the gold, experience, kills and the five rarities you find while you play, keeps a journal of those drops, and files a run when a session ends. It only reads the game.</p>
+      <p class="trk-state"><span class="trk-dot on" aria-hidden="true"></span>Recording this session</p>
+    </section>
+
+    <!-- 2. Sub-tabs, as the Mods tab's. -->
+    <div class="subtabbar" role="tablist" aria-label="Tracker sections">
+      <button type="button" class="subtabbtn" role="tab" aria-selected="true" tabindex="0">Session</button>
+      <button type="button" class="subtabbtn" role="tab" aria-selected="false" tabindex="-1">Runs</button>
+      <button type="button" class="subtabbtn" role="tab" aria-selected="false" tabindex="-1">Alerts</button>
+      <button type="button" class="subtabbtn" role="tab" aria-selected="false" tabindex="-1">Overlay</button>
+      <button type="button" class="subtabbtn" role="tab" aria-selected="false" tabindex="-1">Shopping list</button>
+      <button type="button" class="subtabbtn" role="tab" aria-selected="false" tabindex="-1">Item codex</button>
+    </div>
+
+    <!-- ================= Session (Session.svelte) ================= -->
+    <div class="trk-panel" role="tabpanel" aria-label="Session">
+      <section class="card" aria-labelledby="trkSessionTitle">
+        <div class="trk-head">
+          <h2 id="trkSessionTitle">Sorak</h2>
+          <div class="trk-head-side">
+            <span class="trk-clock" aria-label="Session time">1:02:13</span>
+            <button type="button" class="btn">Pause clock</button>
+            <button type="button" class="trk-quiet">End run</button>
+          </div>
+        </div>
+        <p class="trk-sub">Level 100 · Hero 300 · Hell 5 · Season 10</p>
+        <div class="trk-totals">
+          <div class="trk-total"><span class="trk-total-label">Gold</span><span class="trk-total-value">14.86kk</span><span class="trk-total-rate">14.57kk/h</span><span class="trk-total-note">bank not read offline</span></div>
+          <div class="trk-total"><span class="trk-total-label">Experience</span><span class="trk-total-value">42.18kk</span><span class="trk-total-rate">41.36kk/h</span><span class="trk-total-note">728.84kk in level</span></div>
+          <div class="trk-total"><span class="trk-total-label">Kills</span><span class="trk-total-value">4,862</span><span class="trk-total-rate">4,766/h</span><span class="trk-total-note">91.4k total</span></div>
+          <div class="trk-total"><span class="trk-total-label">Drops</span><span class="trk-total-value">123</span><span class="trk-total-rate">121/h</span><span class="trk-total-note">the five rarities</span></div>
+        </div>
+      </section>
+
+      <div class="trk-stack">
+        <section class="card" aria-labelledby="trkLootTitle">
+          <div class="trk-head"><h2 id="trkLootTitle">Loot</h2><span class="trk-count">this session</span></div>
+          <table class="trk-table">
+            <thead><tr><th scope="col">Rarity</th><th scope="col">Drops</th><th scope="col" title="Of those, the ones the game credited to Magic Find">Magic Find</th><th scope="col">Per hour</th></tr></thead>
+            <tbody>
+              <tr><td class="r-satanic">Satanic</td><td>91</td><td class="trk-dim">38</td><td class="trk-dim">89/h</td></tr>
+              <tr><td class="r-set">Set</td><td>17</td><td class="trk-dim">9</td><td class="trk-dim">17/h</td></tr>
+              <tr><td class="r-heroic">Heroic</td><td>8</td><td class="trk-dim">3</td><td class="trk-dim">8/h</td></tr>
+              <tr><td class="r-angelic">Angelic</td><td>5</td><td class="trk-dim">2</td><td class="trk-dim">5/h</td></tr>
+              <tr><td class="r-unholy">Unholy</td><td>2</td><td class="trk-dim">1</td><td class="trk-dim">2/h</td></tr>
+            </tbody>
+          </table>
+          <div class="trk-group">
+            <h3 class="trk-subhead">Notable</h3>
+            <dl class="trk-tally"><dt>SS-grade gear</dt><dd>7</dd><dt>Angelic Key</dt><dd>5</dd><dt>SS runes</dt><dd>3</dd></dl>
+          </div>
+        </section>
+        <section class="card" aria-labelledby="trkTallyTitle">
+          <div class="trk-head"><h2 id="trkTallyTitle">Killed and opened</h2><span class="trk-count">this session</span></div>
+          <div class="trk-group"><h3 class="trk-subhead">Bosses</h3><dl class="trk-tally"><dt>Uber Phantom Leviathan</dt><dd>4</dd><dt>Chaos Tower floors</dt><dd>18</dd></dl></div>
+          <div class="trk-group"><h3 class="trk-subhead">Chests</h3><dl class="trk-tally"><dt>Crystal</dt><dd>23</dd></dl></div>
+        </section>
+      </div>
+
+      <div class="trk-stack">
+        <section class="card" aria-labelledby="trkZoneTitle">
+          <div class="trk-head"><h2 id="trkZoneTitle">Satanic zone</h2><span class="trk-count">rolled 11 min ago</span></div>
+          <p class="trk-zone-name">Act 9 · Frozen Peaks<span class="trk-here"><span class="trk-dot on" aria-hidden="true"></span>You are here</span></p>
+          <div class="trk-mods">
+            <div class="trk-group"><h3 class="trk-subhead">Buffs</h3>
+              <ul class="trk-mod-list">
+                <li class="trk-mod buff"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 2v8M2 6h8"/></svg><span class="trk-mod-name">Loot Goblin II</span><span class="trk-mod-desc">+2 Maximum Loot from Enemy Killed</span></li>
+                <li class="trk-mod buff"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 2v8M2 6h8"/></svg><span class="trk-mod-name">Rune Master</span><span class="trk-mod-desc">Rune Drop Chance increased</span></li>
+                <li class="trk-mod buff"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 2v8M2 6h8"/></svg><span class="trk-mod-name">Gold Hunger</span><span class="trk-mod-desc">Gold from monster kills increased</span></li>
+              </ul>
+            </div>
+            <div class="trk-group"><h3 class="trk-subhead">Debuffs</h3>
+              <ul class="trk-mod-list">
+                <li class="trk-mod debuff"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6h8"/></svg><span class="trk-mod-name">Dusk's Shroud</span><span class="trk-mod-desc">Light Radius decreased</span></li>
+                <li class="trk-mod debuff"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6h8"/></svg><span class="trk-mod-name">Sundered Armor</span><span class="trk-mod-desc">Damage Taken increased</span></li>
+              </ul>
+            </div>
+          </div>
+        </section>
+        <section class="card" aria-labelledby="trkSeriesTitle">
+          <div class="trk-head"><h2 id="trkSeriesTitle">Over the session</h2><span class="trk-count">every 15 min</span></div>
+          <div class="trk-series">
+            <figure class="trk-chart">
+              <figcaption><span>Gold earned</span><b>14.86kk</b></figcaption>
+              <svg viewBox="0 0 100 40" preserveAspectRatio="none" role="img" aria-label="Gold earned rose from 0 to 14.86kk over 1 hour">
+                <line class="trk-grid-line" x1="0" y1="40" x2="100" y2="40" vector-effect="non-scaling-stroke"/>
+                <line class="trk-grid-line" x1="0" y1="20" x2="100" y2="20" vector-effect="non-scaling-stroke"/>
+                <polyline class="trk-line" vector-effect="non-scaling-stroke" points="0,40 25,33.07 50,21.6 75,11.2 100,0.37"/>
+              </svg>
+              <figcaption><span class="trk-axis-text">0:00</span><span class="trk-axis-text">1:00:00</span></figcaption>
+            </figure>
+            <figure class="trk-chart">
+              <figcaption><span>Experience earned</span><b>42.18kk</b></figcaption>
+              <svg viewBox="0 0 100 40" preserveAspectRatio="none" role="img" aria-label="Experience earned rose from 0 to 42.18kk over 1 hour">
+                <line class="trk-grid-line" x1="0" y1="40" x2="100" y2="40" vector-effect="non-scaling-stroke"/>
+                <line class="trk-grid-line" x1="0" y1="20" x2="100" y2="20" vector-effect="non-scaling-stroke"/>
+                <polyline class="trk-line" vector-effect="non-scaling-stroke" points="0,40 25,32.53 50,21.69 75,11.82 100,2.51"/>
+              </svg>
+              <figcaption><span class="trk-axis-text">0:00</span><span class="trk-axis-text">1:00:00</span></figcaption>
+            </figure>
+          </div>
+        </section>
+      </div>
+
+      <section class="card" aria-labelledby="trkJournalTitle">
+        <div class="trk-head"><h2 id="trkJournalTitle">Journal</h2><span class="trk-count">123 drops</span></div>
+        <ol class="trk-journal" aria-label="Drops, newest first">
+          <li class="trk-entry"><span class="trk-time">21:41:08</span><span class="trk-tag" title="Grade S">S</span><span class="trk-rarity r-angelic">Angelic</span><span class="trk-item r-angelic">Astral Covenant</span><span class="trk-tags"><span class="trk-tag" title="Credited to Magic Find">MF</span><span class="trk-tag-word">alerted</span></span></li>
+          <li class="trk-entry"><span class="trk-time">21:38:42</span><span class="trk-tag" title="Grade A">A</span><span class="trk-rarity r-unholy">Unholy</span><span class="trk-item r-unholy">Oath of the Hollow Star</span><span class="trk-tags"><span class="trk-tag-word">alerted</span></span></li>
+          <li class="trk-entry"><span class="trk-time">21:34:50</span><span class="trk-tag" title="Grade A">A</span><span class="trk-rarity r-heroic">Heroic</span><span class="trk-item r-heroic">Soulforged Ring</span><span class="trk-tags"><span class="trk-tag" title="Credited to Magic Find">MF</span></span></li>
+          <li class="trk-entry"><span class="trk-time">21:31:02</span><span class="trk-tag" title="Grade B">B</span><span class="trk-rarity r-set">Set</span><span class="trk-item r-set">Wyrmhide Gauntlets</span><span class="trk-tags"></span></li>
+          <li class="trk-entry"><span class="trk-time">21:29:17</span><span class="trk-tag" title="Grade SS">SS</span><span class="trk-rarity r-satanic">Satanic</span><span class="trk-item r-satanic">Qi Rune</span><span class="trk-tags"><span class="trk-tag-word">alerted</span></span></li>
+          <li class="trk-entry"><span class="trk-time">21:27:55</span><span class="trk-tag" title="Grade C">C</span><span class="trk-rarity r-satanic">Satanic</span><span class="trk-item r-satanic">Bloodmoon Cleaver</span><span class="trk-tags"></span></li>
+          <li class="trk-entry"><span class="trk-time">21:26:31</span><span class="trk-tag trk-tag-none" title="No grade">–</span><span class="trk-rarity r-satanic">Satanic</span><span class="trk-item r-satanic">A drop whose name the game did not give</span><span class="trk-tags"><span class="trk-tag-word">unnamed</span></span></li>
+        </ol>
+      </section>
+
+      <p class="comp-note">Other states of this sub-tab, for the same cards:</p>
+      <section class="card trk-half" aria-labelledby="trkOffTitle">
+        <h2 id="trkOffTitle">Sorak</h2>
+        <p class="trk-empty">The tracker is off. Turn it on above to count this session. Your runs, alerts, shopping list and the item codex still work.</p>
+      </section>
+      <section class="card trk-half" aria-labelledby="trkCatchTitle">
+        <div class="trk-head"><h2 id="trkCatchTitle">Sorak</h2><div class="trk-head-side"><span class="trk-clock paused" aria-label="Session time, paused">0:41:09</span><button type="button" class="btn">Carry on</button></div></div>
+        <p class="trk-state"><span class="trk-dot warn" aria-hidden="true"></span>Catching up on this session's records…</p>
+        <p class="trk-state"><span class="trk-dot" aria-hidden="true"></span>Clock paused: the counters keep counting, only the per-hour rates stop.</p>
+      </section>
+      <section class="card trk-half" aria-labelledby="trkNoSessionTitle">
+        <h2 id="trkNoSessionTitle">No session yet</h2>
+        <p class="trk-empty">Start the game with the plugin installed and load a character. The first numbers arrive within a second.</p>
+      </section>
+      <section class="card trk-half" aria-labelledby="trkEndTitle">
+        <h2 id="trkEndTitle">End this run?</h2>
+        <p class="hint">It is filed under Runs if it lasted a minute and earned something, and the counters start again from zero.</p>
+        <div class="trk-actions"><button type="button" class="btn primary">End run</button><button type="button" class="btn">Keep going</button></div>
+      </section>
+    </div>
+
+    <!-- ================= Runs (Runs.svelte) ================= -->
+    <p class="comp-note">Runs sub-tab:</p>
+    <div class="trk-panel" role="tabpanel" aria-label="Runs">
+      <section class="card trk-half" aria-labelledby="trkRunsTitle">
+        <div class="trk-head"><h2 id="trkRunsTitle">Runs</h2><span class="trk-count">24</span></div>
+        <ul class="trk-runs">
+          <li><button type="button" class="trk-run" aria-current="true"><span class="trk-run-when">Today, 20:39</span><span class="trk-run-len">1h 02m</span><span class="trk-run-sum">14.86kk gold · 91 Satanic · 5 Angelic</span></button></li>
+          <li><button type="button" class="trk-run"><span class="trk-run-when">Today, 18:02</span><span class="trk-run-len">47m</span><span class="trk-run-sum">9.12kk gold · 60 Satanic · 1 Unholy</span></button></li>
+          <li><button type="button" class="trk-run"><span class="trk-run-when">Yesterday, 22:15</span><span class="trk-run-len">2h 10m</span><span class="trk-run-sum">31.40kk gold · 188 Satanic · 9 Angelic</span></button></li>
+          <li><button type="button" class="trk-run"><span class="trk-run-when">12 Oct, 19:40</span><span class="trk-run-len">18m</span><span class="trk-run-sum">2.07kk gold · 11 Satanic</span></button></li>
+        </ul>
+        <div class="trk-actions"><button type="button" class="trk-quiet">Clear history</button></div>
+      </section>
+      <section class="card trk-half" aria-labelledby="trkRunTitle">
+        <div class="trk-head"><h2 id="trkRunTitle">Today, 20:39</h2><div class="trk-head-side"><span class="trk-count">1h 02m</span><button type="button" class="btn">Copy card</button></div></div>
+        <p class="trk-sub">Sorak · Level 100 · Hero 300 · Hell 5</p>
+        <div class="trk-totals" style="grid-template-columns:repeat(2,minmax(0,1fr))">
+          <div class="trk-total"><span class="trk-total-label">Gold</span><span class="trk-total-value">14.86kk</span><span class="trk-total-rate">14.57kk/h</span></div>
+          <div class="trk-total"><span class="trk-total-label">Experience</span><span class="trk-total-value">42.18kk</span><span class="trk-total-rate">41.36kk/h</span></div>
+          <div class="trk-total"><span class="trk-total-label">Kills</span><span class="trk-total-value">4,862</span><span class="trk-total-rate">4,766/h</span></div>
+          <div class="trk-total"><span class="trk-total-label">Drops</span><span class="trk-total-value">123</span><span class="trk-total-rate">121/h</span></div>
+        </div>
+        <div class="trk-group"><h3 class="trk-subhead">Loot</h3>
+          <dl class="trk-tally"><dt class="r-satanic">Satanic</dt><dd>91</dd><dt class="r-set">Set</dt><dd>17</dd><dt class="r-heroic">Heroic</dt><dd>8</dd><dt class="r-angelic">Angelic</dt><dd>5</dd><dt class="r-unholy">Unholy</dt><dd>2</dd></dl>
+        </div>
+        <div class="trk-group"><h3 class="trk-subhead">Where it happened</h3>
+          <div class="trk-where"><span>Act 9 · Frozen Peaks</span><span class="trk-bar"><i style="width:62%"></i></span><span class="trk-len">38m</span></div>
+          <div class="trk-where"><span>Chaos Tower</span><span class="trk-bar"><i style="width:30%"></i></span><span class="trk-len">19m</span></div>
+          <div class="trk-where"><span>Town</span><span class="trk-bar"><i style="width:8%"></i></span><span class="trk-len">5m</span></div>
+        </div>
+        <div class="trk-group"><h3 class="trk-subhead">Finds</h3>
+          <dl class="trk-tally"><dt class="r-angelic">Astral Covenant</dt><dd>S</dd><dt class="r-unholy">Oath of the Hollow Star</dt><dd>A</dd><dt class="r-satanic">Qi Rune</dt><dd>SS</dd></dl>
+        </div>
+      </section>
+      <p class="comp-note">The run card Copy card draws (a canvas, copied as a PNG; drawn at 480 wide in the page's palette):</p>
+      <section class="card trk-half" aria-label="Run card preview">
+        <div class="trk-runcard">
+          <div class="trk-runcard-top"><span class="trk-runcard-brand">ForgePact Tracker</span><span class="trk-count">Today, 20:39 · 1h 02m</span></div>
+          <h3 class="trk-zone-name">Sorak · Hell 5</h3>
+          <div class="trk-totals">
+            <div class="trk-total"><span class="trk-total-label">Gold</span><span class="trk-total-value">14.86kk</span><span class="trk-total-rate">14.57kk/h</span></div>
+            <div class="trk-total"><span class="trk-total-label">Experience</span><span class="trk-total-value">42.18kk</span><span class="trk-total-rate">41.36kk/h</span></div>
+          </div>
+          <dl class="trk-tally"><dt class="r-satanic">Satanic</dt><dd>91</dd><dt class="r-angelic">Angelic</dt><dd>5</dd><dt class="r-unholy">Unholy</dt><dd>2</dd></dl>
+          <p class="trk-sub" style="margin:0">Finds: <span class="r-angelic">Astral Covenant</span>, <span class="r-unholy">Oath of the Hollow Star</span>, <span class="r-satanic">Qi Rune</span></p>
+        </div>
+      </section>
+      <section class="card trk-half" aria-labelledby="trkClearTitle">
+        <h2 id="trkClearTitle">Clear every run?</h2>
+        <p class="hint">All 24 runs go, and this cannot be undone. Runs you imported from HS Offline Tracker go too; its own files are not touched.</p>
+        <div class="trk-actions"><button type="button" class="btn primary">Clear history</button><button type="button" class="btn">Keep them</button></div>
+        <p class="note">Copy card when the page cannot use the clipboard: "Could not copy the card. Your browser blocked the clipboard."</p>
+      </section>
+    </div>
+
+    <!-- ================= Alerts (AlertSettings.svelte) ================= -->
+    <p class="comp-note">Alerts sub-tab:</p>
+    <div class="trk-panel" role="tabpanel" aria-label="Alerts">
+      <section class="card" aria-labelledby="trkSoundsTitle">
+        <h2 id="trkSoundsTitle">Alert sounds</h2>
+        <p class="hint">A sound plays once for each drop of a rarity you turn on, from this window, whichever tab is open.</p>
+        <p class="trk-gesture" role="status"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5 14.5 13.5h-13ZM8 6.5v3.2M8 11.8v.1"/></svg>Click anywhere in the panel to let it play alert sounds.</p>
+        <div class="setting-entry"><div class="row"><span class="lbl"><span class="r-satanic">Satanic</span></span><label class="switch slider-switch" data-live><input type="checkbox" checked aria-label="Satanic alert"><span class="sl"></span></label><div class="range-control"><input type="range" min="0" max="100" value="72" aria-label="Satanic volume"><div class="value-stepper"><button type="button" class="step-button" aria-label="Quieter">−</button><span class="val">72%</span><button type="button" class="step-button" aria-label="Louder">+</button></div></div><button type="button" class="trk-quiet"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3.5v9l7-4.5Z"/></svg>Test</button></div>
+          <p class="note trk-sound-src">Sound: <b>bundled</b><button type="button" class="trk-quiet">Choose a file…</button></p></div>
+        <div class="setting-entry"><div class="row"><span class="lbl"><span class="r-set">Set</span></span><label class="switch slider-switch" data-live><input type="checkbox" checked aria-label="Set alert"><span class="sl"></span></label><div class="range-control"><input type="range" min="0" max="100" value="66" aria-label="Set volume"><div class="value-stepper"><button type="button" class="step-button" aria-label="Quieter">−</button><span class="val">66%</span><button type="button" class="step-button" aria-label="Louder">+</button></div></div><button type="button" class="trk-quiet"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3.5v9l7-4.5Z"/></svg>Test</button></div>
+          <p class="note trk-sound-src">Sound: <b>set-chime.ogg</b><button type="button" class="trk-quiet">Choose a file…</button><button type="button" class="trk-quiet">Use the bundled sound</button></p></div>
+        <p class="note trk-sound-src trk-error" role="alert"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5 14.5 13.5h-13ZM8 6.5v3.2M8 11.8v.1"/></svg>chime.m4a is not a WAV, MP3, OGG or FLAC file, so the Set sound did not change.</p>
+        <div class="setting-entry"><div class="row"><span class="lbl"><span class="r-heroic">Heroic</span></span><label class="switch slider-switch" data-live><input type="checkbox" checked aria-label="Heroic alert"><span class="sl"></span></label><div class="range-control"><input type="range" min="0" max="100" value="62" aria-label="Heroic volume"><div class="value-stepper"><button type="button" class="step-button" aria-label="Quieter">−</button><span class="val">62%</span><button type="button" class="step-button" aria-label="Louder">+</button></div></div><button type="button" class="trk-quiet"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3.5v9l7-4.5Z"/></svg>Test</button></div></div>
+        <div class="setting-entry"><div class="row"><span class="lbl"><span class="r-angelic">Angelic</span></span><label class="switch slider-switch" data-live><input type="checkbox" checked aria-label="Angelic alert"><span class="sl"></span></label><div class="range-control"><input type="range" min="0" max="100" value="76" aria-label="Angelic volume"><div class="value-stepper"><button type="button" class="step-button" aria-label="Quieter">−</button><span class="val">76%</span><button type="button" class="step-button" aria-label="Louder">+</button></div></div><button type="button" class="trk-quiet"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3.5v9l7-4.5Z"/></svg>Test</button></div></div>
+        <div class="setting-entry"><div class="row"><span class="lbl"><span class="r-unholy">Unholy</span></span><label class="switch slider-switch"><input type="checkbox" aria-label="Unholy alert"><span class="sl"></span></label><div class="range-control"><input type="range" min="0" max="100" value="70" aria-label="Unholy volume"><div class="value-stepper"><button type="button" class="step-button" aria-label="Quieter">−</button><span class="val off">off</span><button type="button" class="step-button" aria-label="Louder">+</button></div></div><button type="button" class="trk-quiet"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3.5v9l7-4.5Z"/></svg>Test</button></div></div>
+        <div class="setting-entry"><div class="row"><span class="lbl">Zone rotation</span><label class="switch slider-switch" data-live><input type="checkbox" checked aria-label="Zone rotation alert"><span class="sl"></span></label><div class="range-control"><input type="range" min="0" max="100" value="55" aria-label="Zone rotation volume"><div class="value-stepper"><button type="button" class="step-button" aria-label="Quieter">−</button><span class="val">55%</span><button type="button" class="step-button" aria-label="Louder">+</button></div></div><button type="button" class="trk-quiet"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3.5v9l7-4.5Z"/></svg>Test</button></div></div>
+        <div class="row"><span class="lbl">Lowest grade</span><select class="style-select" aria-label="Lowest grade that alerts"><option>Any</option><option>C</option><option>B</option><option>A</option><option>S</option><option>SS</option></select><span class="hint">Gear below this grade stays quiet. Runes and keys always count.</span></div>
+      </section>
+      <section class="card trk-half" aria-labelledby="trkBuffsTitle">
+        <h2 id="trkBuffsTitle">Zone rotations worth a sound</h2>
+        <p class="hint">Every rotation alerts until you pick buffs. Then only a zone that carries one of them does.</p>
+        <div class="trk-picks">
+          <label class="trk-pick">Loot Goblin I<span class="switch"><input type="checkbox" aria-label="Loot Goblin I"><span class="sl"></span></span></label>
+          <label class="trk-pick">Loot Goblin II<span class="switch"><input type="checkbox" checked aria-label="Loot Goblin II"><span class="sl"></span></span></label>
+          <label class="trk-pick">Rune Master<span class="switch"><input type="checkbox" checked aria-label="Rune Master"><span class="sl"></span></span></label>
+          <label class="trk-pick">Gold Hunger<span class="switch"><input type="checkbox" aria-label="Gold Hunger"><span class="sl"></span></span></label>
+          <label class="trk-pick">Heroic Windfall<span class="switch"><input type="checkbox" aria-label="Heroic Windfall"><span class="sl"></span></span></label>
+          <label class="trk-pick">Angelic Favor<span class="switch"><input type="checkbox" aria-label="Angelic Favor"><span class="sl"></span></span></label>
+        </div>
+      </section>
+      <section class="card trk-half" aria-labelledby="trkFilterTitle">
+        <div class="trk-head"><h2 id="trkFilterTitle">Sound lists</h2><label class="switch"><input type="checkbox" checked aria-label="Use the sound lists"><span class="sl"></span></label></div>
+        <p class="hint">Name the items you hunt. A list's sound plays for them whatever their rarity or grade; an earlier list wins when an item is on two.</p>
+        <div class="trk-actions"><select class="style-select" aria-label="Filter"><option>Hell farming</option><option>Runes only</option></select><button type="button" class="trk-quiet">New filter</button><button type="button" class="trk-quiet trk-icon-button" aria-label="More filter actions: duplicate, import, export, delete" aria-haspopup="menu" aria-expanded="false"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8h.01M8 8h.01M12.5 8h.01"/></svg></button></div>
+        <div class="trk-lists" role="group" aria-label="Lists in this filter"><button type="button" aria-pressed="true">Chase</button><button type="button" aria-pressed="false">Runes</button><button type="button" aria-pressed="false">Keys</button><button type="button" class="trk-quiet" aria-label="Add a list"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg></button></div>
+        <div class="trk-actions"><span class="hint">Sound: <b class="trk-count">chase.wav</b></span><button type="button" class="trk-quiet">Test</button><button type="button" class="trk-quiet">Choose a file…</button><button type="button" class="trk-quiet" aria-label="Move this list earlier"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3.5 5.5 8l4.5 4.5"/></svg></button><button type="button" class="trk-quiet" aria-label="Move this list later"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3.5 10.5 8 6 12.5"/></svg></button></div>
+        <div class="trk-entry-line"><input class="trk-field" type="search" placeholder="Add an item by name, or narrow the list" aria-label="Add an item to this list"></div>
+        <ul class="trk-names">
+          <li><span class="r-angelic">Astral Covenant</span><button type="button" class="trk-quiet trk-icon-button" aria-label="Remove Astral Covenant"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4.5 4.5 7 7M11.5 4.5l-7 7"/></svg></button></li>
+          <li><span class="r-unholy">Oath of the Hollow Star</span><button type="button" class="trk-quiet trk-icon-button" aria-label="Remove Oath of the Hollow Star"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4.5 4.5 7 7M11.5 4.5l-7 7"/></svg></button></li>
+          <li><span class="r-satanic">Qi Rune</span><span class="trk-actions"><span class="note">also on Runes</span><button type="button" class="trk-quiet trk-icon-button" aria-label="Remove Qi Rune"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4.5 4.5 7 7M11.5 4.5l-7 7"/></svg></button></span></li>
+        </ul>
+      </section>
+    </div>
+
+    <!-- ================= Overlay (OverlaySettings.svelte) ================= -->
+    <p class="comp-note">Overlay sub-tab:</p>
+    <div class="trk-panel" role="tabpanel" aria-label="Overlay">
+      <section class="card trk-half" aria-labelledby="trkOverlayTitle">
+        <div class="trk-head"><h2 id="trkOverlayTitle">Overlay window</h2><button type="button" class="btn primary">Open overlay</button></div>
+        <p class="hint">A small window that stays above the game with the counters, the newest drops and a card for the drops you ask to see. Play windowed or borderless: a full-screen game draws over it.</p>
+        <div class="row"><span class="lbl">Open with the game</span><label class="switch"><input type="checkbox" checked aria-label="Open the overlay with the game"><span class="sl"></span></label></div>
+        <div class="row"><span class="lbl">Click-through</span><label class="switch"><input type="checkbox" aria-label="Lock the overlay and let clicks through"><span class="sl"></span></label></div>
+        <div class="row"><span class="lbl">Newest drops</span><label class="switch"><input type="checkbox" checked aria-label="Show the newest drops"><span class="sl"></span></label></div>
+        <div class="row"><span class="lbl">Counters only</span><label class="switch"><input type="checkbox" aria-label="Counters only"><span class="sl"></span></label></div>
+        <div class="row"><span class="lbl">Opacity</span><div class="range-control"><input type="range" min="90" max="100" value="90" aria-label="Overlay opacity"><div class="value-stepper"><button type="button" class="step-button" aria-label="Less">−</button><span class="val">90%</span><button type="button" class="step-button" aria-label="More">+</button></div></div></div>
+        <div class="row"><span class="lbl">Size</span><div class="range-control"><input type="range" min="50" max="200" value="100" aria-label="Overlay size"><div class="value-stepper"><button type="button" class="step-button" aria-label="Smaller">−</button><span class="val">100%</span><button type="button" class="step-button" aria-label="Larger">+</button></div></div></div>
+        <p class="note">The overlay sits on a solid plate. This machine's window could not be made see-through.</p>
+      </section>
+      <section class="card trk-half" aria-labelledby="trkFlourishTitle">
+        <div class="trk-head"><h2 id="trkFlourishTitle">Drop card</h2><label class="switch"><input type="checkbox" checked aria-label="Show a card for chosen drops"><span class="sl"></span></label></div>
+        <p class="hint">The overlay shows a card for a few seconds when one of these drops. The journal keeps every drop either way.</p>
+        <div class="trk-picks">
+          <label class="trk-pick"><span class="r-satanic">Satanic</span><span class="switch"><input type="checkbox" aria-label="Satanic"><span class="sl"></span></span></label>
+          <label class="trk-pick"><span class="r-set">Set</span><span class="switch"><input type="checkbox" checked aria-label="Set"><span class="sl"></span></span></label>
+          <label class="trk-pick"><span class="r-heroic">Heroic</span><span class="switch"><input type="checkbox" checked aria-label="Heroic"><span class="sl"></span></span></label>
+          <label class="trk-pick"><span class="r-angelic">Angelic</span><span class="switch"><input type="checkbox" checked aria-label="Angelic"><span class="sl"></span></span></label>
+          <label class="trk-pick"><span class="r-unholy">Unholy</span><span class="switch"><input type="checkbox" checked aria-label="Unholy"><span class="sl"></span></span></label>
+          <label class="trk-pick">Items on a sound list<span class="switch"><input type="checkbox" checked aria-label="Items on a sound list"><span class="sl"></span></span></label>
+          <label class="trk-pick">Zone rotations<span class="switch"><input type="checkbox" checked aria-label="Zone rotations"><span class="sl"></span></span></label>
+        </div>
+        <div class="row"><span class="lbl">Lowest grade</span><select class="style-select" aria-label="Lowest grade for a card"><option>Any</option><option>B</option><option>A</option><option>S</option><option>SS</option></select></div>
+        <div class="row"><span class="lbl">Shown for</span><div class="range-control"><input type="range" min="2" max="10" value="4" aria-label="Card duration"><div class="value-stepper"><button type="button" class="step-button" aria-label="Shorter">−</button><span class="val">4 s</span><button type="button" class="step-button" aria-label="Longer">+</button></div></div></div>
+      </section>
+      <section class="card trk-half" aria-labelledby="trkDiscordTitle">
+        <div class="trk-head"><h2 id="trkDiscordTitle">Discord status</h2><label class="switch"><input type="checkbox" aria-label="Show the run in Discord"><span class="sl"></span></label></div>
+        <p class="hint">Shows the act, the zone and the run's haul in your Discord status while the game is open. Off until you turn it on.</p>
+        <p class="note">This card is shown only when ForgePact has a Discord application ID.</p>
+      </section>
+    </div>
+
+    <!-- ================= Shopping list (Shop.svelte) ================= -->
+    <p class="comp-note">Shopping list sub-tab:</p>
+    <div class="trk-panel" role="tabpanel" aria-label="Shopping list">
+      <section class="card trk-half" aria-labelledby="trkShopTitle">
+        <div class="trk-head"><h2 id="trkShopTitle">Shopping list</h2><span class="trk-count">4 items</span></div>
+        <p class="hint">What you still need. Click an entry to copy its name for the trade chat or a search.</p>
+        <div class="trk-entry-line"><input class="trk-field" type="text" placeholder="Add an item" aria-label="Add an item to the shopping list"><button type="button" class="btn">Add</button></div>
+        <ul class="trk-names trk-shop">
+          <li><button type="button" class="trk-copy">Zed Rune</button><span class="trk-copied" role="status">Copied</span><button type="button" class="trk-quiet trk-icon-button" aria-label="Remove Zed Rune"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4.5 4.5 7 7M11.5 4.5l-7 7"/></svg></button></li>
+          <li><button type="button" class="trk-copy">Angelic Key ×3</button><button type="button" class="trk-quiet trk-icon-button" aria-label="Remove Angelic Key ×3"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4.5 4.5 7 7M11.5 4.5l-7 7"/></svg></button></li>
+          <li><button type="button" class="trk-copy">Wyrmhide Gauntlets</button><button type="button" class="trk-quiet trk-icon-button" aria-label="Remove Wyrmhide Gauntlets"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4.5 4.5 7 7M11.5 4.5l-7 7"/></svg></button></li>
+          <li><button type="button" class="trk-copy">Socket stones</button><button type="button" class="trk-quiet trk-icon-button" aria-label="Remove Socket stones"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4.5 4.5 7 7M11.5 4.5l-7 7"/></svg></button></li>
+        </ul>
+      </section>
+      <section class="card trk-half" aria-labelledby="trkShopEmptyTitle">
+        <h2 id="trkShopEmptyTitle">Shopping list</h2>
+        <p class="trk-empty">Nothing on the list. Add what you still need; an entry copies its name when you click it.</p>
+      </section>
+    </div>
+
+    <!-- ================= Item codex (Codex.svelte) ================= -->
+    <p class="comp-note">Item codex sub-tab:</p>
+    <div class="trk-panel" role="tabpanel" aria-label="Item codex">
+      <section class="card" aria-labelledby="trkCodexTitle">
+        <div class="trk-head"><h2 id="trkCodexTitle">Item codex</h2><span class="trk-count">60 of 1,214</span></div>
+        <div class="trk-tools">
+          <input class="trk-field" type="search" placeholder="Search by name" aria-label="Search the codex">
+          <select class="style-select" aria-label="Rarity"><option>Any rarity</option><option>Satanic</option><option>Set</option><option>Heroic</option><option>Angelic</option><option>Unholy</option></select>
+          <select class="style-select" aria-label="Kind"><option>Any kind</option><option>Weapon</option><option>Armor</option><option>Jewelry</option><option>Rune</option></select>
+          <select class="style-select" aria-label="Order"><option>Rarest first</option><option>By name</option></select>
+        </div>
+        <table class="trk-table trk-codex">
+          <thead><tr><th scope="col">Item</th><th scope="col" class="trk-left">Rarity</th><th scope="col" class="trk-left">Kind</th><th scope="col">Grade</th><th scope="col">Anywhere</th><th scope="col">Where it is tied</th><th scope="col" class="trk-left">Places</th></tr></thead>
+          <tbody>
+            <tr><td class="r-unholy">Oath of the Hollow Star</td><td class="r-unholy trk-word">Unholy</td><td class="trk-dim" style="text-align:left">Ring</td><td>A</td><td class="trk-dim">1/48,200</td><td>1/6,400</td><td class="trk-where-cell">Act 9 bosses · Chaos Tower</td></tr>
+            <tr><td class="r-angelic">Astral Covenant</td><td class="r-angelic trk-word">Angelic</td><td class="trk-dim" style="text-align:left">Amulet</td><td>S</td><td class="trk-dim">1/31,900</td><td>1/4,100</td><td class="trk-where-cell">Frozen Peaks</td></tr>
+            <tr><td class="r-heroic">Soulforged Ring</td><td class="r-heroic trk-word">Heroic</td><td class="trk-dim" style="text-align:left">Ring</td><td>A</td><td class="trk-dim">1/12,750</td><td class="trk-dim">—</td><td class="trk-where-cell">anywhere</td></tr>
+            <tr><td class="r-set">Wyrmhide Gauntlets</td><td class="r-set trk-word">Set</td><td class="trk-dim" style="text-align:left">Gloves</td><td>B</td><td class="trk-dim">1/6,020</td><td>1/1,100</td><td class="trk-where-cell">Crystal chest</td></tr>
+            <tr><td class="r-satanic">Bloodmoon Cleaver</td><td class="r-satanic trk-word">Satanic</td><td class="trk-dim" style="text-align:left">Axe</td><td>C</td><td class="trk-dim">1/880</td><td class="trk-dim">—</td><td class="trk-where-cell">anywhere</td></tr>
+          </tbody>
+        </table>
+        <p class="note">Showing 60 of 1,214. Narrow the search to see the rest. Drop chances come from the item tables HS Offline Tracker shipped.</p>
+      </section>
+    </div>
+
+  </div>
+  </div>
+</main>
+<footer class="ember-footer" aria-label="Settings actions">
+  <div class="ember-notices"></div>
+  <div class="ember-save"><div class="ember-save-copy"><span id="saveIndicator" role="status">Saved</span><div class="chip off" id="chipApply" role="status">No settings sent this session</div></div></div>
+  <div class="page-actions"><label class="auto-control">Auto-apply on launch <span class="switch"><input type="checkbox" id="autoapply" aria-label="Auto-apply on game launch"><span class="sl"></span></span></label><button class="btn" id="applyall">Apply all now</button></div>
+</footer>
+</div>
+</div>
+<nav class="comp-bar" aria-label="Comp views">Comp: <a href="?theme=ember">Ember</a> <a href="?theme=ledger">Ledger</a> <a href="?board">Board</a></nav>
+<script>
+  // Comp only. The flat palettes lay the shell out as ember.js does for them:
+  // the Ember-only rail entries, search and footer hide, and the actions,
+  // save line and credits return to the page heading and the status bar.
+  (function () {
+    var q = new URLSearchParams(location.search);
+    if (q.has('board')) {
+      var board = document.createElement('div');
+      board.className = 'comp-board';
+      [['ember', 1280], ['ember', 1100], ['ledger', 1280], ['ledger', 1100]].forEach(function (v) {
+        var h = document.createElement('h2');
+        h.textContent = v[0] + ' at ' + v[1] + ' wide';
+        var f = document.createElement('iframe');
+        f.src = '?theme=' + v[0];
+        f.width = v[1];
+        f.title = 'Tracker tab, ' + v[0] + ', ' + v[1] + ' wide';
+        board.append(h, f);
+      });
+      document.body.replaceChildren(board);
+      return;
+    }
+    if (document.documentElement.dataset.theme === 'ember') return;
+    ['nav-overview', 'nav-help', 'emberPluginStatus'].forEach(function (id) { document.getElementById(id).hidden = true; });
+    document.querySelector('.ember-search-button').hidden = true;
+    var nav = document.querySelector('.tabbar');
+    nav.setAttribute('aria-orientation', 'horizontal');
+    nav.prepend(document.getElementById('nav-setup'));
+    var status = document.getElementById('statusbar');
+    status.append(document.getElementById('saveIndicator'), document.getElementById('chipApply'), document.querySelector('.status-foot'));
+    document.querySelector('.page-heading').append(document.querySelector('.page-actions'));
+    document.querySelector('.ember-footer').hidden = true;
+  })();
+</script>
+</body>
+</html>

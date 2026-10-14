@@ -1,0 +1,488 @@
+/* The Tracker tab's and the overlay's proposed styles, for the comps in this
+   folder. Tokens only: every colour, space, radius, type size and duration is a
+   custom property from panel/src/tokens.css (or Ember's palette.css under
+   html[data-theme="ember"]). The items that build the tab port these rules
+   into panel/src/tracker/ and panel/src/overlay/; panel/DESIGN.md § Tracker
+   holds the rules these comps settled. */
+
+/* ---- The tab ------------------------------------------------------------ */
+
+/* The tab's own container draws no surface (the No Nested Card Rule, as the
+   Mods tab's sub-tab panels): each section below is its own .card. It is a
+   grid once app.css's .tab-card.active has shown it. */
+.tab-card.trk-tab.active {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--space-7) var(--space-9);
+  align-items: start;
+  min-width: 0;
+}
+.trk-tab > .card,
+.trk-tab > .subtabbar,
+.trk-tab > .trk-panel { grid-column: 1 / -1; }
+.trk-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--space-7) var(--space-9);
+  align-items: start;
+  min-width: 0;
+}
+.trk-panel > .card { grid-column: 1 / -1; }
+.trk-panel > .card.trk-half { grid-column: auto; }
+.trk-stack { display: flex; flex-direction: column; gap: var(--space-7); min-width: 0; }
+
+/* The switch card: the heading, the switch and one state line. */
+.trk-state {
+  display: flex;
+  margin: 0;
+  align-items: center;
+  gap: var(--space-4);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}
+.trk-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background-color: var(--color-text-faint);
+}
+.trk-dot.on { background-color: var(--color-ok); }
+.trk-dot.warn { background-color: var(--color-warn); }
+
+/* Section heads: a heading at the left, a mono count or the actions at the right. */
+.trk-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-7);
+  min-width: 0;
+}
+.trk-head h2 { min-width: 0; }
+.trk-head-side {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex: none;
+}
+.trk-count {
+  color: var(--color-text-muted);
+  font-family: var(--font-mono-family), Consolas, monospace;
+  font-size: var(--font-size-xs);
+}
+.trk-sub {
+  margin: calc(var(--space-6) * -1) 0 0;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+.trk-subhead {
+  margin: 0;
+  font-family: inherit;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+}
+
+/* The session clock and the four totals. Numbers are Plex Mono; nothing here
+   moves when a poll repaints it. */
+.trk-clock {
+  color: var(--color-text-primary);
+  font-family: var(--font-mono-family), Consolas, monospace;
+  font-size: var(--font-size-xl);
+  line-height: var(--font-line-height-tight);
+}
+.trk-clock.paused { color: var(--color-text-muted); }
+.trk-totals {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-7) var(--space-9);
+}
+.trk-total { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
+.trk-total-label { color: var(--color-text-muted); font-size: var(--font-size-xs); }
+.trk-total-value {
+  color: var(--color-text-primary);
+  font-family: var(--font-mono-family), Consolas, monospace;
+  font-size: var(--font-size-2xl);
+  line-height: var(--font-line-height-tight);
+  white-space: nowrap;
+}
+.trk-total-rate,
+.trk-total-note {
+  color: var(--color-text-muted);
+  font-family: var(--font-mono-family), Consolas, monospace;
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+}
+.trk-total-note { color: var(--color-text-faint); }
+
+/* Tables: the loot table, the run list, the codex. A row is 32px; the first
+   column is words, the rest mono and right-aligned. */
+.trk-table { width: 100%; border-collapse: collapse; color: var(--color-text-primary); font-size: var(--font-size-sm); }
+.trk-table th {
+  padding: 0 var(--space-4) var(--space-3);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-regular);
+  text-align: right;
+}
+.trk-table td {
+  height: 32px;
+  padding: 0 var(--space-4);
+  font-family: var(--font-mono-family), Consolas, monospace;
+  text-align: right;
+  white-space: nowrap;
+}
+.trk-table th:first-child,
+.trk-table td:first-child {
+  padding-left: 0;
+  font-family: var(--font-body-family), "Segoe UI", system-ui, sans-serif;
+  font-weight: var(--font-weight-medium);
+  text-align: left;
+}
+.trk-table td.trk-dim { color: var(--color-text-muted); }
+
+/* Rarity: colour on the name only, always beside the rarity's own word, never
+   a fill, never the only thing that says which rarity it is. */
+.r-satanic { color: var(--color-rarity-satanic); }
+.r-set { color: var(--color-rarity-set); }
+.r-heroic { color: var(--color-rarity-heroic); }
+.r-angelic { color: var(--color-rarity-angelic); }
+.r-unholy { color: var(--color-rarity-unholy); }
+
+/* Label / mono value pairs: notable counts, tallies, a run's loot. */
+.trk-tally { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-3) var(--space-7); margin: 0; color: var(--color-text-primary); }
+.trk-tally dt { min-width: 0; font-size: var(--font-size-sm); }
+.trk-tally dd {
+  margin: 0;
+  font-family: var(--font-mono-family), Consolas, monospace;
+  font-size: var(--font-size-sm);
+  text-align: right;
+}
+.trk-group { display: flex; flex-direction: column; gap: var(--space-4); }
+
+/* The Satanic zone chip. */
+.trk-zone-name {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-4) var(--space-6);
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+}
+.trk-here {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: 24px;
+  padding: 0 var(--space-5);
+  border-radius: var(--radius-pill);
+  background-color: var(--color-bg-hover);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-regular);
+}
+.trk-mods { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-7); }
+.trk-mod-list { display: flex; flex-direction: column; gap: var(--space-4); margin: 0; padding: 0; list-style: none; }
+.trk-mod { display: grid; grid-template-columns: 12px minmax(0, 1fr); gap: 0 var(--space-4); }
+.trk-mod svg { width: 12px; height: 12px; margin-top: 3px; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; fill: none; }
+.trk-mod.buff svg { color: var(--color-ok); }
+.trk-mod.debuff svg { color: var(--color-danger); }
+.trk-mod-name { color: var(--color-text-primary); font-size: var(--font-size-sm); font-weight: var(--font-weight-medium); }
+.trk-mod-desc { grid-column: 2; color: var(--color-text-muted); font-size: var(--font-size-xs); }
+
+/* The series: small multiples, one counter per chart, each with its own axis. */
+.trk-series { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-7); }
+.trk-chart { display: flex; flex-direction: column; gap: var(--space-3); margin: 0; }
+.trk-chart figcaption {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-6);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}
+.trk-chart figcaption b {
+  color: var(--color-text-primary);
+  font-family: var(--font-mono-family), Consolas, monospace;
+  font-weight: var(--font-weight-regular);
+}
+.trk-chart svg { display: block; width: 100%; height: 96px; overflow: visible; }
+.trk-grid-line { stroke: var(--color-border-subtle); stroke-width: 1; }
+.trk-line { fill: none; stroke: var(--color-text-primary); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+
+/* The journal: newest first, one 32px row per drop, its own scroller. */
+.trk-journal {
+  display: flex;
+  flex-direction: column;
+  max-height: 352px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+.trk-entry {
+  display: grid;
+  grid-template-columns: 64px 32px 64px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-6);
+  min-height: 32px;
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-sm);
+}
+.trk-time { color: var(--color-text-muted); font-family: var(--font-mono-family), Consolas, monospace; font-size: var(--font-size-xs); }
+.trk-rarity { font-size: var(--font-size-xs); }
+.trk-item { min-width: 0; overflow: hidden; font-size: var(--font-size-sm); font-weight: var(--font-weight-medium); text-overflow: ellipsis; white-space: nowrap; }
+.trk-tags { display: flex; align-items: center; gap: var(--space-4); }
+.trk-tag {
+  min-width: 24px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-sm);
+  background-color: var(--color-bg-hover);
+  color: var(--color-text-muted);
+  font-family: var(--font-mono-family), Consolas, monospace;
+  font-size: var(--font-size-xs);
+  line-height: 20px;
+  text-align: center;
+}
+.trk-tag-word { color: var(--color-text-muted); font-size: var(--font-size-xs); }
+.trk-tag-none { background: none; color: var(--color-text-muted); }
+.trk-empty { margin: 0; padding: var(--space-7) 0; color: var(--color-text-faint); font-size: var(--font-size-sm); }
+
+/* Runs: a list at the left, the picked run at the right. */
+.trk-runs { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
+.trk-run {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-1) var(--space-6);
+  width: 100%;
+  padding: var(--space-4) var(--space-5);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--color-text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.trk-run[aria-current="true"] { background-color: var(--color-bg-hover); }
+.trk-run-when { font-size: var(--font-size-sm); font-weight: var(--font-weight-medium); }
+.trk-run-len { color: var(--color-text-muted); font-family: var(--font-mono-family), Consolas, monospace; font-size: var(--font-size-xs); text-align: right; }
+.trk-run-sum { grid-column: 1 / -1; color: var(--color-text-muted); font-family: var(--font-mono-family), Consolas, monospace; font-size: var(--font-size-xs); }
+.trk-where { display: grid; grid-template-columns: minmax(0, 1fr) 120px 56px; align-items: center; gap: var(--space-6); }
+.trk-where span { font-size: var(--font-size-sm); }
+.trk-where .trk-len { color: var(--color-text-muted); font-family: var(--font-mono-family), Consolas, monospace; font-size: var(--font-size-xs); text-align: right; }
+.trk-bar { height: 4px; border-radius: var(--radius-pill); background-color: var(--color-bg-sunken); }
+.trk-bar > i { display: block; height: 100%; border-radius: var(--radius-pill); background-color: var(--color-text-muted); }
+
+/* The run card: what Copy card puts on the clipboard, drawn on a canvas in the
+   page's palette. The comp shows it as markup at its drawn size. */
+.trk-runcard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  width: 480px;
+  max-width: 100%;
+  padding: var(--space-8);
+  border-radius: var(--radius-lg);
+  background-color: var(--color-bg-base);
+}
+.trk-runcard-top { display: flex; justify-content: space-between; gap: var(--space-6); }
+.trk-runcard-brand { color: var(--color-text-muted); font-size: var(--font-size-xs); font-weight: var(--font-weight-medium); }
+.trk-runcard .trk-totals { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.trk-runcard .trk-total-value { font-size: var(--font-size-xl); }
+
+/* Settings rows inside the tab reuse the panel's .setting-entry, .row,
+   .switch.slider-switch, ranges and stepper. The sound's source sits under
+   its row as a note. */
+.trk-sound-src { display: flex; align-items: center; gap: var(--space-4); margin: 0; padding-left: calc(168px + var(--space-7)); color: var(--color-text-muted); }
+.trk-error { color: var(--color-text-primary); }
+.trk-error svg { flex: none; width: 16px; height: 16px; color: var(--color-danger); stroke: currentColor; stroke-width: 1.4; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.trk-sound-src b { color: var(--color-text-primary); font-family: var(--font-mono-family), Consolas, monospace; font-weight: var(--font-weight-regular); }
+.trk-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-4); }
+.trk-quiet {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 28px;
+  padding: 0 var(--space-4);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--color-text-muted);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.trk-quiet svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; fill: none; }
+.trk-icon-button { width: 28px; padding: 0; justify-content: center; }
+.trk-gesture {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  margin: 0;
+  padding: var(--space-4) var(--space-6);
+  border-radius: var(--radius-md);
+  background-color: var(--color-warn-tint);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+}
+.trk-gesture svg { flex: none; width: 16px; height: 16px; color: var(--color-warn); stroke: currentColor; stroke-width: 1.4; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+
+/* The buff pick and the flourish rarities: compact switches in a grid. */
+.trk-picks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2) var(--space-11); }
+.trk-pick { display: flex; align-items: center; justify-content: space-between; gap: var(--space-6); min-height: 36px; font-size: var(--font-size-sm); }
+
+/* The sound filter's lists: a segmented list picker, then the picked list. */
+.trk-lists { display: flex; flex-wrap: wrap; gap: var(--space-1); justify-self: start; padding: var(--space-2); border-radius: var(--radius-md); background-color: var(--color-bg-sunken); }
+.trk-lists button { min-height: 24px; padding: 0 var(--space-5); border: 0; border-radius: var(--radius-sm); background: none; color: var(--color-text-muted); font: inherit; font-size: var(--font-size-sm); cursor: pointer; }
+.trk-lists button[aria-pressed="true"] { background-color: var(--color-bg-hover); color: var(--color-text-primary); }
+.trk-field {
+  height: 32px;
+  min-width: 0;
+  padding: 0 var(--space-6);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background-color: var(--color-bg-sunken);
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: var(--font-size-sm);
+}
+.trk-field::placeholder { color: var(--color-text-muted); }
+.trk-entry-line { display: flex; gap: var(--space-4); }
+.trk-entry-line .trk-field { flex: 1; }
+.trk-names { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
+.trk-names li { display: flex; align-items: center; justify-content: space-between; gap: var(--space-6); min-height: 32px; padding: 0 0 0 var(--space-4); border-radius: var(--radius-sm); font-size: var(--font-size-sm); }
+
+/* The shopping list. */
+.trk-shop li button.trk-copy { flex: 1; min-width: 0; padding: 0; border: 0; background: none; color: var(--color-text-primary); font: inherit; text-align: left; cursor: copy; }
+.trk-copied { color: var(--color-text-muted); font-size: var(--font-size-xs); }
+
+/* The codex. */
+.trk-tools { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-4); }
+.trk-tools .trk-field { flex: 1 1 220px; }
+.trk-codex td.trk-where-cell { max-width: 260px; overflow: hidden; color: var(--color-text-muted); font-family: var(--font-body-family), "Segoe UI", system-ui, sans-serif; text-align: left; text-overflow: ellipsis; }
+.trk-codex th.trk-left,
+.trk-table td.trk-word { text-align: left; }
+.trk-table td.trk-word { font-family: var(--font-body-family), "Segoe UI", system-ui, sans-serif; }
+
+/* Hover, only for a real pointer, colour only. */
+@media (hover: hover) and (pointer: fine) {
+  .trk-entry:hover,
+  .trk-run:hover,
+  .trk-names li:hover,
+  .trk-codex tbody tr:hover { background-color: var(--color-bg-hover); }
+  .trk-quiet:hover,
+  .trk-lists button:hover { color: var(--color-text-primary); }
+  .trk-quiet:hover { background-color: var(--color-bg-hover); }
+}
+
+/* One column at the panel's own breakpoint. */
+@media (max-width: 1100px) {
+  .trk-tab,
+  .trk-panel { grid-template-columns: minmax(0, 1fr); }
+  .trk-panel > .card.trk-half { grid-column: 1 / -1; }
+  .trk-sound-src { padding-left: calc(152px + var(--space-7)); }
+}
+@media (max-width: 720px) {
+  .trk-totals { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .trk-mods,
+  .trk-picks { grid-template-columns: minmax(0, 1fr); }
+  .trk-entry { grid-template-columns: 56px 32px minmax(0, 1fr) auto; }
+  .trk-entry .trk-rarity { display: none; }
+}
+
+/* Ember: the cards already take Ember's relief; the tab adds no artwork of its
+   own. Its numbers stay Plex Mono, and the Tracker's rail button, which has no
+   illustrated icon, shows its line icon at the artwork's size. */
+html[data-theme="ember"] #nav-tracker:before { display: none; }
+html[data-theme="ember"] #nav-tracker > svg {
+  display: block;
+  flex: none;
+  width: 36px;
+  height: 30px;
+  stroke: var(--color-accent);
+  stroke-width: 1.4;
+  fill: none;
+}
+
+/* ---- The overlay -------------------------------------------------------- */
+
+/* One plate, 444 x 147 at scale 1. Solid: the window is the plate. With a
+   transparent window, only the plate draws, at the player's opacity, which
+   has a floor of 90%: over a white frame of the game every overlay text token
+   still passes 4.5:1 there (the overlay uses no faint text). Text never takes
+   the opacity. */
+.ovl {
+  --ovl-plate: 100%;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  width: 444px;
+  padding: var(--space-5) var(--space-6);
+  overflow: hidden;
+  background-color: color-mix(in srgb, var(--color-bg-base) var(--ovl-plate), transparent);
+  color: var(--color-text-primary);
+  font-family: var(--font-body-family), "Segoe UI", system-ui, sans-serif;
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+}
+.ovl.transparent { border-radius: var(--radius-lg); }
+.ovl-top { display: flex; align-items: center; justify-content: space-between; gap: var(--space-6); height: 20px; }
+.ovl-state { display: flex; align-items: center; gap: var(--space-4); color: var(--color-text-muted); }
+.ovl-clock { color: var(--color-text-primary); font-family: var(--font-mono-family), Consolas, monospace; }
+.ovl-zone { display: flex; align-items: center; gap: var(--space-3); min-width: 0; overflow: hidden; color: var(--color-text-muted); white-space: nowrap; }
+.ovl-zone b { min-width: 0; overflow: hidden; color: var(--color-text-primary); font-weight: var(--font-weight-medium); text-overflow: ellipsis; }
+.ovl-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-7); }
+.ovl-metric { display: flex; flex-direction: column; min-width: 0; }
+.ovl-metric span { color: var(--color-text-muted); }
+.ovl-metric strong { font-family: var(--font-mono-family), Consolas, monospace; font-size: var(--font-size-xl); font-weight: var(--font-weight-regular); line-height: var(--font-line-height-tight); white-space: nowrap; }
+.ovl-metric em { color: var(--color-text-muted); font-family: var(--font-mono-family), Consolas, monospace; font-style: normal; white-space: nowrap; }
+.ovl-drops { display: grid; grid-template-columns: repeat(6, auto); justify-content: space-between; gap: var(--space-4); }
+.ovl-drop { display: flex; align-items: baseline; gap: var(--space-3); white-space: nowrap; }
+.ovl-drop strong { color: var(--color-text-primary); font-family: var(--font-mono-family), Consolas, monospace; font-size: var(--font-size-sm); font-weight: var(--font-weight-regular); }
+.ovl-ticker { display: flex; flex-direction: column; gap: var(--space-1); margin: 0; padding: var(--space-3) 0 0; list-style: none; border-top: 1px solid var(--color-border-subtle); }
+.ovl-ticker li { display: grid; grid-template-columns: 56px minmax(0, 1fr) auto; gap: var(--space-4); align-items: baseline; }
+.ovl-ticker .trk-time { font-size: var(--font-size-xs); }
+.ovl .trk-empty { color: var(--color-text-muted); }
+.ovl-ticker .trk-item { font-size: var(--font-size-xs); }
+
+/* The flourish (the "drop card"): for the drop the player asked to see, a
+   card takes the counters' place below the top line for its few seconds; the
+   state, clock and zone stay. It covers the counters whole rather than
+   cutting through a line of them. It enters (opacity and an 8px rise, base
+   duration, emphasized easing) and leaves (opacity, fast, standard). It is an
+   arrival, not a repaint: the counters behind it never move. */
+.ovl-flourish {
+  position: absolute;
+  top: calc(var(--space-5) + 20px + var(--space-3));
+  right: var(--space-6);
+  bottom: var(--space-5);
+  left: var(--space-6);
+  z-index: 2;
+  display: grid;
+  grid-template-columns: 3px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0 var(--space-6);
+  padding: 0 var(--space-7) 0 0;
+  border-radius: var(--radius-md);
+  background-color: var(--color-bg-hover);
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--color-bg-sunken) 80%, transparent);
+}
+.ovl-flourish-line { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
+.ovl-flourish-edge { align-self: stretch; border-radius: var(--radius-md) 0 0 var(--radius-md); background-color: currentColor; }
+.ovl-flourish-name { overflow: hidden; color: inherit; font-size: var(--font-size-lg); font-weight: var(--font-weight-semibold); text-overflow: ellipsis; white-space: nowrap; }
+.ovl-flourish-meta { overflow: hidden; color: var(--color-text-muted); font-size: var(--font-size-xs); text-overflow: ellipsis; white-space: nowrap; }
+.ovl-flourish-count { color: var(--color-text-primary); font-family: var(--font-mono-family), Consolas, monospace; font-size: var(--font-size-lg); }
+@media (prefers-reduced-motion: no-preference) {
+  .ovl-flourish { transition: opacity var(--motion-duration-fast) var(--motion-easing-standard), transform var(--motion-duration-fast) var(--motion-easing-standard); }
+  .ovl-flourish[data-state="enter"] { transition-duration: var(--motion-duration-base); transition-timing-function: var(--motion-easing-emphasized); }
+  @starting-style { .ovl-flourish[data-state="enter"] { opacity: 0; transform: translateY(8px); } }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ovl-flourish { transition: opacity var(--motion-duration-fast) var(--motion-easing-standard); }
+  @starting-style { .ovl-flourish[data-state="enter"] { opacity: 0; } }
+}
