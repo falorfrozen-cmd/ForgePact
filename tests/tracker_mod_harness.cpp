@@ -540,7 +540,7 @@ int main(int argc, char** argv)
         for (const TrackerMod::ZoneWhy why :
              { TrackerMod::ZoneWhy::None, TrackerMod::ZoneWhy::NoController, TrackerMod::ZoneWhy::NoZoneKey,
                TrackerMod::ZoneWhy::NoPlayer, TrackerMod::ZoneWhy::GpvFailed, TrackerMod::ZoneWhy::NoZoneRolled,
-               TrackerMod::ZoneWhy::RoomUnnamed, TrackerMod::ZoneWhy::NotActZone })
+               TrackerMod::ZoneWhy::RoomUnnamed, TrackerMod::ZoneWhy::NotActZone, TrackerMod::ZoneWhy::ArraysUnread })
             names += std::string(TrackerMod::ZoneWhyName(why)) + " ";
         // Answered at last: written, and the reason stays the last failure's.
         const bool answered = m.ZoneAnswered("Act_01_02", { 2 }, { 3 }) && !m.ZoneOwed()
@@ -548,7 +548,7 @@ int main(int argc, char** argv)
                 != std::string::npos;
         check("zone/an_unanswered_read_keeps_its_reason",
               noneAtFirst && afterTwo && notActZone && answered
-                  && names == "none no-controller no-zone-key no-player gpv-failed no-zone-rolled room-unnamed not-act-zone ",
+                  && names == "none no-controller no-zone-key no-player gpv-failed no-zone-rolled room-unnamed not-act-zone arrays-unread ",
               names + m.StatLine(true, "none"));
     }
     {
@@ -570,6 +570,32 @@ int main(int argc, char** argv)
               in + next + back);
     }
     {
+        // A buff or debuff array the adapter could not read is not an empty
+        // one. While a record is owed, `arrays-unread` writes nothing and the
+        // record stays owed for the next read; once one is written, it writes
+        // no rotation to `[]`, so the next answer, equal to the last record,
+        // writes no rotation back either.
+        TrackerMod m;
+        on(m);
+        m.NoteRoom("Act_01_01");
+        m.TakeBatch();
+        m.ZoneUnanswered(TrackerMod::ZoneWhy::ArraysUnread);
+        const bool owed = m.Buffered() == 0 && m.ZoneOwed() && m.Stats().zonesWritten == 0
+            && m.StatLine(true, "none").find(" zone=none zones-written=0 zone-polls=1 zone-unresolved=1 zone-why=arrays-unread ")
+                != std::string::npos;
+        const bool written = m.ZoneAnswered("Act_01_03", { 19, 24, 3 }, { 19, 15 }) && !m.ZoneOwed();
+        const std::string first = m.TakeBatch();
+        m.ZoneUnanswered(TrackerMod::ZoneWhy::ArraysUnread);
+        const bool noPhantom = m.Buffered() == 0 && !m.ZoneOwed();
+        const bool noneBack = !m.ZoneAnswered("Act_01_03", { 19, 24, 3 }, { 19, 15 }) && m.Buffered() == 0;
+        check("zone/an_unread_array_writes_nothing_and_stays_owed",
+              owed && written && noPhantom && noneBack && count(first, "\"kind\":\"satanic_zone\"") == 1
+                  && m.LastZone() == "Satanic_1_3" && m.Stats().zonesWritten == 1
+                  && m.StatLine(true, "none").find(" zone=Satanic_1_3 zones-written=1 zone-polls=4 zone-unresolved=2 zone-why=arrays-unread ")
+                      != std::string::npos,
+              first + m.StatLine(true, "none"));
+    }
+    {
         // The name, owed at install and after each room change, is written
         // once it reads as text, and not again until the next room change.
         TrackerMod m;
@@ -588,6 +614,26 @@ int main(int argc, char** argv)
               !owedBefore && owedAtInstall && first && notAgain && owedAfterChange && empty && second
                   && count(batch, "\"kind\":\"progress\"") == 2 && count(batch, "\"kind\":\"room\"") == 2,
               batch);
+    }
+    {
+        // `name-owed=` says whether the name is still owed, and
+        // `name-unresolved=` counts the reads tried while owed that came back
+        // empty. An empty read with nothing owed is no read and counts nothing.
+        TrackerMod m;
+        on(m);
+        const auto has = [&m](const char* keys) { return m.StatLine(true, "none").find(keys) != std::string::npos; };
+        m.NoteRoom("Town_01_rm");
+        m.NameRead("Sorak");
+        const bool idleAtFirst = has(" name-owed=0 name-unresolved=0 ");
+        m.NoteRoom("Act_01_01");
+        const bool owed = has(" name-owed=1 name-unresolved=0 ");
+        const bool empties = !m.NameRead("") && has(" name-owed=1 name-unresolved=1 ") && !m.NameRead("")
+            && has(" name-owed=1 name-unresolved=2 ");
+        const bool written = m.NameRead("Sorak") && has(" name-owed=0 name-unresolved=2 ");
+        const bool notCounted = !m.NameRead("") && has(" name-owed=0 name-unresolved=2 ") && m.Stats().nameUnresolved == 2;
+        check("progress/an_empty_name_read_is_counted_while_owed",
+              idleAtFirst && owed && empties && written && notCounted,
+              m.StatLine(true, "none"));
     }
 
     // ---- the journal: envelope, sequence, escaping -------------------------------
@@ -753,7 +799,9 @@ int main(int argc, char** argv)
                      "gold-calls=0 xp-calls=0 kill-calls=0 gold-sum=0 xp-sum=0 kills-sum=0 drops-written=0 held-bag-drop=0 "
                      "drops-untracked=0 drops-duplicate=0 drops-unread=0 drops-seen=0 init-calls=0 xp-rejected=0 created=0 create-overflow=0 heartbeats=0 "
                      "lines=0 write-errors=0 buffer-full=0 file-full=0 zone=none zones-written=0 zone-polls=0 "
-                     "zone-unresolved=0 zone-why=none file=none",
+                     "zone-unresolved=0 zone-why=none "
+                     "name-owed=0 name-unresolved=0 "
+                     "file=none",
               m.StatLine(false, "none"));
         on(m);
         TrackerMod::Routes routes;

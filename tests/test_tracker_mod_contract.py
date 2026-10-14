@@ -35,12 +35,13 @@ MINING_HARNESS = ROOT / "tests" / "mining_ore_harness.cpp"
 ADAPTER_START = "// ---- HS Offline Tracker's sensor (TrackerMod.hpp): the adapter"
 ADAPTER_END = "// ---- end of the tracker adapter"
 
-#: The keys Live procedures 1 and 2 read off `tracker stat`; the last five are
-#: replan 2's zone keys.
+#: The keys Live procedures 1 and 2 read off `tracker stat`; then replan 2's
+#: five zone keys, and the name's two.
 STAT_KEYS = ("install=", "gold=", "xp=", "kills=", "drops=", "gold-calls=", "xp-calls=", "kill-calls=",
              "gold-sum=", "xp-sum=", "kills-sum=", "drops-written=", "held-bag-drop=", "drops-untracked=",
              "drops-seen=", "init-calls=", "lines=", "write-errors=", "file=",
-             "zone=", "zones-written=", "zone-polls=", "zone-unresolved=", "zone-why=")
+             "zone=", "zones-written=", "zone-polls=", "zone-unresolved=", "zone-why=",
+             "name-owed=", "name-unresolved=")
 
 #: A file-scope `static` object declaration in the adapter (not a function, not
 #: a constexpr): its type and name.
@@ -126,7 +127,27 @@ class TrackerModContractTests(unittest.TestCase):
         # The name is read first, while owed, so `progress` precedes the zone.
         self.assertBefore("if (g_Tracker.NameOwed()) g_Tracker.NameRead(TrCharacterName());", "TrReadZone(controller, zoneRoom)",
                           both, "TrReadZoneAndName")
-        self.assertIn("g_Tracker.ZoneAnswered(zoneRoom, ReadIntArray(controller, \"satanicZoneBuff\"),", both)
+        # Both arrays through the tracker's own read, which says whether it
+        # happened; an unread one answers `arrays-unread`, never an empty array.
+        self.assertIn('TrReadIntArray(controller, "satanicZoneBuff", buffs)', both)
+        self.assertIn('TrReadIntArray(controller, "satanicZoneDebuff", debuffs)', both)
+        self.assertIn("g_Tracker.ZoneUnanswered(Why::ArraysUnread);", both)
+        self.assertIn("g_Tracker.ZoneAnswered(zoneRoom, buffs, debuffs);", both)
+        self.assertIn('case ZoneWhy::ArraysUnread: return "arrays-unread";', self.header)
+
+    def test_an_unread_array_is_not_an_empty_one(self):
+        read = self.body("static bool TrReadIntArray(const RValue& controller, const char* varName, std::vector<int>& out)")
+        for failure in ("if (!ex.ToBoolean()) return false;", "if (arr.m_Kind != VALUE_ARRAY) return false;",
+                        "catch (...)"):
+            self.assertIn(failure, read, failure)
+        self.assertIn("return true;", read)
+        # The shared reader, which answers an empty vector on every failure,
+        # stays for satmods and is called nowhere in the tracker's adapter. The
+        # positive control: the same pattern finds its calls outside it.
+        self.assertIn("static std::vector<int> ReadIntArray(const RValue& controller, const char* varName)", self.code)
+        call = re.compile(r"\bReadIntArray\(")
+        self.assertGreater(len(call.findall(self.code)), 1, "the pattern finds no call of ReadIntArray at all")
+        self.assertIsNone(call.search(self.adapter), "the adapter calls the shared ReadIntArray")
 
     def test_the_zone_is_read_on_a_room_change_and_every_15th_tick(self):
         poll = self.body("static void TrPollRoom()")

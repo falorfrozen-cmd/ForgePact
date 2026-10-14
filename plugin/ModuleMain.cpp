@@ -56423,9 +56423,36 @@ static ForgePact::TrackerMod::ZoneWhy TrReadZone(const RValue& controller, std::
     return Why::None;
 }
 
+// One of the zone's int arrays on Controller_obj, read so that a failure is
+// not an empty array: false when the variable is absent, is not an array, or
+// a call threw; true for a real array, with `out` then possibly empty. The
+// shared ReadIntArray answers an empty vector on every failure, which suits
+// satmods' poll but, under the tracker's rotation rule, would write a zone
+// with `[]` and another when the read recovered. ReadIntArray stays as it is.
+static bool TrReadIntArray(const RValue& controller, const char* varName, std::vector<int>& out)
+{
+    out.clear();
+    try {
+        RValue ex = g_Yytk->CallBuiltin("variable_instance_exists", { controller, RValue(varName) });
+        if (!ex.ToBoolean()) return false;
+        RValue arr = g_Yytk->CallBuiltin("variable_instance_get", { controller, RValue(varName) });
+        if (arr.m_Kind != VALUE_ARRAY) return false;
+        const int n = (int)g_Yytk->CallBuiltin("array_length", { arr }).ToDouble();
+        std::vector<int> values;
+        for (int i = 0; i < n; ++i)
+            values.push_back((int)g_Yytk->CallBuiltin("array_get", { arr, RValue((double)i) }).ToDouble());
+        out.swap(values);
+    } catch (...) {
+        out.clear();
+        return false;
+    }
+    return true;
+}
+
 // On a zone tick: the name while it is owed (first, so a `progress` comes
 // before the `satanic_zone`, as Live 1 measured at install), then the zone,
-// each answer or failed step handed to the core.
+// each answer or failed step handed to the core. Either array unread is a
+// read that did not answer (`arrays-unread`), never an empty array.
 static void TrReadZoneAndName()
 {
     using Why = ForgePact::TrackerMod::ZoneWhy;
@@ -56435,8 +56462,12 @@ static void TrReadZoneAndName()
     std::string zoneRoom;
     const Why why = TrReadZone(controller, zoneRoom);
     if (why != Why::None) { g_Tracker.ZoneUnanswered(why); return; }
-    g_Tracker.ZoneAnswered(zoneRoom, ReadIntArray(controller, "satanicZoneBuff"),
-                           ReadIntArray(controller, "satanicZoneDebuff"));
+    std::vector<int> buffs, debuffs;
+    if (!TrReadIntArray(controller, "satanicZoneBuff", buffs) || !TrReadIntArray(controller, "satanicZoneDebuff", debuffs)) {
+        g_Tracker.ZoneUnanswered(Why::ArraysUnread);
+        return;
+    }
+    g_Tracker.ZoneAnswered(zoneRoom, buffs, debuffs);
 }
 
 // Every tick: the `room` builtin's name against the last one, then the zone

@@ -70,7 +70,9 @@ namespace ForgePact {
 //     change. An answer is written when a record is owed, or when it differs
 //     from the last one written (a rotation: another zone, other buffs or
 //     other debuffs). A read that did not answer writes nothing, counts, and
-//     keeps its reason token for `zone-why=`.
+//     keeps its reason token for `zone-why=`; a buff or debuff array that
+//     could not be read is such a read (`arrays-unread`), never an empty
+//     array, which would pass for a rotation.
 //   - the arming rule is Loot announcements': armed at launch, hooked on the
 //     first frame setup is done and the local player resolves, once per
 //     session (the guide's Known Limitations item 8).
@@ -419,7 +421,7 @@ public:
 
     // Why a zone read did not answer: the step that failed, as the adapter
     // names it. Fixed tokens: Live procedure 2 and the tests read them.
-    enum class ZoneWhy : int { None, NoController, NoZoneKey, NoPlayer, GpvFailed, NoZoneRolled, RoomUnnamed, NotActZone };
+    enum class ZoneWhy : int { None, NoController, NoZoneKey, NoPlayer, GpvFailed, NoZoneRolled, RoomUnnamed, NotActZone, ArraysUnread };
     static constexpr const char* ZoneWhyName(ZoneWhy why)
     {
         switch (why) {
@@ -431,6 +433,7 @@ public:
         case ZoneWhy::NoZoneRolled: return "no-zone-rolled";  // GPV below 0: none for this difficulty, or none yet
         case ZoneWhy::RoomUnnamed: return "room-unnamed";     // room_get_name had no name for GPV's room
         case ZoneWhy::NotActZone: return "not-act-zone";      // the room named is no act zone: the code is empty
+        case ZoneWhy::ArraysUnread: return "arrays-unread";   // a buff/debuff array absent, not an array, or its read threw
         }
         return "unknown";
     }
@@ -486,10 +489,14 @@ public:
         m_ZoneWhy = why;
     }
     // A name read while owed: written once, when it reads as text. True when
-    // it was written.
+    // it was written. An empty read while owed counts in `name-unresolved=`.
     bool NameRead(const std::string& name)
     {
-        if (!NameOwed() || name.empty()) return false;
+        if (!NameOwed()) return false;
+        if (name.empty()) {
+            ++m_Stats.nameUnresolved;
+            return false;
+        }
         RecordProgress(name);
         return !m_NameOwed;
     }
@@ -647,13 +654,18 @@ public:
         long long bufferFull = 0;      // records dropped at the buffer's cap
         long long fileFull = 0;        // records dropped at the file's cap
         long long zonesWritten = 0;    // satanic_zone records buffered
-        long long zonePolls = 0;       // zone reads tried: the read's own positive control
+        // Zone reads tried (answered = zone-polls - zone-unresolved). It tells
+        // "nothing ran" from "ran", no more: failures count too. The zone
+        // readers' positive control is the install-time `satanic_zone` record,
+        // not this count.
+        long long zonePolls = 0;
         long long zoneUnresolved = 0;  // zone reads that did not answer
+        long long nameUnresolved = 0;  // name reads tried while owed that came back empty
     };
     const Counters& Stats() const { return m_Stats; }
 
     std::string StatusLine() const { return m_Enabled ? "tracker: on" : "tracker: off"; }
-    // `tracker stat`: Live procedure 1 reads these keys.
+    // `tracker stat`: Live procedures 1 and 2 read these keys.
     std::string StatLine(bool installTried, const std::string& fileName) const
     {
         const auto n = [](long long v) { return std::to_string(v); };
@@ -673,6 +685,7 @@ public:
         s += " zone=" + (m_LastZone.empty() ? std::string("none") : m_LastZone);
         s += " zones-written=" + n(m_Stats.zonesWritten) + " zone-polls=" + n(m_Stats.zonePolls);
         s += " zone-unresolved=" + n(m_Stats.zoneUnresolved) + " zone-why=" + ZoneWhyName(m_ZoneWhy);
+        s += std::string(" name-owed=") + (NameOwed() ? "1" : "0") + " name-unresolved=" + n(m_Stats.nameUnresolved);
         s += " file=" + (fileName.empty() ? std::string("none") : fileName);
         return s;
     }

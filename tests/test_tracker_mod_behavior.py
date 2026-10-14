@@ -192,10 +192,12 @@ class TrackerModBehaviorTests(unittest.TestCase):
                              "zone/a_rotation_without_a_room_change_is_written",
                              "zone/an_unchanged_answer_writes_nothing",
                              "zone/an_unanswered_read_keeps_its_reason",
-                             "zone/here_when_the_zone_names_the_current_room")
+                             "zone/here_when_the_zone_names_the_current_room",
+                             "zone/an_unread_array_writes_nothing_and_stays_owed")
 
     def test_the_name_is_read_until_it_answers(self):
-        self.assertScenarios("progress/owed_after_a_room_change_until_the_name_reads")
+        self.assertScenarios("progress/owed_after_a_room_change_until_the_name_reads",
+                             "progress/an_empty_name_read_is_counted_while_owed")
 
     # ---- the journal ------------------------------------------------------------
 

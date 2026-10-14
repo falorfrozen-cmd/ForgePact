@@ -82,7 +82,9 @@ Labels: **measured** (a live run recorded it; who ran it is named),
   15th tick, owed or not, and the name on the same ticks while it is owed:
   - the name is the local player's `name` variable (the read Loot
     announcements' chat line uses), written once as a `progress` when it
-    reads as text;
+    reads as text. `tracker stat` prints `name-owed=` (1 while it is owed)
+    and `name-unresolved=` (the reads tried while owed that came back empty;
+    the read keeps no reason token);
   - the zone goes through the tracker's own copy of ForgePact's satzone
     readers: `Controller_obj.satanicZone`, `GPV` of that key by SDK name with
     the local player as `self` (the proven pair `HhResolveLocalPlayer` +
@@ -98,13 +100,29 @@ Labels: **measured** (a live run recorded it; who ran it is named),
   2026-10-03: the store moved 20 to 4 within one session). A read that does
   not answer writes nothing, keeps the record owed, and keeps the step that
   failed for `zone-why=` (`no-controller`, `no-zone-key`, `no-player`,
-  `gpv-failed`, `no-zone-rolled`, `room-unnamed`, `not-act-zone`). Why reads
-  can fail on a room change's first ticks: `GetMyPlayer` answers noone with
-  no `Player_obj` (**static reading**), `Player_obj` gets a new instance id
-  on a room change, and there is no `Player_obj` while the map is open (both
+  `gpv-failed`, `no-zone-rolled`, `room-unnamed`, `not-act-zone`, and
+  `arrays-unread`: a buff or debuff array absent, not an array, or whose
+  read threw). Before `arrays-unread`, the shared array reader answered an
+  empty array on every failure, so a failed read passed for an empty one and
+  the rotation rule wrote a zone with `[]`, then another when the read
+  recovered; the tracker now reads both arrays through its own
+  `TrReadIntArray`, which says whether the read happened. `zone-polls=`
+  counts reads tried (answered = zone-polls - zone-unresolved), failures
+  included, so it tells "nothing ran" from "ran" and no more: the zone
+  readers' positive control is the install-time `satanic_zone` record (Live
+  procedure 2's `zone-control`), not this count. Why reads can fail on a
+  room change's first ticks: `GetMyPlayer` answers noone with no
+  `Player_obj` (**static reading**), `Player_obj` gets a new instance id on
+  a room change, and there is no `Player_obj` while the map is open (both
   **measured**; RDM § 1, "How the local player arrives"). How many ticks a new
-  act zone runs without a player is **not established**; Live procedure 2
-  reads it from `zone-why=`. The tracker writes nothing of `satzone`'s state
+  act zone runs without a player is **not established**. Live procedure 2
+  bounds it rather than measuring it: it counts k failed polls (the
+  `zone-unresolved=` delta), so the readers answered between (k-1)*15 and
+  k*15 ticks after the room change. The milliseconds between the `room`
+  record and the `satanic_zone` after it are an upper bound set by
+  `kZonePollTicks` (15 ticks, about 250 ms at 60 fps), not a measured
+  duration, and `zone-why=` keeps only the last failure's token. The
+  tracker writes nothing of `satzone`'s state
   and does not call `SatZoneReadValue`, which records its failures as
   `satzone stat`'s last reason.
 - **Arming:** armed at launch, hooked once a character exists, as Loot
@@ -117,7 +135,7 @@ Labels: **measured** (a live run recorded it; who ran it is named),
 
 Live procedure 1 (below) measured the counters, a held bag drop and a clean
 close with the producer installed. **Not established** until Live procedure 2
-of the toolkit workorder `forgepact-185-tracker-move` runs: that the rule
+of the toolkit workorder `forgepact-185-tracker-zone-fix` runs: that the rule
 above writes the `satanic_zone` and the name after a room change and on a
 rotation in a real session.
 
