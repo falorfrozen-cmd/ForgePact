@@ -103,9 +103,10 @@ Labels: **measured** (a live run recorded it; who ran it is named),
   `gpv-failed`, `no-zone-rolled`, `room-unnamed`, `not-act-zone`, and
   `arrays-unread`: a buff or debuff array absent, not an array, or whose
   read threw). Before `arrays-unread`, the shared array reader answered an
-  empty array on every failure, so a failed read passed for an empty one and
-  the rotation rule wrote a zone with `[]`, then another when the read
-  recovered; the tracker now reads both arrays through its own
+  empty array on every failure, so a failed read would have passed for an
+  empty one, and the rotation rule would have written a zone with `[]`, then
+  another when the read recovered (**static reading** of the old adapter; not
+  observed live); the tracker now reads both arrays through its own
   `TrReadIntArray`, which says whether the read happened. `zone-polls=`
   counts reads tried (answered = zone-polls - zone-unresolved), failures
   included, so it tells "nothing ran" from "ran" and no more: the zone
@@ -134,10 +135,10 @@ Labels: **measured** (a live run recorded it; who ran it is named),
   lines intact, against `0x7E2` for a joinable `std::thread` left at exit.
 
 Live procedure 1 (below) measured the counters, a held bag drop and a clean
-close with the producer installed. **Not established** until Live procedure 2
-of the toolkit workorder `forgepact-185-tracker-zone-fix` runs: that the rule
-above writes the `satanic_zone` and the name after a room change and on a
-rotation in a real session.
+close with the producer installed. Live procedure 2 of the toolkit workorder
+`forgepact-185-tracker-zone-fix` (below) measured that the rule above writes
+the `satanic_zone` and the name after a room change, into an act zone and
+back to town, and on a rotation with no room change, in a real session.
 
 ## Live procedure 1 (2026-10-13)
 
@@ -201,6 +202,76 @@ results the capture gives them:
 One 4.6 s freeze in town lined up in time with a debugger break in
 `discordhook64.dll` that the debugger's keeper resumed. Its cause is **not
 established** beyond that timing.
+
+## Live procedure 2 (2026-10-14)
+
+Capture: `.claude/workorders/forgepact-185-tracker-zone-fix-live-2.md` in the
+toolkit hub (`forgepact-185-tracker-zone-fix-live-2`), from the toolkit
+workorder `forgepact-185-tracker-zone-fix`. The research build with the five
+fixes (sha256 `77125bac…58ed`), Sorak in character-select slot 14 and his
+save file 13, HS Offline Tracker's v0.1.4 producer (`5f83e542…`) installed
+beside it and unchanged at teardown, the ForgePact panel closed, and x64dbg
+logpoints on `GetSatanicZoneOffline`, `GetSatanicZoneEligible` and
+`NetworkRoomGoto` beside a `CheckTalentUse` control, every candidate's first
+bytes matching the procedure's. The operator did every step, the fighting
+included (`hs_input`); the owner took none. All 24 checks `pass`, as the
+capture gives them:
+
+- **Session validity**, all `pass`: `dll-hash`, `exit-reader`, `control`,
+  `marker`, `dbg-control` (the control rose from hit 4,793 to 16,807) and
+  `zone-control` (the install-time `satanic_zone` named `Satanic_3_5`).
+- **Shipped behaviour**, all `pass`:
+  - `installs-with-character`: `install=installed`, every route `both`,
+    `zone=Satanic_3_5 zones-written=1`, `name-owed=0 name-unresolved=0`, 5 s
+    after the load; the file opened with `bridge_status`, `room`
+    `Town_01_rm`, `progress` `Sorak`, `satanic_zone` and `vitals` false;
+  - `session-file`: one file for the pid, 59 lines, sequence 1 to 59;
+  - `zone-rotation`: `satzone pin 1` with no room change wrote a second
+    `satanic_zone`, `Satanic_1_1`, with the same arrays, and the stat read
+    `zone=Satanic_1_1 zones-written=2`. No natural re-roll came before it;
+  - `zone-after-act-room` and `name-after-room`: after `pcall
+    NetworkRoomGoto 1` the `room` `Act_01_01` was followed by a `progress`
+    `Sorak`, a `satanic_zone` and a `vitals` before the next `room`;
+  - `zone-after-town` and `name-after-room`: after `pcall NetworkRoomGoto
+    235` the `room` `Town_01_rm` was followed the same way, the `vitals`
+    false;
+  - `replay-matches`: `tools/tracker_replay.py` on the file read 201 gold,
+    69,175 XP and 58 kills with `bad_lines` 0, the file's own sums;
+  - `save-read`: both `--save 13` reads named Sorak;
+  - `clean-close`: `hs_stop_game` in the world with the tracker on read
+    `0x00000000`, and `out.txt` ended on `==== clean shutdown ====`.
+- **Research**, all `pass`:
+  - `here-true`: in `Act_01_01` with the store pinned to it, the `vitals`
+    read `satanic_here: true`;
+  - `zone-load-reason`: the act zone's first ticks had no player. Between
+    the stats before and after the travel, `zone-unresolved=` rose 0 to 2
+    with `zone-why=no-player`, so k = 2 and the readers answered between 15
+    and 30 ticks after the room change. The `room` and the `satanic_zone`
+    after it were 2,482 ms apart, an upper bound set by `kZonePollTicks`,
+    not a measured duration. The way back to town added 3 more failed reads
+    (`zone-unresolved=5`, again `no-player`; 633 ms between its records, the
+    same kind of bound). `name-unresolved=` rose in step with them (2, then
+    5) while `name-owed=` read 0 at each stat, after the name was written;
+  - `deltas-flow`, `kills-vs-save` and `xp-vs-save`: 58 kills and 69,175 XP
+    from the operator's fighting; the file's sums equal `gold-sum=201`,
+    `xp-sum=69175` and `kills-sum=58`, and save 13 moved by exactly the XP
+    and kill sums (**measured**);
+  - `dbg-travel`: `NetworkRoomGoto` hit twice, once per travel, each with
+    one argument;
+  - `dbg-roll` and `dbg-eligible`: `GetSatanicZoneOffline` and
+    `GetSatanicZoneEligible` had no hit over the whole window, beside the
+    rising control and both travels. So no roll was observed beside a room
+    change by `NetworkRoomGoto`, in town or into an act zone. What does
+    trigger a roll stays **not established**: no natural re-roll came in the
+    session's 337 s (the file's four `satanic_zone` records are the install,
+    the pin and the two travels), so the logpoints, armed for about 4.5
+    minutes of it, had no roll to catch;
+  - `producer-coexists`: present at the start and at teardown, with a clean
+    close.
+
+Two freezes lined up with the debugger's own holds: the control's arming
+hold, and a `discordhook64.dll` TLS-callback break (4.7 s) the keeper
+resumed. They are the debugger's, as in Live procedure 1.
 
 ## Rejected routes
 
