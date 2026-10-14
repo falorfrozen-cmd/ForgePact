@@ -120,9 +120,9 @@ Labels: **measured** (a live run recorded it; who ran it is named),
   bounds it rather than measuring it: it counts k failed polls (the
   `zone-unresolved=` delta), so the readers answered between (k-1)*15 and
   k*15 ticks after the room change. The milliseconds between the `room`
-  record and the `satanic_zone` after it are an upper bound set by
-  `kZonePollTicks` (15 ticks, about 250 ms at 60 fps), not a measured
-  duration, and `zone-why=` keeps only the last failure's token. The
+  record and the `satanic_zone` after it are an upper bound on when the
+  readers answered, not a measured duration; it depends on how long the
+  ticks ran during the load, not on `kZonePollTicks` (15 ticks) alone, and `zone-why=` keeps only the last failure's token. The
   tracker writes nothing of `satzone`'s state
   and does not call `SatZoneReadValue`, which records its failures as
   `satzone stat`'s last reason.
@@ -252,13 +252,17 @@ capture gives them:
     so only the last of the two is known to be `no-player`; the bound needs
     no more), so k = 2 and the readers answered between 15 and 30 ticks
     after the room change. The `room` and the `satanic_zone` after it were
-    2,482 ms apart, an upper bound set by `kZonePollTicks`, not a measured
-    duration. Between the stat after the fighting (step 8,
-    `zone-unresolved=2`) and the one after the way back to town (step 9,
-    `zone-unresolved=5`), 3 more reads failed, the last `no-player`; that
-    window holds the end of the fighting as well as the travel, so which of
-    the 3 fell on the travel is not established (633 ms between the
-    travel's records, the same kind of bound). `name-unresolved=` rose in
+    2,482 ms apart, an upper bound on when the readers answered, not a
+    measured duration: it depends on how long the ticks ran during the
+    load, not on `kZonePollTicks` alone, and at most 30 ticks in 2,482 ms
+    means they ran far slower than 60 a second. Between the stat after the
+    fighting (step 8, `zone-unresolved=2`) and the one after the way back
+    to town (step 9, `zone-unresolved=5`), 3 more reads failed, the last
+    `no-player`; all 3 fell after the travel's room change:
+    `name-unresolved=` rose with them, and the name is read only while it
+    is owed after a room change (no `room` record lies between step 8's
+    stat and the travel; 633 ms between the travel's records, the same
+    kind of bound). `name-unresolved=` rose in
     step with them (2, then
     5) while `name-owed=` read 0 at each stat, after the name was written;
   - `deltas-flow`, `kills-vs-save` and `xp-vs-save`: 58 kills and 69,175 XP
