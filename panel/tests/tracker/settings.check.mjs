@@ -392,13 +392,20 @@ export default async function (t) {
     await page.click('#trkFilterExport');
     // Headless Edge shares the machine's clipboard, and a failed read can come
     // back empty, so the poll that sees the export is the one that keeps it:
-    // a second read could still return 'before'.
-    const seen = await page.waitForFunction(async () => {
-      let text = null;
-      try { text = await navigator.clipboard.readText(); } catch (e) { return null; }
-      try { return JSON.parse(text)?.name === 'Hell farming' ? text : null; } catch (e) { return null; }
-    }, null, { timeout: 8000 });
-    const text = await seen.jsonValue();
+    // a second read could still return 'before'. The poll runs from here, not
+    // in waitForFunction, which takes an async predicate's pending promise as
+    // truthy and returns before the read settles.
+    let text = null;
+    for (const deadline = Date.now() + 8000; !text && Date.now() < deadline;) {
+      text = await page.evaluate(async () => {
+        try {
+          const read = await navigator.clipboard.readText();
+          return JSON.parse(read)?.name === 'Hell farming' ? read : null;
+        } catch (e) { return null; }
+      });
+      if (!text) await page.waitForTimeout(100);
+    }
+    assert(text, 'Export did not put the filter on the clipboard within 8 s');
     const exported = JSON.parse(text);
     assert(exported.name === 'Hell farming' && exported.lists.length === 2, `the export is ${text.slice(0, 300)}`);
     for (const [i, list] of seeded.filters[0].lists.entries()) {
