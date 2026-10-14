@@ -187,8 +187,18 @@ game. It is off by default.
   a close from the world with Loot announcements on all exited cleanly with
   no crash report; HS Offline Tracker's own checks of its fixed sensor, on a
   test build with ForgePact loaded, closed cleanly from the main menu three
-  times out of three. A close with no sensor at all, as 2.3.0 leaves it, was
-  not tested separately.
+  times out of three. With no sensor at all, as 2.3.0 leaves your game, a
+  close from the main menu, from the world, after Save & Exit, and from the
+  world with Loot announcements on all exited cleanly with no crash report,
+  tested on a ForgePact build from before 2.3.0.
+- **ForgePact leaves other sensors alone.** A sensor ForgePact does not know
+  as the crashing build, such as HS Offline Tracker 0.1.4's fixed one or a
+  newer one, stays where it is, without a word. **Remove Plugin** no longer
+  deletes any HS Offline Tracker sensor, and starting the game from ForgePact
+  no longer replaces one.
+
+## Known issues
+
 - **HS Offline Tracker 0.1.1 to 0.1.3 can put the old sensor back.** If you
   still use HS Offline Tracker, update it to 0.1.4 or later, or use the
   Tracker tab instead. Versions 0.1.1 to 0.1.3 offer to update the live
@@ -196,11 +206,6 @@ game. It is off by default.
   close with it. When you start the game from ForgePact with that sensor in
   place, its launch message says so, and pressing **Install Mod Plugin** moves
   it aside again.
-- **ForgePact leaves other sensors alone.** A sensor ForgePact does not know
-  as the crashing build, such as HS Offline Tracker 0.1.4's fixed one or a
-  newer one, stays where it is, without a word. **Remove Plugin** no longer
-  deletes any HS Offline Tracker sensor, and starting the game from ForgePact
-  no longer replaces one.
 
 ## How to update
 
