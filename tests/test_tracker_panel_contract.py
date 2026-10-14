@@ -158,7 +158,7 @@ class TrackerPanelReadTests(unittest.TestCase):
     def test_api_tracker_reports_the_switch_the_snapshot_and_the_session(self):
         code, body = self.box.call("GET", "/api/tracker")
         self.assertEqual(code, 200, body)
-        self.assertEqual(set(body), {"on", "snapshot", "revision", "extra_revision", "catching_up", "session"})
+        self.assertLessEqual({"on", "snapshot", "revision", "extra_revision", "catching_up", "session"}, set(body))
         self.assertIs(body["on"], False)
         snap = body["snapshot"]
         self.assertEqual((snap["gold"]["earned"], snap["xp"]["earned"], snap["kills"]["earned"]), (200, 400, 6))

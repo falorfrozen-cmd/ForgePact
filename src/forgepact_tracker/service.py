@@ -23,6 +23,14 @@ closed, or re-read after a restart, gives the same totals and journal:
   filed once; `cursor.json` remembers it, so reading it again files nothing.
 - **Retention** keeps the newest 20 finalized session files and never removes
   an unfinalized one or a live pid's.
+- **Alerts are claimed once per panel process.** Each tick takes the ledger's
+  Satanic-zone rotation (one that passed the buff pick) from a live session
+  and keeps the latest as `zone_alert`, numbered by `seq`, rising by 1 per
+  rotation; reading it never consumes it. A page that wants to play a journal
+  entry or `zone:<seq>` claims it first (`announce`), and only the first
+  claim of an id answers `play`. Claims are not persisted: a restarted panel
+  starts with none, and the page's own baseline keeps it quiet about what it
+  already showed.
 
 Every public method takes the one tracker lock. The service starts no thread:
 the panel's watcher calls `tick`, and request threads call the rest.
@@ -30,6 +38,8 @@ the panel's watcher calls `tick`, and request threads call the rest.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import os
 import threading
 import time
@@ -37,7 +47,7 @@ from pathlib import Path
 
 from .ledger import Ledger, prefs_from_settings, Prefs
 from .protocol import MAX_LINE_BYTES, ProtocolError, parse_line, session_file_identity
-from .store import SettingsError, TrackerStore, import_tracker_data
+from .store import (SOUND_MAX_BYTES, Refused, SettingsError, TrackerStore, import_tracker_data)
 
 READ_BUDGET = 256 * 1024
 SESSIONS_KEPT = 20
@@ -161,6 +171,26 @@ class _Session:
             return 0
 
 
+def _sound_upload(name, data) -> tuple[str, bytes]:
+    """(kind, bytes) of an uploaded sound: `name` is the file's name (its
+    extension says the kind) and `data` its bytes in base64, a `data:` URL
+    prefix allowed. Raises `Refused`; the store checks the kind and content."""
+    if not isinstance(name, str) or "." not in name:
+        raise Refused("name the sound file, with its extension")
+    if not isinstance(data, str):
+        raise Refused("data must be the sound file's bytes in base64")
+    if data.startswith("data:") and ";base64," in data[:100]:
+        data = data.split(";base64,", 1)[1]
+    # refused before decoding: the decoded size is about 3/4 of the text's
+    if len(data) > (SOUND_MAX_BYTES // 3 + 1) * 4 + 4:
+        raise Refused("the sound file is larger than 8 MiB")
+    try:
+        raw = base64.b64decode(data, validate=True)
+    except (binascii.Error, ValueError):
+        raise Refused("data is not base64") from None
+    return name.rsplit(".", 1)[1].strip().lower(), raw
+
+
 def _apply_control(ledger: Ledger, control: dict) -> None:
     kind = control.get("kind")
     at = control.get("at_ms", 0)
@@ -198,6 +228,10 @@ class TrackerService:
         self.current: _Session | None = None
         self.catching_up = False
         self._finalized_view: dict | None = None
+        # what this panel process has announced, and the latest zone rotation
+        self.claimed: set[str] = set()
+        self.zone_alert: dict | None = None
+        self._zone_seq = 0
         cursor = self.store.read_json("cursor.json", {})
         self.cursor = cursor if isinstance(cursor, dict) and isinstance(cursor.get("sessions"), dict) else {
             "version": 1, "sessions": {}}
@@ -271,6 +305,7 @@ class TrackerService:
                     continue
                 used, reached_end = session.read(budget)
                 budget -= used
+                self._take_zone_alert(session)
                 self._file_runs(session)
                 if not reached_end:
                     catching_up = True
@@ -304,6 +339,17 @@ class TrackerService:
             pid = session_file_identity(chosen)[0]
             entry = self.cursor["sessions"].get(chosen, {})
             self._finalized_view = {"file": chosen, "pid": pid, "entry": entry}
+
+    def _take_zone_alert(self, session: _Session) -> None:
+        """Keep a live session's zone rotation as the latest `zone_alert`. The
+        ledger hands each rotation out once; one in a session whose game is
+        gone is taken and dropped, since there is nobody playing to tell."""
+        change = session.ledger.take_zone_change()
+        if change is None or not session.live:
+            return
+        self._zone_seq += 1
+        self.zone_alert = {"seq": self._zone_seq, "zone": change["zone"], "buffs": list(change["buffs"]),
+                           "debuffs": list(change["debuffs"]), "at_ms": change.get("at_ms")}
 
     def _file_runs(self, session: _Session) -> None:
         for key, run in session.ledger.take_finished_runs():
@@ -398,13 +444,107 @@ class TrackerService:
             return snap
 
     def extra(self) -> dict:
-        """The Tracker's `Extra`: the character, the series and the journal."""
+        """The Tracker's `Extra`: the character, the series and the journal.
+        A journal entry this panel process announced reads `announced: true`."""
         with self.lock:
-            return self._view()[0].extra()
+            extra = self._view()[0].extra()
+            for drop in extra["drops"]:
+                drop["announced"] = drop.get("id") in self.claimed
+            return extra
+
+    def zone_alert_state(self) -> dict | None:
+        """The latest zone rotation (`seq`, `zone`, `buffs`, `debuffs`,
+        `at_ms`, `announced`), or None. Reading never consumes it."""
+        with self.lock:
+            if self.zone_alert is None:
+                return None
+            return dict(self.zone_alert, buffs=list(self.zone_alert["buffs"]),
+                        debuffs=list(self.zone_alert["debuffs"]),
+                        announced="zone:%d" % self.zone_alert["seq"] in self.claimed)
+
+    def announce(self, alert_id) -> dict:
+        """Claim an alert: a journal entry's `id` or `zone:<seq>`. `play` is
+        true for the first claim of an id this process holds, and false for
+        every later one and for an id neither the journal nor the zone alert
+        holds."""
+        with self.lock:
+            if not isinstance(alert_id, str) or not alert_id:
+                return {"ok": False, "error": "id must be a journal entry's id or zone:<seq>"}
+            if alert_id in self.claimed or not self._holds(alert_id):
+                return {"play": False}
+            self.claimed.add(alert_id)
+            return {"play": True}
+
+    def _holds(self, alert_id: str) -> bool:
+        if alert_id.startswith("zone:"):
+            return self.zone_alert is not None and alert_id == "zone:%d" % self.zone_alert["seq"]
+        return any(d.get("id") == alert_id for d in self._view()[0].drops)
 
     def runs(self) -> list:
         with self.lock:
             return self.store.runs()
+
+    def clear_runs(self) -> dict:
+        """Empty the run history (the page asks the player first)."""
+        with self.lock:
+            try:
+                self.store.clear_runs()
+            except OSError as exc:
+                return {"ok": False, "error": "cannot clear the run history: %s" % exc}
+            return {"ok": True, "runs": []}
+
+    # -- the shopping list and custom sounds --------------------------------
+
+    def shopping(self) -> list:
+        with self.lock:
+            return self.store.shopping()
+
+    def set_shopping(self, items) -> dict:
+        with self.lock:
+            try:
+                saved = self.store.set_shopping(items)
+            except Refused as exc:
+                return {"ok": False, "error": str(exc)}
+            except OSError as exc:
+                return {"ok": False, "error": "cannot save the shopping list: %s" % exc}
+            return {"ok": True, "items": saved}
+
+    def sounds(self) -> dict:
+        with self.lock:
+            return self.store.sounds()
+
+    def sound(self, key: str):
+        """(bytes, kind) of the custom sound filed as `key`, or None."""
+        with self.lock:
+            path = self.store.sound_file(key)
+            if path is None:
+                return None
+            try:
+                with open(path, "rb") as fh:
+                    return fh.read(), path.suffix[1:].lower()
+            except OSError:
+                return None
+
+    def change_sound(self, key: str, body) -> dict:
+        """POST /api/tracker/sound/<key>: `{"name", "data"}` files a sound
+        (`data` in base64), `{"clear": true}` deletes it and
+        `{"copy_from": "<key>"}` copies another key's. Answers the listing."""
+        with self.lock:
+            try:
+                if not isinstance(body, dict):
+                    raise Refused("the request must be an object")
+                if body.get("clear") is True:
+                    self.store.clear_sound(key)
+                elif "copy_from" in body:
+                    self.store.copy_sound(body["copy_from"], key)
+                else:
+                    ext, data = _sound_upload(body.get("name"), body.get("data"))
+                    self.store.put_sound(key, ext, data)
+            except Refused as exc:
+                return {"ok": False, "error": str(exc)}
+            except OSError as exc:
+                return {"ok": False, "error": "cannot save the sound: %s" % exc}
+            return {"ok": True, "sounds": self.store.sounds()}
 
     def take_zone_change(self) -> dict | None:
         with self.lock:
@@ -471,6 +611,22 @@ class TrackerService:
                 if not result["ok"]:
                     return result
             return {"ok": True, "settings": self.store.settings()}
+
+    def save_overlay_place(self, place: dict) -> dict:
+        """Store the overlay window's `overlay_x`, `overlay_y`, `overlay_w` and
+        `overlay_h` in the settings document. Only whole numbers are kept. No
+        field the ledger reads changes, so no control is recorded."""
+        with self.lock:
+            fields = {k: v for k, v in (place or {}).items()
+                      if k in ("overlay_x", "overlay_y", "overlay_w", "overlay_h")
+                      and isinstance(v, int) and not isinstance(v, bool)}
+            if not fields:
+                return {"ok": True, "settings": self.store.settings()}
+            try:
+                saved = self.store.save_settings(dict(self.store.settings(), **fields))
+            except (SettingsError, OSError) as exc:
+                return {"ok": False, "error": "cannot save the overlay's place: %s" % exc}
+            return {"ok": True, "settings": saved}
 
     def run_import(self) -> dict:
         """Import HS Offline Tracker's data again: only files still missing here

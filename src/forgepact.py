@@ -2664,7 +2664,14 @@ TRACKER_DIR = "tracker"
 TRACKER_SOURCE = Path.home() / "AppData" / "Local" / "HS Offline Tracker"
 TRACKER_DROPS_SERVED = 400
 _TRACKER_LOCK = threading.Lock()
-_TRACKER = {"service": None, "key": None, "saves": None}
+_TRACKER = {"service": None, "key": None, "saves": None, "overlay": None}
+# The page's alert sounds play without a click first (alerts come while the
+# player is in the game, not in the panel). Whether WebView2 honours this
+# beside pywebview's own AdditionalBrowserArguments is measured by the Tracker
+# tab's `sounds` work (panel/src/tracker/audio.js); the page asks for a click
+# when it does not.
+AUTOPLAY_FLAG = "--autoplay-policy=no-user-gesture-required"
+WEBVIEW2_ARGS_VAR = "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"
 
 
 def tracker_sessions_dir():
@@ -2705,8 +2712,23 @@ def tracker_service():
         return _TRACKER["service"]
 
 
+def tracker_overlay_window():
+    """The overlay window's controller (src/tracker_overlay.py), built once.
+    It can open a window only beside the panel's own pywebview window."""
+    import tracker_overlay
+    with _TRACKER_LOCK:
+        if _TRACKER["overlay"] is None:
+            _TRACKER["overlay"] = tracker_overlay.TrackerOverlay(
+                main_window=lambda: WEBVIEW_WINDOW,
+                base_url=lambda: f"http://127.0.0.1:{PORT}",
+                settings=lambda: tracker_service().get_settings(),
+                save_place=lambda place: tracker_service().save_overlay_place(place))
+        return _TRACKER["overlay"]
+
+
 def tracker_state(cfg) -> dict:
-    """/api/tracker: the switch, the Tracker's snapshot and the session."""
+    """/api/tracker: the switch, the Tracker's snapshot and the session, the
+    latest Satanic-zone alert and whether the overlay can open and is open."""
     service = tracker_service()
     service.tick()
     snap = service.snapshot()
@@ -2714,7 +2736,24 @@ def tracker_state(cfg) -> dict:
     session = snap.pop("session", None)
     return {"on": bool(cfg.get("mod_tracker", False)), "snapshot": snap,
             "revision": snap.get("revision", 0), "extra_revision": snap.get("extra_revision", 0),
-            "catching_up": catching_up, "session": session}
+            "catching_up": catching_up, "session": session,
+            "zone_alert": service.zone_alert_state(),
+            "overlay": tracker_overlay_window().state()}
+
+
+def tracker_sound_key(path: str) -> str:
+    """The key in /api/tracker/sound/<key>; the store refuses one it does not file."""
+    return unquote(path[len("/api/tracker/sound/"):])
+
+
+def allow_alert_autoplay(environ=None) -> str:
+    """Append AUTOPLAY_FLAG to WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS, keeping
+    whatever is there. Called before webview.start(); answers the value."""
+    environ = os.environ if environ is None else environ
+    current = environ.get(WEBVIEW2_ARGS_VAR, "")
+    if AUTOPLAY_FLAG not in current.split():
+        environ[WEBVIEW2_ARGS_VAR] = (current + " " + AUTOPLAY_FLAG).strip()
+    return environ[WEBVIEW2_ARGS_VAR]
 
 
 def tracker_extra() -> dict:
@@ -2736,7 +2775,16 @@ def tracker_watch(cfg, running: bool) -> None:
     """The watcher's tracker step: ingest the session files, finalize ended
     sessions and, while the game runs, poll the character saves. Runs only
     once the tracker has something to do: the switch is on, or a session
-    folder exists from an earlier session."""
+    folder exists from an earlier session. The overlay's auto show runs
+    first, in its own try: it reads the tracker's settings only on a game
+    start with the tracker on, so a player who never turned it on gets no
+    store from it either."""
+    try:
+        tracker_overlay_window().auto_show(
+            running, lambda: bool(cfg.get("mod_tracker", False))
+            and bool(tracker_service().get_settings().get("auto_show", True)))
+    except Exception:
+        pass
     sessions = tracker_sessions_dir()
     if not cfg.get("mod_tracker", False) and not (sessions is not None and sessions.is_dir()):
         return
@@ -3108,6 +3156,11 @@ PANEL_MIME = {
     ".png": "image/png",
     ".json": "application/json",
     ".ico": "image/x-icon",
+    # the Tracker tab's bundled alert sounds
+    ".wav": "audio/wav",
+    ".mp3": "audio/mpeg",
+    ".ogg": "audio/ogg",
+    ".flac": "audio/flac",
 }
 
 
@@ -3206,6 +3259,30 @@ class H(BaseHTTPRequestHandler):
                     self._json({"runs": tracker_service().runs()})
                 else:
                     self._json({"settings": tracker_service().get_settings()})
+            except Exception as e:
+                self._json({"err": f"error: {e}"}, 500)
+        elif u.path in ("/api/tracker/sounds", "/api/tracker/shopping", "/api/tracker/codex") \
+                or u.path.startswith("/api/tracker/sound/"):
+            # The Tracker tab's additions: custom sounds, the shopping list
+            # and the item codex.
+            try:
+                if u.path == "/api/tracker/sounds":
+                    self._json({"sounds": tracker_service().sounds()})
+                elif u.path == "/api/tracker/shopping":
+                    self._json({"items": tracker_service().shopping()})
+                elif u.path == "/api/tracker/codex":
+                    from forgepact_tracker import codex
+                    self._json({"items": codex.rows()})
+                else:
+                    from forgepact_tracker.store import SOUND_TYPES
+                    found = tracker_service().sound(tracker_sound_key(u.path))
+                    if found is None:
+                        self._json({"err": "no such sound"}, 404)
+                    else:
+                        data, ext = found
+                        self._reply(200, [("Content-Type", SOUND_TYPES[ext]),
+                                          ("Content-Length", str(len(data))),
+                                          ("Cache-Control", "no-store")], data)
             except Exception as e:
                 self._json({"err": f"error: {e}"}, 500)
         elif u.path != "/api" and not u.path.startswith("/api/") and (f := panel_file(u.path)):
@@ -3585,6 +3662,22 @@ class H(BaseHTTPRequestHandler):
                 self._json(*tracker_reply(tracker_service().set_settings(body)))
             elif u.path == "/api/tracker/import":
                 self._json(*tracker_reply(tracker_service().run_import()))
+            elif u.path == "/api/tracker/announce":
+                # Claim before playing: only the first claim of an id plays.
+                self._json(*tracker_reply(tracker_service().announce(body.get("id"))))
+            elif u.path.startswith("/api/tracker/sound/"):
+                self._json(*tracker_reply(tracker_service().change_sound(tracker_sound_key(u.path), body)))
+            elif u.path == "/api/tracker/shopping":
+                self._json(*tracker_reply(tracker_service().set_shopping(body.get("items"))))
+            elif u.path == "/api/tracker/runs/clear":
+                self._json(*tracker_reply(tracker_service().clear_runs()))
+            elif u.path == "/api/tracker/overlay":
+                if not isinstance(body.get("on"), bool):
+                    self._json({"err": "on must be true or false"}, 400); return
+                overlay = tracker_overlay_window()
+                if not overlay.available():
+                    self._json({"err": "the overlay needs ForgePact's own window, not a browser"}, 409); return
+                self._json(*tracker_reply(overlay.set_open(body["on"])))
             else:
                 self._json({"err": "not found"}, 404)
         except Exception as e:
@@ -3692,6 +3785,7 @@ def main():
         import webview
         global WEBVIEW_WINDOW
         WEBVIEW_WINDOW = webview.create_window("ForgePact", url, width=1140, height=860, min_size=(900, 600))
+        allow_alert_autoplay()
         webview.start()
     except Exception:
         import webbrowser

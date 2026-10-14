@@ -4,6 +4,8 @@
     py -3 tests/panel_sandbox_server.py [--legacy] [--dist <dir>] [--offline]
                                         [--satanic-minimum] [--seed <json file>]
                                         [--src <dir>] [--start-delay <seconds>]
+                                        [--tracker-session <file>]
+                                        [--tracker-source <dir>]
 
 Used by `panel/tests/` (the behaviour oracle, the screenshot tool and the e2e
 suite). It reuses `test_satanic_panel.PanelSandbox` - an isolated
@@ -22,7 +24,26 @@ every control's full path can be recorded:
 - `op_install_mod`, `op_remove_mod`, `launch_modded_game` and
   `open_reports_folder` answer `{"ok": "stubbed <name>"}` - nothing is
   installed, patched, launched or opened in Explorer;
-- `pick_exe_dialog` answers the sandbox's own (empty) `Hero_Siege.exe`.
+- `pick_exe_dialog` answers the sandbox's own (empty) `Hero_Siege.exe`;
+- the tracker (#185) never touches the developer's own data: `forgepact.ROOT`
+  (so the tracker's store, `ROOT\\tracker`) is `<tmp>/Hero_Siege`, the session
+  folder `tracker_sessions_dir()` answers is `<tmp>/bp_ipc/tracker` whatever
+  the seed's `game_exe`, `TRACKER_SOURCE` (HS Offline Tracker's folder, which
+  the store imports from on its first start) is a folder that does not exist,
+  and `tracker_pid_is_live` answers from the sandbox, never the process list.
+  Before this, the first suite that read `/api/tracker` built the service
+  under the real `%LOCALAPPDATA%\\Hero_Siege\\tracker` and imported the
+  developer's real Tracker data into it.
+
+`--tracker-session <file>` copies a protocol-v1 session file into the session
+folder as `session-<pid>-<ms>.ndjson`, byte for byte, and reports that pid as
+a running game, so `/api/tracker` reads it as a live session. The pid and ms
+come from the file's name when it is already named so, else from its first
+record's `process_id` and `emitted_at_unix_ms`
+(`tests/fixtures/tracker/session-fixture.ndjson` gives pid 777). A suite
+appends records to the copy to drive the panel. `--tracker-source <dir>` is
+the HS Offline Tracker folder the store's first start imports from (read
+only, as the import always is).
 
 `--satanic-minimum` starts at `PanelSandbox.at_minimum()` (3 buffs and 2
 debuffs enabled, the Satanic card's floor), the fixture the Satanic checks
@@ -58,12 +79,15 @@ machine: `tests/test_start_sandbox_report.py` needs a sandbox that misses
 about 0.5 s since hs_game_sdk loads its tables on first use (hub PR #286), and
 0.25 s without the SDK beside the checkout.
 
-Prints `port=<n>` then `cmds=<path>` and serves until stdin closes. No route
-is added to the product for testing: everything here is a patch on the
-module the product already runs.
+Prints `port=<n>`, then `cmds=<path>`, then `tracker=<path>` (the session
+file's copy, or nothing after the `=` without `--tracker-session`), and serves
+until stdin closes. No route is added to the product for testing: everything
+here is a patch on the module the product already runs.
 """
 import argparse
 import json
+import re
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -72,6 +96,28 @@ from unittest.mock import patch
 TESTS = Path(__file__).resolve().parent
 ROOT = TESTS.parent
 SDK_PYTHON = ROOT.parent / "hs-game-sdk" / "python"
+SESSION_NAME = re.compile(r"^session-(\d+)-(\d+)\.ndjson$")
+
+
+def session_identity(parser, path):
+    """(pid, ms) for a session file: from its name, else its first record."""
+    m = SESSION_NAME.match(path.name)
+    if m:
+        return int(m.group(1)), int(m.group(2))
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError) as e:
+        parser.error(f"--tracker-session: cannot read {path}: {e}")
+    for line in lines:
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        pid, ms = record.get("process_id"), record.get("emitted_at_unix_ms")
+        if isinstance(pid, int) and pid > 0 and isinstance(ms, int) and ms > 0:
+            return pid, ms
+        break
+    parser.error(f"--tracker-session: {path}'s first record names no process_id and emitted_at_unix_ms")
 
 
 def load(parser, src):
@@ -111,9 +157,18 @@ def main(argv=None):
     parser.add_argument("--start-delay", type=float, default=0.0, metavar="SECONDS",
                         help="wait this long before importing anything or reading --seed "
                              "(a start that is late on any machine)")
+    parser.add_argument("--tracker-session", type=Path, default=None, metavar="FILE",
+                        help="copy this protocol-v1 session file into the sandbox's session folder, "
+                             "its pid reported live")
+    parser.add_argument("--tracker-source", type=Path, default=None, metavar="DIR",
+                        help="the HS Offline Tracker folder the tracker store imports from")
     args = parser.parse_args(argv)
     if args.start_delay < 0:
         parser.error("--start-delay: must not be negative")
+    if args.tracker_session is not None and not args.tracker_session.is_file():
+        parser.error(f"--tracker-session: {args.tracker_session} is not a file")
+    if args.tracker_source is not None and not args.tracker_source.is_dir():
+        parser.error(f"--tracker-source: {args.tracker_source} is not a folder")
     if args.start_delay:
         # Before load(), where a slow start spent its time, and so before the
         # seed is read (checking its keys needs forgepact.DEFAULTS): a late
@@ -160,6 +215,21 @@ def main(argv=None):
         def stub(name):
             return lambda *a, **k: {"ok": f"stubbed {name}"}
 
+        # The tracker's folders, all inside the sandbox (see the docstring).
+        store_root = temp / "Hero_Siege"
+        store_root.mkdir()
+        sessions = temp / "bp_ipc" / "tracker"
+        source = args.tracker_source.resolve() if args.tracker_source else temp / "no-hs-offline-tracker"
+        live_pids = set()
+        tracker_session = ""
+        if args.tracker_session is not None:
+            pid, ms = session_identity(parser, args.tracker_session)
+            sessions.mkdir(parents=True, exist_ok=True)
+            copy = sessions / f"session-{pid}-{ms}.ndjson"
+            shutil.copyfile(args.tracker_session, copy)
+            live_pids.add(pid)
+            tracker_session = str(copy)
+
         if args.legacy:
             dist = temp / "no-panel-build"
         else:
@@ -177,12 +247,19 @@ def main(argv=None):
             # create=True: this works on a tree where the static serving (and
             # so the name) does not exist yet, which is where --legacy records.
             patch.object(forgepact, "PANEL_DIST", dist, create=True),
+            # The tracker never reads or writes the developer's own data.
+            # create=True: an older tree served with --src has no tracker.
+            patch.object(forgepact, "ROOT", store_root),
+            patch.object(forgepact, "TRACKER_SOURCE", source, create=True),
+            patch.object(forgepact, "tracker_sessions_dir", lambda: sessions, create=True),
+            patch.object(forgepact, "tracker_pid_is_live", lambda pid: pid in live_pids, create=True),
         ]
         for p in patches:
             p.start()
         try:
             print(f"port={sandbox.port}", flush=True)
             print(f"cmds={cmds}", flush=True)
+            print(f"tracker={tracker_session}", flush=True)
             # Serve until whoever started us closes our stdin (or dies).
             sys.stdin.read()
         finally:

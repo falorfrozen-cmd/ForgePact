@@ -6,11 +6,13 @@
 | `settings.json` | the Tracker's settings document |
 | `cursor.json` | per session file: finalized, runs filed, the panel's controls |
 | `import.json` | what the one-time import of the Tracker's data did |
-| `shopping.json`, `sounds\\*` | copied by the import, for the Tracker tab |
+| `shopping.json` | the Tracker tab's shopping list: a JSON list of strings, the Tracker's own format |
+| `sounds\\<key>.<ext>` | the player's own alert sounds, one file per key |
 
 The panel writes only whole files: a temporary file beside the target, then
 `os.replace`, so a reader never sees half a document and a failed write
 leaves the old one whole. The service holds one lock around every use.
+Nothing here ever writes in HS Offline Tracker's own folder.
 
 `import_tracker_data` is the one-time, read-only import of HS Offline
 Tracker's data, after the Tracker's own `migrate_legacy_data`: it copies only
@@ -22,10 +24,45 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from pathlib import Path
 
 RUNS_KEPT = 200
+
+# The shopping list's bounds: the Tracker kept at most 200 entries, and an
+# entry is one item name, not a note.
+SHOPPING_MAX_ITEMS = 200
+SHOPPING_MAX_CHARS = 120
+
+# Custom alert sounds. A key is one of the alerts that has a sound of its own
+# (the Tracker's `mail` is online-only and not ported) or a sound list's own
+# file; anything else never reaches the filesystem. When a key has files of
+# several kinds (an import from a Tracker that kept both), the first kind
+# here is the one that plays, as the Tracker's readers took it.
+SOUND_KEYS = ("satanic", "set", "heroic", "angelic", "unholy", "zone")
+_LIST_KEY = re.compile(r"^list-[A-Za-z0-9_-]{1,64}$")
+SOUND_TYPES = {"mp3": "audio/mpeg", "wav": "audio/wav", "ogg": "audio/ogg", "flac": "audio/flac"}
+SOUND_MAX_BYTES = 8 * 1024 * 1024
+
+
+def sound_key_ok(key) -> bool:
+    """Whether `key` names a sound this store files."""
+    return isinstance(key, str) and (key in SOUND_KEYS or bool(_LIST_KEY.match(key)))
+
+
+def sound_bytes_match(ext: str, data: bytes) -> bool:
+    """Whether `data` starts the way a file of kind `ext` does."""
+    if ext == "wav":
+        return len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WAVE"
+    if ext == "mp3":
+        # a tagged file, or a bare MPEG audio frame (11 sync bits set)
+        return data[:3] == b"ID3" or (len(data) >= 2 and data[0] == 0xFF and data[1] & 0xE0 == 0xE0)
+    if ext == "ogg":
+        return data[:4] == b"OggS"
+    if ext == "flac":
+        return data[:4] == b"fLaC"
+    return False
 
 # What the import copies, and what it leaves behind on purpose: window
 # positions belong to the Tracker's windows, carried totals to its online
@@ -49,6 +86,11 @@ def default_tracker_source() -> Path:
 class SettingsError(ValueError):
     """A settings document with a field of the wrong type. The message names
     the field."""
+
+
+class Refused(ValueError):
+    """A request the store will not carry out (a bad sound, a shopping entry
+    out of bounds). The message says why, in words the panel can show."""
 
 
 def default_settings() -> dict:
@@ -224,6 +266,126 @@ class TrackerStore:
         del runs[RUNS_KEPT:]
         self.write_json("runs.json", runs)
         return True
+
+    def clear_runs(self) -> None:
+        """Empty the run history, as the Tracker's `clear_runs` did: a whole
+        `[]`, never a truncate in place."""
+        self.write_json("runs.json", [])
+
+    # -- the shopping list -------------------------------------------------
+
+    def shopping(self) -> list:
+        """The shopping list. Anything but a JSON list reads as empty, as the
+        Tracker's `get_shopping` read it; entries that are not text are left out."""
+        items = self.read_json("shopping.json", [])
+        return [i for i in items if isinstance(i, str)] if isinstance(items, list) else []
+
+    def set_shopping(self, items) -> list:
+        """Write the whole list. Each entry is stripped and must then be 1 to
+        120 characters; at most 200 entries. Raises `Refused` otherwise."""
+        if not isinstance(items, list):
+            raise Refused("items must be a list of item names")
+        if len(items) > SHOPPING_MAX_ITEMS:
+            raise Refused("the shopping list holds at most %d items" % SHOPPING_MAX_ITEMS)
+        clean = []
+        for item in items:
+            if not isinstance(item, str):
+                raise Refused("each shopping list entry must be text")
+            item = item.strip()
+            if not item:
+                raise Refused("a shopping list entry cannot be blank")
+            if len(item) > SHOPPING_MAX_CHARS:
+                raise Refused("a shopping list entry is at most %d characters" % SHOPPING_MAX_CHARS)
+            clean.append(item)
+        self.write_json("shopping.json", clean)
+        return clean
+
+    # -- custom sounds -----------------------------------------------------
+
+    def _sounds_dir(self) -> Path:
+        return self.root / IMPORTED_FOLDER
+
+    def sound_file(self, key: str) -> Path | None:
+        """The file that plays for `key`, or None (also for a key this store
+        does not file)."""
+        if not sound_key_ok(key):
+            return None
+        for ext in SOUND_TYPES:
+            path = self._sounds_dir() / ("%s.%s" % (key, ext))
+            if path.is_file():
+                return path
+        return None
+
+    def sounds(self) -> dict:
+        """{key: {"ext", "stamp"}} for every key with a file. `stamp` changes
+        whenever the file does."""
+        listing = {}
+        folder = self._sounds_dir()
+        try:
+            names = sorted(p.name for p in folder.iterdir())
+        except OSError:
+            return listing
+        keys = {name.rsplit(".", 1)[0] for name in names if "." in name}
+        for key in sorted(keys):
+            path = self.sound_file(key)
+            if path is None:
+                continue
+            try:
+                st = path.stat()
+            except OSError:
+                continue
+            listing[key] = {"ext": path.suffix[1:].lower(), "stamp": "%d-%d" % (st.st_mtime_ns, st.st_size)}
+        return listing
+
+    def put_sound(self, key: str, ext: str, data: bytes) -> None:
+        """File `data` as `key`'s sound, whole, then remove the key's files of
+        any other kind (written first and cleared after, so a failed write
+        never leaves the key silent). Raises `Refused` for a key, kind, size
+        or content this store will not file."""
+        if not sound_key_ok(key):
+            raise Refused("not a sound this panel files: %r" % key)
+        if ext not in SOUND_TYPES:
+            raise Refused("a sound must be a .wav, .mp3, .ogg or .flac file")
+        if not data:
+            raise Refused("the sound file is empty")
+        if len(data) > SOUND_MAX_BYTES:
+            raise Refused("the sound file is larger than 8 MiB")
+        if not sound_bytes_match(ext, data):
+            raise Refused("that file is not a .%s sound" % ext)
+        self._write_bytes(self._sounds_dir() / ("%s.%s" % (key, ext)), data)
+        self._remove_sound(key, keep=ext)
+
+    def clear_sound(self, key: str) -> None:
+        """Delete `key`'s sound, so the bundled one plays again."""
+        if not sound_key_ok(key):
+            raise Refused("not a sound this panel files: %r" % key)
+        self._remove_sound(key)
+
+    def copy_sound(self, source: str, key: str) -> bool:
+        """Give `key` the sound `source` has. Nothing to copy is not an error
+        (most lists have no sound of their own); returns whether one was."""
+        if not sound_key_ok(source) or not sound_key_ok(key):
+            raise Refused("not a sound this panel files")
+        if source == key:
+            raise Refused("a sound cannot be copied onto itself")
+        path = self.sound_file(source)
+        if path is None:
+            return False
+        with open(path, "rb") as fh:
+            data = fh.read()
+        ext = path.suffix[1:].lower()
+        self._write_bytes(self._sounds_dir() / ("%s.%s" % (key, ext)), data)
+        self._remove_sound(key, keep=ext)
+        return True
+
+    def _remove_sound(self, key: str, keep: str | None = None) -> None:
+        for ext in SOUND_TYPES:
+            if ext == keep:
+                continue
+            try:
+                os.remove(self._sounds_dir() / ("%s.%s" % (key, ext)))
+            except FileNotFoundError:
+                pass
 
     # -- settings ----------------------------------------------------------
 

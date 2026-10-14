@@ -49,8 +49,8 @@ export const SANDBOX_START_TIMEOUT_MS = 120000;
 // How many of a sandbox's last stderr lines an error quotes.
 const STDERR_TAIL = 20;
 
-// Start tests/panel_sandbox_server.py and wait for its `port=` and `cmds=`
-// lines. `stop()` closes its stdin, which is how the server knows to exit,
+// Start tests/panel_sandbox_server.py and wait for its `port=`, `cmds=` and
+// `tracker=` lines. `stop()` closes its stdin, which is how the server knows to exit,
 // and kills only the process this call started if it has not gone by then.
 // `seed`, an object of forgepact.json keys, is written to a temp file and
 // passed as `--seed` (the server refuses a key it does not know, exit 2);
@@ -63,6 +63,14 @@ const STDERR_TAIL = 20;
 // `startDelayMs` is passed as `--start-delay`: the server waits that long
 // before it imports anything or reads its seed, a start that misses a shorter
 // `startTimeoutMs` on any machine (test_start_sandbox_report.py's late case).
+// `trackerSession`, a protocol-v1 session file, is passed as
+// `--tracker-session`: the server copies it into its own session folder with
+// its pid reported live, and `trackerSession` on the result is the copy's
+// path (null without one), which a suite appends records to.
+// `trackerSource`, a folder laid out as HS Offline Tracker's, is passed as
+// `--tracker-source`, the folder the tracker store imports from. Either way
+// the tracker's store and session folder are the sandbox's own, never the
+// developer's.
 //
 // The sandbox's stderr reaches this process's stderr line by line, each line
 // prefixed with the sandbox's port (its pid until it has one), so a suite's
@@ -71,7 +79,7 @@ const STDERR_TAIL = 20;
 // and a failed `state()` carry that text in their message, which is how a
 // refused connection says whether anything was still serving.
 export async function startSandbox({ legacy = false, dist = null, offline = false, satanicMinimum = false, seed = null, src = null,
-  startTimeoutMs = SANDBOX_START_TIMEOUT_MS, startDelayMs = 0 } = {}) {
+  startTimeoutMs = SANDBOX_START_TIMEOUT_MS, startDelayMs = 0, trackerSession = null, trackerSource = null } = {}) {
   const args = ['-3', SANDBOX];
   if (legacy) args.push('--legacy');
   if (src) args.push('--src', src);
@@ -79,6 +87,8 @@ export async function startSandbox({ legacy = false, dist = null, offline = fals
   if (offline) args.push('--offline');
   if (satanicMinimum) args.push('--satanic-minimum');
   if (startDelayMs) args.push('--start-delay', String(startDelayMs / 1000));
+  if (trackerSession) args.push('--tracker-session', trackerSession);
+  if (trackerSource) args.push('--tracker-source', trackerSource);
   let seedDir = null;
   if (seed) {
     seedDir = mkdtempSync(join(tmpdir(), 'forgepact-seed-'));
@@ -139,13 +149,17 @@ export async function startSandbox({ legacy = false, dist = null, offline = fals
     });
     child.stdout.on('data', (chunk) => {
       buffer += chunk.toString();
-      for (const line of buffer.split(/\r?\n/)) {
-        const m = line.match(/^(port|cmds)=(.+)$/);
+      // Whole lines only: `tracker=` may be empty, so a line the pipe cut
+      // short must not be read as a shorter value.
+      const lines = buffer.split(/\r?\n/);
+      lines.pop();
+      for (const line of lines) {
+        const m = line.match(/^(port|cmds|tracker)=(.*)$/);
         if (m) found[m[1]] = m[2];
       }
       // Not once the start timer has fired: that sandbox is being stopped, and
       // a port line still on the pipe must not win over the timeout's reject.
-      if (!late && found.port && found.cmds) { clearTimeout(timer); resolveInfo(found); }
+      if (!late && found.port && found.cmds && found.tracker !== undefined) { clearTimeout(timer); resolveInfo(found); }
     });
   }).catch((e) => { dropSeed(); throw e; });
   const port = Number(info.port);
@@ -156,6 +170,8 @@ export async function startSandbox({ legacy = false, dist = null, offline = fals
     port,
     url,
     cmds,
+    // The copy of `trackerSession` the sandbox reads as its live session.
+    trackerSession: info.tracker.trim() || null,
     // The temp directory the sandbox owns; paths inside it differ per run, so
     // recorded bodies and commands carry `<sandbox>` in its place.
     root: dirname(cmds),

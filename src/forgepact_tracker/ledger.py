@@ -732,7 +732,8 @@ class Ledger:
 
     def take_zone_change(self) -> dict | None:
         """The Satanic zone moved and the rotation passes the buff pick. Taken,
-        so one rotation is announced once. An empty pick is every rotation."""
+        so one rotation is announced once. An empty pick is every rotation.
+        `at_ms` is the event time of the record that rotated it."""
         if not self.sz_changed:
             return None
         self.sz_changed = False
@@ -742,7 +743,8 @@ class Ledger:
         wanted = self.prefs.zone_buffs
         if wanted and not any(b in wanted for b in zone["buffs"]):
             return None
-        return {"zone": zone["zone"], "buffs": list(zone["buffs"]), "debuffs": list(zone["debuffs"])}
+        return {"zone": zone["zone"], "buffs": list(zone["buffs"]), "debuffs": list(zone["debuffs"]),
+                "at_ms": self.satanic_at}
 
     # -- runs --------------------------------------------------------------
 
