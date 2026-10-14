@@ -12,7 +12,53 @@ Three new charms, **Pocket Elf**, **Gabriel Wings** and **Witch's
 Broomstick**, let you walk through scenery and monsters while you wear one,
 and each can join the game's own drops behind its own switch, off by default.
 
+HS Offline Tracker now lives inside ForgePact: a new **Tracker** tab counts
+your session, keeps a journal of your best drops, plays an alert for each one
+and files your runs, with a small always-on-top overlay window beside the
+game. It is off by default.
+
 ## New
+
+- **HS Offline Tracker is now part of ForgePact (#185).** Until now, keeping
+  count of a farming session meant running a second program, HS Offline
+  Tracker, beside ForgePact. Its offline features are now ForgePact's
+  **Tracker tab**, with one switch, **Session tracker**, off by default; with
+  it off, ForgePact tracks nothing. With it on, ForgePact's own plugin counts
+  while you play; it only reads the game and changes nothing in it.
+  - **Session:** the gold, experience and kills of this run, their rates per
+    hour, the Satanic zone you are in with its buffs and debuffs, and a
+    journal of the drops it records.
+  - **Five rarities:** it records Set, Satanic, Angelic, Heroic and Unholy
+    items that drop on the ground. Lower rarities, and items you drop
+    yourself from the bag, are not recorded.
+  - **Runs:** a session is filed as a run when the game closes (or when you
+    end the run yourself), with its own run card you can copy.
+  - **Alerts:** a sound plays once for each recorded drop of a rarity you
+    turn on and, if you turn it on too, once when your Satanic zone changes.
+    The bundled sounds are
+    HS Offline Tracker's own; you can use your own sound files instead. The
+    panel plays them from its own window, whichever tab is open; if it was
+    started in a browser, click anywhere in it once to let it play sounds.
+  - **Shopping list and Item codex:** a list of items you are hunting, which
+    always plays its alert when one drops, and a book of every named item
+    with its drop chance and where to farm it.
+  - **Overlay:** a small window that stays on top of the game, with your
+    counters, the newest drops and a card for a great find. It is a solid
+    plate, not see-through, and it needs the game in windowed or borderless
+    mode: a game in exclusive fullscreen draws over it. It opens only from
+    ForgePact's own window, not from a browser tab.
+  - **Your HS Offline Tracker data comes with you:** the first time you turn
+    the tracker on, ForgePact copies the Tracker's runs, settings, shopping
+    list and your own alert sounds. It only reads them; HS Offline Tracker's
+    files are left as they are.
+  - **Offline play only.** The Tracker's online-only parts (mail, purses,
+    pickups, magic find) and its Game Link installer are not carried over,
+    and neither is its keys and resources counter, which never counted
+    offline. Discord status is built in but not offered yet: it needs a
+    Discord application of ForgePact's own.
+
+  HS Offline Tracker itself takes no new features from now on; its page
+  points to ForgePact's Tracker tab.
 
 - **Always show Chaos Pillar mods (#7).** A Chaos Pillar shows its box of
   mods (pack size, magic find, experience, extra loot and the rest) only while
@@ -127,41 +173,53 @@ and each can join the game's own drops behind its own switch, off by default.
   crashed (`ucrtbase.dll`, `0xc0000409`) on nearly every close, even ordinary
   ones from the main menu or after Save & Exit. The report came after the game
   had finished its own shutdown. The cause was the HS Offline Tracker sensor
-  that ForgePact installs beside its plugin, an older build that aborted while
-  it unloaded. ForgePact now installs HS Offline Tracker 0.1.4's sensor, which
-  carries the Tracker's own fix. Tested on 2026-10-13: with the old sensor a
-  close from the main menu still crashed, and with the new one a close from
-  the world, a close after Save & Exit, and a close from the world with Loot
-  announcements on all exited cleanly with no crash report. We did not repeat
-  a close from the main menu with the new sensor; HS Offline Tracker's own
-  checks of the same fix, on a test build with ForgePact loaded, closed
-  cleanly from the main menu three times out of three. ForgePact and HS
-  Offline Tracker 0.1.4 now install the same sensor and loader files (checked
-  file by file against the Tracker's 0.1.4 download).
+  (`HSOfflineTrackerProducer.dll`) that ForgePact up to 2.2.x installed beside
+  its plugin, an older build that aborted while it unloaded. ForgePact no
+  longer ships that sensor at all: its own Tracker tab does the counting from
+  inside ForgePact's plugin (see New). When **Install Mod Plugin** finds the
+  old build in your game, it moves it out of the game's mods folder into
+  ForgePact's backup folder (`%LOCALAPPDATA%\Hero_Siege\backup\`), checks the
+  copy there, and tells you what it moved and why; if the file cannot be
+  moved (HS Offline Tracker still running, for example), it says so and
+  installs everything else. Tested on 2026-10-13: with the old sensor a close
+  from the main menu still crashed, and with HS Offline Tracker 0.1.4's fixed
+  sensor in its place a close from the world, a close after Save & Exit, and
+  a close from the world with Loot announcements on all exited cleanly with
+  no crash report; HS Offline Tracker's own checks of its fixed sensor, on a
+  test build with ForgePact loaded, closed cleanly from the main menu three
+  times out of three. A close with no sensor at all, as 2.3.0 leaves it, was
+  not tested separately.
 - **HS Offline Tracker 0.1.1 to 0.1.3 can put the old sensor back.** If you
-  also use HS Offline Tracker, update it to 0.1.4 or later. Versions 0.1.1 to
-  0.1.3 offer to update the live sensor when they see ForgePact's, and
-  pressing that puts their own old sensor back, and the crash at close with
-  it. ForgePact replaces it again the next time you start the game from
-  ForgePact, so the two keep swapping the file until the Tracker is updated.
-- **Install Mod Plugin no longer overwrites a sensor it does not recognise.**
-  If your game has a sensor from a newer HS Offline Tracker, Install leaves
-  it as it is and says so, instead of replacing it with ForgePact's copy.
+  still use HS Offline Tracker, update it to 0.1.4 or later, or use the
+  Tracker tab instead. Versions 0.1.1 to 0.1.3 offer to update the live
+  sensor, and pressing that puts their own old sensor back, and the crash at
+  close with it. When you start the game from ForgePact with that sensor in
+  place, its launch message says so, and pressing **Install Mod Plugin** moves
+  it aside again.
+- **ForgePact leaves other sensors alone.** A sensor ForgePact does not know
+  as the crashing build, such as HS Offline Tracker 0.1.4's fixed one or a
+  newer one, stays where it is, without a word. **Remove Plugin** no longer
+  deletes any HS Offline Tracker sensor, and starting the game from ForgePact
+  no longer replaces one.
 
 ## How to update
 
 Download and extract the complete release, then reopen ForgePact and press
 **Install Mod Plugin** once. Both parts changed: the plugin (the Chaos Pillar
-switch, the Boss soul pieces switch and the three flight charms) and the panel
-(their switches on the Mods and Loot tabs), so updating only one of them leaves
-the other behind. Pressing **Install Mod Plugin** also replaces an old HS
-Offline Tracker sensor with the fixed one. If you start the game from
-ForgePact without pressing Install, ForgePact replaces an old sensor itself
-when it can, as it does the plugin, and when it cannot, its launch message
-asks you to close the game and press Install Mod Plugin (or, if your ForgePact
-download is missing the fixed sensor, to extract the complete release again);
-until you do, the crash at close stays. Your existing settings are retained. Start the
-game after installing; a game that was already open keeps the old plugin
+switch, the Boss soul pieces switch, the three flight charms and the tracker)
+and the panel (their switches on the Mods and Loot tabs, and the new Tracker
+tab), so updating only one of them leaves the other behind. Pressing **Install
+Mod Plugin** also moves HS Offline Tracker's old, crashing sensor out of the
+game, if it is there; ForgePact installs no sensor in its place. If you start
+the game from ForgePact without pressing Install, ForgePact still replaces an
+older plugin itself, but it leaves the old sensor where it is: its launch
+message tells you, and until you press Install Mod Plugin with the game
+closed, the crash at close stays. Your existing settings are retained. Start
+the game after installing; a game that was already open keeps the old plugin
 until it is restarted.
+
+If you used HS Offline Tracker, turn on the Tracker tab's **Session tracker**
+switch once: ForgePact then copies your Tracker runs, settings, shopping list
+and sounds, and leaves HS Offline Tracker's own files untouched.
 
 Use ForgePact only with an offline / EAC-disabled copy of Hero Siege.
