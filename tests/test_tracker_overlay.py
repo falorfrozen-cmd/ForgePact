@@ -9,8 +9,12 @@ pin:
 - no window without the panel's own pywebview window (`available` false: the
   browser fallback and the sandbox), and `POST /api/tracker/overlay` 409 then;
 - the window's form: `/overlay.html`, frameless, on top, `focus=False`, solid
-  (`OVERLAY_TRANSPARENT`), 444 x 147 unless the settings say otherwise;
-- one window at most, closed on request, its place saved when it closes;
+  (`OVERLAY_TRANSPARENT`, off as the overlay item's probe measured), 444 x 147
+  unless the settings say otherwise, dragged only from the page's drag region
+  (so a locked overlay stays put);
+- one window at most, closed on request, its place saved when the player lets
+  go of a drag and when it closes;
+- the page's bridge (`js_api`): `place_done` and `fit`, and nothing else;
 - `auto_show`: opened on a game start when wanted, closed on the stop only
   when it opened the window itself;
 - the watcher's tracker step reads no settings (and so builds no store) for
@@ -61,6 +65,12 @@ class FakeWindow:
         self.kwargs = kwargs
         self.events = FakeEvents()
         self.destroyed = False
+        self.sizes = []
+
+    def resize(self, width, height):
+        # pywebview's own resize fires `resized` with the new size
+        self.sizes.append((width, height))
+        self.events.resized.set(width, height)
 
     def destroy(self):
         self.destroyed = True
@@ -95,7 +105,7 @@ class OverlayBaselineTests(unittest.TestCase):
 
     def test_without_a_main_window_it_is_unavailable_and_opens_nothing(self):
         h = Harness(main_window=None)
-        self.assertEqual(h.overlay.state(), {"available": False, "open": False})
+        self.assertEqual(h.overlay.state(), {"available": False, "open": False, "transparent": False})
         self.assertFalse(h.overlay.open())
         refused = h.overlay.set_open(True)
         self.assertIs(refused["ok"], False)
@@ -103,9 +113,17 @@ class OverlayBaselineTests(unittest.TestCase):
         h.overlay.auto_show(True, lambda: True)
         self.assertEqual(h.webview.windows, [], "no window without the panel's own")
 
-    def test_it_starts_solid(self):
+    def test_it_is_solid_as_the_probe_measured(self):
+        # The overlay item's probe (2026-10-14): a transparent pywebview 6.2.1
+        # window on WebView2 here painted the form's grey, not what was behind
+        # it. The measurement is recorded beside the constant.
         self.assertIs(tracker_overlay.OVERLAY_TRANSPARENT, False)
         self.assertEqual(tracker_overlay.DEFAULT_SIZE, (444, 147))
+        lines = (ROOT / "src" / "tracker_overlay.py").read_text(encoding="utf-8").split("\n")
+        (at,) = [i for i, line in enumerate(lines) if line.startswith("OVERLAY_TRANSPARENT")]
+        near = " ".join(lines[max(0, at - 8):at + 1]).lower()
+        self.assertIn("measured", near)
+        self.assertIn("2026-10-14", near)
 
     def test_pywebview_is_imported_only_when_a_window_opens(self):
         tree = ast.parse((ROOT / "src" / "tracker_overlay.py").read_text(encoding="utf-8"))
@@ -120,7 +138,7 @@ class OverlayBaselineTests(unittest.TestCase):
 class OverlayWindowTests(unittest.TestCase):
     def test_it_opens_the_overlay_page_frameless_on_top_without_focus(self):
         h = Harness()
-        self.assertEqual(h.overlay.state(), {"available": True, "open": False})
+        self.assertEqual(h.overlay.state(), {"available": True, "open": False, "transparent": False})
         self.assertEqual(h.overlay.set_open(True), {"ok": True, "open": True})
         (window,) = h.webview.windows
         k = window.kwargs
@@ -129,8 +147,11 @@ class OverlayWindowTests(unittest.TestCase):
         self.assertIs(k["on_top"], True)
         self.assertIs(k["focus"], False, "it must never take the keyboard from the game")
         self.assertIs(k["transparent"], tracker_overlay.OVERLAY_TRANSPARENT)
+        # dragged only from the page's drag region, which a locked overlay drops
+        self.assertIs(k["easy_drag"], False)
+        self.assertIsInstance(k["js_api"], tracker_overlay.OverlayBridge)
         self.assertEqual((k["width"], k["height"], k["x"], k["y"]), (444, 147, None, None))
-        self.assertEqual(h.overlay.state(), {"available": True, "open": True})
+        self.assertEqual(h.overlay.state(), {"available": True, "open": True, "transparent": False})
 
     def test_the_saved_size_and_place_are_used_and_bad_ones_are_not(self):
         h = Harness(settings={"overlay_w": 520, "overlay_h": 180, "overlay_x": -1900, "overlay_y": 40})
@@ -177,8 +198,67 @@ class OverlayWindowTests(unittest.TestCase):
         h.overlay.open()
         h.webview.windows[0].events.moved.set(5, 6)
         h.webview.windows[0].events.closed.set()
-        self.assertEqual(h.overlay.state(), {"available": True, "open": False})
+        self.assertEqual(h.overlay.state(), {"available": True, "open": False, "transparent": False})
         self.assertEqual(h.saved, [{"overlay_x": 5, "overlay_y": 6, "overlay_w": 444, "overlay_h": 147}])
+
+
+class OverlayBridgeTests(unittest.TestCase):
+    """The page's two calls into the window (`window.pywebview.api`): the end
+    of a drag, and the size its plate needs."""
+
+    def bridge(self, h):
+        return h.webview.windows[0].kwargs["js_api"]
+
+    def test_the_bridge_exposes_only_its_two_calls(self):
+        h = Harness()
+        h.overlay.open()
+        # pywebview exposes every public attribute it can reach, recursively
+        self.assertEqual([n for n in dir(self.bridge(h)) if not n.startswith("_")], ["fit", "place_done"])
+
+    def test_letting_go_of_a_drag_saves_the_place_once(self):
+        h = Harness(settings={"overlay_x": 10, "overlay_y": 20})
+        h.overlay.open()
+        window = h.webview.windows[0]
+        for x in range(30, 300, 30):
+            window.events.moved.set(x, 400)
+        self.assertEqual(h.saved, [], "a drag is not written move by move")
+        self.bridge(h).place_done()
+        self.assertEqual(h.saved, [{"overlay_x": 270, "overlay_y": 400, "overlay_w": 444, "overlay_h": 147}])
+        self.bridge(h).place_done()
+        h.overlay.close()
+        self.assertEqual(len(h.saved), 1, "an unchanged place is not written again")
+
+    def test_a_click_without_a_move_saves_nothing(self):
+        h = Harness(settings={"overlay_x": 10, "overlay_y": 20})
+        h.overlay.open()
+        self.bridge(h).place_done()
+        self.assertEqual(h.saved, [])
+
+    def test_fit_sizes_the_window_to_the_plate_within_bounds(self):
+        h = Harness()
+        h.overlay.open()
+        window = h.webview.windows[0]
+        bridge = self.bridge(h)
+        self.assertIs(bridge.fit(444, 210.4), True)
+        self.assertEqual(window.sizes, [(444, 211)], "a fraction of a pixel rounds up, so nothing is cut")
+        bridge.fit(444, 211)
+        self.assertEqual(window.sizes, [(444, 211)], "the size it has is not asked again")
+        bridge.fit(10, 99999)
+        self.assertEqual(window.sizes[-1], (tracker_overlay.MIN_SIZE[0], tracker_overlay.MAX_SIZE[1]))
+        for bad in ((True, 100), ("444", 147), (None, 147), (float("nan"), 147)):
+            self.assertIs(bridge.fit(*bad), False, bad)
+        self.assertEqual(len(window.sizes), 2)
+
+    def test_the_bridge_does_nothing_once_the_window_is_gone(self):
+        h = Harness()
+        h.overlay.open()
+        bridge = self.bridge(h)
+        window = h.webview.windows[0]
+        h.overlay.close()
+        self.assertIs(bridge.fit(500, 200), False)
+        bridge.place_done()
+        self.assertEqual(window.sizes, [])
+        self.assertEqual(h.saved, [])
 
 
 class AutoShowTests(unittest.TestCase):
@@ -235,7 +315,7 @@ class PanelOverlayTests(unittest.TestCase):
     def test_the_sandbox_has_no_main_window_so_the_endpoint_answers_409(self):
         code, state = self.box.call("GET", "/api/tracker")
         self.assertEqual(code, 200)
-        self.assertEqual(state["overlay"], {"available": False, "open": False})
+        self.assertEqual(state["overlay"], {"available": False, "open": False, "transparent": False})
         code, body = self.box.call("POST", "/api/tracker/overlay", {"on": True})
         self.assertEqual(code, 409, body)
         self.assertIn("err", body)
@@ -249,7 +329,7 @@ class PanelOverlayTests(unittest.TestCase):
             self.assertEqual((code, body), (200, {"ok": True, "open": True}))
             self.assertTrue(fake.windows[0].kwargs["url"].endswith("/overlay.html"))
             code, state = self.box.call("GET", "/api/tracker")
-            self.assertEqual(state["overlay"], {"available": True, "open": True})
+            self.assertEqual(state["overlay"], {"available": True, "open": True, "transparent": False})
             fake.windows[0].events.moved.set(12, 34)
             code, body = self.box.call("POST", "/api/tracker/overlay", {"on": False})
             self.assertEqual((code, body), (200, {"ok": True, "open": False}))

@@ -13,7 +13,14 @@ This module owns the window's life and nothing else:
   keyboard from the game. It is solid unless `OVERLAY_TRANSPARENT` says
   otherwise. Its size and place are the settings' `overlay_w`, `overlay_h`,
   `overlay_x` and `overlay_y` (444 x 147 and pywebview's own placement while
-  unset), and where the player last moved or sized it is saved when it closes.
+  unset), and where the player last moved or sized it is saved when the
+  player lets go of a drag and when it closes.
+- It is dragged only from the page's drag region (`easy_drag` off), which the
+  page drops while the settings' `locked` is on, so a locked overlay stays
+  put. The page talks back through `OverlayBridge` (pywebview's `js_api`):
+  `place_done()` at the end of a drag, and `fit(width, height)` to size the
+  window to its plate (the newest drops, counters only and the size setting
+  each change it).
 - `auto_show` follows the watcher's tracker step: when the game starts and the
   player wants it (`auto_show` in the settings, the tracker on) the overlay
   opens, and when the game stops it closes, but only a window this opened
@@ -29,11 +36,16 @@ thread is started here: pywebview runs window events on its own.
 
 from __future__ import annotations
 
+import math
 import threading
 
-# Whether the window is created transparent. Off until the `overlay` item's
-# probe measures that a transparent pywebview window really draws through on
-# WebView2 here; until then the overlay is the solid compact window (Q8).
+# Whether the window is created transparent: off, as measured 2026-10-14
+# (pywebview 6.2.1, WebView2, Windows 11). A transparent, frameless, on-top,
+# focus=False window over a solid magenta one painted the form's grey
+# (#f0f0f0) in its empty area, not the magenta behind (#e83ffb as read beside
+# it), while the solid control read its own blue: the window does not draw
+# through, so the overlay is the solid compact window (Q8's fallback). Clicks
+# reached a focus=False window in both forms, and neither took the foreground.
 OVERLAY_TRANSPARENT = False
 
 OVERLAY_PATH = "/overlay.html"
@@ -67,6 +79,25 @@ def window_geometry(settings: dict) -> dict:
             "x": _whole(settings.get("overlay_x")), "y": _whole(settings.get("overlay_y"))}
 
 
+class OverlayBridge:
+    """What the overlay page may call (`window.pywebview.api`). pywebview
+    exposes every public attribute it can reach, so this holds the controller
+    privately and offers two calls and nothing else."""
+
+    def __init__(self, overlay: "TrackerOverlay", window_id: int):
+        self._overlay = overlay
+        self._window_id = window_id
+
+    def place_done(self) -> None:
+        """The player let go of a drag: save where the window is now."""
+        self._overlay._place_done(self._window_id)
+
+    def fit(self, width, height) -> bool:
+        """Size the window to the page's plate, in CSS pixels. Answers whether
+        it asked pywebview for a new size."""
+        return self._overlay._fit(self._window_id, width, height)
+
+
 class TrackerOverlay:
     """The overlay window's controller. One per panel process.
 
@@ -89,6 +120,9 @@ class TrackerOverlay:
         self._game_running = False
         self._place: dict = {}
         self._saved_place: dict = {}
+        # which open the current window is, so a bridge left from a closed
+        # window never acts on the next one
+        self._opened = 0
 
     # -- what the panel reads ------------------------------------------------
 
@@ -105,8 +139,10 @@ class TrackerOverlay:
             return self.window is not None
 
     def state(self) -> dict:
-        """`/api/tracker`'s `overlay`: `{"available", "open"}`."""
-        return {"available": self.available(), "open": self.is_open()}
+        """`/api/tracker`'s `overlay`: `{"available", "open", "transparent"}`.
+        `transparent` is `OVERLAY_TRANSPARENT`, so the settings can say why
+        opacity does nothing on a solid window."""
+        return {"available": self.available(), "open": self.is_open(), "transparent": OVERLAY_TRANSPARENT}
 
     # -- opening and closing -------------------------------------------------
 
@@ -143,11 +179,13 @@ class TrackerOverlay:
             self._place = {"overlay_x": geometry["x"], "overlay_y": geometry["y"],
                            "overlay_w": geometry["width"], "overlay_h": geometry["height"]}
             self._saved_place = dict(self._place)
+            self._opened += 1
             window = webview.create_window(
                 OVERLAY_TITLE, self._base_url() + OVERLAY_PATH,
                 width=geometry["width"], height=geometry["height"], x=geometry["x"], y=geometry["y"],
-                min_size=MIN_SIZE, frameless=True, easy_drag=True, on_top=True, focus=False,
-                transparent=OVERLAY_TRANSPARENT, background_color=BACKGROUND, shadow=False)
+                min_size=MIN_SIZE, frameless=True, easy_drag=False, on_top=True, focus=False,
+                transparent=OVERLAY_TRANSPARENT, background_color=BACKGROUND, shadow=False,
+                js_api=OverlayBridge(self, self._opened))
             if window is None:
                 return False
             self.window = window
@@ -198,6 +236,31 @@ class TrackerOverlay:
     def _resized(self, width, height) -> None:
         with self._lock:
             self._place.update(overlay_w=int(width), overlay_h=int(height))
+
+    # -- the page's calls (OverlayBridge), on pywebview's own thread ----------
+
+    def _current(self, window_id: int):
+        """The open window, when the bridge asking is still its own."""
+        with self._lock:
+            return self.window if window_id == self._opened else None
+
+    def _place_done(self, window_id: int) -> None:
+        if self._current(window_id) is not None:
+            self._store_place()
+
+    def _fit(self, window_id: int, width, height) -> bool:
+        size = []
+        for value, low, high in ((width, MIN_SIZE[0], MAX_SIZE[0]), (height, MIN_SIZE[1], MAX_SIZE[1])):
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+                return False
+            size.append(min(high, max(low, math.ceil(value))))
+        with self._lock:
+            window = self._current(window_id)
+            if window is None or (self._place.get("overlay_w"), self._place.get("overlay_h")) == tuple(size):
+                return False
+        # outside the lock: pywebview answers with a `resized` event, which takes it
+        window.resize(size[0], size[1])
+        return True
 
     def _closed(self) -> None:
         """The window went (closed by the player or the system): forget it."""

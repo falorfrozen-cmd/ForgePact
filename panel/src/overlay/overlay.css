@@ -1,0 +1,112 @@
+/* The Tracker's overlay window (#185), ported from design/tracker/tracker.css
+   (panel/DESIGN.md § Tracker, "The overlay's look"). Tokens only, so the
+   palette the player picked repaints it; flat in every palette, Ember
+   included: none of Ember's artwork, serif or glow. */
+
+html, body { margin: 0; overflow: hidden; background-color: var(--color-bg-base); }
+/* A transparent window (only when src/tracker_overlay.py's probe allows it) shows the game around the plate. */
+html.ovl-see-through, html.ovl-see-through body { background-color: transparent; }
+body {
+  color: var(--color-text-primary);
+  font-family: var(--font-body-family), "Segoe UI", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* One plate, 444 px wide at size 100%. Solid: the window is the plate. With a
+   transparent window only the plate's background is translucent, at the
+   player's opacity with its 90% floor, so every overlay text token still
+   passes 4.5:1 over a white game frame. Text never takes the opacity, and the
+   overlay uses no faint text. */
+.ovl {
+  --ovl-plate: 100%;
+  position: relative;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  width: 444px;
+  padding: var(--space-5) var(--space-6);
+  overflow: hidden;
+  background-color: color-mix(in srgb, var(--color-bg-base) var(--ovl-plate), transparent);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-xs);
+  line-height: var(--font-line-height-base);
+  cursor: default;
+}
+.ovl.pywebview-drag-region { cursor: move; }
+.ovl.transparent { border-radius: var(--radius-lg); }
+.ovl-top { display: flex; align-items: center; justify-content: space-between; gap: var(--space-6); height: 20px; }
+.ovl-state { display: flex; flex: none; align-items: center; gap: var(--space-4); color: var(--color-text-muted); white-space: nowrap; }
+.ovl-clock { color: var(--color-text-primary); font-family: var(--font-mono-family), Consolas, monospace; }
+.ovl-zone { display: flex; align-items: center; gap: var(--space-3); min-width: 0; overflow: hidden; color: var(--color-text-muted); white-space: nowrap; }
+.ovl-zone b { min-width: 0; overflow: hidden; color: var(--color-text-primary); font-weight: var(--font-weight-medium); text-overflow: ellipsis; }
+.ovl-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-7); }
+.ovl-metric { display: flex; flex-direction: column; min-width: 0; }
+.ovl-metric span { color: var(--color-text-muted); }
+.ovl-metric strong { font-family: var(--font-mono-family), Consolas, monospace; font-size: var(--font-size-xl); font-weight: var(--font-weight-regular); line-height: var(--font-line-height-tight); white-space: nowrap; }
+.ovl-metric em { color: var(--color-text-muted); font-family: var(--font-mono-family), Consolas, monospace; font-style: normal; white-space: nowrap; }
+.ovl-drops { display: grid; grid-template-columns: repeat(6, auto); justify-content: space-between; gap: var(--space-4); }
+.ovl-drop { display: flex; align-items: baseline; gap: var(--space-3); white-space: nowrap; }
+.ovl-drop strong { color: var(--color-text-primary); font-family: var(--font-mono-family), Consolas, monospace; font-size: var(--font-size-sm); font-weight: var(--font-weight-regular); }
+
+/* The newest drops: the journal's three newest entries, still. */
+.ovl-ticker { display: flex; flex-direction: column; gap: var(--space-1); margin: 0; padding: var(--space-3) 0 0; list-style: none; border-top: 1px solid var(--color-border-subtle); }
+.ovl-ticker li { display: grid; grid-template-columns: 56px minmax(0, 1fr) auto; gap: var(--space-4); align-items: baseline; }
+.ovl-ticker .trk-time { color: var(--color-text-muted); font-family: var(--font-mono-family), Consolas, monospace; font-size: var(--font-size-xs); }
+.ovl-ticker .trk-item { min-width: 0; overflow: hidden; font-size: var(--font-size-xs); font-weight: var(--font-weight-medium); text-overflow: ellipsis; white-space: nowrap; }
+.ovl-ticker .trk-tag { min-width: 24px; padding: 0 var(--space-3); border-radius: var(--radius-sm); background-color: var(--color-bg-hover); color: var(--color-text-muted); font-family: var(--font-mono-family), Consolas, monospace; font-size: var(--font-size-xs); line-height: 18px; text-align: center; }
+.ovl .trk-empty { margin: 0; color: var(--color-text-muted); font-size: var(--font-size-xs); }
+.ovl-waiting { padding: var(--space-4) 0; }
+
+/* The state's dot, and the rarity colours (on text only). */
+.trk-dot { flex: none; width: 6px; height: 6px; border-radius: var(--radius-pill); background-color: var(--color-text-faint); }
+.trk-dot.on { background-color: var(--color-ok); }
+.trk-dot.warn { background-color: var(--color-warn); }
+.r-satanic { color: var(--color-rarity-satanic); }
+.r-set { color: var(--color-rarity-set); }
+.r-heroic { color: var(--color-rarity-heroic); }
+.r-angelic { color: var(--color-rarity-angelic); }
+.r-unholy { color: var(--color-rarity-unholy); }
+
+/* The drop card (the Tracker's flourish): for the drop the player asked to
+   see, a card takes the counters' place below the top line for its seconds;
+   the state, clock and zone stay. It covers the counters whole rather than
+   cutting through a line of them, and casts the Float shadow, as a toast
+   does. It enters (opacity and an 8px rise, base duration, emphasized
+   easing) and leaves (opacity, fast, standard): an arrival, not a repaint.
+   The counters behind it never move. */
+.ovl-flourish {
+  position: absolute;
+  top: calc(var(--space-5) + 20px + var(--space-3));
+  right: var(--space-6);
+  bottom: var(--space-5);
+  left: var(--space-6);
+  z-index: 2;
+  display: grid;
+  grid-template-columns: 3px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0 var(--space-6);
+  padding: 0 var(--space-7) 0 0;
+  border-radius: var(--radius-md);
+  background-color: var(--color-bg-hover);
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--color-bg-sunken) 80%, transparent);
+}
+.ovl-flourish[data-kind="zone"] { color: var(--color-text-primary); }
+.ovl-flourish[data-state="leave"] { opacity: 0; }
+.ovl-flourish-line { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
+.ovl-flourish-edge { align-self: stretch; border-radius: var(--radius-md) 0 0 var(--radius-md); background-color: currentColor; }
+.ovl-flourish-name { overflow: hidden; color: inherit; font-size: var(--font-size-lg); font-weight: var(--font-weight-semibold); text-overflow: ellipsis; white-space: nowrap; }
+.ovl-flourish-meta { overflow: hidden; color: var(--color-text-muted); font-size: var(--font-size-xs); text-overflow: ellipsis; white-space: nowrap; }
+.ovl-flourish-count { color: var(--color-text-primary); font-family: var(--font-mono-family), Consolas, monospace; font-size: var(--font-size-lg); }
+@media (prefers-reduced-motion: no-preference) {
+  .ovl-flourish { transition: opacity var(--motion-duration-fast) var(--motion-easing-standard), transform var(--motion-duration-fast) var(--motion-easing-standard); }
+  .ovl-flourish[data-state="enter"] { transition-duration: var(--motion-duration-base); transition-timing-function: var(--motion-easing-emphasized); }
+  @starting-style { .ovl-flourish[data-state="enter"] { opacity: 0; transform: translateY(8px); } }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ovl-flourish { transition: opacity var(--motion-duration-fast) var(--motion-easing-standard); }
+  @starting-style { .ovl-flourish[data-state="enter"] { opacity: 0; } }
+}
