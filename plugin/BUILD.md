@@ -11,8 +11,7 @@ controls over a small file-based IPC channel that the ForgePact panel writes to.
   applies.
 - **YYToolkit headers** (the `YYToolkit`, `Aurie`, and `FunctionWrapper` include trees)
   plus `YYToolkit/YYTK_Shared_Types.cpp`, and the third-party binaries in
-  `modfiles_shipped/` (`AurieCore.dll`, `AuriePatcher.exe`, `YYToolkit.dll`, optionally
-  `HSOfflineTrackerProducer.dll`). Run `py tools/fetch_toolchain.py` to place all of
+  `modfiles_shipped/` (`AurieCore.dll`, `AuriePatcher.exe`, `YYToolkit.dll`). Run `py tools/fetch_toolchain.py` to place all of
   them — it downloads each from a pinned commit or release and verifies its SHA-256
   before writing anything (all-or-nothing; see `tools/toolchain-pins.json` for exactly
   where each one comes from). The headers and `AuriePatcher.exe` come from YYToolkit

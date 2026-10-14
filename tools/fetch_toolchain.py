@@ -10,7 +10,7 @@ Run it:
 What it fetches, from `tools/toolchain-pins.json`: the YYToolkit v4.0.1 and
 Aurie v2.0.2 headers `plugin_build/include/` needs to compile
 (`plugin/BUILD.md`; both are AGPL-3.0 and never ours to commit -- see
-`.gitignore`), the two Aurie binaries, and two shipped mod files.
+`.gitignore`), the two Aurie binaries, and the shipped `YYToolkit.dll`.
 `AuriePatcher.exe` is upstream's v2.0.2 release binary, unmodified. The
 modified `YYToolkit.dll` and the modified `AurieCore.dll` are plain file
 pins, downloaded directly from the hub repository's own releases
@@ -21,14 +21,10 @@ each is the "hs.1" build of a documented patch series the hub keeps under
 `yytoolkit-modified/NOTICE.md`, `aurie-modified/AurieCore-NOTICE.md` and the
 BUILD-INFO records installed beside them). They stay pinned binaries for the
 same reason YYToolkit always has: ship the exact binary that was launched
-against the game, not a fresh CI build. The optional
-`HSOfflineTrackerProducer.dll` is extracted as a zip member
-(`producer/HSOfflineTrackerProducer.dll`) from the published
-HS-Offline-Tracker v0.1.4 release's portable zip, the build carrying that
-project's exit-teardown fix; the earlier build it replaces aborted every
-graceful close of the game (#201). See
-`docs/submodules/ForgePact/instructions.md`'s "The build half" for why an
-already-released binary is extracted rather than rebuilt in CI.
+against the game, not a fresh CI build. HS Offline Tracker's live sensor was
+pinned here through ForgePact 2.2.x and is not any more (#185): ForgePact
+stopped shipping it in 2.3.0. A zip-member entry (`archive_sha256` and
+`member`) still works for any future pin read out of a release archive.
 
 **All-or-nothing.** Every hash is verified -- for a zip-member entry, the
 archive's own hash first, before any member is read out of it -- and only if

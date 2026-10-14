@@ -1368,20 +1368,23 @@ MODFILE_SOURCES = [
     Path(getattr(sys, "frozen", False) and Path(sys.executable).parent or Path(__file__).parent) / "modfiles",
     Path(__file__).resolve().parent.parent / "modfiles_shipped",
 ]
-# HS Offline Tracker's live sensor (read-only Aurie module). Installed beside
-# BloodPactPlugin.dll when it ships with ForgePact; optional.
+# HS Offline Tracker's live sensor (a read-only Aurie module). ForgePact
+# shipped it through 2.2.x and stopped in 2.3.0 (#185 Q11), when its own
+# Tracker tab replaced HS Offline Tracker: Install Mod Plugin copies none, and
+# HS Offline Tracker's own installer places its own.
 TRACKER_SENSOR_DLL = "HSOfflineTrackerProducer.dll"
 # Sensor builds this panel knows by SHA-256 (#185, #201), each with what is
 # known about it. An aborting build ends every graceful close of the game in a
 # 0xC0000409 abort raised in the sensor: its publisher thread is a global
 # std::thread that ExitProcess kills, and the CRT's exit-time destructor then
-# finds it still joinable. refresh_stale_tracker_sensor() replaces only these,
-# never a sensor it does not recognise (a newer HS Offline Tracker's, or a
-# developer's own), and only with a build from TRACKER_SENSOR_CLEAN; Install
-# Mod Plugin leaves an unrecognised one alone too (_tracker_sensor_install).
-# tests/test_tracker_producer_pin.py checks tools/toolchain-pins.json against
-# both sets. Every HS Offline Tracker release before 0.1.4 is listed: 0.1.1
-# (ForgePact 1.3.8-1.3.9 shipped it), 0.1.2 (ForgePact 1.3.10-2.2.x) and 0.1.3.
+# finds it still joinable. Install Mod Plugin moves only these out of the game
+# (_move_tracker_sensor_aside), and the launch note names only these; a sensor
+# it does not recognise (a newer HS Offline Tracker's, or a developer's own)
+# and the clean build are left alone without a word.
+# tests/test_tracker_producer_pin.py pins both sets, and the hub's
+# docs/tools/hs-drive-mcp.md classifies a game's sensor with them. Every HS
+# Offline Tracker release before 0.1.4 is listed: 0.1.1 (ForgePact
+# 1.3.8-1.3.9 shipped it), 0.1.2 (ForgePact 1.3.10-2.2.x) and 0.1.3.
 TRACKER_SENSOR_ABORTING = {
     "8594d096b157eb955c72a4645f118a65916782b36e7ea5343634644a8260676d":
         "HS Offline Tracker 0.1.1's (2026-09-04), read from that release's installer, and the build "
@@ -1399,6 +1402,9 @@ TRACKER_SENSOR_CLEAN = {
         "HS Offline Tracker 0.1.4's, pinned from ForgePact 2.3.0; measured to close cleanly "
         "(#185, 2026-10-13)",
 }
+# Where Install Mod Plugin moves an aborting sensor: %LOCALAPPDATA%\Hero_Siege
+# \backup\, ForgePact's own folder, created on the first move.
+TRACKER_SENSOR_BACKUP_DIR = ROOT / "backup"
 PLUGIN_SOURCES = [
     Path(getattr(sys, "frozen", False) and Path(sys.executable).parent or Path(__file__).parent) / "modfiles",
     Path(__file__).resolve().parent.parent / "modfiles_shipped",
@@ -1804,54 +1810,66 @@ def mod_chain(cfg=None) -> dict:
     }
 
 
-# A source checkout whose modfiles_shipped holds an aborting producer: one the
-# pin superseded is replaced by Prepare-Plugin.bat (fetch_toolchain.py); any
-# other (a hand-placed Tracker 0.1.1 or 0.1.3 copy) needs --force, which also
-# overwrites every other pinned file that differs (a hand-placed YYToolkit.dll,
-# AurieCore.dll or header included).
-_SOURCE_SENSOR_REMEDY = ("run Prepare-Plugin.bat first; if it refuses the file as hand-placed, "
-                         "run py tools/fetch_toolchain.py --force, which also replaces any other "
-                         "pinned file you placed by hand, such as YYToolkit.dll, AurieCore.dll or a header")
+def _utc_stamp() -> str:
+    """The UTC time as yyyymmddThhmmss, for a moved-aside sensor's name."""
+    return time.strftime("%Y%m%dT%H%M%S", time.gmtime())
 
 
-# A release package whose own sensor is missing or an old build: Install
-# cannot fix that, so both Install and the launch note say what can.
-_PACKAGE_SENSOR_REMEDY = ("extract the complete ForgePact release again, or update HS Offline Tracker "
-                          "to 0.1.4 or later and press its Update live sensor")
-
-
-def _tracker_sensor_install(bundled: Path, target: Path) -> tuple:
-    """(copy, step) for Install Mod Plugin's copy of HS Offline Tracker's
-    sensor, decided by hash (#185). A bundled build known to abort every close
-    is never installed (a source checkout that has not re-run
-    Prepare-Plugin.bat still holds one). A sensor already in the game is
-    replaced only when this ForgePact knows it, as aborting or as a clean
-    build it pins; anything else, a newer HS Offline Tracker's or a
-    developer's own, is left as it is. Raises OSError when a file cannot be
-    read, for op_install_mod's message."""
-    bundled_sha = _sha256_file(bundled)
-    if bundled_sha in TRACKER_SENSOR_ABORTING:
-        remedy = ((": " + _PACKAGE_SENSOR_REMEDY) if getattr(sys, "frozen", False)
-                  else " (source checkout: %s)" % _SOURCE_SENSOR_REMEDY)
-        left = ""
-        if target.exists():
-            left = ("; the game's own sensor, also an old build, was left in place"
-                    if _sha256_file(target) in TRACKER_SENSOR_ABORTING
-                    else "; the game's own sensor was left in place")
-        return False, ("HS Offline Tracker sensor not installed: this ForgePact's copy is an old build "
-                       "that crashes the game when it closes" + left + remedy)
-    # A sensor in TRACKER_SENSOR_CLEAN is replaced too: with one clean build
-    # today, that is only ever the bundle itself. When a re-pin adds a second,
-    # a source checkout that has not re-run Prepare-Plugin.bat could replace a
-    # newer clean sensor with its older bundle; order the clean builds then.
-    if target.exists():
-        installed_sha = _sha256_file(target)
-        if (installed_sha != bundled_sha and installed_sha not in TRACKER_SENSOR_ABORTING
-                and installed_sha not in TRACKER_SENSOR_CLEAN):
-            return False, ("HS Offline Tracker sensor left as it was: the game has a build this ForgePact "
-                           "does not know, such as a newer HS Offline Tracker's (if it is a damaged copy, "
-                           "click Remove Plugin, then Install again)")
-    return True, "HS Offline Tracker sensor installed"
+def _move_tracker_sensor_aside(installed: Path) -> str:
+    """Install Mod Plugin's step for HS Offline Tracker's sensor (#185 Q11,
+    #217): "" unless the game's sensor is a build in TRACKER_SENSOR_ABORTING,
+    which is moved to TRACKER_SENSOR_BACKUP_DIR as
+    HSOfflineTrackerProducer-<first 8 of its sha256>-<UTC stamp>.dll (a
+    numbered name when that one exists, never overwriting), then checked by
+    hash. A clean or unknown sensor, or none, is left as it is without a
+    word. A sensor that cannot be read or moved is named in the step and left
+    in place: Install carries on either way. Never raises."""
+    try:
+        if not installed.is_file():
+            return ""
+        sha = _sha256_file(installed)
+    except OSError as e:
+        return (f"HS Offline Tracker sensor not checked: {installed} could not be read ({e.strerror or e}); "
+                "if it is an old build it crashes the game every time it closes")
+    if sha not in TRACKER_SENSOR_ABORTING:
+        return ""
+    dest = None
+    try:
+        TRACKER_SENSOR_BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+        base = "%s-%s-%s" % (Path(TRACKER_SENSOR_DLL).stem, sha[:8], _utc_stamp())
+        dest, n = TRACKER_SENSOR_BACKUP_DIR / (base + ".dll"), 2
+        while dest.exists():
+            dest, n = TRACKER_SENSOR_BACKUP_DIR / ("%s-%d.dll" % (base, n)), n + 1
+        try:
+            # Same volume: one rename, which on Windows refuses an existing name.
+            os.rename(installed, dest)
+        except OSError as e:
+            # Another drive (winerror 17, errno EXDEV): copy into a new file,
+            # then delete the original; a delete that fails takes the copy back.
+            if getattr(e, "winerror", None) != 17 and e.errno != 18:
+                raise
+            with open(installed, "rb") as src, open(dest, "xb") as out:
+                while True:
+                    chunk = src.read(1 << 20)
+                    if not chunk:
+                        break
+                    out.write(chunk)
+            try:
+                installed.unlink()
+            except OSError:
+                dest.unlink(missing_ok=True)
+                raise
+        moved_sha = _sha256_file(dest)
+    except OSError as e:
+        return (f"HS Offline Tracker's old sensor could not be moved ({installed.name}: {e.strerror or e}): "
+                "it crashes the game every time it closes - close HS Offline Tracker and any tool using "
+                "it, then click Install again, or move it out of mods\\aurie yourself")
+    if moved_sha != sha:
+        return (f"HS Offline Tracker's old sensor was moved to {dest}, but the copy there does not match "
+                "the file it was (check your antivirus); the game no longer loads it")
+    return (f"HS Offline Tracker's old sensor moved from mods\\aurie to {dest}: it crashes the game every "
+            "time it closes - ForgePact's own Tracker tab replaces it, and HS Offline Tracker 0.1.4 or later "
+            "has the fixed sensor")
 
 
 def op_install_mod(cfg) -> dict:
@@ -1869,10 +1887,6 @@ def op_install_mod(cfg) -> dict:
     yytk = find_src("YYToolkit.dll", MODFILE_SOURCES)
     plug = find_src("BloodPactPlugin.dll", PLUGIN_SOURCES)
     patcher = find_src("AuriePatcher.exe", MODFILE_SOURCES)
-    # HS Offline Tracker's live sensor rides along when it ships with ForgePact.
-    # It is a separate, read-only Aurie module; a package without it installs
-    # exactly as before, so its absence is not an error.
-    sensor = find_src(TRACKER_SENSOR_DLL, PLUGIN_SOURCES)
     missing = [n for n, f in (("AurieCore.dll", core), ("YYToolkit.dll", yytk),
                               ("BloodPactPlugin.dll", plug), ("AuriePatcher.exe", patcher)) if f is None]
     if missing:
@@ -1916,14 +1930,6 @@ def op_install_mod(cfg) -> dict:
     # while, and a DLL the game has loaded cannot be overwritten (issue #123).
     if game_running(cfg):
         return {"err": "Close the game first, then click Install again."}
-    copy_sensor, sensor_step = False, ""
-    if sensor is not None:
-        try:
-            copy_sensor, sensor_step = _tracker_sensor_install(sensor, b / "mods" / "aurie" / TRACKER_SENSOR_DLL)
-        except OSError as e:
-            return {"err": f"Could not read {e.filename or TRACKER_SENSOR_DLL} ({e.strerror or e}). It is in "
-                           "use, locked, or held by antivirus: close the game and any other tool using the "
-                           "mod files, check your antivirus, then click Install again."}
     copying = "AurieCore.dll"
     try:
         _sh.copy2(core, b / "AurieCore.dll")
@@ -1935,11 +1941,6 @@ def op_install_mod(cfg) -> dict:
         copying = "BloodPactPlugin.dll"
         _sh.copy2(plug, b / "mods" / "aurie" / "BloodPactPlugin.dll")
         steps.append("mod DLLs installed/updated")
-        if copy_sensor:
-            copying = TRACKER_SENSOR_DLL
-            _sh.copy2(sensor, b / "mods" / "aurie" / TRACKER_SENSOR_DLL)
-        if sensor_step:
-            steps.append(sensor_step)
     except OSError as e:
         # Before this, the handler's catch-all answered HTTP 500 with the raw
         # "[WinError 32] ..." text in a toast.
@@ -1973,6 +1974,12 @@ def op_install_mod(cfg) -> dict:
         steps.append("exe patched and base build verified")
     else:
         steps.append("exe already patched")
+    # Last, once the install has succeeded: an aborting HS Offline Tracker
+    # sensor is moved aside (ForgePact no longer ships one), and a sensor that
+    # cannot be moved is named without failing the install.
+    sensor_step = _move_tracker_sensor_aside(b / "mods" / "aurie" / TRACKER_SENSOR_DLL)
+    if sensor_step:
+        steps.append(sensor_step)
     return {"ok": "MOD INSTALLED: " + ", ".join(steps) +
                   " - NOTE: only works on an EAC-free copy (online/EAC games will bounce back to the clean exe).",
             "chain": mod_chain(cfg), "pluginBuild": plugin_build_state(cfg, use_cache=False)}
@@ -2017,8 +2024,9 @@ def op_remove_mod(cfg) -> dict:
     if exe_is_patched(exe):
         return {"err": "restore ran but the exe still looks patched - check the .aurie_backup file."}
     b = exe.parent
-    for rel in ("AurieCore.dll", "mods/aurie/YYToolkit.dll", "mods/aurie/BloodPactPlugin.dll",
-                "mods/aurie/" + TRACKER_SENSOR_DLL):
+    # HS Offline Tracker's sensor is not ForgePact's (#185 Q11, #217): Remove
+    # leaves it, whichever build it is, for the Tracker that installed it.
+    for rel in ("AurieCore.dll", "mods/aurie/YYToolkit.dll", "mods/aurie/BloodPactPlugin.dll"):
         try:
             p = b / rel
             if p.exists():
@@ -2988,8 +2996,8 @@ def refresh_stale_plugin(cfg, loader_ok=None) -> str:
     is staged beside it and swapped in whole (_atomic_verified_copy), so a
     failure leaves the old plugin as it was.
 
-    It replaces BloodPactPlugin.dll and nothing else (the tracker sensor is
-    refresh_stale_tracker_sensor()'s, run beside it), and only when:
+    It replaces BloodPactPlugin.dll and nothing else (refresh_stale_tracker_sensor(),
+    run beside it, only names an old tracker sensor), and only when:
     - this is a release build of ForgePact (frozen).  From source, a plugin in
       the game is a developer's own build or a hand-installed test DLL;
     - the game's plugin is older than the bundled one: never a newer one, the
@@ -3003,7 +3011,7 @@ def refresh_stale_plugin(cfg, loader_ok=None) -> str:
     Install Mod Plugin, for the launch message: the launch goes ahead as it
     did before this existed.  Returns "" when there is nothing to say, and
     never raises.  `loader_ok`, when given, answers the YYToolkit/AurieCore
-    gate (launch_modded_game() shares one answer with the sensor refresh).
+    gate (launch_modded_game() hashes those DLLs once, and only if asked).
     """
     try:
         build = plugin_build_state(cfg, use_cache=False)
@@ -3026,7 +3034,7 @@ def refresh_stale_plugin(cfg, loader_ok=None) -> str:
 def _loader_matches_bundle(game: Path) -> bool:
     """The game's YYToolkit.dll and AurieCore.dll are byte-identical to the
     ones this ForgePact ships: the gate for replacing a module built against
-    them (the plugin, the tracker sensor) without the player's Install."""
+    them (the plugin) without the player's Install."""
     for name, installed in (("YYToolkit.dll", game / "mods" / "aurie" / "YYToolkit.dll"),
                             ("AurieCore.dll", game / "AurieCore.dll")):
         bundled = find_src(name, MODFILE_SOURCES)
@@ -3037,56 +3045,30 @@ def _loader_matches_bundle(game: Path) -> bool:
 
 TRACKER_SENSOR_STALE_LEAD = ("The HS Offline Tracker sensor in the game is an old build that can make Windows "
                              "report a crash when the game closes (on nearly every close, for the build measured).")
-TRACKER_SENSOR_STALE_ADVICE = TRACKER_SENSOR_STALE_LEAD + INSTALL_ADVICE
+TRACKER_SENSOR_STALE_ADVICE = (TRACKER_SENSOR_STALE_LEAD + " Install Mod Plugin moves it to ForgePact's backup "
+                               "folder; ForgePact's own Tracker tab replaces it." + INSTALL_ADVICE)
 
 
 def refresh_stale_tracker_sensor(cfg, loader_ok=None) -> str:
-    """Put the fixed HS Offline Tracker sensor into the game when the game's is
-    a build known to abort every close (#185, #201).
+    """The launch note for HS Offline Tracker's sensor (#185 Q11, #201, #217).
+    Writes nothing: ForgePact no longer ships a sensor, so it has none to put
+    in the game, and only Install Mod Plugin moves an old one aside.
 
-    refresh_stale_plugin() updates the plugin at launch, and an updated plugin
-    clears the panel's Install prompt, so a player who only pressed Launch kept
-    the sensor ForgePact shipped through 2.2.x. Called beside it, with the same
-    timing (launch_game's `prepare`, no game running) and the same gates:
-    - the game's sensor's SHA-256 is in TRACKER_SENSOR_ABORTING. Any other
-      sensor, a newer HS Offline Tracker's or a developer's own, is never
-      touched and nothing is said;
-    - this is a release build of ForgePact (frozen);
-    - the bundled sensor's SHA-256 is in TRACKER_SENSOR_CLEAN;
-    - the game's YYToolkit.dll and AurieCore.dll are the bundled ones.
-    Otherwise nothing is written and the answer is the advice to click Install
-    Mod Plugin, which replaces a known-aborting sensor with the bundled one;
-    when the bundle itself is missing or not a clean build, Install could not
-    help, so a release build says what can instead. Returns "" when there is
-    nothing to say, and never raises. `loader_ok` as in refresh_stale_plugin().
-
-    The aborting set holds HS Offline Tracker 0.1.1 to 0.1.3's own sensors
-    too. A player who keeps one of those Trackers and presses its Update live
-    sensor puts its build back, and the next launch from here swaps the fixed
-    one in again; updating the Tracker to 0.1.4 ends that.
+    Called beside refresh_stale_plugin() (launch_game's `prepare`). When the
+    game's sensor's SHA-256 is in TRACKER_SENSOR_ABORTING the answer is
+    TRACKER_SENSOR_STALE_ADVICE: it is an old build, and Install Mod Plugin
+    moves it aside. Any other sensor (the clean build, a newer HS Offline
+    Tracker's, a developer's own), none, or one that cannot be read: "".
+    Never raises. `loader_ok` is accepted for the shared refresh call and
+    unused.
     """
     try:
-        game = exe_path(cfg).parent
-        installed = game / "mods" / "aurie" / TRACKER_SENSOR_DLL
-        if not installed.exists() or _sha256_file(installed) not in TRACKER_SENSOR_ABORTING:
-            return ""
-        bundled = find_src(TRACKER_SENSOR_DLL, PLUGIN_SOURCES)
-        if bundled is None or _sha256_file(bundled) not in TRACKER_SENSOR_CLEAN:
-            # Install could not fix it either: it copies only the bundle.
-            if getattr(sys, "frozen", False):
-                return (TRACKER_SENSOR_STALE_LEAD + " This ForgePact package does not carry the fixed one: "
-                        + _PACKAGE_SENSOR_REMEDY + ".")
-            return (TRACKER_SENSOR_STALE_LEAD + " From a source checkout, " + _SOURCE_SENSOR_REMEDY
-                    + ", so that Install has the fixed sensor to copy." + INSTALL_ADVICE)
-        if not getattr(sys, "frozen", False) or not (loader_ok() if loader_ok else _loader_matches_bundle(game)):
+        installed = exe_path(cfg).parent / "mods" / "aurie" / TRACKER_SENSOR_DLL
+        if installed.is_file() and _sha256_file(installed) in TRACKER_SENSOR_ABORTING:
             return TRACKER_SENSOR_STALE_ADVICE
-        # The bundle was checked against the clean set just above, and the copy
-        # verifies the replaced file against what it staged from the bundle; a
-        # bundle swapped between those two reads is not re-checked.
-        _atomic_verified_copy(bundled, installed)
-    except Exception as exc:
-        return f"The HS Offline Tracker sensor could not be updated ({exc})." + INSTALL_ADVICE
-    return "HS Offline Tracker sensor replaced with the fixed build before launch."
+    except Exception:
+        pass
+    return ""
 
 
 def launch_modded_game(cfg: dict) -> dict:
@@ -3100,8 +3082,9 @@ def launch_modded_game(cfg: dict) -> dict:
     notes = []
 
     def refresh_plugin() -> None:
-        # Both refreshes gate on the same YYToolkit/AurieCore comparison;
-        # hash those DLLs once per launch, and only if a refresh asks.
+        # The plugin refresh gates on the YYToolkit/AurieCore comparison;
+        # hash those DLLs once per launch, and only if it asks. The sensor
+        # note writes nothing and never asks.
         gate: dict = {}
 
         def loader_ok() -> bool:

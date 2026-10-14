@@ -16,8 +16,7 @@ the exe - see MODFILE_SOURCES in src/forgepact.py):
         modfiles/AuriePatcher.exe
         modfiles/YYToolkit.dll
         modfiles/BloodPactPlugin.dll
-        modfiles/HSOfflineTrackerProducer.dll   (optional: HS Offline Tracker live sensor)
-        modfiles/NOTICE.md                      (YYToolkit corresponding-source pointer)
+        modfiles/NOTICE.md                     (YYToolkit corresponding-source pointer)
         modfiles/YYToolkit-BUILD-INFO.json      (YYToolkit build record)
         modfiles/AurieCore-NOTICE.md            (modified AurieCore notice)
         modfiles/AurieCore-BUILD-INFO.json      (AurieCore build record)
@@ -54,10 +53,11 @@ PANEL_DIST = ROOT / "panel" / "dist"
 MODFILES = ROOT / "modfiles_shipped"
 DIST = ROOT / "dist" / "ForgePact"
 NEEDED = ["AurieCore.dll", "AuriePatcher.exe", "YYToolkit.dll", "BloodPactPlugin.dll"]
-# Shipped when present; a package without them is still complete.
-OPTIONAL = ["HSOfflineTrackerProducer.dll"]  # HS Offline Tracker live sensor
+# HS Offline Tracker's live sensor was shipped here, when present, through
+# 2.2.x; 2.3.0 stopped (#185 Q11): the panel's own Tracker tab replaces the
+# Tracker, and a sensor left in a checkout's modfiles_shipped is not packaged.
 # The YYToolkit corresponding-source pointer and its build record. Not a DLL,
-# so not in NEEDED/OPTIONAL, but shipped beside modfiles/YYToolkit.dll so the
+# so not in NEEDED, but shipped beside modfiles/YYToolkit.dll so the
 # AGPL notice and the provenance record travel with the binary they describe.
 YYTOOLKIT_NOTICE_DIR = ROOT / "yytoolkit-modified"
 YYTOOLKIT_NOTICE_FILES = ["NOTICE.md", "YYToolkit-BUILD-INFO.json"]
@@ -253,9 +253,6 @@ def main() -> int:
     out_mod.mkdir(exist_ok=True)
     for n in NEEDED:
         shutil.copy2(MODFILES / n, out_mod / n)
-    for n in OPTIONAL:
-        if (MODFILES / n).is_file():
-            shutil.copy2(MODFILES / n, out_mod / n)
     ship_notices(out_mod)
 
     for n in ("README.md", "CREDITS.md", "LICENSE"):
