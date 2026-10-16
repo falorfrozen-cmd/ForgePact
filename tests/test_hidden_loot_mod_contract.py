@@ -141,11 +141,14 @@ class HiddenLootPluginWiringTests(unittest.TestCase):
 
     def test_hidden_loot_still_sees_the_call_first(self):
         # ForgePact #158 made the flight charms' ground icon the detour's third
-        # consumer; hidden loot keeps its place, right after the original.
+        # consumer and ForgePact #185 the tracker its fourth; hidden loot keeps
+        # its place, right after the original.
         hook = _code(_body(self.plugin, "static RValue& HookHiddenLootInit(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)"))
         self.assertEqual(hook.count("FlightCharmOnGroundInit(argc, A);"), 1)
+        self.assertEqual(hook.count("TrackerOnInit(S, argc, A);"), 1)
         self.assertLess(hook.index(".OnInit("), hook.index("FlightCharmOnGroundInit(argc, A);"))
         self.assertLess(hook.index("LootAnnounceOnInit(S, argc, A);"), hook.index("FlightCharmOnGroundInit(argc, A);"))
+        self.assertLess(hook.index("FlightCharmOnGroundInit(argc, A);"), hook.index("TrackerOnInit(S, argc, A);"))
 
     def test_the_hook_body_calls_the_trampoline_first_and_only_records(self):
         hook = _code(_body(self.plugin, "static RValue& HookHiddenLootInit(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)"))

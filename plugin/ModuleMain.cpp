@@ -558,6 +558,16 @@ static ForgePact::JumpSceneryMod::Mod g_JumpScenery;
 // adapter sits after jump through scenery's; the mod state reads the switch.
 #include <ForgePact/LootAnnounceMod.hpp>
 static ForgePact::LootAnnounceMod g_LootAnnounce;
+// HS Offline Tracker's sensor (`tracker`, ForgePact #185): the decision core.
+// Its adapter sits after the loot announcement adapter, whose readers it
+// shares. The core lives on the heap and is never deleted, so no destructor of
+// it runs at process exit.
+#include <ForgePact/TrackerMod.hpp>
+static ForgePact::TrackerMod& g_Tracker = *new ForgePact::TrackerMod();
+// The session file's writer (trivially destructible; nothing closes it at
+// exit) and whether the install ran, up here for the mod state.
+static ForgePact::TrackerJournalFile g_TrFile;
+static bool g_TrInstallTried = false;
 // Flight charms (`flightcharm`, ForgePact #158): the decision core and the
 // owner's six icons. The Custom Forge recognises and dresses the charms (what
 // it reads sits just before TryApplyCustomForge, the rest of the forge part
@@ -21305,6 +21315,9 @@ static void DungeonChestTick()
 // and outermost alike) while its switch is on: the adapter is defined far
 // below, in the loot announcement adapter.
 static void LootAnnounceNoteCreated(int argc, RValue** A, const RValue& result);
+// The tracker's own copy of that creation guard (ForgePact #185), noted the
+// same way while `tracker` is on; defined in the tracker adapter, far below.
+static void TrackerNoteCreated(int argc, RValue** A, const RValue& result);
 // `soulprobe dress on` (ForgePact #197, research build): one more consumer on
 // CreateItemNew's own return; defined with the probe, far below.
 #ifndef FORGEPACT_RELEASE
@@ -21329,6 +21342,7 @@ static void SoulProbeAfterCreate(RValue& item);
         } \
         RValue& _res = *_resp; \
         if (_final && g_LootAnnounce.Enabled()) LootAnnounceNoteCreated(argc, A, _res); \
+        if (_final && g_Tracker.Enabled()) TrackerNoteCreated(argc, A, _res); \
         if (g_GemTableBuilding) return _res;   /* the gem tables' own candidates: nothing else sees them */ \
         const bool _outermost = _final && g_TruthDepth == 0; \
         const std::string _native = _outermost ? ItemTruthNativeSnapshot(_res) : std::string(); \
@@ -28909,6 +28923,20 @@ static void FlushModState(uint32_t frame)
             body += ",\"heldDuplicate\":" + std::to_string(la.heldDuplicate);
             body += ",\"heldBagDrop\":" + std::to_string(la.heldBagDrop);
             body += ",\"sinkRefused\":" + std::to_string(la.sinkRefused) + "}";
+        }
+        {
+            // The tracker's state, not its counts: the counts move every
+            // frame and would rewrite this file every 30; they are in the
+            // journal and `tracker stat`.
+            const auto& routes = g_Tracker.GetRoutes();
+            body += ",\"tracker\":{\"on\":"; body += g_Tracker.Enabled() ? "true" : "false";
+            body += ",\"install\":\""; body += g_Tracker.InstallState(g_TrInstallTried); body += "\"";
+            body += ",\"gold\":\""; body += routes.gold; body += "\"";
+            body += ",\"xp\":\""; body += routes.xp; body += "\"";
+            body += ",\"kills\":\""; body += routes.kills; body += "\"";
+            body += ",\"drops\":\""; body += routes.drops; body += "\"";
+            body += ",\"file\":\""; body += ModStateEscape(g_TrFile.IsOpen() ? g_TrFile.Name() : ""); body += "\"";
+            body += ",\"writeErrors\":" + std::to_string(g_Tracker.Stats().writeErrors) + "}";
         }
         body += ",\"pillarTips\":{\"enabled\":"; body += g_PillarTips.Enabled() ? "true" : "false";
         body += ",\"shown\":" + std::to_string(g_PillarTips.Shown()) + "}";
@@ -53468,11 +53496,13 @@ static void FarSleepCommand(const std::string& rest)
 // detour hands the call to each consumer in turn - hidden loot, then
 // LootAnnounceOnInit, which returns at once while `lootann` is off, then
 // (ForgePact #158) FlightCharmOnGroundInit, which returns at once while no
-// flight charm's ground icon has loaded.
+// flight charm's ground icon has loaded, then (ForgePact #185) TrackerOnInit,
+// which returns at once while `tracker` is off.
 static PFUNC_YYGMLScript g_Orig_LootGroundInit = nullptr;
 static bool g_HiddenLootInstallTried = false;
 static bool g_HiddenLootVisibleNoted = false;
 static void LootAnnounceOnInit(CInstance* S, int argc, RValue** A);   // the loot announcement adapter, below
+static void TrackerOnInit(CInstance* S, int argc, RValue** A);        // the tracker adapter, below
 static RValue& HookHiddenLootInit(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
     RValue& result = g_Orig_LootGroundInit(S, O, R, argc, A);
@@ -53485,6 +53515,9 @@ static RValue& HookHiddenLootInit(CInstance* S, CInstance* O, RValue& R, int arg
     // The third consumer (ForgePact #158): a flight charm's ground icon, set
     // after the game picked its sprite; returns at once while none loaded.
     FlightCharmOnGroundInit(argc, A);
+    // The fourth (ForgePact #185): the tracker notes the call's handles, as
+    // Loot announcements does, and decides the item at the end of the frame.
+    TrackerOnInit(S, argc, A);
     return result;
 }
 // The one install attempt, on the first switch-on after setup. Both routes
@@ -56095,6 +56128,497 @@ static void LootAnnounceCommand(const std::string& rest)
     Out("lootann: usage lootann 1 | 0 | stat");
 }
 // ---- end of the loot announcement adapter
+
+// ---- HS Offline Tracker's sensor (TrackerMod.hpp): the adapter ------------
+// `tracker 1` (ForgePact #185) makes ForgePact the sensor HS Offline Tracker's
+// producer DLL was, writing protocol-v1 lines to
+// `bp_ipc\tracker\session-<pid>-<unix ms>.ndjson` for the panel to read. The
+// core in TrackerMod.hpp decides; this adapter reads the game, by name.
+//
+// Installed once per session when the core's ShouldInstall says so: the switch
+// on, setup done and the local player resolved through HhResolveLocalPlayer
+// (Known Limitations item 8; the arming rule Loot announcements uses). A
+// switch already on at launch only arms; the tick looks for the player every
+// kInstallPollFrames frames. What it installs, every route by SDK name:
+//   - GoldLogAdd and EnemyAddStatistics, through HookOneScript (both routes),
+//     each detour reading its arguments before the game's own call and
+//     counting after it returns, as the producer did (HookGold,
+//     HookKillCandidate);
+//   - ExperienceUpdate through its one shared detour,
+//     ForgePact::MiningOre::InstallExperience (MiningOreMod.hpp): Extra
+//     rolls' pass-through is its other consumer, and a second HookOneScript
+//     on it would be table-only. The tracker's count is that detour's
+//     experienceCapture/experienceCount pair; inside a silenced extra run it
+//     counts nothing;
+//   - drops: the fourth consumer of the shared LootGroundInit detour
+//     (HookHiddenLootInit, installed through HiddenLootInstall), where
+//     TrackerOnInit only reduces argument 0 and `self` to durable handles, the
+//     same reads Loot announcements makes there; and the creation guard's
+//     notes from the shared Hook_CreateItemNew, installed here by SDK name
+//     with both routes when nobody holds it yet. At the end of the frame each
+//     noted item is decided by the core; only a tracked rarity pays for
+//     reading the item's type, id, weapon type and name.
+// No RoomGoto hook: the room is the `room` builtin's room_get_name, polled
+// every tick and compared with the last one. On a change (and at install) it
+// writes `room`, and the core marks the Satanic zone and the character's name
+// owed. The zone is read on that tick and then every kZonePollTicks ticks,
+// owed or not, and the name on those ticks while it is owed, until the game's
+// readers answer: a new room can have no player on its first tick, which is
+// how Live 1 lost the zone after its one room change (replan 2). The zone is
+// read the way the satzone readers read it, but with none of satzone's state
+// touched (TrReadZone): Controller_obj.satanicZone, GPV by its SDK name with
+// the player from the proven pair as self, room_get_name of the room it
+// answers, and the satanicZoneBuff/Debuff arrays. Each answer goes to the
+// core, which writes it when owed or when it differs from the last one
+// written (a rotation); a read that did not answer hands the core the failed
+// step as its reason token (`zone-why=`).
+//
+// No thread, and nothing at process exit: hooks and the tick run on the game
+// thread, records are appended every kFlushFrames frames from the tick, the
+// core and this adapter's state live on the heap and are never deleted, and
+// the session file's writer is a plain global with no destructor. What is
+// still buffered when the game exits is lost (at most kFlushFrames frames).
+struct TrackerAdapterState {
+    std::vector<LaPending> pending;   // ground items noted inside LootGroundInit's call this frame
+};
+static TrackerAdapterState& g_TrState = *new TrackerAdapterState();
+// g_TrFile and g_TrInstallTried are declared with g_Tracker, for the mod state.
+static unsigned long long g_TrArmedFrames = 0;   // ticks while on and not installed: LooksForPlayer's count
+static PFUNC_YYGMLScript g_Orig_GoldLogAdd = nullptr;
+static PFUNC_YYGMLScript g_Orig_EnemyAddStatistics = nullptr;
+static const char* g_TrCreateRoute = "not-installed";   // CreateItemNew's route, as the tracker found it
+static long long g_TrUnidentified = 0;   // noted calls with no live Loot_Ground_obj among their handles
+static long long g_TrNoItem = 0;         // a ground item with no item struct to read
+static long long g_TrNoIdentity = 0;     // an identity that could not be read: counted, not decided
+static long long g_TrQueueFull = 0;      // calls not noted because a frame's queue was full
+static constexpr size_t kTrPendingCap = 512;   // per frame
+static_assert(ForgePact::TrackerMod::kRarityUnread == ForgePact::LootAnnounceMod::kRarityUnread,
+              "LaRarity's unread value is the tracker's too");
+
+// The frame clock: Unix milliseconds, read once per tick.
+static unsigned long long TrUnixMs()
+{
+    FILETIME ft;
+    GetSystemTimeAsFileTime(&ft);
+    const unsigned long long t = ((unsigned long long)ft.dwHighDateTime << 32) | ft.dwLowDateTime;
+    return t >= 116444736000000000ULL ? (t - 116444736000000000ULL) / 10000ULL : 0ULL;
+}
+
+// One argument as the core's counter rules see it: its kind and value, with
+// no conversion between kinds.
+static ForgePact::TrackerMod::Num TrNum(const RValue* v)
+{
+    using Kind = ForgePact::TrackerMod::NumKind;
+    ForgePact::TrackerMod::Num n;
+    if (!v) return n;
+    try {
+        switch (v->m_Kind) {
+        case VALUE_REAL: n.kind = Kind::Real; n.real = v->ToDouble(); break;
+        case VALUE_INT32: n.kind = Kind::Int32; n.integer = v->m_i32; break;
+        case VALUE_INT64: n.kind = Kind::Int64; n.integer = v->m_i64; break;
+        default: break;
+        }
+    } catch (...) { n = ForgePact::TrackerMod::Num(); }
+    return n;
+}
+// The first kMaxCounterArguments arguments; a wider call is refused by the
+// capture rule on its argc before any of them is looked at.
+static void TrNums(int argc, RValue** A, ForgePact::TrackerMod::Num (&out)[ForgePact::TrackerMod::kMaxCounterArguments])
+{
+    const int n = argc < ForgePact::TrackerMod::kMaxCounterArguments ? argc : ForgePact::TrackerMod::kMaxCounterArguments;
+    for (int i = 0; i < n; ++i) out[i] = A ? TrNum(A[i]) : ForgePact::TrackerMod::Num();
+}
+
+// GoldLogAdd: the arguments read before the game's call, counted after it.
+static RValue& HookTrackerGold(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    if (!g_Orig_GoldLogAdd) return R;
+    if (!g_Tracker.Enabled()) return g_Orig_GoldLogAdd(S, O, R, argc, A);
+    ForgePact::TrackerMod::Num args[ForgePact::TrackerMod::kMaxCounterArguments];
+    TrNums(argc, A, args);
+    const auto amount = ForgePact::TrackerMod::CaptureGold(argc, args);
+    RValue& result = g_Orig_GoldLogAdd(S, O, R, argc, A);
+    g_Tracker.CountGold(amount);
+    return result;
+}
+
+// EnemyAddStatistics: one kill per accepted call, counted after the game's
+// call (the producer's HookKillCandidate).
+static RValue& HookTrackerKill(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    if (!g_Orig_EnemyAddStatistics) return R;
+    if (!g_Tracker.Enabled()) return g_Orig_EnemyAddStatistics(S, O, R, argc, A);
+    ForgePact::TrackerMod::Num args[ForgePact::TrackerMod::kMaxCounterArguments];
+    TrNums(argc, A, args);
+    const auto id = ForgePact::TrackerMod::CaptureKill(argc, args);
+    RValue& result = g_Orig_EnemyAddStatistics(S, O, R, argc, A);
+    g_Tracker.CountKill(id);
+    return result;
+}
+
+// ExperienceUpdate, through the shared detour (MiningOreMod.hpp's
+// HookExperience): argument 0 read before the game's call ...
+static ForgePact::MiningOre::ExperienceCapture TrXpCapture(int argc, RValue** A)
+{
+    ForgePact::MiningOre::ExperienceCapture c{ false, false, 0 };
+    if (!g_Tracker.Enabled()) return c;
+    c.counted = true;
+    ForgePact::TrackerMod::Num args[ForgePact::TrackerMod::kMaxCounterArguments];
+    TrNums(argc, A, args);
+    if (const auto amount = ForgePact::TrackerMod::CaptureXp(argc, args)) {
+        c.hasAmount = true;
+        c.amount = *amount;
+    }
+    return c;
+}
+// ... and counted once it returned, unless it answered an explicit false.
+static void TrXpCount(const ForgePact::MiningOre::ExperienceCapture& c, const RValue& result)
+{
+    if (!c.counted) return;
+    bool explicitFalse = false;
+    try { explicitFalse = result.m_Kind == VALUE_BOOL && !result.ToBoolean(); } catch (...) {}
+    g_Tracker.CountXp(c.hasAmount ? std::optional<std::int64_t>(c.amount) : std::nullopt, explicitFalse);
+}
+
+// From the shared LootGroundInit detour, after the game's own call returned:
+// only the call's handles, made durable, as LootAnnounceOnInit keeps them.
+// Armed but not installed (`tracker 1` at character select), the core takes
+// nothing: the tick neither drains nor ages anything until the install. What
+// it takes it counts, for `init-calls=`.
+static void TrackerOnInit(CInstance* S, int argc, RValue** A)
+{
+    if (!g_Tracker.AcceptInit(g_TrInstallTried)) return;
+    auto& pending = g_TrState.pending;
+    if (pending.size() >= kTrPendingCap) { ++g_TrQueueFull; return; }
+    LaPending p;
+    if (argc > 0 && A && A[0]) p.arg0 = LaDurable(*A[0]);
+    if (S) p.self = LaDurable(RValue(S));
+    pending.push_back(std::move(p));
+}
+
+// From the shared Hook_CreateItemNew, after the game's original returned,
+// while the switch is on: the tracker's creation window, keyed as Loot
+// announcements keys its own. The core notes nothing until the install: the
+// window is aged by the installed tick alone, so creations noted during
+// character load would stay "recent" until the first tick after the install
+// and let a restored ground item past the guard.
+static void TrackerNoteCreated(int argc, RValue** A, const RValue& result)
+{
+    ForgePact::LootAnnounceMod::ItemKey key{};
+    if (argc > 0 && A && A[0] && LaItemKey(*A[0], key)) g_Tracker.NoteCreated({ key.kind, key.value }, g_TrInstallTried);
+    if (LaItemKey(result, key)) g_Tracker.NoteCreated({ key.kind, key.value }, g_TrInstallTried);
+}
+
+// A whole, non-negative number field of a struct-like value; -1 when it is
+// missing or anything else.
+static std::int64_t TrWholeField(const RValue& owner, const char* name)
+{
+    RValue v;
+    if (!LaField(owner, name, v)) return -1;
+    if (v.m_Kind != VALUE_REAL && v.m_Kind != VALUE_INT32 && v.m_Kind != VALUE_INT64) return -1;
+    try {
+        const double d = v.ToDouble();
+        if (!std::isfinite(d) || d < 0.0 || d > 9007199254740991.0 || std::trunc(d) != d) return -1;
+        return (std::int64_t)d;
+    } catch (...) {}
+    return -1;
+}
+
+// One noted call, at the end of its frame: the ground item resolved the way
+// LaProcess resolves it, then decided by the core.
+static void TrProcess(const LaPending& p)
+{
+    if (g_LaLootIndex == -2) {
+        try {
+            g_LaLootIndex = (int)g_Yytk->CallBuiltin("asset_get_index", {
+                RValue(std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Loot_Ground_obj))) }).ToDouble();
+        } catch (...) { g_LaLootIndex = -1; }
+    }
+    CInstance* loot = nullptr;
+    for (const RValue* h : { &p.arg0, &p.self }) {
+        if (h->m_Kind == VALUE_UNDEFINED || g_LaLootIndex < 0) continue;
+        CInstance* inst = HhResolveInstance(*h);
+        if (inst && CallerObjectIndex(inst) == g_LaLootIndex) { loot = inst; break; }
+    }
+    if (!loot) { ++g_TrUnidentified; return; }
+    RValue item;
+    double id = 0.0;
+    bool idRead = false;
+    try {
+        const RValue inst = loot->ToRValue();
+        const std::string field(HeroSiege::Player::kGroundItemInstanceField);
+        if (g_Yytk->CallBuiltin("variable_instance_exists", { inst, RValue(field) }).ToBoolean())
+            item = g_Yytk->CallBuiltin("variable_instance_get", { inst, RValue(field) });
+        id = InstanceIdOf(inst);
+        idRead = id >= 0.0;
+    } catch (...) {}
+    if (!(item.m_Kind == VALUE_OBJECT && item.m_Object) && item.m_Kind != VALUE_REF) { ++g_TrNoItem; return; }
+    const std::string type = LaItemType(item);
+    const std::string stamp = LaTimeStamp(item);
+    if (!ForgePact::TrackerMod::Identifiable(idRead, type, stamp)) { ++g_TrNoIdentity; return; }
+    ForgePact::LootAnnounceMod::ItemKey key{};
+    const bool recent = LaItemKey(item, key) && g_Tracker.RecentlyCreated({ key.kind, key.value });
+    ForgePact::TrackerMod::Drop drop;
+    drop.rarity = LaRarity(item);
+    // Most ground items stop at the guard or the rarity; only a tracked one
+    // pays for the rest (the producer's CaptureGroundItem did the same).
+    if (recent && ForgePact::TrackerMod::IsTrackedRarity(drop.rarity)) {
+        drop.itemType = TrWholeField(item, "itemType");
+        RValue definition;
+        if (LaField(item, "itemDefinitionStruct", definition)) {
+            drop.itemId = TrWholeField(definition, "b");
+            drop.weaponType = TrWholeField(definition, "j");
+        }
+        drop.name = LaItemName(item);
+    }
+    g_Tracker.DecideDrop(drop, recent, ForgePact::TrackerMod::Identity((std::int64_t)id, type, stamp));
+}
+
+// The character's name: the local player's `name`, when it is text; "" (and
+// no record) otherwise.
+static std::string TrCharacterName()
+{
+    std::string failed;
+    CInstance* player = LaPlayer(nullptr, failed);
+    if (!player) return "";
+    try {
+        const RValue n = g_Yytk->CallBuiltin("variable_instance_get", { player->ToRValue(), RValue("name") });
+        if (n.m_Kind == VALUE_STRING) return n.ToString();
+    } catch (...) {}
+    return "";
+}
+
+// The room of the Satanic zone the game rolled, read the way SatZoneReadValue
+// reads it: the handle in Controller_obj.satanicZone, then GPV by its SDK name
+// with the local player, from the proven pair HhResolveLocalPlayer +
+// HhResolveInstance, as self (instance_find hands back a VALUE_REF on this
+// runner), then room_get_name of the index it answers. Its own copy rather
+// than SatZoneReadValue, because that one records its failures as satzone's
+// last reason, and the tracker leaves satzone's state alone. Answers the step
+// that failed, or None with the room's name in `zoneRoom`.
+static ForgePact::TrackerMod::ZoneWhy TrReadZone(const RValue& controller, std::string& zoneRoom)
+{
+    using Why = ForgePact::TrackerMod::ZoneWhy;
+    RValue key;
+    try { key = g_Yytk->CallBuiltin("variable_instance_get", { controller, RValue("satanicZone") }); }
+    catch (...) { return Why::NoZoneKey; }
+    if (key.m_Kind == VALUE_UNDEFINED) return Why::NoZoneKey;
+    CInstance* inst = nullptr;
+    try {
+        RValue player;
+        if (HhResolveLocalPlayer(player)) inst = HhResolveInstance(player);
+    } catch (...) { inst = nullptr; }
+    if (!inst) return Why::NoPlayer;
+    double value = -1.0;
+    try {
+        RValue res;
+        const AurieStatus st = g_Yytk->CallGameScriptEx(res, HeroSiege::Scripts::gml_Script_GPV.data(), inst, inst, { key });
+        if (!AurieSuccess(st)) return Why::GpvFailed;
+        value = res.ToDouble();
+    } catch (...) { return Why::GpvFailed; }
+    if (!std::isfinite(value)) return Why::GpvFailed;
+    // Below 0: no zone rolled (the difficulty has none, or none yet).
+    if (value < 0.0) return Why::NoZoneRolled;
+    if (value > 2147483647.0 || !SatZoneRoomName((int)value, zoneRoom)) return Why::RoomUnnamed;
+    return Why::None;
+}
+
+// One of the zone's int arrays on Controller_obj, read so that a failure is
+// not an empty array: false when the variable is absent, is not an array, or
+// a call threw; true for a real array, with `out` then possibly empty. The
+// shared ReadIntArray answers an empty vector on every failure, which suits
+// satmods' poll but, under the tracker's rotation rule, would write a zone
+// with `[]` and another when the read recovered. ReadIntArray stays as it is.
+static bool TrReadIntArray(const RValue& controller, const char* varName, std::vector<int>& out)
+{
+    out.clear();
+    try {
+        RValue ex = g_Yytk->CallBuiltin("variable_instance_exists", { controller, RValue(varName) });
+        if (!ex.ToBoolean()) return false;
+        RValue arr = g_Yytk->CallBuiltin("variable_instance_get", { controller, RValue(varName) });
+        if (arr.m_Kind != VALUE_ARRAY) return false;
+        const int n = (int)g_Yytk->CallBuiltin("array_length", { arr }).ToDouble();
+        std::vector<int> values;
+        for (int i = 0; i < n; ++i)
+            values.push_back((int)g_Yytk->CallBuiltin("array_get", { arr, RValue((double)i) }).ToDouble());
+        out.swap(values);
+    } catch (...) {
+        out.clear();
+        return false;
+    }
+    return true;
+}
+
+// On a zone tick: the name while it is owed (first, so a `progress` comes
+// before the `satanic_zone`, as Live 1 measured at install), then the zone,
+// each answer or failed step handed to the core. Either array unread is a
+// read that did not answer (`arrays-unread`), never an empty array.
+static void TrReadZoneAndName()
+{
+    using Why = ForgePact::TrackerMod::ZoneWhy;
+    if (g_Tracker.NameOwed()) g_Tracker.NameRead(TrCharacterName());
+    RValue controller;
+    if (!ResolveControllerObj(controller)) { g_Tracker.ZoneUnanswered(Why::NoController); return; }
+    std::string zoneRoom;
+    const Why why = TrReadZone(controller, zoneRoom);
+    if (why != Why::None) { g_Tracker.ZoneUnanswered(why); return; }
+    std::vector<int> buffs, debuffs;
+    if (!TrReadIntArray(controller, "satanicZoneBuff", buffs) || !TrReadIntArray(controller, "satanicZoneDebuff", debuffs)) {
+        g_Tracker.ZoneUnanswered(Why::ArraysUnread);
+        return;
+    }
+    g_Tracker.ZoneAnswered(zoneRoom, buffs, debuffs);
+}
+
+// Every tick: the `room` builtin's name against the last one, then the zone
+// (and the name, while owed) on the tick of a change and every kZonePollTicks
+// ticks. The core counts the ticks, so this runs once per installed tick, plus
+// once at install.
+static void TrPollRoom()
+{
+    std::string name;
+    try {
+        RValue roomV;
+        g_Yytk->GetBuiltin("room", nullptr, NULL_INDEX, roomV);
+        name = g_Yytk->CallBuiltin("room_get_name", { roomV }).ToString();
+    } catch (...) { name.clear(); }
+    const bool changed = !name.empty() && name != "<undefined>" && g_Tracker.NoteRoom(name);
+    if (g_Tracker.ZoneReadDue(changed)) TrReadZoneAndName();
+}
+
+// One append of the batch, opening the session file first if it is not yet
+// open. A failure is counted by the core (write-errors=) and never retried.
+static void TrAppend(const std::string& batch)
+{
+    if (batch.empty()) return;
+    if (!g_TrFile.IsOpen()) g_TrFile.Open(IPC_DIR, GetCurrentProcessId(), TrUnixMs());
+    g_Tracker.NoteAppend(g_TrFile.Append(batch));
+}
+
+static const char* TrRoute(bool ok, bool native)
+{
+    return ok ? (native ? "both" : "table-only") : "none";
+}
+
+// CreateItemNew: the shared Hook_CreateItemNew, by its SDK name when nobody
+// holds it yet; otherwise its route is read from the saved original, as
+// LaInstallCreateHook reads it.
+static void TrInstallCreateHook()
+{
+    if (g_Orig_CreateItemNew) {
+        g_TrCreateRoute = SavedOriginalIsTableOnly(g_Orig_CreateItemNew) ? "table-only" : "both";
+        return;
+    }
+    bool native = false;
+    const bool ok = HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_CreateItemNew), "fp_tracker_new",
+                                  (PVOID)Hook_CreateItemNew, &g_Orig_CreateItemNew, &native);
+    g_TrCreateRoute = TrRoute(ok, native);
+}
+
+// The one install, once a session. Any route but both is said out loud: the
+// game's compiled calls may pass a table-only hook by.
+static void TrackerInstall()
+{
+    g_TrInstallTried = true;
+    g_Tracker.SetIdentity(GetCurrentProcessId(), std::string("forgepact-") + FORGEPACT_VERSION);
+    ForgePact::TrackerMod::Routes routes;
+    bool native = false;
+    bool ok = HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_GoldLogAdd), "fp_tracker_gold",
+                            (PVOID)HookTrackerGold, &g_Orig_GoldLogAdd, &native);
+    routes.gold = TrRoute(ok, native);
+    ForgePact::MiningOre::experienceCapture = &TrXpCapture;
+    ForgePact::MiningOre::experienceCount = &TrXpCount;
+    ForgePact::MiningOre::InstallExperience();
+    routes.xp = ForgePact::MiningOre::ExperienceRoute();
+    native = false;
+    ok = HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_EnemyAddStatistics), "fp_tracker_kills",
+                       (PVOID)HookTrackerKill, &g_Orig_EnemyAddStatistics, &native);
+    routes.kills = TrRoute(ok, native);
+    if (!g_HiddenLootInstallTried) HiddenLootInstall();
+    TrInstallCreateHook();
+    routes.drops = ForgePact::TrackerMod::CombineRoutes(LaInitRoute(), g_TrCreateRoute);
+    g_Tracker.SetRoutes(routes);
+    const std::pair<const char*, const char*> said[] = {
+        { "gold", routes.gold }, { "xp", routes.xp }, { "kills", routes.kills }, { "drops", routes.drops } };
+    for (const auto& [what, route] : said) {
+        if (std::string_view(route) != "both")
+            Out(std::string("tracker: ") + what + " hook " + route
+                + " - the game's own calls may pass it by, so the journal may miss them");
+    }
+    const bool anyRoute = std::string_view(routes.gold) != "none" || std::string_view(routes.xp) != "none"
+        || std::string_view(routes.kills) != "none" || std::string_view(routes.drops) != "none";
+    g_Tracker.BeginFrame(TrUnixMs());
+    g_Tracker.RecordBridgeStatus(anyRoute, "no route installed", g_Tracker.RouteSummary());
+    g_TrFile.Open(IPC_DIR, GetCurrentProcessId(), TrUnixMs());
+    TrPollRoom();
+}
+
+// Installs when the core says so: setup done, the local player resolved, no
+// install tried yet. Before a character exists it installs nothing.
+static void TrInstallIfReady()
+{
+    RValue player;
+    const bool havePlayer = g_Setup && !g_TrInstallTried && HhResolveLocalPlayer(player);
+    if (g_Tracker.ShouldInstall(g_Setup, havePlayer, g_TrInstallTried)) TrackerInstall();
+}
+
+// The per-frame tick. Returns at once while the switch is off; while armed and
+// not installed, looks for the local player every kInstallPollFrames frames;
+// once installed, decides the drops this frame noted, ages the creation window,
+// polls the room and, on a flush frame, appends the batch.
+static void TrackerTick()
+{
+    if (!g_Tracker.Enabled()) return;
+    if (!g_TrInstallTried && ForgePact::TrackerMod::LooksForPlayer(g_TrArmedFrames++)) TrInstallIfReady();
+    if (!g_TrInstallTried) return;
+    g_Tracker.BeginFrame(TrUnixMs());
+    if (!g_TrState.pending.empty()) {
+        std::vector<LaPending> batch;
+        batch.swap(g_TrState.pending);
+        for (const LaPending& p : batch) {
+            try { TrProcess(p); } catch (...) {}
+        }
+    }
+    g_Tracker.AgeCreationWindow();
+    TrPollRoom();
+    if (g_Tracker.EndFrame()) TrAppend(g_Tracker.TakeBatch());
+}
+
+static std::string TrackerStatLine()
+{
+    return g_Tracker.StatLine(g_TrInstallTried, g_TrFile.IsOpen() ? g_TrFile.Name() : "none")
+        + " unidentified=" + std::to_string(g_TrUnidentified)
+        + " no-item=" + std::to_string(g_TrNoItem)
+        + " no-identity=" + std::to_string(g_TrNoIdentity)
+        + " queue-full=" + std::to_string(g_TrQueueFull);
+}
+
+// `tracker 1|0` (the panel's switch, from the tab workorder on); bare `tracker`
+// or `stat` prints the line Live procedure 1 reads. Every reply begins
+// `tracker: on` or `tracker: off`.
+static void TrackerCommand(const std::string& rest)
+{
+    const std::string arg = Lower(TrimCopy(rest));
+    if (arg == "1" || arg == "on") {
+        g_Tracker.SetEnabled(true);
+        // In game, with a character loaded: at once. At character select (the
+        // launch commands): armed only, and the tick installs later.
+        if (!g_TrInstallTried) TrInstallIfReady();
+        Out(TrackerStatLine());
+        return;
+    }
+    if (arg == "0" || arg == "off") {
+        // What is buffered goes out now, in one append, before the switch goes off.
+        if (g_TrInstallTried && g_Tracker.Enabled()) TrAppend(g_Tracker.Drain());
+        g_Tracker.SetEnabled(false);
+        g_TrState.pending.clear();
+        Out(TrackerStatLine());
+        return;
+    }
+    if (arg.empty() || arg == "stat") { Out(TrackerStatLine()); return; }
+    Out(g_Tracker.StatusLine() + " usage: tracker 1 | 0 | stat");
+}
+// ---- end of the tracker adapter
 
 #ifndef FORGEPACT_RELEASE
 // ===== Zone census (`zonecensus [near radius]`, research build) =====
@@ -62212,7 +62736,8 @@ static void RunCommand(const std::string& line)
         "craftmats", "gemmythic", "gemmaxroll", "gemfilter", "skillstate", "talentalloc",
         "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem", "frameprof", "farsleep",
         "stashmoveall", "stashmove", "densityroll", "hiddenloot", "bossrarity", "incident", "dungeonchest",
-        "jumpscenery", "skillslider", "gambapity", "lootann", "pillartips", "flightcharm", "soulpiece"
+        "jumpscenery", "skillslider", "gambapity", "lootann", "pillartips", "flightcharm", "soulpiece",
+        "tracker"
     };
     if (kPlayerCommands.find(lc) == kPlayerCommands.end()) {
         Out("command unavailable in player build: " + cmd);
@@ -62384,6 +62909,8 @@ static void RunCommand(const std::string& line)
 #endif
     // Loot announcements: the Mods tab's switch, the same early return.
     if (lc == "lootann") { LootAnnounceCommand(rest); return; }
+    // HS Offline Tracker's sensor (ForgePact #185): the same early return.
+    if (lc == "tracker") { TrackerCommand(rest); return; }
     // Always show Chaos Pillar mods: the Mods tab's switch, the same early return.
     if (lc == "pillartips") { PillarTipsCommand(rest); return; }
     // Rolling density copies: the Mods tab's switch, the same early return.
@@ -63866,6 +64393,13 @@ void FrameCallback(FWFrame& FrameContext)
     // filter-hidden drop to sleep, where it can no longer be read. Returns at
     // once while it is off.
     if (g_Setup) LootAnnounceTick();
+
+    // HS Offline Tracker's sensor, toggled by `tracker 1`: the drops the shared
+    // LootGroundInit detour noted this frame are decided, the room is polled,
+    // and every kFlushFrames frames the journal gets one append
+    // (TrackerMod.hpp). Before hidden loot's tick, for the reason above.
+    // Returns at once while it is off.
+    if (g_Setup) TrackerTick();
 
     // Hidden loot sleep, toggled by `hiddenloot 1`: a drop the player's loot
     // filter hides sleeps at the end of the frame it dropped in, and wakes

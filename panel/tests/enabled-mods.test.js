@@ -29,7 +29,7 @@ test('an empty or missing config is not an error', () => {
 });
 
 test('every boolean mod is an entry when true, keyed by its own checkbox', () => {
-  assert.equal(BOOLEAN_MODS.length, 28);
+  assert.equal(BOOLEAN_MODS.length, 29);
   for (const key of BOOLEAN_MODS) {
     assert.deepEqual(enabledControls(cfg({ [key]: true })), [key], key);
     assert.deepEqual(enabledControls(cfg({ [key]: false })), [], key);
@@ -55,6 +55,13 @@ test('Boss soul pieces (#197) is an entry while on, and off by default', () => {
   // Beside the Gems of Incarnation switches it is its own entry, not theirs.
   assert.deepEqual(enabledControls(cfg({ mod_gem_mythic: true, mod_boss_soul_pieces: true })),
     ['mod_gem_mythic', 'mod_boss_soul_pieces']);
+});
+
+test('the Tracker switch (#185) is an entry while on, and off by default', () => {
+  assert.ok(BOOLEAN_MODS.includes('mod_tracker'));
+  assert.equal(DEFAULTS.mod_tracker, false);
+  assert.deepEqual(enabledControls(cfg({ mod_tracker: true })), ['mod_tracker']);
+  assert.deepEqual(enabledControls(cfg({ mod_tracker: false })), []);
 });
 
 test('the Satanic Zone control switch is an entry while on, and off by default', () => {

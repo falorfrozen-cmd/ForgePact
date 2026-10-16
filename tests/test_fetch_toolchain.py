@@ -271,12 +271,14 @@ class TheRealManifestParsesAndCoversWhatBuildReleaseNeeds(unittest.TestCase):
         manifest = json.loads(PINS_PATH.read_text(encoding="utf-8"))
         self.assertTrue(manifest["files"])
 
-    def test_covers_needed_minus_plugin_plus_tracker(self):
+    def test_covers_needed_minus_plugin_and_no_tracker_sensor(self):
+        # ForgePact stopped shipping HS Offline Tracker's sensor in 2.3.0
+        # (#185 Q11): the shipped mod files are build_release's NEEDED, less
+        # the plugin it builds itself, and nothing else.
         sys.path.insert(0, str(REPO_ROOT))
         import build_release  # noqa: E402  (safe: main() is __main__-guarded)
 
-        needed = set(build_release.NEEDED) - {"BloodPactPlugin.dll"}
-        expected_names = needed | {"HSOfflineTrackerProducer.dll"}
+        expected_names = set(build_release.NEEDED) - {"BloodPactPlugin.dll"}
 
         manifest = json.loads(PINS_PATH.read_text(encoding="utf-8"))
         modfile_dests = {
@@ -285,10 +287,12 @@ class TheRealManifestParsesAndCoversWhatBuildReleaseNeeds(unittest.TestCase):
             if f["dest"].startswith("modfiles_shipped/")
         }
         self.assertEqual(modfile_dests, expected_names)
+        self.assertFalse(hasattr(build_release, "OPTIONAL"), "build_release still packages optional extras")
 
-    def test_eleven_entries(self):
+    def test_ten_entries(self):
         manifest = json.loads(PINS_PATH.read_text(encoding="utf-8"))
-        self.assertEqual(len(manifest["files"]), 11)
+        self.assertEqual(len(manifest["files"]), 10)
+        self.assertFalse([f["dest"] for f in manifest["files"] if "TrackerProducer" in f["dest"]])
 
 
 if __name__ == "__main__":

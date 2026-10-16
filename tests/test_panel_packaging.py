@@ -149,6 +149,11 @@ class StaticServingTests(unittest.TestCase):
             ".png": "image/png",
             ".json": "application/json",
             ".ico": "image/x-icon",
+            # the Tracker tab's bundled alert sounds
+            ".wav": "audio/wav",
+            ".mp3": "audio/mpeg",
+            ".ogg": "audio/ogg",
+            ".flac": "audio/flac",
         })
 
     def test_a_path_outside_the_build_is_refused(self):

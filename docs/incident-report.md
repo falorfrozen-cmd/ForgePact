@@ -192,8 +192,9 @@ that fails to write is counted, and the `incident: report written` line says
   plugin has no `DllMain`, so round 0 relied on a namespace-scope destructor
   alone. But the tracker producer the panel installed beside the plugin
   through 2.2.x aborts most game exits from its own exit-time destructors (the
-  guide's Known Limitations item 25; 2.3.0 pins HS Offline Tracker 0.1.4's
-  fixed build, and an older producer can still be installed), and DLLs detach in reverse load order: if our
+  guide's Known Limitations item 25; 2.3.0 ships no producer, its Install
+  moves an aborting one aside, and an older HS Offline Tracker can still put
+  one back), and DLLs detach in reverse load order: if our
   destructor ran after that abort, every exit on a tracker user's machine
   would read as a crash, with a crash report at every launch. So
   the adapter installs, by name (`GetModuleHandleW(L"kernelbase.dll")` then

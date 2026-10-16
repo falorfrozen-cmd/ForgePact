@@ -338,6 +338,12 @@ What changed in ForgePact around the pin:
 
 The fix ships in ForgePact 2.3.0.
 
+> **Later decision (#185, 2026-10-14):** the bundled-sensor design above did
+> not ship. ForgePact 2.3.0 ships no producer: Install Mod Plugin moves an
+> aborting one aside and installs nothing in its place. See
+> `tracker-research.md` § "The Tracker tab (part 2b)", Decisions, "ForgePact
+> ships no producer (Q11)".
+
 The live gate ran on 2026-10-13, in capture
 `forgepact-185-tracker-mod-live-1`, kept with the hub's workorder. It used the
 installed v2.2.1 plugin (`8a16a38e…4bc92`, unchanged at teardown), slot 14,

@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<!-- Direction comp: the Tracker's overlay window (#185), the compact window
+     that stays above the game. Each frame below is one window at its default
+     444 px wide (scale 1). ?theme=ember (the default) or ?theme=ledger picks the
+     palette, ?board shows both. The light field stands in for the game at its
+     worst case for contrast, a white frame; it is comp chrome, not part of the
+     design. Sample values are invented. -->
+<html lang="en" data-theme="ember">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Comp: Tracker overlay</title>
+  <link rel="stylesheet" href="../../panel/src/tokens.css">
+  <link rel="stylesheet" href="../../panel/src/fonts.css">
+  <link rel="stylesheet" href="../../panel/src/ember/palette.css">
+  <link rel="stylesheet" href="tracker.css">
+  <script>
+    (function () {
+      var t = new URLSearchParams(location.search).get('theme');
+      if (t === 'ledger' || t === 'graphite' || t === 'sigil') document.documentElement.dataset.theme = t;
+    })();
+  </script>
+  <style>
+    /* Comp chrome only. */
+    body { margin: 0; padding: var(--space-9); background-color: var(--color-bg-sunken); color: var(--color-text-muted); font-family: var(--font-body-family), sans-serif; font-size: var(--font-size-xs); }
+    h1 { margin: 0 0 var(--space-7); color: var(--color-text-primary); font-size: var(--font-size-lg); font-weight: var(--font-weight-semibold); }
+    .comp-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(500px, 1fr)); gap: var(--space-9); }
+    .comp-frame { display: flex; flex-direction: column; gap: var(--space-4); margin: 0; }
+    .comp-frame figcaption { font-family: var(--font-mono-family), monospace; }
+    .comp-game { padding: var(--space-9); background-color: var(--color-text-primary); }
+    .comp-solid { padding: var(--space-9); background-color: var(--color-bg-raised); }
+    .comp-bar { display: flex; gap: var(--space-4); margin: 0 0 var(--space-7); }
+    .comp-bar a { color: var(--color-text-primary); }
+    .comp-board iframe { display: block; width: 100%; height: 1500px; border: 0; }
+  </style>
+</head>
+<body>
+<h1>Overlay window comps</h1>
+<nav class="comp-bar" aria-label="Comp views">Comp: <a href="?theme=ember">Ember</a> <a href="?theme=ledger">Ledger</a> <a href="?board">Board</a></nav>
+<div class="comp-grid">
+
+  <!-- 1. The default: solid plate, counters, drop counts and the zone. -->
+  <figure class="comp-frame">
+    <figcaption>1 · Solid window, 444 × 147: the default (transparency is off until the overlay item measures it)</figcaption>
+    <div class="comp-solid">
+      <div class="ovl" aria-label="Tracker overlay">
+        <div class="ovl-top">
+          <span class="ovl-state"><span class="trk-dot on" aria-hidden="true"></span>Recording<span class="ovl-clock">1:02:13</span></span>
+          <span class="ovl-zone">Satanic zone <b>Act 9 · Frozen Peaks</b>· here</span>
+        </div>
+        <div class="ovl-metrics">
+          <div class="ovl-metric"><span>Gold</span><strong>14.86kk</strong><em>14.57kk/h</em></div>
+          <div class="ovl-metric"><span>Experience</span><strong>42.18kk</strong><em>41.36kk/h</em></div>
+          <div class="ovl-metric"><span>Kills</span><strong>4,862</strong><em>4,766/h</em></div>
+        </div>
+        <div class="ovl-drops">
+          <span class="ovl-drop"><span class="r-satanic">Satanic</span><strong>91</strong></span>
+          <span class="ovl-drop"><span class="r-set">Set</span><strong>17</strong></span>
+          <span class="ovl-drop"><span class="r-heroic">Heroic</span><strong>8</strong></span>
+          <span class="ovl-drop"><span class="r-angelic">Angelic</span><strong>5</strong></span>
+          <span class="ovl-drop"><span class="r-unholy">Unholy</span><strong>2</strong></span>
+          <span class="ovl-drop">SS<strong>7</strong></span>
+        </div>
+      </div>
+    </div>
+  </figure>
+
+  <!-- 2. Transparent: only the plate draws, at the player's opacity. -->
+  <figure class="comp-frame">
+    <figcaption>2 · Transparent window over the game, plate at 90%, its floor (only if the overlay item's probe shows the window draws through)</figcaption>
+    <div class="comp-game">
+      <div class="ovl transparent" style="--ovl-plate: 90%" aria-label="Tracker overlay">
+        <div class="ovl-top">
+          <span class="ovl-state"><span class="trk-dot on" aria-hidden="true"></span>Recording<span class="ovl-clock">1:02:13</span></span>
+          <span class="ovl-zone">Satanic zone <b>Act 9 · Frozen Peaks</b>· here</span>
+        </div>
+        <div class="ovl-metrics">
+          <div class="ovl-metric"><span>Gold</span><strong>14.86kk</strong><em>14.57kk/h</em></div>
+          <div class="ovl-metric"><span>Experience</span><strong>42.18kk</strong><em>41.36kk/h</em></div>
+          <div class="ovl-metric"><span>Kills</span><strong>4,862</strong><em>4,766/h</em></div>
+        </div>
+        <div class="ovl-drops">
+          <span class="ovl-drop"><span class="r-satanic">Satanic</span><strong>91</strong></span>
+          <span class="ovl-drop"><span class="r-set">Set</span><strong>17</strong></span>
+          <span class="ovl-drop"><span class="r-heroic">Heroic</span><strong>8</strong></span>
+          <span class="ovl-drop"><span class="r-angelic">Angelic</span><strong>5</strong></span>
+          <span class="ovl-drop"><span class="r-unholy">Unholy</span><strong>2</strong></span>
+          <span class="ovl-drop">SS<strong>7</strong></span>
+        </div>
+      </div>
+    </div>
+  </figure>
+
+  <!-- 3. Newest drops on: the ticker under the counters; the window grows to hold three entries. -->
+  <figure class="comp-frame">
+    <figcaption>3 · Newest drops on: 444 × 211, the three newest journal entries</figcaption>
+    <div class="comp-solid">
+      <div class="ovl" aria-label="Tracker overlay">
+        <div class="ovl-top">
+          <span class="ovl-state"><span class="trk-dot on" aria-hidden="true"></span>Recording<span class="ovl-clock">1:02:13</span></span>
+          <span class="ovl-zone">Satanic zone <b>Act 9 · Frozen Peaks</b></span>
+        </div>
+        <div class="ovl-metrics">
+          <div class="ovl-metric"><span>Gold</span><strong>14.86kk</strong><em>14.57kk/h</em></div>
+          <div class="ovl-metric"><span>Experience</span><strong>42.18kk</strong><em>41.36kk/h</em></div>
+          <div class="ovl-metric"><span>Kills</span><strong>4,862</strong><em>4,766/h</em></div>
+        </div>
+        <div class="ovl-drops">
+          <span class="ovl-drop"><span class="r-satanic">Satanic</span><strong>91</strong></span>
+          <span class="ovl-drop"><span class="r-set">Set</span><strong>17</strong></span>
+          <span class="ovl-drop"><span class="r-heroic">Heroic</span><strong>8</strong></span>
+          <span class="ovl-drop"><span class="r-angelic">Angelic</span><strong>5</strong></span>
+          <span class="ovl-drop"><span class="r-unholy">Unholy</span><strong>2</strong></span>
+          <span class="ovl-drop">SS<strong>7</strong></span>
+        </div>
+        <ol class="ovl-ticker" aria-label="Newest drops">
+          <li><span class="trk-time">21:41:08</span><span class="trk-item r-angelic">Astral Covenant</span><span class="trk-tag" title="Grade S">S</span></li>
+          <li><span class="trk-time">21:38:42</span><span class="trk-item r-unholy">Oath of the Hollow Star</span><span class="trk-tag" title="Grade A">A</span></li>
+          <li><span class="trk-time">21:34:50</span><span class="trk-item r-heroic">Soulforged Ring</span><span class="trk-tag" title="Grade A">A</span></li>
+        </ol>
+      </div>
+    </div>
+  </figure>
+
+  <!-- 4. The drop card (flourish) over the lower half of the plate; the counters behind it do not move. -->
+  <figure class="comp-frame">
+    <figcaption>4 · Drop card: an Angelic drop the player chose, shown for 4 s (twice in a row reads ×2)</figcaption>
+    <div class="comp-solid">
+      <div class="ovl" aria-label="Tracker overlay">
+        <div class="ovl-top">
+          <span class="ovl-state"><span class="trk-dot on" aria-hidden="true"></span>Recording<span class="ovl-clock">1:02:13</span></span>
+          <span class="ovl-zone">Satanic zone <b>Act 9 · Frozen Peaks</b></span>
+        </div>
+        <div class="ovl-metrics">
+          <div class="ovl-metric"><span>Gold</span><strong>14.86kk</strong><em>14.57kk/h</em></div>
+          <div class="ovl-metric"><span>Experience</span><strong>42.18kk</strong><em>41.36kk/h</em></div>
+          <div class="ovl-metric"><span>Kills</span><strong>4,862</strong><em>4,766/h</em></div>
+        </div>
+        <div class="ovl-drops">
+          <span class="ovl-drop"><span class="r-satanic">Satanic</span><strong>91</strong></span>
+          <span class="ovl-drop"><span class="r-set">Set</span><strong>17</strong></span>
+          <span class="ovl-drop"><span class="r-heroic">Heroic</span><strong>8</strong></span>
+          <span class="ovl-drop"><span class="r-angelic">Angelic</span><strong>5</strong></span>
+          <span class="ovl-drop"><span class="r-unholy">Unholy</span><strong>2</strong></span>
+          <span class="ovl-drop">SS<strong>7</strong></span>
+        </div>
+        <div class="ovl-flourish r-angelic" data-state="enter" role="status">
+          <span class="ovl-flourish-edge" aria-hidden="true"></span>
+          <span class="ovl-flourish-line"><span class="ovl-flourish-name">Astral Covenant</span><span class="ovl-flourish-meta">Angelic · Grade S · Magic Find</span></span>
+          <span class="ovl-flourish-count" aria-label="2 drops">×2</span>
+        </div>
+      </div>
+    </div>
+  </figure>
+
+  <!-- 5. A zone rotation's card. -->
+  <figure class="comp-frame">
+    <figcaption>5 · Drop card for a Satanic zone rotation that passed the buff pick</figcaption>
+    <div class="comp-game">
+      <div class="ovl transparent" style="--ovl-plate: 90%" aria-label="Tracker overlay">
+        <div class="ovl-top">
+          <span class="ovl-state"><span class="trk-dot on" aria-hidden="true"></span>Recording<span class="ovl-clock">1:14:40</span></span>
+          <span class="ovl-zone">Satanic zone <b>Act 7 · Ashen Wastes</b></span>
+        </div>
+        <div class="ovl-metrics">
+          <div class="ovl-metric"><span>Gold</span><strong>17.02kk</strong><em>13.68kk/h</em></div>
+          <div class="ovl-metric"><span>Experience</span><strong>49.40kk</strong><em>39.70kk/h</em></div>
+          <div class="ovl-metric"><span>Kills</span><strong>5,731</strong><em>4,606/h</em></div>
+        </div>
+        <div class="ovl-drops">
+          <span class="ovl-drop"><span class="r-satanic">Satanic</span><strong>104</strong></span>
+          <span class="ovl-drop"><span class="r-set">Set</span><strong>19</strong></span>
+          <span class="ovl-drop"><span class="r-heroic">Heroic</span><strong>9</strong></span>
+          <span class="ovl-drop"><span class="r-angelic">Angelic</span><strong>5</strong></span>
+          <span class="ovl-drop"><span class="r-unholy">Unholy</span><strong>2</strong></span>
+          <span class="ovl-drop">SS<strong>8</strong></span>
+        </div>
+        <div class="ovl-flourish" data-state="enter" role="status" style="color: var(--color-text-primary)">
+          <span class="ovl-flourish-edge" aria-hidden="true"></span>
+          <span class="ovl-flourish-line"><span class="ovl-flourish-name">Satanic zone: Act 7 · Ashen Wastes</span><span class="ovl-flourish-meta">Loot Goblin II · Rune Master</span></span>
+          <span></span>
+        </div>
+      </div>
+    </div>
+  </figure>
+
+  <!-- 6. Counters only, and the two quiet states. -->
+  <figure class="comp-frame">
+    <figcaption>6 · Counters only (444 × 104), and the window with no session yet</figcaption>
+    <div class="comp-solid" style="display:flex;flex-direction:column;gap:var(--space-7)">
+      <div class="ovl" aria-label="Tracker overlay, counters only">
+        <div class="ovl-top">
+          <span class="ovl-state"><span class="trk-dot" aria-hidden="true"></span>Clock paused<span class="ovl-clock">0:41:09</span></span>
+          <span class="ovl-zone">SS <b>7</b></span>
+        </div>
+        <div class="ovl-metrics">
+          <div class="ovl-metric"><span>Gold</span><strong>9.12kk</strong><em>13.30kk/h</em></div>
+          <div class="ovl-metric"><span>Experience</span><strong>27.81kk</strong><em>40.55kk/h</em></div>
+          <div class="ovl-metric"><span>Kills</span><strong>3,140</strong><em>4,578/h</em></div>
+        </div>
+      </div>
+      <div class="ovl" aria-label="Tracker overlay, waiting">
+        <div class="ovl-top"><span class="ovl-state"><span class="trk-dot warn" aria-hidden="true"></span>Waiting for the game</span></div>
+        <p class="trk-empty" style="padding:var(--space-4) 0">Load a character with the tracker on. The counters start at the first record.</p>
+      </div>
+    </div>
+  </figure>
+
+</div>
+<script>
+  // Comp only: ?board shows both palettes, one frame each.
+  (function () {
+    if (!new URLSearchParams(location.search).has('board')) return;
+    var board = document.createElement('div');
+    board.className = 'comp-board';
+    ['ember', 'ledger'].forEach(function (t) {
+      var f = document.createElement('iframe');
+      f.src = '?theme=' + t;
+      f.title = 'Overlay comps, ' + t;
+      board.append(f);
+    });
+    document.body.replaceChildren(board);
+  })();
+</script>
+</body>
+</html>

@@ -99,6 +99,21 @@ template<int I> RValue& NativeScript(CInstance*,CInstance*,RValue& r,int argc,RV
     return r;
 }
 static PFUNC_YYGMLScript kNativeScripts[5]={NativeScript<0>,NativeScript<1>,NativeScript<2>,NativeScript<3>,NativeScript<4>};
+// The tracker's XP count (ForgePact #185), ExperienceUpdate's second consumer:
+// what it was handed, and whether each count came after the game's own call.
+static int trackerCaptures=0, trackerCounts=0, xpCallsAtCapture=0;
+static bool trackerCountedAfterOriginal=true;
+static ForgePact::MiningOre::ExperienceCapture TrackerCapture(int,RValue**) {
+    ++trackerCaptures;xpCallsAtCapture=nativeScriptCalls[1];
+    return {true,true,10};
+}
+static void TrackerCount(const ForgePact::MiningOre::ExperienceCapture& c,const RValue&) {
+    ++trackerCounts;
+    if(!c.counted||nativeScriptCalls[1]!=xpCallsAtCapture+1) trackerCountedAfterOriginal=false;
+}
+static void TrackerAttach() {
+    ForgePact::MiningOre::experienceCapture=TrackerCapture;ForgePact::MiningOre::experienceCount=TrackerCount;
+}
 // What the production code installed, per script (the fake script table).
 static std::map<std::string,PFUNC_YYGMLScript> detours;
 static std::map<std::string,int> installsByName;
@@ -193,6 +208,8 @@ static void Reset() {
     rolls=1;rollsInstallTried=rollsReady=rollsUnavailable=false;rollsFailure.clear();inExtraRun=false;
     loggedRollPaid=loggedRollUnpaid=loggedHpReset=false;extraRuns=extraRunsUnpaid=silencedCalls=0;
     for(auto& s:silencedScripts){s.original=nullptr;s.native=false;s.passed=s.silenced=0;}
+    experienceInstallTried=experienceInstalled=false;experienceCapture=nullptr;experienceCount=nullptr;
+    trackerCaptures=trackerCounts=xpCallsAtCapture=0;trackerCountedAfterOriginal=true;
     namespace C=ForgePact::CombatText;
     C::original=nullptr;C::installTried=C::installed=C::native=false;C::xpMultiplier=1;C::rewardScopeActive=nullptr;
     C::silenceDepth=0;C::passedCalls=C::silencedCalls=0;
@@ -277,6 +294,31 @@ int main() {
     Reset();ForgePact::CombatText::rewardScopeActive=[]{return true;};ForgePact::CombatText::xpMultiplier=2;
     ForgePact::CombatText::Install();RunStep();
     Check(floatingTexts.size()==1&&floatingTexts[0]=="10 XP","baseline/combattext_reward_scope_leaves_text");
+
+    // ===== ExperienceUpdate's one detour, shared with the tracker (ForgePact #185) =====
+    // Nothing installs it until one of its two consumers asks.
+    Reset();
+    Check(std::string(ExperienceRoute())=="not-installed"&&installsByName.empty(),"baseline/xp_detour_not_installed_until_asked");
+    // The tracker turns on first: the one native detour goes in, and the extra
+    // rolls find it there rather than installing a second (table-only) one.
+    Reset();const bool trackerFirst=InstallExperience();TrackerAttach();RollsCommand("3");RunStep();
+    Check(trackerFirst&&rollsReady&&!rollsUnavailable&&installsByName["ExperienceUpdate"]==1&&silencedScripts[1].native
+        &&std::string(ExperienceRoute())=="both"&&silencedScripts[1].passed==1&&silencedScripts[1].silenced==2
+        &&trackerCaptures==1&&trackerCounts==1&&trackerCountedAfterOriginal&&nativeScriptCalls[1]==1,
+        "target/tracker_first_then_rolls_share_one_native_xp_detour");
+    // The other order: the rolls install it, the tracker finds it in.
+    Reset();RollsCommand("3");const bool rollsFirst=InstallExperience();TrackerAttach();RunStep();
+    Check(rollsFirst&&rollsReady&&installsByName["ExperienceUpdate"]==1&&trackerCaptures==1&&trackerCounts==1
+        &&trackerCountedAfterOriginal&&silencedScripts[1].silenced==2,"target/rolls_first_then_tracker_share_one_native_xp_detour");
+    // The tracker alone: each call counted once, after the game's own call.
+    Reset();InstallExperience();TrackerAttach();CallScript(1);CallScript(1);
+    Check(trackerCaptures==2&&trackerCounts==2&&trackerCountedAfterOriginal&&nativeScriptCalls[1]==2
+        &&silencedScripts[1].passed==2&&silencedScripts[1].silenced==0&&rolls==1,"target/tracker_alone_counts_every_xp_call_after_the_original");
+    // A shared detour that came up table-only still keeps the rolls unavailable, and says which.
+    Reset();tableOnly.insert("ExperienceUpdate");InstallExperience();RollsCommand("3");
+    Check(rolls==1&&rollsUnavailable&&Logged("miningrolls: unavailable - ExperienceUpdate came up table-only")
+        &&std::string(ExperienceRoute())=="table-only"&&installsByName["ExperienceUpdate"]==1,
+        "target/a_table_only_shared_xp_detour_keeps_rolls_unavailable");
 
     // ===== The ore multiplier, as before =====
     Reset();Command("1");RunStep();

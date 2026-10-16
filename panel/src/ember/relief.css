@@ -113,6 +113,20 @@
 :where(html[data-theme="ember"]) #nav-mods {
   --nav-icon: var(--nav-mods);
 }
+/* The Tracker (#185) has no illustrated icon: Ember shows its line drawing at
+   the artwork's size, in the accent (design/tracker/README.md, Decisions). */
+:where(html[data-theme="ember"]) #nav-tracker:before {
+  display: none;
+}
+:where(html[data-theme="ember"]) #nav-tracker > svg {
+  display: block;
+  flex: none;
+  width: 36px;
+  height: 30px;
+  stroke: var(--color-accent);
+  stroke-width: 1.4;
+  fill: none;
+}
 :where(html[data-theme="ember"]) #nav-setup {
   --nav-icon: var(--nav-setup);
   margin-top: clamp(28px, calc(100vh - 880px), 150px);

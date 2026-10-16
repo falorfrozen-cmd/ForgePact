@@ -1,5 +1,8 @@
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
+
+const page = (name) => fileURLToPath(new URL(name, import.meta.url));
 
 export default defineConfig({
   // Keep the terminal's earlier output (a Python traceback from the panel
@@ -15,5 +18,10 @@ export default defineConfig({
     proxy: { '/api': 'http://127.0.0.1:8780' },
   },
   // Static files for src/forgepact.py to serve and build_release.py to bundle.
-  build: { outDir: 'dist' },
+  // Two pages: the panel, and the Tracker's overlay window (#185), which
+  // src/tracker_overlay.py opens on /overlay.html beside it.
+  build: {
+    outDir: 'dist',
+    rolldownOptions: { input: { main: page('index.html'), overlay: page('overlay.html') } },
+  },
 });

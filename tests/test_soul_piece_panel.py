@@ -155,7 +155,10 @@ class SoulPiecePanelRowTests(unittest.TestCase):
     def test_the_switch_posts_a_boolean_and_redraws_its_value(self):
         panel = panel_file("panel.js")
         self.assertIn(f"['{KEY}','mbspval','{KEY}','Boss soul pieces']", panel)
-        handler = panel.split(f"['{KEY}','mbspval','{KEY}','Boss soul pieces']]){{", 1)[1][:500]
+        # The handler follows the loop's list, wherever the entry sits in it:
+        # from the entry to the list's closing `]){`, not the entry's own `]`.
+        after = panel.split(f"['{KEY}','mbspval','{KEY}','Boss soul pieces']", 1)[1]
+        handler = after[after.index("]){") + 3:][:500]
         self.assertIn("{key:key,value:e.target.checked}", handler)
         self.assertIn("document.getElementById(val)", handler)
         self.assertIn(f"['{KEY}','mbspval','{KEY}']", panel)

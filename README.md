@@ -63,6 +63,7 @@ none of these diagnostic hooks or the recorder. See
 | **Remove Owned Relics** | A relic you already own at 10/10, worn or in the backpack's relic tab, stops dropping: when the game picks it, it picks again, so another relic drops in its place and every other relic keeps its usual odds |
 | **Bosses** | Mods → Gameplay, off by default. Every boss that spawns comes as a Rare ("uber") or Ancient ("uber uber") boss, its rarity set just before the game's own rarity setup runs. Measured live (2026-10-02) on one boss, a Karp King spawned from the research console: as an Ancient, from the rarity and the affixes the mod added, it had about 4.7 to 5.7 times its health, about 2.1 times its damage and 6.25 times its experience, and rolled its loot at the ancient rank; an ancient look, more loot and what Rare changes were not observed. Bosses the game already made rare are left alone by design (not yet seen in a live game), and the Monster Rarity sliders still never touch a boss ([details](#bosses-uber-and-uber-uber-bosses)) |
 | **Dungeon chest opens early** | Mods → Gameplay, off by default. A switch and a slider from 50 to 95 % (click the value to type it): in a key dungeon, the chest at the end opens once that share of all the dungeon's monsters is dead instead of every last one, counting every monster the dungeon plans when it loads, spawned yet or not (an estimate from its spawners). When 50 or fewer kills are left, a countdown tells you how many: above your character, in chat, or both, as you pick under the switch. Checked in a live game with this build in the Pumpkin Cellar at 50 %: the chest opened with over 100 monsters left, each countdown form showed where picked, and in the second run, after a fix to the label's font, the label above your character held steady; a boss dungeon not checked yet ([details](#dungeon-chest-opens-early)) |
+| **Tracker** | The **Tracker tab**, HS Offline Tracker's offline features built into ForgePact (#185). One switch, **Session tracker**, off by default (plugin command `tracker 1` / `tracker 0`, `tracker stat`). While it is on, ForgePact's own plugin counts this session's gold, experience and kills, records Set, Satanic, Angelic, Heroic and Unholy items that drop on the ground, follows your Satanic zone, and files a run when the game closes. The tab shows the totals and rates, the zone, a journal of the drops, run history with run cards, alert settings, a shopping list and an item codex; a sound plays once per recorded drop, and a small always-on-top overlay window shows the counters beside a windowed or borderless game. Your HS Offline Tracker runs, settings, shopping list and sounds are copied once, read-only. It only reads the game. Offline only ([details](#tracker-hs-offline-tracker-built-in)) |
 | **Auto-apply** | Saved settings are re-sent every time the game starts |
 | **Frame profiler** | Plugin command `frameprof start [seconds]`: measures what the game spends its frames on - frame times, the heaviest events, scripts and built-ins, what ran during each slow frame, CPU per thread - and writes a report to `bp_ipc\perf`; `tools/frameprof_report.py` turns it into a page. Changes nothing in the game; costs nothing until started ([details](#frame-profiler-where-the-games-frame-time-goes)) |
 | **Incident reports** | Always on, nothing to switch on. When the game crashes, freezes or drops frames badly, ForgePact saves a report folder under `bp_ipc\reports\` without a notification of any kind (no pop-up, no message box, and no switch for one): which ForgePact hook or mod was running or busy, how much frame time each mod took (only ForgePact's own code, never the game work its hook wraps), plus your settings and system. Nothing is uploaded. Setup tab → **Incident reports** lists every report ([details](#incident-reports-crash-freeze-and-fps-drop-reports)) |
@@ -1371,7 +1372,8 @@ What counts as an incident:
   (the faulting module and offset), and that goes into the same report. If
   another mod file aborts while the game is closing, after ForgePact's clean
   shutdown line (the tracker producer ForgePact shipped through 2.2.x does,
-  see the module guide's Known Limitations; 2.3.0 ships a fixed one), that is
+  see the module guide's Known Limitations; 2.3.0 ships none, and **Install
+  Mod Plugin** moves that old build out of the game), that is
   noted in `out.txt` and on the panel's card as an exit
   after a clean shutdown, not reported as a crash.
 
@@ -1904,6 +1906,60 @@ everything it put to sleep.
 Measurements, the mechanism and what is not known yet:
 [`docs/hidden-loot-research.md`](docs/hidden-loot-research.md).
 
+## Tracker (HS Offline Tracker, built in)
+
+The **Tracker** tab → **Session tracker** (plugin command `tracker 1|0`,
+`tracker stat` for its state). Off by default; with it off, ForgePact tracks
+nothing, and a player who never turns it on gets no tracker folder and no
+import of HS Offline Tracker's data.
+
+HS Offline Tracker used to be a second program beside ForgePact, with its own
+sensor in the game. Its offline features now live in ForgePact (#185), and HS
+Offline Tracker itself takes no new features.
+
+- **What it counts.** ForgePact's own plugin counts the gold, experience and
+  kills you earn, records each Set, Satanic, Angelic, Heroic and Unholy item
+  that drops on the ground (lower rarities are not recorded, and neither is an
+  item you drop yourself from the bag), and follows the room you are in and
+  your Satanic zone with its buffs and debuffs. It only reads the game and
+  changes nothing in it. In two research sessions in October 2026 the
+  experience and kills it counted matched what the character's save gained,
+  and in the second the gold did too.
+- **Session.** The totals and their rates per hour, the drops by rarity, the
+  zone, charts of the session and a journal of the recorded drops, newest
+  first. The clock can be paused, and **End run** files the run by hand.
+- **Runs.** A session is filed as a run when the game closes. Runs lists them,
+  each with a run card you can copy.
+- **Alerts.** A sound plays once for each recorded drop of a rarity you turn
+  on, at its own volume, and, if you turn it on, once when your Satanic zone
+  changes. Gear below the lowest grade you pick stays quiet. The bundled
+  sounds are HS Offline Tracker's own; you can pick your own sound file for
+  any of them. Sounds play from ForgePact's main window, whichever tab is
+  open. A panel opened in a browser plays nothing until you click in it once.
+- **Overlay.** A small window that stays on top of the game, with your
+  counters, the newest drops and a card for a great find. It can open with
+  the game, be locked in place, show counters only, and be scaled from 50 to
+  200%. It is a solid plate, not see-through (a see-through window did not
+  draw through on Windows when we tried it), and it needs the game in
+  windowed or borderless mode: a game in exclusive fullscreen draws over it.
+  It opens only from ForgePact's own window, not from a browser tab.
+- **Shopping list and Item codex.** A list of items you are hunting, which
+  always play their alert when one drops, and a book of every named item with
+  its drop chance and where to farm it.
+- **Your HS Offline Tracker data.** The first time the tracker is on,
+  ForgePact copies HS Offline Tracker's runs, settings, shopping list and your
+  own alert sounds into its own folder, `%LOCALAPPDATA%\Hero_Siege\tracker\`.
+  It copies only what is missing and never writes to HS Offline Tracker's
+  files.
+- **Not carried over.** The Tracker's online-only parts (mail, purses,
+  pickups, magic find), its Game Link installer, and its keys and resources
+  counter, which never counted offline. Discord status is built in but
+  hidden: it needs a Discord application of ForgePact's own, which this
+  release does not have yet.
+
+ForgePact no longer installs HS Offline Tracker's sensor; see
+[How to use](#-how-to-use) for what Install does with an old one.
+
 ## 🔧 How to use
 
 **Running from source:** Python opens the control panel, but the game also needs
@@ -1919,7 +1975,7 @@ the installation is incomplete, a warning appears on every tab with a shortcut
 to Setup. **Commands sent** means settings were handed to the plugin's command
 file; it does not claim the game has already applied them.
 
-The Install button also places the **HS Offline Tracker** live sensor (`HSOfflineTrackerProducer.dll`) beside the plugin when it ships with ForgePact. It is a separate, read-only module: it only reports gold, XP, kills, drops, room and satanic zone to the tracker and changes nothing in the game. Since 2.3.0 Install decides by the file's hash: it replaces a missing sensor, a known old build that crashes the game when it closes, or a build ForgePact knows to be clean, leaves a sensor it does not recognise (such as a newer HS Offline Tracker's) as it is, and never installs a bundled copy that is itself an old build. Starting the game from ForgePact also replaces a known old build, from a release build and only when YYToolkit and AurieCore in the game are the ones this ForgePact ships (see "After a **ForgePact** update" below); otherwise it asks you to press Install. Remove Plugin takes the sensor away again, whatever build it is.
+Since 2.3.0 ForgePact installs no **HS Offline Tracker** sensor (`HSOfflineTrackerProducer.dll`): its own [Tracker tab](#tracker-hs-offline-tracker-built-in) counts from inside ForgePact's plugin. Up to 2.2.x ForgePact shipped that sensor, and the build it shipped crashes the game every time it closes. So when **Install Mod Plugin** finds that build in `mods\aurie\` (it decides by the file's hash), it moves it to ForgePact's backup folder, `%LOCALAPPDATA%\Hero_Siege\backup\`, as `HSOfflineTrackerProducer-<hash>-<time>.dll`, never over another file, checks the copy, and says what it moved and why. If the file cannot be moved (HS Offline Tracker still has it open, for example), Install says so and carries on with everything else. Any other sensor, such as HS Offline Tracker 0.1.4's fixed one or a newer one, is left where it is, without a word. Starting the game from ForgePact never moves or replaces a sensor: with the crashing build in place, its launch message says so and points at Install. **Remove Plugin** leaves every sensor where it is.
 
 1. Run `ForgePact.exe` and set the path to your Season 10 `Hero_Siege.exe`.
 2. Press **Install Mod Plugin**. ForgePact will back up your exe, copy the mod files into the
@@ -1944,8 +2000,8 @@ After a **ForgePact** update, the plugin in your game is still the old one until
 ForgePact compares it with the plugin it ships, by reading the file, never by loading it. When
 the game's plugin is older, Setup, the status bar and the warning icon say so and point at
 **Install Mod Plugin**. **Launch Modded Game** replaces an older plugin itself before the game
-starts: only with the game closed, only the plugin file and (since 2.3.0) an HS Offline Tracker
-sensor that is a known old build, never YYToolkit or AurieCore, and only when YYToolkit and
+starts: only with the game closed, only the plugin file (never YYToolkit, AurieCore or an HS
+Offline Tracker sensor), and only when YYToolkit and
 AurieCore in the game are already the ones this ForgePact ships. Otherwise it launches as before and asks you to
 press **Install Mod Plugin**. Run from source, ForgePact only warns, since a plugin in the game
 may be your own build. Starting the game from Steam skips the launch step, so press
@@ -1969,8 +2025,9 @@ bp_ipc/                          the panel's command channel (created on first l
 
 **Your `Hero_Siege.exe` is modified.** The original is saved next to it as
 `Hero_Siege.exe.aurie_backup`, and **Remove Plugin** in the panel restores it and
-deletes the mod files. Install on an offline copy of the game, not on the one you
-play online with.
+deletes the mod files. It leaves an HS Offline Tracker sensor in `mods\aurie\`, if
+there is one, where it is: that file is HS Offline Tracker's, not ForgePact's. Install
+on an offline copy of the game, not on the one you play online with.
 
 ForgePact verifies that the backup belongs to the same game build before restoring
 it. If a game update has already replaced the exe with a newer clean copy, the old

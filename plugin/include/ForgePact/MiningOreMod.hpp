@@ -333,8 +333,60 @@ template<size_t I> RValue& HookSilenced(CInstance* S, CInstance* O, RValue& R, i
     ++script.passed;
     return script.original ? script.original(S, O, R, argc, A) : R;
 }
+
+// ExperienceUpdate's one detour, shared (ForgePact #185). Its pass-through
+// above is one consumer; the HS Offline Tracker sensor's XP count (`tracker`,
+// ModuleMain.cpp's tracker adapter) is the other. A second HookOneScript on
+// the same script would come up table-only, blind to the game's direct calls,
+// so whichever of the two turns on first installs this one, through
+// InstallExperience, and the other finds it in - the way HookHiddenLootInit
+// shares LootGroundInit. Inside an extra run the game's call is silenced and
+// the tracker counts nothing; otherwise `experienceCapture` reads the call's
+// arguments before the game's own call and `experienceCount` counts what it
+// read once that call has returned.
+inline constexpr size_t kExperienceScript = 1;   // silencedScripts' ExperienceUpdate
+struct ExperienceCapture {
+    bool counted;     // the consumer wants this call counted
+    bool hasAmount;   // argument 0 decoded as an amount
+    int64_t amount;
+};
+inline ExperienceCapture (*experienceCapture)(int argc, RValue** A) = nullptr;
+inline void (*experienceCount)(const ExperienceCapture& captured, const RValue& result) = nullptr;
+inline bool experienceInstallTried = false, experienceInstalled = false;
+
+inline RValue& HookExperience(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) {
+    SilencedScript& script = silencedScripts[kExperienceScript];
+    if (inExtraRun) { ++script.silenced; ++silencedCalls; return R; }
+    ++script.passed;
+    if (!script.original) return R;
+    const auto capture = experienceCapture;
+    const auto count = experienceCount;
+    if (!capture || !count) return script.original(S, O, R, argc, A);
+    const ExperienceCapture captured = capture(argc, A);
+    RValue& result = script.original(S, O, R, argc, A);
+    count(captured, result);
+    return result;
+}
 inline constexpr std::array<PFUNC_YYGMLScript, 4> kSilencedHooks = {
-    HookSilenced<0>, HookSilenced<1>, HookSilenced<2>, HookSilenced<3> };
+    HookSilenced<0>, HookExperience, HookSilenced<2>, HookSilenced<3> };
+
+// The shared detour's one install, once a session, for whichever consumer
+// asks first. True when it is in natively; anything else leaves the extra
+// rolls unavailable, and the tracker reports the route (ExperienceRoute).
+inline bool InstallExperience() {
+    SilencedScript& script = silencedScripts[kExperienceScript];
+    if (!experienceInstallTried) {
+        experienceInstallTried = true;
+        experienceInstalled = HookOneScript(script.name, script.hookId, (PVOID)kSilencedHooks[kExperienceScript],
+                                            &script.original, &script.native);
+    }
+    return experienceInstalled && script.native;
+}
+inline const char* ExperienceRoute() {
+    if (!experienceInstallTried) return "not-installed";
+    if (!experienceInstalled) return "none";
+    return silencedScripts[kExperienceScript].native ? "both" : "table-only";
+}
 
 inline bool Install() {
     if (installTried) return ready;
@@ -353,11 +405,17 @@ inline bool Install() {
 }
 
 // The step/loot pair and the four pass-through detours; empty when all six
-// are native, otherwise the first that is not.
+// are native, otherwise the first that is not. ExperienceUpdate's goes in
+// through the shared InstallExperience, which the tracker may have run first.
 inline std::string HookPassThrough() {
     if (!Install()) return installFailure.empty() ? "the mining step/loot hooks are unavailable" : installFailure;
     for (size_t i = 0; i < silencedScripts.size(); ++i) {
         SilencedScript& script = silencedScripts[i];
+        if (i == kExperienceScript) {
+            if (!InstallExperience())
+                return std::string(script.name) + (experienceInstalled ? " came up table-only" : " could not be hooked");
+            continue;
+        }
         const bool ok = HookOneScript(script.name, script.hookId, (PVOID)kSilencedHooks[i], &script.original, &script.native);
         if (!(ok && script.native)) return std::string(script.name) + (ok ? " came up table-only" : " could not be hooked");
     }

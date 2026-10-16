@@ -14,6 +14,8 @@
 // "enabled" there is the default rather than something the player turned on).
 // The same card's zone-control switch (#157) is an ordinary entry: off by
 // default, and it sends its line while on.
+// The Tracker tab's switch, mod_tracker (#185), is one too: off by default,
+// and `tracker 1` while on.
 
 // Boolean mods: an entry while true; the control is the checkbox itself.
 export const BOOLEAN_MODS = [
@@ -21,6 +23,7 @@ export const BOOLEAN_MODS = [
   'mod_orb_pickup_radius', 'mod_pet_quest_pickup', 'mod_pet_relic_pickup', 'mod_pet_loot_unstick', 'mod_auto_prospect',
   'mod_toggle_indicator', 'mod_toggle_guard', 'mod_restart_anytime', 'mod_craft_mats',
   'mod_far_sleep', 'mod_stash_move_all', 'density_rolling', 'mod_hidden_loot', 'mod_jump_scenery', 'mod_loot_announce', 'mod_pillar_tips',
+  'mod_tracker',
   'mod_flight_elf', 'mod_flight_wings', 'mod_flight_broom',
   'mod_gem_mythic', 'mod_gem_maxroll', 'mod_boss_soul_pieces',
   'satanic_everywhere',
