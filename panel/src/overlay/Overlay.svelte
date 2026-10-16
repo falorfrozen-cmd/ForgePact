@@ -52,7 +52,8 @@
   const showTicker = $derived(settings.ticker === true && !compact);
   const locked = $derived(settings.locked === true);
   const transparent = $derived(client.overlay?.transparent === true);
-  const scale = $derived(clamp(settings.scale, 0.5, 2, 1));
+  // 75% to 200%, as OverlaySettings.svelte offers: below 75% the 12px text would shrink under 9px.
+  const scale = $derived(clamp(settings.scale, 0.75, 2, 1));
   const plateOpacity = $derived(clamp(settings.opacity, 0.9, 1, 1));
   const metrics = $derived(['gold', 'xp', 'kills'].map((key) => ({
     key,
@@ -167,10 +168,10 @@
   });
 </script>
 
-<!-- svelte-ignore a11y_no_static_element_interactions -->
+<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <div class="ovl" id="ovl" class:transparent class:pywebview-drag-region={!locked} class:locked
   style:zoom={scale} style:--ovl-plate={transparent ? `${Math.round(plateOpacity * 100)}%` : '100%'}
-  aria-label="Tracker overlay" bind:this={plate} onmousedown={down}
+  role="region" aria-label="Tracker overlay" bind:this={plate} onmousedown={down}
   data-polled={client.polled ? '1' : ''} data-revision={snap?.revision ?? ''}
   data-journal={client.extra ? String(client.extra.drops?.length ?? 0) : ''}>
   <div class="ovl-top">
@@ -207,13 +208,16 @@
     {/if}
     {#if card}
       {#key card.key}
-        <div class="ovl-flourish {card.cls}" id="ovlFlourish" data-state={cardState} data-kind={card.kind} role="status">
+        <div class="ovl-flourish {card.cls}" id="ovlFlourish" data-state={cardState} data-kind={card.kind}>
           <span class="ovl-flourish-edge" aria-hidden="true"></span>
           <span class="ovl-flourish-line"><span class="ovl-flourish-name">{card.name}</span><span class="ovl-flourish-meta">{card.meta}</span></span>
-          {#if card.count > 1}<span class="ovl-flourish-count" aria-label={`${card.count} drops`}>×{card.count}</span>{:else}<span></span>{/if}
+          {#if card.count > 1}<span class="ovl-flourish-count"><span aria-hidden="true">×{card.count}</span><span class="ovl-announce">{card.count} drops</span></span>{:else}<span></span>{/if}
         </div>
       {/key}
     {/if}
+    <!-- The card is announced through this line, which is always there, so a
+         screen reader hears each card as its words arrive. -->
+    <p class="ovl-announce" id="ovlAnnounce" role="status">{card && cardState !== 'leave' ? `${card.name}, ${card.meta}${card.count > 1 ? `, ${card.count} drops` : ''}` : ''}</p>
   {:else}
     <p class="trk-empty ovl-waiting">Load a character with the tracker on. The counters start at the first record.</p>
   {/if}

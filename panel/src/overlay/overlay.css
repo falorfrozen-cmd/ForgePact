@@ -48,7 +48,11 @@ body {
 .ovl-metric span { color: var(--color-text-muted); }
 .ovl-metric strong { font-family: var(--font-mono-family), Consolas, monospace; font-size: var(--font-size-xl); font-weight: var(--font-weight-regular); line-height: var(--font-line-height-tight); white-space: nowrap; }
 .ovl-metric em { color: var(--color-text-muted); font-family: var(--font-mono-family), Consolas, monospace; font-style: normal; white-space: nowrap; }
-.ovl-drops { display: grid; grid-template-columns: repeat(6, auto); justify-content: space-between; gap: var(--space-4); }
+/* The five rarities and SS on one line while their counts fit, as they do
+   for an ordinary session; six counts in the thousands no longer fit 444 px,
+   so the line wraps (the plate grows and the window follows it) rather than
+   cutting the last ones off. */
+.ovl-drops { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--space-1) var(--space-4); }
 .ovl-drop { display: flex; align-items: baseline; gap: var(--space-3); white-space: nowrap; }
 .ovl-drop strong { color: var(--color-text-primary); font-family: var(--font-mono-family), Consolas, monospace; font-size: var(--font-size-sm); font-weight: var(--font-weight-regular); }
 
@@ -60,6 +64,8 @@ body {
 .ovl-ticker .trk-tag { min-width: 24px; padding: 0 var(--space-3); border-radius: var(--radius-sm); background-color: var(--color-bg-hover); color: var(--color-text-muted); font-family: var(--font-mono-family), Consolas, monospace; font-size: var(--font-size-xs); line-height: 18px; text-align: center; }
 .ovl .trk-empty { margin: 0; color: var(--color-text-muted); font-size: var(--font-size-xs); }
 .ovl-waiting { padding: var(--space-4) 0; }
+/* Words for a screen reader only: the drop card's status line and its count. */
+.ovl-announce { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
 /* The state's dot, and the rarity colours (on text only). */
 .trk-dot { flex: none; width: 6px; height: 6px; border-radius: var(--radius-pill); background-color: var(--color-text-faint); }

@@ -16,8 +16,10 @@ import { fmt, rate, RARITIES } from '../../src/tracker/format.js';
 export const EXPECTED = [
   'overlay-page-is-served',
   'counters-equal-the-api',
+  'drop-row-keeps-every-count-whole',
   'ticker-shows-the-newest-journal-entries',
   'appended-flourish-drop-raises-the-card',
+  'drop-card-rises-in-and-fades-out',
   'overlay-never-claims-or-plays',
   'settings-write-their-fields',
   'open-button-disabled-with-the-reason-while-unavailable',
@@ -74,8 +76,8 @@ function COUNT_PLAYS() {
 }
 
 // The overlay page in a fresh context, with the play counter in when asked.
-async function openOverlay(t, { countPlays = false } = {}) {
-  const page = await t.openPanel();
+async function openOverlay(t, { countPlays = false, routes } = {}) {
+  const page = await t.openPanel({ routes });
   if (countPlays) await page.addInitScript(COUNT_PLAYS);
   const res = await page.goto(new URL('/overlay.html', t.sandbox.url).href);
   assert(res && res.ok(), `/overlay.html answered ${res && res.status()}`);
@@ -113,6 +115,56 @@ async function journalEntry(t, name) {
 }
 
 const cardName = (page) => page.evaluate(() => document.querySelector('#ovlFlourish .ovl-flourish-name')?.textContent.trim() ?? null);
+
+// The motion recorder motion.e2e.mjs uses: every `transitionrun`, with the
+// CSSTransition's own duration and easing, so no check races a 120 ms fade.
+async function record(page) {
+  await page.evaluate(() => {
+    window.__motion = [];
+    document.addEventListener('transitionrun', (e) => {
+      const a = e.target.getAnimations().find((x) => x.transitionProperty === e.propertyName);
+      const timing = a?.effect?.getTiming();
+      window.__motion.push({ el: e.target, prop: e.propertyName, state: e.target.dataset.state ?? '', duration: timing ? Number(timing.duration) : null, easing: timing ? String(timing.easing) : null });
+    }, true);
+  });
+}
+const seenOn = (page, selector) => page.evaluate((s) => window.__motion.filter((m) => m.el.matches(s))
+  .map(({ prop, state, duration, easing }) => ({ prop, state, duration, easing })), selector);
+// The motion tokens as the page computes them.
+const motionTokens = (page) => page.evaluate(() => {
+  const cs = getComputedStyle(document.documentElement);
+  const v = (n) => cs.getPropertyValue(n).trim();
+  const ms = (n) => { const s = v(n); return /ms$/.test(s) ? parseFloat(s) : parseFloat(s) * 1000; };
+  return { fast: ms('--motion-duration-fast'), base: ms('--motion-duration-base'), standard: v('--motion-easing-standard'), emphasized: v('--motion-easing-emphasized') };
+});
+// The page writes a token's curve back as `.23`, a timing as `0.23`: compare the numbers.
+const curve = (s) => (String(s).match(/-?\d*\.?\d+/g) || []).map(Number);
+const sameCurve = (a, b) => /^cubic-bezier\(/.test(String(a)) && curve(a).length === 4 && curve(a).every((n, i) => Math.abs(n - curve(b)[i]) < 1e-6);
+function timed(m, duration, easing, what) {
+  assert(m, `${what}: no transition`);
+  assert(m.duration === duration, `${what}: ${m.prop} runs ${m.duration} ms, not the token's ${duration}`);
+  assert(sameCurve(m.easing, easing), `${what}: ${m.prop} eases ${m.easing}, not the token's ${easing}`);
+}
+
+// Each drop cell's box against the row's and the plate's, and whether any
+// count is cut inside its cell.
+const dropBoxes = (page) => page.evaluate(() => {
+  const plate = document.getElementById('ovl');
+  const row = document.querySelector('.ovl-drops');
+  const inner = plate.getBoundingClientRect();
+  const pad = parseFloat(getComputedStyle(plate).paddingRight);
+  const box = row.getBoundingClientRect();
+  return {
+    plateRight: inner.right - pad,
+    rowLeft: box.left,
+    rowRight: box.right,
+    cells: [...row.querySelectorAll('.ovl-drop')].map((cell) => {
+      const r = cell.getBoundingClientRect();
+      const value = cell.querySelector('strong');
+      return { key: cell.dataset.rarity, text: cell.textContent.trim(), left: r.left, right: r.right, top: r.top, cut: cell.scrollWidth > cell.clientWidth + 0.5 || value.scrollWidth > value.getBoundingClientRect().width + 0.5 };
+    }),
+  };
+});
 
 async function openOverlaySettings(t, options) {
   const page = await t.openPanel(options);
@@ -160,6 +212,39 @@ export default async function (t) {
     assert(/Act 1/.test(top), `the top line does not name the fixture's zone: ${top}`);
   });
 
+  await t.check('drop-row-keeps-every-count-whole', async () => {
+    // The control: the fixture's own counts sit on one line, as the plate's
+    // 147 px assumes.
+    let page = await openOverlay(t);
+    await settled(t, page);
+    const small = await dropBoxes(page);
+    assert(small.cells.length === 6, `the row has ${small.cells.length} cells`);
+    assert(new Set(small.cells.map((c) => Math.round(c.top))).size === 1, `the fixture's counts do not sit on one line: ${JSON.stringify(small.cells)}`);
+    await page.context().close();
+    // Six of the widest counts fmt writes below a million ("123.5k"), through the
+    // page's own poll: every count shows whole, inside the plate.
+    const big = 123456;
+    page = await openOverlay(t, {
+      routes: async (p) => {
+        await p.route('**/api/tracker', async (route) => {
+          const res = await route.fetch();
+          const body = await res.json();
+          for (const name of RARITIES) body.snapshot.items = { ...body.snapshot.items, [name]: { ...(body.snapshot.items?.[name] ?? {}), total: big } };
+          body.snapshot.ss = big;
+          await route.fulfill({ response: res, json: body });
+        });
+      },
+    });
+    await until(() => page.evaluate(() => [...document.querySelectorAll('.ovl-drop strong')].map((s) => s.textContent.trim())),
+      () => Array(6).fill(fmt(big)), 'the large counts');
+    const wide = await dropBoxes(page);
+    for (const c of wide.cells) {
+      assert(!c.cut, `${c.key}'s count is cut: ${c.text}`);
+      assert(c.left >= wide.rowLeft - 0.5 && c.right <= wide.rowRight + 0.5, `${c.key} (${c.text}) runs out of its row: ${c.left}-${c.right} in ${wide.rowLeft}-${wide.rowRight}`);
+      assert(c.right <= wide.plateRight + 0.5, `${c.key} (${c.text}) runs past the plate's edge: ${c.right} > ${wide.plateRight}`);
+    }
+  });
+
   await t.check('ticker-shows-the-newest-journal-entries', async () => {
     // Off by default, as in the Tracker: the control first.
     assert((await t.api('/api/tracker/settings')).settings.ticker === false, 'the ticker is not off by default');
@@ -192,6 +277,10 @@ export default async function (t) {
     const page = await openOverlay(t);
     await settled(t, page);
     assert(await page.locator('#ovlFlourish').count() === 0, 'a card shows before anything dropped');
+    // The card is announced through a status line that is there before it.
+    const announce = page.locator('#ovlAnnounce');
+    assert(await announce.count() === 1 && await announce.getAttribute('role') === 'status', 'no status line waits for the card');
+    assert((await announce.textContent()).trim() === '', `the status line says ${await announce.textContent()} before any card`);
     const name = 'Overlay Check Covenant';
     t.appendSession([groundDrop({ name, rarity: 'Angelic', item_type: 0, item_id: 1200 + nextEvent, weapon_type: 1, amount: 1 })]);
     const entry = await journalEntry(t, name);
@@ -200,14 +289,57 @@ export default async function (t) {
     const card = await page.evaluate(() => ({
       meta: document.querySelector('#ovlFlourish .ovl-flourish-meta')?.textContent.trim(),
       cls: document.getElementById('ovlFlourish').className,
-      role: document.getElementById('ovlFlourish').getAttribute('role'),
+      said: document.getElementById('ovlAnnounce')?.textContent.trim() ?? '',
     }));
     assert(card.meta.startsWith('Angelic'), `the card's line reads ${card.meta}`);
     assert(/\br-angelic\b/.test(card.cls), `the card is not in Angelic's colour: ${card.cls}`);
-    assert(card.role === 'status', 'the card is not announced as a status');
+    assert(card.said.startsWith(`${name}, Angelic`), `the status line says ${card.said}`);
     // It leaves after the drop card's time (4 s by default).
     const secs = (await t.api('/api/tracker/settings')).settings.flourish_secs;
     await until(() => cardName(page), () => null, 'the card leaving', secs * 1000 + 3000);
+  });
+
+  await t.check('drop-card-rises-in-and-fades-out', async () => {
+    // DESIGN.md § Tracker: in over base on the emphasized easing (opacity and
+    // an 8px rise), out over fast on the standard easing (opacity only), and
+    // under reduced motion a fade with no rise.
+    const secs = (await t.api('/api/tracker/settings')).settings.flourish_secs;
+    let page = await openOverlay(t);
+    await settled(t, page);
+    await record(page);
+    const tok = await motionTokens(page);
+    let name = 'Overlay Motion Covenant';
+    t.appendSession([groundDrop({ name, rarity: 'Angelic', item_type: 0, item_id: 1300 + nextEvent, weapon_type: 1, amount: 1 })]);
+    await until(() => cardName(page), () => name, 'the drop card', 8000);
+    await until(() => cardName(page), () => null, 'the card leaving', secs * 1000 + 3000);
+    let seen = await seenOn(page, '.ovl-flourish');
+    const enter = seen.filter((m) => m.state === 'enter');
+    const leave = seen.filter((m) => m.state === 'leave');
+    timed(enter.find((m) => m.prop === 'opacity'), tok.base, tok.emphasized, 'the card entering');
+    timed(enter.find((m) => m.prop === 'transform'), tok.base, tok.emphasized, 'the card rising');
+    timed(leave.find((m) => m.prop === 'opacity'), tok.fast, tok.standard, 'the card leaving');
+    assert(!leave.some((m) => m.prop === 'transform'), `the card moves as it leaves: ${JSON.stringify(leave)}`);
+    await page.context().close();
+
+    // Reduced motion, proven on before it is relied on: a fade, no rise.
+    page = await t.openPanel();
+    const before = await page.evaluate(() => matchMedia('(prefers-reduced-motion: reduce)').matches);
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    const after = await page.evaluate(() => matchMedia('(prefers-reduced-motion: reduce)').matches);
+    assert(before === false && after === true, `reduced-motion emulation did not take: before ${before}, after ${after}`);
+    const res = await page.goto(new URL('/overlay.html', t.sandbox.url).href);
+    assert(res && res.ok(), `/overlay.html answered ${res && res.status()}`);
+    await page.waitForFunction(() => document.getElementById('ovl')?.dataset.polled === '1', null, { timeout: 15000 });
+    await settled(t, page);
+    await record(page);
+    name = 'Overlay Still Covenant';
+    t.appendSession([groundDrop({ name, rarity: 'Angelic', item_type: 0, item_id: 1400 + nextEvent, weapon_type: 1, amount: 1 })]);
+    await until(() => cardName(page), () => name, 'the drop card under reduced motion', 8000);
+    await until(() => cardName(page), () => null, 'the card leaving under reduced motion', secs * 1000 + 3000);
+    seen = await seenOn(page, '.ovl-flourish');
+    assert(seen.some((m) => m.state === 'enter' && m.prop === 'opacity'), `the card does not fade in under reduced motion: ${JSON.stringify(seen)}`);
+    assert(seen.some((m) => m.state === 'leave' && m.prop === 'opacity'), `the card does not fade out under reduced motion: ${JSON.stringify(seen)}`);
+    assert(!seen.some((m) => m.prop !== 'opacity'), `the card moves under reduced motion: ${JSON.stringify(seen)}`);
   });
 
   await t.check('overlay-never-claims-or-plays', async () => {

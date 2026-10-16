@@ -1216,6 +1216,10 @@
     {
       "selector": ".ovl-ticker",
       "why": "a 1px color/border/subtle top rule separates the overlay's newest drops from its counters, like the Modifiers group divider; decorative, so no contrast pair"
+    },
+    {
+      "selector": ".trk-menu",
+      "why": "the sound lists' More list (duplicate, import, export, delete) floats over its card, so it has the theme picker list's 1px color/border/subtle edge, 8px corners and Tray shadow (PR #220 review)"
     }
   ],
   "contrastPairs": [

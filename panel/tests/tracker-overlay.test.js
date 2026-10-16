@@ -8,6 +8,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   FlourishQueue, GROUP_MS, LEAVE_MS, MAX_WAITING, TICKER_ROWS, cardMs, dropCard, overlayState, tickerRows, zoneCard,
 } from '../src/overlay/queue.js';
@@ -187,4 +188,15 @@ test('the top line says what the tracker is doing, shortest form', () => {
   assert.deepEqual(overlayState({ on: true, session: { live: true }, catching_up: true }), { text: 'Catching up', tone: 'warn' });
   assert.deepEqual(overlayState({ on: true, session: { live: true }, snapshot: { paused: true } }), { text: 'Clock paused', tone: 'off' });
   assert.deepEqual(overlayState({ on: true, session: { live: true }, snapshot: { paused: false } }), { text: 'Recording', tone: 'on' });
+});
+
+// ---- The leaving fade ----------------------------------------------------
+
+test('LEAVE_MS is the leaving fade, --motion-duration-fast in tokens.css', () => {
+  // The queue keeps a leaving card this long, so the CSS fade (overlay.css,
+  // fast) finishes before the card is removed: the two must not drift apart.
+  const css = readFileSync(new URL('../src/tokens.css', import.meta.url), 'utf8');
+  const declared = [...css.matchAll(/--motion-duration-fast:\s*([\d.]+)(ms|s)\s*;/g)];
+  assert.ok(declared.length > 0, 'tokens.css declares no --motion-duration-fast');
+  for (const [, value, unit] of declared) assert.equal(Number(value) * (unit === 's' ? 1000 : 1), LEAVE_MS);
 });

@@ -175,7 +175,7 @@
         <div class="trk-head-side"><span class="trk-count">{span(run.secs)}</span><button type="button" class="btn" id="trkRunCopy" onclick={copy}>Copy card</button></div>
       </div>
       <p class="trk-sub">{whoLine(run)}</p>
-      <p class="trk-copy-state" id="trkRunCopyState" role="status">{copyState}</p>
+      <p class="trk-copy-state trk-live" id="trkRunCopyState" role="status">{copyState}</p>
       <div class="trk-totals">
         {#each totals as t (t.key)}
           <div class="trk-total" data-total={t.key}>
@@ -216,7 +216,7 @@
     <section class="card trk-half" aria-labelledby="trkRunCardTitle">
       <div class="trk-head"><h2 id="trkRunCardTitle">Run card</h2></div>
       <p class="hint">What Copy card puts on the clipboard, drawn in this theme's colours, to paste into a chat.</p>
-      <canvas class="trk-runcard" id="trkRunCard" aria-label={cardLabel(run)} bind:this={canvas}></canvas>
+      <canvas class="trk-runcard" id="trkRunCard" role="img" aria-label={cardLabel(run)} bind:this={canvas}></canvas>
     </section>
   {/if}
 </section>
@@ -243,28 +243,8 @@
   .trk-run-when { font-size: var(--font-size-sm); font-weight: var(--font-weight-medium); }
   .trk-run-len { color: var(--color-text-muted); font-family: var(--font-mono-family), Consolas, monospace; font-size: var(--font-size-xs); text-align: right; }
   .trk-run-sum { grid-column: 1 / -1; min-width: 0; overflow: hidden; color: var(--color-text-muted); font-family: var(--font-mono-family), Consolas, monospace; font-size: var(--font-size-xs); text-overflow: ellipsis; white-space: nowrap; }
-  .trk-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-4); }
-  .trk-quiet {
-    display: inline-flex;
-    align-items: center;
-    min-height: 28px;
-    padding: 0 var(--space-4);
-    border: 0;
-    border-radius: var(--radius-sm);
-    background: none;
-    color: var(--color-text-muted);
-    font: inherit;
-    font-size: var(--font-size-sm);
-    cursor: pointer;
-  }
-  .trk-confirm { display: flex; flex-direction: column; gap: var(--space-4); padding-top: var(--space-6); border-top: 1px solid var(--color-border-subtle); }
-  .trk-confirm-title { margin: 0; color: var(--color-text-primary); font-size: var(--font-size-sm); font-weight: var(--font-weight-medium); }
-  .trk-confirm .hint { margin: 0; }
-  .trk-empty { margin: 0; padding: var(--space-7) 0; color: var(--color-text-faint); font-size: var(--font-size-sm); }
-  .trk-error { display: flex; align-items: center; gap: var(--space-4); color: var(--color-text-primary); }
-  .trk-error svg { flex: none; width: 16px; height: 16px; color: var(--color-danger); stroke: currentColor; stroke-width: 1.4; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+  /* Empty, it takes no room but stays a live region (app.css's .trk-live). */
   .trk-copy-state { margin: 0; color: var(--color-text-muted); font-size: var(--font-size-xs); }
-  .trk-copy-state:empty { display: none; }
 
   .trk-totals { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-7) var(--space-9); }
   .trk-total { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
@@ -294,6 +274,5 @@
 
   @media (hover: hover) and (pointer: fine) {
     .trk-run:hover { background-color: var(--color-bg-hover); }
-    .trk-quiet:hover { color: var(--color-text-primary); background-color: var(--color-bg-hover); }
   }
 </style>

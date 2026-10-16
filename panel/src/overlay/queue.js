@@ -59,7 +59,7 @@ export function overlayState({ on = false, session = null, snapshot = null, catc
 
 /** The same drop again within this many ms counts on the card (×2) instead of queueing. */
 export const GROUP_MS = 1500;
-/** The card's leaving fade (`--motion-duration-fast`). */
+/** The card's leaving fade (`--motion-duration-fast`; tests/tracker-overlay.test.js holds them equal). */
 export const LEAVE_MS = 120;
 /** How many cards may wait behind the one shown. */
 export const MAX_WAITING = 3;

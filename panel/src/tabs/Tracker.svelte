@@ -90,8 +90,8 @@
   <section class="card" id="trackerCard" aria-labelledby="trkSwitchTitle">
     <div class="density-top">
       <h2 id="trkSwitchTitle">Session tracker</h2>
-      <!-- The row's first text names the Enabled mods entry ("Tracker"); sighted readers see "Enabled". -->
-      <div class="row"><span class="lbl"><span class="visually-hidden">Tracker</span><span aria-hidden="true">Enabled</span></span><label class="switch"><input type="checkbox" id="mod_tracker" aria-label="Session tracker"><span class="sl"></span></label><span class="val off" id="mtrval">off</span></div>
+      <!-- The row's first text names the Enabled mods entry ("Tracker"); sighted readers see "Enabled", which the switch's name ends with. -->
+      <div class="row"><span class="lbl"><span class="visually-hidden">Tracker</span><span aria-hidden="true">Enabled</span></span><label class="switch"><input type="checkbox" id="mod_tracker" aria-label="Session tracker enabled"><span class="sl"></span></label><span class="val off" id="mtrval">off</span></div>
     </div>
     <p class="hint">Counts the gold, experience, kills and the five rarities you find while you play, keeps a journal of those drops, and files a run when a session ends. It only reads the game. Off by default.</p>
     <p class="trk-state" id="trackerState" role="status"><span class="trk-dot {line.tone}" aria-hidden="true"></span>{line.text}</p>

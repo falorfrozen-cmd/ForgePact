@@ -14,6 +14,7 @@ export const EXPECTED = [
   'a-blank-entry-is-refused',
   'a-refusal-is-shown-and-the-list-kept',
   'copy-puts-an-entry-on-the-clipboard',
+  'a-removed-entry-hands-focus-on',
 ];
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -52,6 +53,14 @@ async function shownEquals(page, items) {
   }, items, { timeout: 5000 }).catch(() => {});
   const got = await shown(page);
   assert(same(got, items), `the page shows ${JSON.stringify(got)}, the API holds ${JSON.stringify(items)}`);
+}
+
+// What has focus: the element's id, or a Remove button (which has none) by its entry.
+const focused = (page) => page.evaluate(() => document.activeElement?.id || document.activeElement?.getAttribute('aria-label') || document.activeElement?.tagName);
+async function focusIs(page, want, what) {
+  await page.waitForFunction((w) => (document.activeElement?.id || document.activeElement?.getAttribute('aria-label')) === w, want, { timeout: 5000 }).catch(() => {});
+  const got = await focused(page);
+  assert(got === want, `${what}: focus is on ${got}, not ${want}`);
 }
 
 async function add(page, text) {
@@ -173,5 +182,34 @@ export default async function (t) {
     // Copying changes nothing on the list.
     assert(same((await t.api('/api/tracker/shopping')).items, items), 'copying changed the saved list');
     await seed(t, []);
+  });
+
+  await t.check('a-removed-entry-hands-focus-on', async () => {
+    // The button that had focus goes with its row: focus moves to the next
+    // entry's Remove, else the one before, else the field.
+    const items = await seed(t, ['Ber Rune', 'Jah Rune', 'Zed Rune']);
+    const page = await openShop(t);
+    await shownEquals(page, items);
+    const remove = (name) => page.locator(`[data-section="shopping"] .trk-shop li button[aria-label="Remove ${name}"]`);
+    await remove('Jah Rune').focus();
+    await Promise.all([page.waitForRequest(isShoppingPost), page.keyboard.press('Enter')]);
+    await shownEquals(page, ['Ber Rune', 'Zed Rune']);
+    await focusIs(page, 'Remove Zed Rune', 'after removing the middle entry');
+    await Promise.all([page.waitForRequest(isShoppingPost), page.keyboard.press('Enter')]);
+    await shownEquals(page, ['Ber Rune']);
+    await focusIs(page, 'Remove Ber Rune', 'after removing the last entry');
+    await Promise.all([page.waitForRequest(isShoppingPost), page.keyboard.press('Enter')]);
+    await shownEquals(page, []);
+    await focusIs(page, 'trkShopField', 'after removing the only entry');
+    // "Copied" is spoken by a status line that was there before it.
+    await seed(t, ['Zed Rune']);
+    const fresh = await openShop(t);
+    await shownEquals(fresh, ['Zed Rune']);
+    const live = fresh.locator('[data-section="shopping"] p.trk-live[role="status"]');
+    assert(await live.count() === 1 && (await live.textContent()).trim() === '', 'no empty status line waits for a copy');
+    await fresh.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin: new URL(t.sandbox.url).origin });
+    await fresh.click('[data-section="shopping"] .trk-shop li .trk-copy');
+    await fresh.waitForFunction(() => document.querySelector('[data-section="shopping"] p.trk-live')?.textContent.trim() === 'Copied Zed Rune', null, { timeout: 3000 }).catch(() => {});
+    assert((await live.textContent()).trim() === 'Copied Zed Rune', `the status line says ${await live.textContent()}`);
   });
 }

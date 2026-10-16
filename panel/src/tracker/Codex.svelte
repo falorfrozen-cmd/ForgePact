@@ -106,21 +106,7 @@
 <style>
   /* design/tracker/tracker.css's codex and table rules, tokens only. */
   .trk-tools { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-4); }
-  .trk-field {
-    flex: 1 1 220px;
-    height: 32px;
-    min-width: 0;
-    padding: 0 var(--space-6);
-    border: 1px solid var(--color-border-strong);
-    border-radius: var(--radius-md);
-    background-color: var(--color-bg-sunken);
-    color: var(--color-text-primary);
-    font: inherit;
-    font-size: var(--font-size-sm);
-  }
-  .trk-field::placeholder { color: var(--color-text-muted); }
-  .trk-error { display: flex; align-items: center; gap: var(--space-4); color: var(--color-text-primary); }
-  .trk-error svg { flex: none; width: 16px; height: 16px; color: var(--color-danger); stroke: currentColor; stroke-width: 1.4; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+  .trk-tools .trk-field { flex: 1 1 220px; }
   .trk-scroll { min-width: 0; overflow-x: auto; }
   .trk-table { width: 100%; border-collapse: collapse; color: var(--color-text-primary); font-size: var(--font-size-sm); }
   .trk-table th {
@@ -157,7 +143,6 @@
     text-align: left;
     text-overflow: ellipsis;
   }
-  .trk-empty { margin: 0; padding: var(--space-7) 0; color: var(--color-text-faint); font-size: var(--font-size-sm); }
   /* Hover, only for a real pointer, colour only. */
   @media (hover: hover) and (pointer: fine) {
     .trk-codex tbody tr:hover { background-color: var(--color-bg-hover); }

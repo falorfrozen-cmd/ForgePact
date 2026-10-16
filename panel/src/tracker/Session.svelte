@@ -105,7 +105,7 @@
       <div class="trk-head">
         <h2 id="trkSessionTitle">{character?.name || 'This session'}</h2>
         <div class="trk-head-side">
-          <span class="trk-clock" class:paused={snap.paused} id="trkClock" data-secs={snap.session_secs ?? 0}
+          <span class="trk-clock" class:paused={snap.paused} id="trkClock" data-secs={snap.session_secs ?? 0} role="timer"
             aria-label={snap.paused ? 'Session time, paused' : 'Session time'}>{sessionClock(snap)}</span>
           {#if client.on && !confirming}
             <button type="button" class="btn" id="trkPause" disabled={busy} onclick={togglePause}>{snap.paused ? 'Carry on' : 'Pause clock'}</button>
@@ -229,7 +229,8 @@
                 <line class="trk-grid-line" x1="0" y1={CHART_H / 2} x2={CHART_W} y2={CHART_H / 2} vector-effect="non-scaling-stroke"/>
                 {#if c.samples}<polyline class="trk-line" vector-effect="non-scaling-stroke" points={c.attr}/>{/if}
               </svg>
-              <figcaption><span class="trk-axis-text">0:00</span><span class="trk-axis-text">{clock(c.span)}</span></figcaption>
+              <!-- The time axis; the chart's own label already says the span. -->
+              <div class="trk-axis" aria-hidden="true"><span class="trk-axis-text">0:00</span><span class="trk-axis-text">{clock(c.span)}</span></div>
             </figure>
           {/each}
         </div>
@@ -272,26 +273,6 @@
     line-height: var(--font-line-height-tight);
   }
   .trk-clock.paused { color: var(--color-text-muted); }
-  .trk-quiet {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-3);
-    min-height: 28px;
-    padding: 0 var(--space-4);
-    border: 0;
-    border-radius: var(--radius-sm);
-    background: none;
-    color: var(--color-text-muted);
-    font: inherit;
-    font-size: var(--font-size-sm);
-    white-space: nowrap;
-    cursor: pointer;
-  }
-  .trk-quiet:disabled { cursor: default; }
-  .trk-confirm { display: flex; flex-direction: column; gap: var(--space-4); }
-  .trk-confirm .hint { margin: 0; }
-  .trk-confirm-title { margin: 0; color: var(--color-text-primary); font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); }
-  .trk-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-4); }
 
   .trk-totals {
     display: grid;
@@ -384,7 +365,8 @@
 
   .trk-series { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-7); }
   .trk-chart { display: flex; flex-direction: column; gap: var(--space-3); margin: 0; }
-  .trk-chart figcaption {
+  .trk-chart figcaption,
+  .trk-chart .trk-axis {
     display: flex;
     justify-content: space-between;
     gap: var(--space-6);
@@ -436,12 +418,10 @@
   }
   .trk-tag-word { color: var(--color-text-muted); font-size: var(--font-size-xs); }
   .trk-tag-none { background: none; color: var(--color-text-muted); }
-  .trk-empty { margin: 0; padding: var(--space-7) 0; color: var(--color-text-faint); font-size: var(--font-size-sm); }
 
   /* Hover, only for a real pointer, colour only. */
   @media (hover: hover) and (pointer: fine) {
     .trk-entry:hover { background-color: var(--color-bg-hover); }
-    .trk-quiet:hover:not(:disabled) { background-color: var(--color-bg-hover); color: var(--color-text-primary); }
   }
 
   @media (max-width: 720px) {

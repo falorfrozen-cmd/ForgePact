@@ -375,7 +375,7 @@ The spacing scale is an 11-step ramp (2, 4, 6, 8, 10, 12, 16, 20, 24, 32, 40). T
 The system is flat and tonal. Four steps carry depth: **sunken** for wells you type into, **base** for the page, **raised** for cards, and **hover** for what the pointer is on and for floating surfaces. Shadows exist only under layers that float above the page. Each shadow is tinted from `bg-sunken`, so it deepens the palette rather than greying it.
 
 ### Shadow Vocabulary
-- **Tray** (`box-shadow: 0 12px 32px color-mix(in srgb, var(--color-bg-sunken) 80%, transparent)`): the enabled-mods tray list and the theme picker's list.
+- **Tray** (`box-shadow: 0 12px 32px color-mix(in srgb, var(--color-bg-sunken) 80%, transparent)`): the enabled-mods tray list, the theme picker's list and the Tracker sound lists' More list.
 - **Float** (`box-shadow: 0 8px 24px color-mix(in srgb, var(--color-bg-sunken) 80%, transparent)`): both toasts and both tooltips (the plugin warning and an idle slider's note).
 
 ### Named Rules
@@ -585,7 +585,11 @@ chart with two scales. No legend, fill or point markers.
 **The overlay's look.**
 - One plate, 444 x 147 at scale 1 (444 x 211 with the newest drops, 444 x 104
   with counters only): the state and clock, the zone; gold, experience and
-  kills with rates; the five rarity counts and SS.
+  kills with rates; the five rarity counts and SS. Those six sit on one line
+  while their counts fit; when they no longer do (counts in the thousands),
+  the line wraps and the plate grows, so no count is cut.
+- Its Size runs from 75% to 200%: below 75% its 12px text would fall under
+  9px.
 - Flat in every palette: the palette's colours and none of Ember's artwork,
   serif or glow.
 - Solid by default. With a transparent window only the plate's background is
@@ -604,9 +608,12 @@ motion: it enters over `--motion-duration-base` on the emphasized easing
 (opacity and an 8px rise) and leaves over `fast` on the standard easing
 (opacity). Under reduced motion it fades only.
 
-**Edges.** Two new allowlisted borders: `.trk-field`, the tab's text fields'
-1px strong edge, and `.ovl-ticker`, the 1px subtle rule above the overlay's
-newest drops.
+**Edges.** Three new allowlisted borders: `.trk-field`, the tab's text fields'
+1px strong edge; `.ovl-ticker`, the 1px subtle rule above the overlay's
+newest drops; and `.trk-menu`, the sound lists' More list, which floats over
+its card like the theme picker's list and so takes that list's 1px subtle
+edge, 8px corners and the Tray shadow. Nothing else in the tab draws an edge:
+an in-place confirmation sits in its card's flow with no rule above it.
 
 ## Do's and Don'ts
 

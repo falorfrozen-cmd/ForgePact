@@ -106,27 +106,6 @@
   .trk-alert .row { flex-wrap: nowrap; }
   .trk-sound-src { display: flex; align-items: center; gap: var(--space-4); margin: 0; padding-left: calc(168px + var(--space-7)); color: var(--color-text-muted); }
   .trk-sound-src b { color: var(--color-text-primary); font-family: var(--font-mono-family), Consolas, monospace; font-weight: var(--font-weight-regular); }
-  .trk-quiet {
-    display: inline-flex;
-    flex: none;
-    align-items: center;
-    gap: var(--space-3);
-    min-height: 28px;
-    padding: 0 var(--space-4);
-    border: 0;
-    border-radius: var(--radius-sm);
-    background: none;
-    color: var(--color-text-muted);
-    font: inherit;
-    font-size: var(--font-size-sm);
-    white-space: nowrap;
-    cursor: pointer;
-  }
-  .trk-quiet:disabled { cursor: default; }
-  .trk-quiet svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; fill: none; }
-  @media (hover: hover) and (pointer: fine) {
-    .trk-quiet:hover:not(:disabled) { color: var(--color-text-primary); background-color: var(--color-bg-hover); }
-  }
   @media (max-width: 1100px) {
     .trk-sound-src { padding-left: calc(152px + var(--space-7)); }
   }

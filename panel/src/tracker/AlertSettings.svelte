@@ -88,9 +88,8 @@
     <section class="card" aria-labelledby="trkSoundsTitle">
       <h2 id="trkSoundsTitle">Alert sounds</h2>
       <p class="hint">A sound plays once for each drop of a rarity you turn on, from this window, whichever tab is open. Turning a rarity off here also keeps it off the overlay's drop card.</p>
-      {#if silent}
-        <p class="trk-gesture" role="status"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5 14.5 13.5h-13ZM8 6.5v3.2M8 11.8v.1"/></svg>Click anywhere in the panel to let it play alert sounds.</p>
-      {/if}
+      <!-- Always there, so the note is announced when it appears; empty, it takes no room. -->
+      <div class="trk-live" role="status">{#if silent}<p class="trk-gesture"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5 14.5 13.5h-13ZM8 6.5v3.2M8 11.8v.1"/></svg>Click anywhere in the panel to let it play alert sounds.</p>{/if}</div>
       {#each RARITY_KEYS as key (key)}
         <SoundRow {client} {key} label={RARITY_NAMES[key]} rarityClass={'r-' + key} {write} onerror={(m) => (soundError = m)} />
       {/each}
@@ -113,7 +112,7 @@
       <section class="card trk-half" aria-labelledby="trkDiscordTitle" id="trkDiscordCard">
         <h2 id="trkDiscordTitle">Discord status</h2>
         <p class="hint">Shows the zone, the difficulty, this run's finds and how long it has been going under your name in Discord, while the game is open. Discord must run on this computer.</p>
-        <div class="row"><span class="lbl">Show in Discord</span><label class="switch"><input type="checkbox" id="trkDiscord" checked={!!doc.discord} aria-label="Show the run in Discord" onchange={(e) => discord(e.currentTarget)}><span class="sl"></span></label></div>
+        <div class="row"><span class="lbl">Show in Discord</span><label class="switch"><input type="checkbox" id="trkDiscord" checked={!!doc.discord} aria-label="Show in Discord" onchange={(e) => discord(e.currentTarget)}><span class="sl"></span></label></div>
         {#if discordError}<p class="note trk-error" role="alert"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5 14.5 13.5h-13ZM8 6.5v3.2M8 11.8v.1"/></svg>{discordError}</p>{/if}
       </section>
     {/if}
@@ -135,8 +134,6 @@
     font-size: var(--font-size-sm);
   }
   .trk-gesture svg { flex: none; width: 16px; height: 16px; color: var(--color-warn); stroke: currentColor; stroke-width: 1.4; fill: none; stroke-linecap: round; stroke-linejoin: round; }
-  .trk-error { display: flex; align-items: center; gap: var(--space-4); color: var(--color-text-primary); }
-  .trk-error svg { flex: none; width: 16px; height: 16px; color: var(--color-danger); stroke: currentColor; stroke-width: 1.4; fill: none; stroke-linecap: round; stroke-linejoin: round; }
   .trk-sound-src { margin: 0; padding-left: calc(168px + var(--space-7)); }
   @media (max-width: 1100px) {
     .trk-sound-src { padding-left: calc(152px + var(--space-7)); }

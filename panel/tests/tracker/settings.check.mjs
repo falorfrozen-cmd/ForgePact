@@ -30,6 +30,7 @@ export const EXPECTED = [
   'filter-export-and-import-round-trip',
   'unknown-fields-survive-every-write',
   'discord-switch-hidden-unless-presence-available',
+  'more-is-a-disclosure-and-removed-controls-hand-focus-on',
 ];
 
 const SECTION = '[data-section="alerts"]';
@@ -501,6 +502,88 @@ export default async function (t) {
     assert(await switchOf(offered).isChecked() === !!before, 'the Discord switch does not show the API value');
     await switchOf(offered).click({ force: true });
     await until(t, (d) => d.discord === !before, 'the Discord switch did not write');
+    await reset();
+  });
+
+  await t.check('more-is-a-disclosure-and-removed-controls-hand-focus-on', async () => {
+    await reset();
+    const seeded = structuredClone(initial);
+    seeded.filters = [{ id: 'f1', name: 'Mine', lists: [
+      { id: 'l1', name: 'Runes', enabled: true, volume: 0.5, items: ['Ber Rune', 'Jah Rune', 'Zed Rune'] },
+      { id: 'l2', name: 'Keys', enabled: true, volume: 0.5, items: [] },
+    ] }];
+    seeded.filter = 'f1';
+    seeded.notable = [{ label: 'First', names: ['Ber Rune'] }, { label: 'Second', names: ['Zed Rune'] }];
+    await writeSettings(t, seeded);
+    const page = await openAlerts(t);
+    const focusIs = async (want, what) => {
+      const read = () => page.evaluate(() => document.activeElement?.id || document.activeElement?.getAttribute('aria-label') || document.activeElement?.tagName);
+      await page.waitForFunction((w) => (document.activeElement?.id || document.activeElement?.getAttribute('aria-label')) === w, want, { timeout: 5000 }).catch(() => {});
+      const got = await read();
+      assert(got === want, `${what}: focus is on ${got}, not ${want}`);
+    };
+    const more = page.locator('#trkFilterMore');
+    const expanded = () => more.getAttribute('aria-expanded');
+
+    // More (…) is a disclosure: aria-expanded on its trigger, no menu roles.
+    assert(await more.getAttribute('aria-haspopup') === null, 'the trigger still announces a menu');
+    assert(await expanded() === 'false', 'More starts open');
+    await more.focus();
+    await page.keyboard.press('Enter');
+    await page.locator('#trkFilterMenu').waitFor({ state: 'visible', timeout: 3000 });
+    assert(await expanded() === 'true', 'the trigger does not say it is expanded');
+    assert(await page.locator(`${SECTION} [role="menu"], ${SECTION} [role="menuitem"]`).count() === 0, 'menu roles without menu keys');
+    assert(await more.getAttribute('aria-controls') === 'trkFilterMenu', 'the trigger does not name what it opens');
+    // Escape from the trigger closes it; focus stays there.
+    await page.keyboard.press('Escape');
+    await page.locator('#trkFilterMenu').waitFor({ state: 'detached', timeout: 3000 });
+    assert(await expanded() === 'false', 'Escape on the trigger did not close More');
+    await focusIs('trkFilterMore', 'after Escape on the trigger');
+    // Escape from inside closes it too, and focus goes back to the trigger.
+    await page.keyboard.press('Enter');
+    await page.locator('#trkFilterDuplicate').focus();
+    await page.keyboard.press('Escape');
+    await page.locator('#trkFilterMenu').waitFor({ state: 'detached', timeout: 3000 });
+    await focusIs('trkFilterMore', 'after Escape inside More');
+    // Delete… asks in place with focus on Keep it; Escape keeps the filter and returns focus.
+    await page.keyboard.press('Enter');
+    await page.locator('#trkFilterDelete').click();
+    await focusIs('trkFilterDeleteNo', 'after Delete…');
+    await page.keyboard.press('Escape');
+    await page.locator('#trkFilterConfirm').waitFor({ state: 'detached', timeout: 3000 });
+    await focusIs('trkFilterMore', 'after keeping the filter');
+    assert((await settings(t)).filters.length === 1, 'keeping the filter deleted it');
+
+    // A removed item's focus goes to the next item, else the one before, else the field.
+    const remove = (name) => page.locator(`${SECTION} .trk-items button[aria-label="Remove ${name}"]`);
+    await remove('Jah Rune').focus();
+    await page.keyboard.press('Enter');
+    await until(t, (d) => !d.filters[0].lists[0].items.includes('Jah Rune'), 'Jah Rune was not removed');
+    await focusIs('Remove Zed Rune', 'after removing the middle item');
+    await page.keyboard.press('Enter');
+    await until(t, (d) => !d.filters[0].lists[0].items.includes('Zed Rune'), 'Zed Rune was not removed');
+    await focusIs('Remove Ber Rune', 'after removing the last item');
+    await page.keyboard.press('Enter');
+    await until(t, (d) => d.filters[0].lists[0].items.length === 0, 'Ber Rune was not removed');
+    await focusIs('trkItemField', 'after removing the only item');
+
+    // Deleting a list asks with focus on Keep it, and hands focus to the list then shown.
+    await page.locator('#trkListDelete').click();
+    await focusIs('trkListDeleteNo', 'after Delete list…');
+    await page.locator('#trkListDeleteYes').click();
+    await until(t, (d) => d.filters[0].lists.length === 1, 'the list was not deleted');
+    await page.waitForFunction(() => document.activeElement?.matches?.('.trk-lists button[aria-pressed="true"]') === true, null, { timeout: 5000 }).catch(() => {});
+    const onList = await page.evaluate(() => document.activeElement?.matches?.('.trk-lists button[aria-pressed="true"]') ? document.activeElement.textContent.trim() : null);
+    assert(onList === 'Keys', `after deleting a list focus is on ${onList}, not the Keys list now shown`);
+
+    // A removed notable group's focus goes to the next group's Remove, else the name field.
+    await page.locator('#trkNotable button[aria-label="Remove the First group"]').focus();
+    await page.keyboard.press('Enter');
+    await until(t, (d) => d.notable.length === 1, 'the First group was not removed');
+    await focusIs('Remove the Second group', 'after removing the first group');
+    await page.keyboard.press('Enter');
+    await until(t, (d) => (d.notable ?? []).length === 0, 'the Second group was not removed');
+    await focusIs('trkNotableLabel', 'after removing the last group');
     await reset();
   });
 }

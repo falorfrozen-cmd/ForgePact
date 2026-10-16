@@ -43,7 +43,11 @@
   let pending = Promise.resolve();
 
   const pct = (value, fallback) => Math.round((typeof value === 'number' && Number.isFinite(value) ? value : fallback) * 100);
-  const scalePct = $derived(draft.scale ?? pct(s.scale, 1));
+  // The size's range, as Overlay.svelte clamps it: below 75% its 12px text
+  // would shrink under 9px. A smaller size another program saved shows as 75%.
+  const SCALE_MIN = 75;
+  const SCALE_MAX = 200;
+  const scalePct = $derived(draft.scale ?? Math.min(SCALE_MAX, Math.max(SCALE_MIN, pct(s.scale, 1))));
   const opacityPct = $derived(draft.opacity ?? pct(s.opacity, 1));
   const secs = $derived(draft.flourish_secs ?? (typeof s.flourish_secs === 'number' ? Math.round(s.flourish_secs) : 4));
 
@@ -112,9 +116,9 @@
     {/if}
     {#if failure}<p class="trk-state" id="trkOverlayError" role="alert"><span class="trk-dot warn" aria-hidden="true"></span>{failure}</p>{/if}
 
-    <div class="row"><span class="lbl">Open with the game</span><label class="switch"><input type="checkbox" id="trkOvlAutoShow" aria-label="Open the overlay with the game" checked={s.auto_show !== false} disabled={!loaded} onchange={(e) => toggle('auto_show', e)}><span class="sl"></span></label></div>
-    <div class="row"><span class="lbl">Lock in place</span><label class="switch"><input type="checkbox" id="trkOvlLocked" aria-label="Lock the overlay in place" checked={s.locked === true} disabled={!loaded} onchange={(e) => toggle('locked', e)}><span class="sl"></span></label></div>
-    <div class="row"><span class="lbl">Newest drops</span><label class="switch"><input type="checkbox" id="trkOvlTicker" aria-label="Show the newest drops" checked={s.ticker === true} disabled={!loaded} onchange={(e) => toggle('ticker', e)}><span class="sl"></span></label></div>
+    <div class="row"><span class="lbl">Open with the game</span><label class="switch"><input type="checkbox" id="trkOvlAutoShow" aria-label="Open with the game" checked={s.auto_show !== false} disabled={!loaded} onchange={(e) => toggle('auto_show', e)}><span class="sl"></span></label></div>
+    <div class="row"><span class="lbl">Lock in place</span><label class="switch"><input type="checkbox" id="trkOvlLocked" aria-label="Lock in place" checked={s.locked === true} disabled={!loaded} onchange={(e) => toggle('locked', e)}><span class="sl"></span></label></div>
+    <div class="row"><span class="lbl">Newest drops</span><label class="switch"><input type="checkbox" id="trkOvlTicker" aria-label="Newest drops" checked={s.ticker === true} disabled={!loaded} onchange={(e) => toggle('ticker', e)}><span class="sl"></span></label></div>
     <div class="row"><span class="lbl">Counters only</span><label class="switch"><input type="checkbox" id="trkOvlCompact" aria-label="Counters only" checked={s.compact === true} disabled={!loaded} onchange={(e) => toggle('compact', e)}><span class="sl"></span></label></div>
     <div class="row">
       <span class="lbl">Opacity</span>
@@ -129,13 +133,13 @@
     <div class="row">
       <span class="lbl">Size</span>
       <div class="range-control">
-        <input type="range" id="trkOvlScale" min="50" max="200" step="5" value={scalePct} aria-label="Overlay size" disabled={!loaded}
+        <input type="range" id="trkOvlScale" min={SCALE_MIN} max={SCALE_MAX} step="5" value={scalePct} aria-label="Overlay size" disabled={!loaded}
           oninput={(e) => { draft = { ...draft, scale: Number(e.currentTarget.value) }; }}
           onchange={(e) => setRange('scale', Number(e.currentTarget.value), scaleDoc)}>
         <div class="value-stepper">
-          <button type="button" class="step-button" id="trkOvlScaleLess" aria-label="Smaller" disabled={!loaded || scalePct <= 50} onclick={() => setRange('scale', Math.max(50, scalePct - 5), scaleDoc)}>−</button>
+          <button type="button" class="step-button" id="trkOvlScaleLess" aria-label="Smaller" disabled={!loaded || scalePct <= SCALE_MIN} onclick={() => setRange('scale', Math.max(SCALE_MIN, scalePct - 5), scaleDoc)}>−</button>
           <span class="val">{scalePct}%</span>
-          <button type="button" class="step-button" id="trkOvlScaleMore" aria-label="Larger" disabled={!loaded || scalePct >= 200} onclick={() => setRange('scale', Math.min(200, scalePct + 5), scaleDoc)}>+</button>
+          <button type="button" class="step-button" id="trkOvlScaleMore" aria-label="Larger" disabled={!loaded || scalePct >= SCALE_MAX} onclick={() => setRange('scale', Math.min(SCALE_MAX, scalePct + 5), scaleDoc)}>+</button>
         </div>
       </div>
     </div>
@@ -147,7 +151,7 @@
   <section class="card trk-half" id="trkFlourishCard" aria-labelledby="trkFlourishTitle">
     <div class="trk-head">
       <h2 id="trkFlourishTitle">Drop card</h2>
-      <label class="switch"><input type="checkbox" id="trkFlourishOn" aria-label="Show a card for chosen drops" checked={flourishOn} disabled={!loaded} onchange={(e) => toggle('flourish', e)}><span class="sl"></span></label>
+      <label class="switch"><input type="checkbox" id="trkFlourishOn" aria-label="Drop card" checked={flourishOn} disabled={!loaded} onchange={(e) => toggle('flourish', e)}><span class="sl"></span></label>
     </div>
     <p class="hint">The overlay shows a card for a few seconds when one of these drops. The journal keeps every drop either way.</p>
     <div class="ovs-picks">
@@ -167,7 +171,7 @@
     <div class="row">
       <span class="lbl">Shown for</span>
       <div class="range-control">
-        <input type="range" id="trkFlourishSecs" min="2" max="10" step="1" value={secs} aria-label="Card duration" disabled={!loaded || !flourishOn}
+        <input type="range" id="trkFlourishSecs" min="2" max="10" step="1" value={secs} aria-label="Card shown for" disabled={!loaded || !flourishOn}
           oninput={(e) => { draft = { ...draft, flourish_secs: Number(e.currentTarget.value) }; }}
           onchange={(e) => setRange('flourish_secs', Number(e.currentTarget.value), (v) => v)}>
         <div class="value-stepper">

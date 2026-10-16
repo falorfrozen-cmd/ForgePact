@@ -17,8 +17,15 @@
   //   both there and in a browser. Import reads such a file, or the clipboard.
   // - Item names come from the item codex (`/api/tracker/codex`) as
   //   suggestions; any name can be typed, as in the Tracker.
-  // - Deleting a filter or a list asks first, in place.
-  import { onMount } from 'svelte';
+  // - Deleting a filter or a list asks first, in place, as End run does on
+  //   Session: focus goes to Keep it, and back to what asked once it is gone.
+  // - More (…) is a disclosure, not a menu: a plain group of buttons under a
+  //   trigger that carries aria-expanded. Escape closes it from the trigger or
+  //   from inside, and a button that closes it hands focus back to the trigger.
+  // - A control that goes away while it has focus hands it on: a removed
+  //   item's to the next item (or the one before, or the field), a deleted
+  //   list's to the list now shown.
+  import { onMount, tick } from 'svelte';
   import {
     activeFilter, addFilter, addItem, addList, clashes, duplicateFilter, moveList, removeFilter, removeItem, removeList,
     renameFilter, selectFilter, setListField, volumePercent,
@@ -59,6 +66,8 @@
   let listFile = $state(null);
   let importFile = $state(null);
   let menuButton = $state(null);
+  let itemField = $state(null);
+  let section = $state(null);
 
   // The codex's names, for the item field's suggestions, and each name's rarity for its colour.
   let names = $state([]);
@@ -83,6 +92,37 @@
 
   function say(text) { notice = text; error = null; }
   function fail(text) { error = text; notice = null; }
+
+  // Close More (…); focus goes back to its trigger unless a caller moves it on.
+  function closeMenu(refocus = true) {
+    menuOpen = false;
+    if (refocus) menuButton?.focus();
+  }
+
+  // Focus the first element a selector finds in this card, once the page has drawn.
+  async function focusIn(...selectors) {
+    await tick();
+    for (const selector of selectors) {
+      const el = section?.querySelector(selector);
+      if (el) { el.focus(); return; }
+    }
+  }
+
+  async function ask(what) {
+    closeMenu(false);
+    confirming = what;
+    await focusIn(what === 'filter' ? '#trkFilterDeleteNo' : '#trkListDeleteNo');
+  }
+
+  async function keep() {
+    const what = confirming;
+    confirming = null;
+    await focusIn(what === 'filter' ? '#trkFilterMore' : '#trkListDelete');
+  }
+
+  function confirmKeys(e) {
+    if (e.key === 'Escape') { e.preventDefault(); keep(); }
+  }
 
   async function edit(fn) {
     const res = await write(fn);
@@ -112,7 +152,7 @@
   }
 
   async function duplicate() {
-    menuOpen = false;
+    closeMenu();
     if (!active) return;
     const id = active.id;
     let pairs = [];
@@ -134,10 +174,11 @@
     let keys = [];
     const res = await edit((d) => { keys = removeFilter(d, id); });
     confirming = null;
-    if (res.err) return;
+    if (res.err) { await focusIn('#trkFilterMore'); return; }
     for (const key of keys) if (client.sounds?.[key]) await client.changeSound(key, { clear: true });
     pickedList = null;
     say(`Deleted ${name}.`);
+    await focusIn('#trkFilterMore');
   }
 
   async function writeClipboard(text) {
@@ -160,7 +201,7 @@
   }
 
   async function exportActive() {
-    menuOpen = false;
+    closeMenu();
     if (!active) return;
     busy = true;
     try {
@@ -203,14 +244,14 @@
   }
 
   async function importChosen(e) {
-    menuOpen = false;
+    closeMenu();
     const file = e.currentTarget.files?.[0];
     e.currentTarget.value = '';
     if (file) await importText(await file.text(), file.name);
   }
 
   async function importClipboard() {
-    menuOpen = false;
+    closeMenu();
     let text;
     try { text = await navigator.clipboard.readText(); } catch (e) { fail('The clipboard could not be read. Import the file instead.'); return; }
     await importText(text, 'The clipboard');
@@ -255,10 +296,11 @@
     let key = null;
     const res = await edit((d) => { key = removeList(d, filterId, listId); });
     confirming = null;
-    if (res.err) return;
+    if (res.err) { await focusIn('#trkListDelete'); return; }
     if (key && client.sounds?.[key]) await client.changeSound(key, { clear: true });
     pickedList = null;
     say(`Deleted ${name}.`);
+    await focusIn('.trk-lists button[aria-pressed="true"]', '#trkListAdd');
   }
 
   async function addTyped(e) {
@@ -276,7 +318,13 @@
   async function remove(name) {
     if (!active || !list) return;
     const [filterId, listId] = [active.id, list.id];
-    await edit((d) => removeItem(d, filterId, listId, name));
+    const at = shown.indexOf(name);
+    const res = await edit((d) => removeItem(d, filterId, listId, name));
+    if (res.err) return;
+    // The row went with its button: the next row's, else the one before, else the field.
+    await tick();
+    const rest = [...(section?.querySelectorAll('.trk-items li button') ?? [])];
+    (rest[at] ?? rest[at - 1] ?? itemField)?.focus();
   }
 
   async function test() {
@@ -306,17 +354,19 @@
     if (res.err) fail(res.err); else error = null;
   }
 
+  // Escape closes More (…) from its trigger or from inside it.
   function menuKeys(e) {
-    if (e.key === 'Escape') { menuOpen = false; menuButton?.focus(); }
+    if (e.key === 'Escape' && menuOpen) { e.preventDefault(); closeMenu(); }
   }
 
   const alsoOn = (name) => (clash.get(name.toLowerCase()) ?? []).filter((n) => n !== list?.name).join(', ');
 </script>
 
-<section class="card trk-half" aria-labelledby="trkFilterTitle" id="trkFilters">
+<section class="card trk-half" aria-labelledby="trkFilterTitle" id="trkFilters" bind:this={section}>
   <div class="trk-head"><h2 id="trkFilterTitle">Sound lists</h2><label class="switch"><input type="checkbox" id="trkFilterUse" checked={doc?.use_filter !== false} aria-label="Use the sound lists" onchange={(e) => { const box = e.currentTarget; edit((d) => { d.use_filter = box.checked; return d; }).then((r) => { if (r.err) box.checked = doc?.use_filter !== false; }); }}><span class="sl"></span></label></div>
   <p class="hint">Name the items you hunt. A list's sound plays for them whatever their rarity or grade; an earlier list wins when an item is on two.</p>
-  <div class="trk-actions trk-menu-host">
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="trk-actions trk-menu-host" onkeydown={menuKeys}>
     {#if filters.length}
       <select class="style-select" id="trkFilter" aria-label="Filter" value={active?.id ?? ''} onchange={(e) => pickFilter(e.currentTarget.value)}>
         {#if !active}<option value="" disabled>Pick a filter</option>{/if}
@@ -324,24 +374,27 @@
       </select>
     {/if}
     <button type="button" class="trk-quiet" id="trkFilterNew" onclick={newFilter}>New filter</button>
-    <button type="button" class="trk-quiet trk-icon-button" id="trkFilterMore" aria-label="More filter actions: duplicate, import, export, delete" aria-haspopup="menu" aria-expanded={menuOpen ? 'true' : 'false'} bind:this={menuButton} onclick={() => (menuOpen = !menuOpen)}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8h.01M8 8h.01M12.5 8h.01"/></svg></button>
+    <button type="button" class="trk-quiet trk-icon-button" id="trkFilterMore" aria-label="More filter actions: duplicate, import, export, delete" aria-expanded={menuOpen ? 'true' : 'false'} aria-controls="trkFilterMenu" bind:this={menuButton} onclick={() => (menuOpen = !menuOpen)}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8h.01M8 8h.01M12.5 8h.01"/></svg></button>
     {#if menuOpen}
-      <div class="trk-menu" role="menu" aria-label="Filter actions" tabindex="-1" onkeydown={menuKeys}>
-        <button type="button" role="menuitem" id="trkFilterDuplicate" disabled={!active} onclick={duplicate}>Duplicate</button>
-        <button type="button" role="menuitem" id="trkFilterExport" disabled={!active || busy} onclick={exportActive}>Copy to the clipboard</button>
-        <button type="button" role="menuitem" id="trkFilterImportFile" disabled={busy} onclick={() => importFile?.click()}>Import a file…</button>
-        <button type="button" role="menuitem" id="trkFilterImportPaste" disabled={busy} onclick={importClipboard}>Import from the clipboard</button>
-        <button type="button" role="menuitem" id="trkFilterDelete" disabled={!active} onclick={() => { menuOpen = false; confirming = 'filter'; }}>Delete…</button>
+      <div class="trk-menu" id="trkFilterMenu" role="group" aria-label="Filter actions">
+        <button type="button" id="trkFilterDuplicate" disabled={!active} onclick={duplicate}>Duplicate</button>
+        <button type="button" id="trkFilterExport" disabled={!active || busy} onclick={exportActive}>Copy to the clipboard</button>
+        <button type="button" id="trkFilterImportFile" disabled={busy} onclick={() => importFile?.click()}>Import a file…</button>
+        <button type="button" id="trkFilterImportPaste" disabled={busy} onclick={importClipboard}>Import from the clipboard</button>
+        <button type="button" id="trkFilterDelete" disabled={!active} onclick={() => ask('filter')}>Delete…</button>
       </div>
     {/if}
     <input type="file" class="visually-hidden" id="trkFilterImportInput" accept=".json,application/json" tabindex="-1" aria-label="Import a sound filter file" bind:this={importFile} onchange={importChosen}>
   </div>
 
   {#if confirming === 'filter' && active}
-    <div class="trk-confirm" role="group" aria-label="Delete this filter?">
-      <span>Delete {active.name}, its {lists.length} list{lists.length === 1 ? '' : 's'} and their sounds?</span>
-      <button type="button" class="btn primary" id="trkFilterDeleteYes" onclick={deleteFilter}>Delete filter</button>
-      <button type="button" class="btn" onclick={() => (confirming = null)}>Keep it</button>
+    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+    <div class="trk-confirm" id="trkFilterConfirm" role="group" aria-labelledby="trkFilterConfirmTitle" onkeydown={confirmKeys}>
+      <h3 class="trk-confirm-title" id="trkFilterConfirmTitle">Delete {active.name}, its {lists.length} list{lists.length === 1 ? '' : 's'} and their sounds?</h3>
+      <div class="trk-actions">
+        <button type="button" class="btn primary" id="trkFilterDeleteYes" onclick={deleteFilter}>Delete filter</button>
+        <button type="button" class="btn" id="trkFilterDeleteNo" onclick={keep}>Keep it</button>
+      </div>
     </div>
   {/if}
 
@@ -356,7 +409,7 @@
       <div class="trk-line"><span class="trk-line-label">List name</span><input class="trk-field" id="trkListName" type="text" value={list.name} aria-label="List name" maxlength="60" autocomplete="off"
         onchange={(e) => setField('name', e.currentTarget.value)} onkeydown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}></div>
       <div class="trk-line"><span class="trk-line-label">Plays</span>
-        <label class="switch slider-switch" data-live={list.enabled !== false ? '' : undefined}><input type="checkbox" id="trkListOn" checked={list.enabled !== false} aria-label={'Play ' + list.name + "'s sound"}
+        <label class="switch slider-switch" data-live={list.enabled !== false ? '' : undefined}><input type="checkbox" id="trkListOn" checked={list.enabled !== false} aria-label={'Plays: ' + list.name}
           onchange={(e) => { const box = e.currentTarget; setField('enabled', box.checked).then((r) => { if (r?.err) box.checked = list.enabled !== false; }); }}><span class="sl"></span></label>
         <div class="range-control">
           <input type="range" id="trkListVolume" min="0" max="100" step="1" value={pct} aria-label={list.name + ' volume'}
@@ -378,17 +431,20 @@
       <div class="trk-actions">
         <button type="button" class="trk-quiet trk-icon-button" id="trkListEarlier" aria-label="Move this list earlier" disabled={lists[0]?.id === list.id} onclick={() => move(-1)}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3.5 5.5 8l4.5 4.5"/></svg></button>
         <button type="button" class="trk-quiet trk-icon-button" id="trkListLater" aria-label="Move this list later" disabled={lists.at(-1)?.id === list.id} onclick={() => move(1)}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3.5 10.5 8 6 12.5"/></svg></button>
-        <button type="button" class="trk-quiet" id="trkListDelete" onclick={() => (confirming = 'list')}>Delete list…</button>
+        <button type="button" class="trk-quiet" id="trkListDelete" onclick={() => ask('list')}>Delete list…</button>
       </div>
       {#if confirming === 'list'}
-        <div class="trk-confirm" role="group" aria-label="Delete this list?">
-          <span>Delete {list.name}{list.items.length ? ` and its ${list.items.length} item${list.items.length === 1 ? '' : 's'}` : ''}?</span>
-          <button type="button" class="btn primary" id="trkListDeleteYes" onclick={deleteList}>Delete list</button>
-          <button type="button" class="btn" onclick={() => (confirming = null)}>Keep it</button>
+        <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+        <div class="trk-confirm" id="trkListConfirm" role="group" aria-labelledby="trkListConfirmTitle" onkeydown={confirmKeys}>
+          <h3 class="trk-confirm-title" id="trkListConfirmTitle">Delete {list.name}{list.items.length ? ` and its ${list.items.length} item${list.items.length === 1 ? '' : 's'}` : ''}?</h3>
+          <div class="trk-actions">
+            <button type="button" class="btn primary" id="trkListDeleteYes" onclick={deleteList}>Delete list</button>
+            <button type="button" class="btn" id="trkListDeleteNo" onclick={keep}>Keep it</button>
+          </div>
         </div>
       {/if}
       <form class="trk-entry-line" onsubmit={addTyped}>
-        <input class="trk-field" id="trkItemField" type="search" list="trkItemNames" placeholder="Add an item by name, or narrow the list" aria-label="Add an item to this list" maxlength="120" autocomplete="off" bind:value={query}>
+        <input class="trk-field" id="trkItemField" type="search" list="trkItemNames" placeholder="Add an item by name, or narrow the list" aria-label="Add an item to this list" maxlength="120" autocomplete="off" bind:value={query} bind:this={itemField}>
         <button type="submit" class="btn" id="trkItemAdd">Add</button>
       </form>
       <datalist id="trkItemNames">{#each names as n (n)}<option value={n}></option>{/each}</datalist>
@@ -417,8 +473,10 @@
 </section>
 
 <style>
-  .trk-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-4); }
   .trk-menu-host { position: relative; }
+  /* More (…)'s list floats over the card, so it takes the theme picker's list's
+     look (DESIGN.md § Theme picker): the allowlisted 1px subtle edge, 8px
+     corners and the Tray shadow. */
   .trk-menu {
     position: absolute;
     top: calc(100% + var(--space-2));
@@ -429,12 +487,12 @@
     min-width: 200px;
     padding: var(--space-2);
     border: 1px solid var(--color-border-subtle);
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-lg);
     background-color: var(--color-bg-raised);
+    box-shadow: 0 12px 32px color-mix(in srgb, var(--color-bg-sunken) 80%, transparent);
   }
   .trk-menu button { min-height: 32px; padding: 0 var(--space-5); border: 0; border-radius: var(--radius-sm); background: none; color: var(--color-text-primary); font: inherit; font-size: var(--font-size-sm); text-align: left; cursor: pointer; }
   .trk-menu button:disabled { color: var(--color-text-faint); cursor: default; }
-  .trk-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-4); font-size: var(--font-size-sm); }
   .trk-line { display: flex; align-items: center; gap: var(--space-6); min-width: 0; }
   .trk-line-label { flex: none; width: 88px; color: var(--color-text-muted); font-size: var(--font-size-sm); }
   .trk-line .trk-field { flex: 1; }
@@ -443,48 +501,9 @@
   .trk-lists button[data-list] { min-height: 24px; padding: 0 var(--space-5); border: 0; border-radius: var(--radius-sm); background: none; color: var(--color-text-muted); font: inherit; font-size: var(--font-size-sm); cursor: pointer; }
   .trk-lists button[aria-pressed="true"] { background-color: var(--color-bg-hover); color: var(--color-text-primary); }
   .trk-count { color: var(--color-text-primary); font-family: var(--font-mono-family), Consolas, monospace; font-weight: var(--font-weight-regular); }
-  .trk-field {
-    height: 32px;
-    min-width: 0;
-    padding: 0 var(--space-6);
-    border: 1px solid var(--color-border-strong);
-    border-radius: var(--radius-md);
-    background-color: var(--color-bg-sunken);
-    color: var(--color-text-primary);
-    font: inherit;
-    font-size: var(--font-size-sm);
-  }
-  .trk-field::placeholder { color: var(--color-text-muted); }
-  .trk-entry-line { display: flex; gap: var(--space-4); }
-  .trk-entry-line .trk-field { flex: 1; }
-  .trk-names { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
-  .trk-names li { display: flex; align-items: center; justify-content: space-between; gap: var(--space-6); min-height: 32px; padding: 0 0 0 var(--space-4); border-radius: var(--radius-sm); font-size: var(--font-size-sm); }
   .trk-names .note { margin: 0; }
-  .trk-quiet {
-    display: inline-flex;
-    flex: none;
-    align-items: center;
-    gap: var(--space-3);
-    min-height: 28px;
-    padding: 0 var(--space-4);
-    border: 0;
-    border-radius: var(--radius-sm);
-    background: none;
-    color: var(--color-text-muted);
-    font: inherit;
-    font-size: var(--font-size-sm);
-    white-space: nowrap;
-    cursor: pointer;
-  }
-  .trk-quiet:disabled { cursor: default; color: var(--color-text-faint); }
-  .trk-quiet svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; fill: none; }
-  .trk-icon-button { width: 28px; padding: 0; justify-content: center; }
-  .trk-error { display: flex; align-items: center; gap: var(--space-4); color: var(--color-text-primary); }
-  .trk-error svg { flex: none; width: 16px; height: 16px; color: var(--color-danger); stroke: currentColor; stroke-width: 1.4; fill: none; stroke-linecap: round; stroke-linejoin: round; }
-  .trk-empty { margin: 0; padding: var(--space-7) 0; color: var(--color-text-faint); font-size: var(--font-size-sm); }
   @media (hover: hover) and (pointer: fine) {
-    .trk-names li:hover, .trk-menu button:hover:not(:disabled) { background-color: var(--color-bg-hover); }
+    .trk-menu button:hover:not(:disabled) { background-color: var(--color-bg-hover); }
     .trk-lists button[data-list]:hover { color: var(--color-text-primary); }
-    .trk-quiet:hover:not(:disabled) { color: var(--color-text-primary); background-color: var(--color-bg-hover); }
   }
 </style>

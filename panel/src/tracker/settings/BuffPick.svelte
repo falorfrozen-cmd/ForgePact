@@ -46,27 +46,6 @@
 <style>
   .trk-picks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2) var(--space-11); }
   .trk-pick { display: flex; align-items: center; justify-content: space-between; gap: var(--space-6); min-height: 36px; font-size: var(--font-size-sm); }
-  .trk-quiet {
-    display: inline-flex;
-    flex: none;
-    align-items: center;
-    min-height: 28px;
-    padding: 0 var(--space-4);
-    border: 0;
-    border-radius: var(--radius-sm);
-    background: none;
-    color: var(--color-text-muted);
-    font: inherit;
-    font-size: var(--font-size-sm);
-    cursor: pointer;
-  }
-  .trk-quiet:disabled { cursor: default; color: var(--color-text-faint); }
-  .trk-error { display: flex; align-items: center; gap: var(--space-4); color: var(--color-text-primary); }
-  .trk-error svg { flex: none; width: 16px; height: 16px; color: var(--color-danger); stroke: currentColor; stroke-width: 1.4; fill: none; stroke-linecap: round; stroke-linejoin: round; }
-  .trk-empty { margin: 0; padding: var(--space-7) 0; color: var(--color-text-faint); font-size: var(--font-size-sm); }
-  @media (hover: hover) and (pointer: fine) {
-    .trk-quiet:hover:not(:disabled) { color: var(--color-text-primary); background-color: var(--color-bg-hover); }
-  }
   @media (max-width: 720px) {
     .trk-picks { grid-template-columns: minmax(0, 1fr); }
   }
