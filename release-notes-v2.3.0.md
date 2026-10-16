@@ -59,7 +59,7 @@ game. It is off by default.
 
   HS Offline Tracker itself takes no new features from now on; its page
   points to ForgePact's Tracker tab. The tab, its alerts and the overlay were
-  checked in a real game session, which ended with a clean close.
+  checked in real game sessions, each ending with a clean close.
 
 - **Always show Chaos Pillar mods (#7).** A Chaos Pillar shows its box of
   mods (pack size, magic find, experience, extra loot and the rest) only while
