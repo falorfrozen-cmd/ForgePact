@@ -382,9 +382,56 @@ module guide's section "HS Offline Tracker in ForgePact" describes the result.
   play alert sounds" note ships anyway, for a browser tab, where no flag
   applies.
 
-Neither probe ran inside the panel itself; Live procedure 1 of
-`forgepact-185-tracker-tab` is where the panel's own window is observed (not
-established until it runs).
+Neither probe ran inside the panel itself; Live procedures 1 and 2 below
+observed the panel's own window.
+
+### Live procedures 1 and 2 (2026-10-14, 2026-10-16)
+
+Workorder `forgepact-185-tracker-tab-gate`; captures
+`forgepact-185-tracker-tab-gate-live-1` and
+`forgepact-185-tracker-tab-gate-live-2` (kept with the workorder, outside
+the repository). The research build at ForgePact b72688c (sha256
+`dc84084d...4bf7`), Sorak in slot 14, `HSOfflineTrackerProducer.dll` held
+aside so the game ran as an upgrading player's does, the panel from the
+checkout with no tracker store.
+
+- **Live 1: 20 of 24 checks pass, 1 not observed, 3 fail.** Passed: the
+  switch and the overlay's availability, arming at launch by the panel's
+  auto-apply (`install=waiting-for-character`) and installing with the
+  character, the session file ingested live, the overlay opened over the
+  game and (the owner) stayed on top while they played, a placed Heroic in
+  the journal with `"sound": "heroic"` within a second, a placed Mythic
+  counted untracked with no entry, the tab's gold, XP and kills equal to
+  `tracker stat`'s sums (3,516, 1,738,473, 1,343), the overlay's kill count
+  the same, an in-world close reading `0x00000000` with the clean-shutdown
+  line and no dump (the dump control raised `0xC0000005` and wrote one), the
+  run filed about 12 s after the close, and `tools/tracker_replay.py`'s
+  totals equal to the sums. Not observed: the import, since the machine had
+  no HS Offline Tracker data. Failed: `heroic-claimed-once`, `zone-alert`
+  and `heard-once`. Neither the Heroic nor the zone rotation was ever marked
+  announced, and the owner heard neither.
+- **Why the alerts failed.** The alerts and the tab's polling follow the
+  saved switch as the main window holds it (`ST.cfg.mod_tracker`), and only
+  a write from that window updated it. The session started the panel with
+  the switch off and turned it on through `POST /api/set`, so the main window,
+  on another tab, never polled and never claimed. The overlay polls on its
+  own and was not affected. ForgePact 6a2dc91 has each status poll take the
+  saved switch unless the window has a write of its own in flight.
+  `alerts.check.mjs` `switch-turned-on-elsewhere-arms-the-alerts` fails
+  without the change (the page never fetches `/extra`) and passes with it.
+- **Live 2: 10 of 10 checks pass**, on the same path (switch off at the
+  panel's start, turned on from outside the window, the window on another
+  tab and never clicked). Two placed Heroics and two `satzone pin` rotations
+  were each marked announced on the first poll, a second claim answered
+  `{"play": false}`, and the owner heard one sound for each, once the
+  speakers were on (the first ask had them off). The close read
+  `0x00000000`. The first attempt stopped at the operator's API limit and
+  was resumed two days later from a restored backup.
+- **Not observed live:** Install moving an aborting sensor out of a real
+  game folder, the import of real Tracker data, whether the overlay takes
+  focus, the flourish card, a natural zone re-roll (both rotations were
+  `satzone pin`), and a drop above the lowest rarity tier (`lootannprobe`
+  places tier 0; the panel's default `min_tier` 0 plays it).
 
 ### Decisions
 
