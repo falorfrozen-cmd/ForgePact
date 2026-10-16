@@ -22,6 +22,7 @@ Three separate problems, all of which only show up over a long session:
    equal here.
 """
 
+import ast
 import inspect
 import json
 import os
@@ -627,9 +628,12 @@ class VersionStampTests(unittest.TestCase):
         self.assertRegex(forgepact.__version__, r"^\d+\.\d+\.\d+$")
 
     def test_the_version_appears_exactly_once_in_the_panel(self):
-        # Rendered from /api/state, never embedded in HTML, so there is no
-        # second literal that can go stale.
-        self.assertEqual(self.source.count(forgepact.__version__), 1)
+        # Count complete version literals, not historical versions mentioned
+        # in comments or diagnostic prose that can match after a release bump.
+        versions = [node.value for node in ast.walk(ast.parse(self.source.lstrip("\ufeff")))
+                    if isinstance(node, ast.Constant) and isinstance(node.value, str)]
+        self.assertEqual(versions.count(forgepact.__version__), 1)
+        # Rendered from /api/state, never embedded in the frontend.
         self.assertNotIn(forgepact.__version__, panel_source())
 
     def test_the_state_payload_carries_the_version(self):
