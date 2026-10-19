@@ -48,6 +48,7 @@
 #include <utility>
 #include <vector>
 
+#include "CrashTrap.hpp"
 #include "ExitSafeThread.hpp"
 
 #ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
@@ -203,22 +204,24 @@ inline double Percent(uint64_t part, uint64_t whole)
 inline bool ReadDirectories(uintptr_t base, const RUNTIME_FUNCTION*& pdata, DWORD& count,
                             DWORD& exportRva, DWORD& exportSize) noexcept
 {
-    __try {
-        const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
-        if (dos->e_magic != IMAGE_DOS_SIGNATURE) return false;
-        const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(base + dos->e_lfanew);
-        if (nt->Signature != IMAGE_NT_SIGNATURE || nt->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC)
+    return CrashTrap::GuardedRead([&]() noexcept -> bool {
+        __try {
+            const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+            if (dos->e_magic != IMAGE_DOS_SIGNATURE) return false;
+            const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(base + dos->e_lfanew);
+            if (nt->Signature != IMAGE_NT_SIGNATURE || nt->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC)
+                return false;
+            const IMAGE_DATA_DIRECTORY& ex = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXCEPTION];
+            const IMAGE_DATA_DIRECTORY& ed = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
+            pdata = ex.VirtualAddress ? reinterpret_cast<const RUNTIME_FUNCTION*>(base + ex.VirtualAddress) : nullptr;
+            count = ex.VirtualAddress ? static_cast<DWORD>(ex.Size / sizeof(RUNTIME_FUNCTION)) : 0;
+            exportRva = ed.VirtualAddress;
+            exportSize = ed.Size;
+            return true;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
             return false;
-        const IMAGE_DATA_DIRECTORY& ex = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXCEPTION];
-        const IMAGE_DATA_DIRECTORY& ed = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
-        pdata = ex.VirtualAddress ? reinterpret_cast<const RUNTIME_FUNCTION*>(base + ex.VirtualAddress) : nullptr;
-        count = ex.VirtualAddress ? static_cast<DWORD>(ex.Size / sizeof(RUNTIME_FUNCTION)) : 0;
-        exportRva = ed.VirtualAddress;
-        exportSize = ed.Size;
-        return true;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
-    }
+        }
+    });
 }
 
 // A loaded module's address range, sorted by `lo`, for the table walk.
@@ -259,17 +262,19 @@ inline bool GmlEntryLooksValid(const GmlEntry* e, uintptr_t lo, uintptr_t hi,
 inline size_t FindGmlTable(const GmlEntry* anchor, uintptr_t lo, uintptr_t hi, const CodeRange* modules,
                            size_t moduleCount, const GmlEntry** first) noexcept
 {
-    __try {
-        if (!anchor || !GmlEntryLooksValid(anchor, lo, hi, modules, moduleCount)) return 0;
-        const GmlEntry* b = anchor;
-        for (size_t guard = 0; guard < 4000000 && GmlEntryLooksValid(b - 1, lo, hi, modules, moduleCount); ++guard) --b;
-        const GmlEntry* e = anchor + 1;
-        for (size_t guard = 0; guard < 4000000 && GmlEntryLooksValid(e, lo, hi, modules, moduleCount); ++guard) ++e;
-        *first = b;
-        return static_cast<size_t>(e - b);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return 0;
-    }
+    return CrashTrap::GuardedRead([&]() noexcept -> size_t {
+        __try {
+            if (!anchor || !GmlEntryLooksValid(anchor, lo, hi, modules, moduleCount)) return 0;
+            const GmlEntry* b = anchor;
+            for (size_t guard = 0; guard < 4000000 && GmlEntryLooksValid(b - 1, lo, hi, modules, moduleCount); ++guard) --b;
+            const GmlEntry* e = anchor + 1;
+            for (size_t guard = 0; guard < 4000000 && GmlEntryLooksValid(e, lo, hi, modules, moduleCount); ++guard) ++e;
+            *first = b;
+            return static_cast<size_t>(e - b);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return 0;
+        }
+    });
 }
 
 // The game image's section table, copied out of its in-memory headers.
@@ -281,52 +286,60 @@ struct SectionSpan {
 
 inline size_t ReadSectionTable(uintptr_t base, SectionSpan* out, size_t capacity) noexcept
 {
-    __try {
-        const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
-        if (dos->e_magic != IMAGE_DOS_SIGNATURE) return 0;
-        const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(base + dos->e_lfanew);
-        if (nt->Signature != IMAGE_NT_SIGNATURE) return 0;
-        const IMAGE_SECTION_HEADER* s = IMAGE_FIRST_SECTION(nt);
-        size_t n = nt->FileHeader.NumberOfSections;
-        if (n > capacity) n = capacity;
-        for (size_t i = 0; i < n; ++i) out[i] = { s[i].VirtualAddress, s[i].SizeOfRawData, s[i].PointerToRawData };
-        return n;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return 0;
-    }
+    return CrashTrap::GuardedRead([&]() noexcept -> size_t {
+        __try {
+            const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+            if (dos->e_magic != IMAGE_DOS_SIGNATURE) return 0;
+            const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(base + dos->e_lfanew);
+            if (nt->Signature != IMAGE_NT_SIGNATURE) return 0;
+            const IMAGE_SECTION_HEADER* s = IMAGE_FIRST_SECTION(nt);
+            size_t n = nt->FileHeader.NumberOfSections;
+            if (n > capacity) n = capacity;
+            for (size_t i = 0; i < n; ++i) out[i] = { s[i].VirtualAddress, s[i].SizeOfRawData, s[i].PointerToRawData };
+            return n;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return 0;
+        }
+    });
 }
 
 inline size_t SafeCopy(void* dst, const void* src, size_t n) noexcept
 {
-    __try {
-        std::memcpy(dst, src, n);
-        return n;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return 0;
-    }
+    return CrashTrap::GuardedRead([&]() noexcept -> size_t {
+        __try {
+            std::memcpy(dst, src, n);
+            return n;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return 0;
+        }
+    });
 }
 
 inline bool VirtualUnwindSafe(uintptr_t imageBase, uintptr_t pc, const RUNTIME_FUNCTION* f, CONTEXT& ctx) noexcept
 {
-    __try {
-        PVOID handlerData = nullptr;
-        DWORD64 establisher = 0;
-        RtlVirtualUnwind(UNW_FLAG_NHANDLER, imageBase, pc, const_cast<PRUNTIME_FUNCTION>(f), &ctx,
-                         &handlerData, &establisher, nullptr);
-        return true;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
-    }
+    return CrashTrap::GuardedRead([&]() noexcept -> bool {
+        __try {
+            PVOID handlerData = nullptr;
+            DWORD64 establisher = 0;
+            RtlVirtualUnwind(UNW_FLAG_NHANDLER, imageBase, pc, const_cast<PRUNTIME_FUNCTION>(f), &ctx,
+                             &handlerData, &establisher, nullptr);
+            return true;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return false;
+        }
+    });
 }
 
 inline bool ReadU64Safe(const void* p, uint64_t& v) noexcept
 {
-    __try {
-        v = *static_cast<const volatile uint64_t*>(p);
-        return true;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
-    }
+    return CrashTrap::GuardedRead([&]() noexcept -> bool {
+        __try {
+            v = *static_cast<const volatile uint64_t*>(p);
+            return true;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return false;
+        }
+    });
 }
 
 } // namespace detail

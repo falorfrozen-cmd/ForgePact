@@ -15,8 +15,14 @@ control where the check could pass vacuously:
   loader;
 - the vectored route only ever continues the search, and the filter returns
   that or the previous filter's own answer; neither handles nor resumes;
-- `MiniDumpNormal` is the only dump type, the dump is taken from the
-  unhandled route only, and the filter's wait for it is bounded;
+- `MiniDumpNormal` is the only dump type; the dump is staged at first chance
+  for a fatal exception outside a guarded read (Amendment 3), under two named
+  limits, and taken by the filter only when the staged one is not for the same
+  exception; every wait for it is bounded, and every staged file is written on
+  the helper thread alone;
+- every `IsBadReadPtr` call and every reading `__try` the player build carries
+  raises the guarded-read depth first (a research block is exempt), and the
+  research build's `incident trapprobe` stays out of the player build;
 - dbghelp.dll is loaded from the system directory and MiniDumpWriteDump taken
   by name, so build.bat's link line stays as it is;
 - the installer runs in the player build, from IncidentMonitorStart, before
@@ -76,11 +82,15 @@ ROUTE_FORBIDDEN = (
 ROUTE_FUNCTIONS = {
     "FirstChance": "inline LONG CALLBACK FirstChance(PEXCEPTION_POINTERS info) noexcept",
     "Unhandled": "inline LONG WINAPI Unhandled(PEXCEPTION_POINTERS info) noexcept",
-    "WriteRecord": "inline void WriteRecord(const EXCEPTION_RECORD* record, bool unhandled) noexcept",
+    "WriteRecord": "inline int WriteRecord(const EXCEPTION_RECORD* record, bool unhandled, char* line, int cap) noexcept",
     "AppendRecord": "inline bool AppendRecord(const char* text, int len) noexcept",
     "ReadCppType": "inline bool ReadCppType(const EXCEPTION_RECORD* record, char* out, size_t cap) noexcept",
     "FindModule": "inline const ModuleRow* FindModule(uintptr_t address) noexcept",
-    "RequestDump": "inline void RequestDump(PEXCEPTION_POINTERS info) noexcept",
+    "RequestDump": "inline void RequestDump(PEXCEPTION_POINTERS info, const char* line, int length) noexcept",
+    "ClaimStaging": "inline bool ClaimStaging() noexcept",
+    "ClaimHelper": "inline bool ClaimHelper() noexcept",
+    "DumpedFor": "inline bool DumpedFor(const EXCEPTION_RECORD* record) noexcept",
+    "WriteLimitLine": "inline void WriteLimitLine() noexcept",
     "IsFatal": "inline bool IsFatal(DWORD code) noexcept",
     "Put": "inline int Put(char* buf, int pos, int cap, const char* text, size_t limit",
     "PutHex": "inline int PutHex(char* buf, int pos, int cap, unsigned long long value, int minDigits) noexcept",
@@ -91,9 +101,11 @@ ROUTE_FUNCTIONS = {
 # Every call a route function makes. A new one has to be added here, deliberately.
 ROUTE_CALLS = {
     "FirstChance", "Unhandled", "WriteRecord", "AppendRecord", "ReadCppType", "FindModule", "RequestDump",
+    "ClaimStaging", "ClaimHelper", "DumpedFor", "WriteLimitLine",
     "IsFatal", "Put", "PutHex", "PutDec", "CopyText",
-    "InterlockedIncrement", "InterlockedDecrement", "InterlockedExchange", "GetCurrentThreadId",
-    "SetEvent", "WaitForSingleObject", "CreateFileA", "WriteFile", "CloseHandle",
+    "InterlockedIncrement", "InterlockedDecrement", "InterlockedExchange", "InterlockedCompareExchange",
+    "GetCurrentThreadId", "GetTickCount64", "Sleep",
+    "SetEvent", "ResetEvent", "WaitForSingleObject", "CreateFileA", "WriteFile", "CloseHandle",
     "InHookId", "InModNow", "ModName", "load", "previous",
     "reinterpret_cast", "static_cast", "sizeof", "if", "for", "while", "do", "__except",
 }
@@ -142,6 +154,27 @@ def rethrows_without_a_line(code, allowlist):
     return missing
 
 
+def code_lines(text):
+    return [line.strip() for line in text.splitlines() if line.strip()]
+
+
+def unguarded_reads(code):
+    """The enclosing function of each `IsBadReadPtr(` call and `__try` in
+    `code` that raises no guarded-read depth before it: no GuardedReadScope
+    and no GuardedRead( between the function's opening brace (at column 0)
+    and the read."""
+    missing = []
+    for found in re.finditer(r"IsBadReadPtr\(|\b__try\b", code):
+        brace = code.rfind("\n{\n", 0, found.start())
+        segment = code[brace if brace >= 0 else 0:found.start()]
+        if "GuardedReadScope" in segment or "GuardedRead(" in segment:
+            continue
+        name = enclosing_function(code, found.start())
+        if name not in missing:
+            missing.append(name)
+    return missing
+
+
 # Rethrows that do not reach the game: SkillTimerDrawNumber's caller is our own
 # draw path, which catches and counts it.
 RETHROW_ALLOWLIST = {"SkillTimerDrawNumber"}
@@ -168,9 +201,12 @@ class CrashTrapContractTests(unittest.TestCase):
             calls = set(re.findall(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(", body))
             self.assertLessEqual(calls, ROUTE_CALLS, f"{name}: {calls - ROUTE_CALLS}")
         record = self.body("WriteRecord")
-        self.assertIn("char line[kLineChars];", record)
         self.assertIn("char type[kTypeChars];", record)
         self.assertIn("AppendRecord(line, pos);", record)
+        # The line is each route's own fixed buffer, handed to the helper by copy.
+        for route in ("FirstChance", "Unhandled", "WriteLimitLine"):
+            self.assertIn("char line[kLineChars];", self.body(route), route)
+        self.assertIn("char pendingLine[kLineChars];", self.trap_code)
         append = self.body("AppendRecord")
         self.assertLess(append.index("CreateFileA("), append.index("WriteFile("))
         self.assertLess(append.index("WriteFile("), append.index("CloseHandle("))
@@ -207,6 +243,12 @@ class CrashTrapContractTests(unittest.TestCase):
         self.assertIn("record->ExceptionCode == kCppExceptionCode", first)
         cpp = first[first.index("kCppExceptionCode"):first.index("IsFatal(")]
         self.assertNotIn("WriteRecord(", cpp)
+        # A fatal exception inside a guarded read of ours is counted and nothing else.
+        guarded = first[first.index("if (t_GuardedReads > 0) {"):first.index("} else if (InterlockedIncrement(")]
+        self.assertEqual(code_lines(guarded), ["if (t_GuardedReads > 0) {",
+                                               "InterlockedIncrement(&g_State.guardedFaults);"])
+        self.assertLess(first.index("IsFatal("), first.index("t_GuardedReads > 0"))
+        self.assertLess(first.index("t_GuardedReads > 0"), first.index("WriteRecord("))
         fatal = self.body("IsFatal")
         for code in ("EXCEPTION_ACCESS_VIOLATION", "EXCEPTION_STACK_OVERFLOW", "EXCEPTION_ILLEGAL_INSTRUCTION",
                      "EXCEPTION_PRIV_INSTRUCTION", "EXCEPTION_INT_DIVIDE_BY_ZERO",
@@ -223,8 +265,21 @@ class CrashTrapContractTests(unittest.TestCase):
         unhandled = self.body("Unhandled")
         self.assertTrue(filter_only_continues_or_defers(unhandled))
         self.assertIn("InterlockedExchange(&g_State.unhandledSeen, 1) == 0", unhandled)
-        self.assertLess(unhandled.index("WriteRecord(info->ExceptionRecord, true);"), unhandled.index("RequestDump(info);"))
-        self.assertLess(unhandled.index("RequestDump(info);"), unhandled.index("return previous(info);"))
+        order = ("WriteRecord(exception, true, line,", "ClaimHelper()", "if (DumpedFor(exception)) {",
+                 "} else if (claimed) {", "RequestDump(info, line, length);", "return previous(info);")
+        for before, after in zip(order, order[1:]):
+            self.assertLess(unhandled.index(before), unhandled.index(after), (before, after))
+        # The same exception already staged: no second dump, the claim given
+        # back, and a note in trap.txt (not an `exception ` line).
+        skipped = unhandled[unhandled.index("if (DumpedFor(exception)) {"):unhandled.index("} else if (claimed) {")]
+        self.assertNotIn("RequestDump(", skipped)
+        self.assertIn("if (claimed) InterlockedExchange(&g_State.helperBusy, 0);", skipped)
+        self.assertIn('"dump already staged at first chance for this exception', skipped)
+        same = self.body("DumpedFor")
+        for part in ("g_State.haveDumped", "g_State.dumpedCode == record->ExceptionCode",
+                     "g_State.dumpedAddress == reinterpret_cast<ULONG_PTR>(record->ExceptionAddress)",
+                     "g_State.dumpedThread == GetCurrentThreadId()"):
+            self.assertIn(part, same)
         self.assertFalse(filter_only_continues_or_defers(unhandled.replace(
             "return previous(info);", "return EXCEPTION_EXECUTE_HANDLER;")))
 
@@ -237,23 +292,126 @@ class CrashTrapContractTests(unittest.TestCase):
         # Negative control: a fuller type would be caught.
         self.assertNotEqual(set(re.findall(r"\bMiniDump\w+", self.trap_code + " MiniDumpWithFullMemory")), names)
 
-    def test_the_dump_comes_from_the_unhandled_route_only_and_is_waited_for_a_bounded_time(self):
-        self.assertIn("RequestDump(info);", self.body("Unhandled"))
-        self.assertNotIn("RequestDump(", self.body("FirstChance"))
-        self.assertEqual(len(re.findall(r"\bRequestDump\(", self.trap_code)), 2)   # definition + the filter's call
+    # Amendment 3: the dump is staged at first chance, because Live 1 measured a
+    # crash whose process ended before the top-level filter ran. The filter
+    # stays the second trigger, and every wait for the helper is bounded.
+    def test_the_dump_is_staged_at_first_chance_and_waited_for_a_bounded_time(self):
+        first = self.body("FirstChance")
+        self.assertIn("if (ClaimStaging()) RequestDump(info, line, length);", first)
+        self.assertLess(first.index("WriteRecord("), first.index("ClaimStaging()"))
+        self.assertIn("RequestDump(info, line, length);", self.body("Unhandled"))
+        # Definition, the vectored route's call, the filter's call.
+        self.assertEqual(len(re.findall(r"\bRequestDump\(", self.trap_code)), 3)
         request = self.body("RequestDump")
-        self.assertIn("WaitForSingleObject(g_State.done, kDumpWaitMs);", request)
-        self.assertNotIn("INFINITE", request)
-        self.assertNotIn("MiniDumpWriteDump", request)
+        self.assertIn("WaitForSingleObject(s.done, kDumpWaitMs);", request)
+        self.assertLess(request.index("ResetEvent(s.done);"), request.index("SetEvent(s.request);"))
+        self.assertIn("s.pendingLine[n] = line[n];", request)
+        claim = self.body("ClaimHelper")
+        self.assertIn("if (waited >= kDumpWaitMs) return false;", claim)
+        self.assertIn("Sleep(kHelperClaimStepMs);", claim)
+        for name in ("RequestDump", "ClaimHelper", "ClaimStaging"):
+            self.assertNotIn("INFINITE", self.body(name), name)
+            self.assertNotIn("MiniDumpWriteDump", self.body(name), name)
         self.assertRegex(self.trap_code, r"inline constexpr DWORD kDumpWaitMs = \d+;")
-        # The helper thread writes it, created at install, never at the crash.
+        # The helper thread writes it, created at install, never at the crash,
+        # and never records or stages its own faults.
         helper = strip_comments(function_body(self.trap, "inline DWORD WINAPI Helper(LPVOID) noexcept"))
-        self.assertIn("WriteDump()", helper)
-        self.assertLess(helper.index("CopyLogTail("), helper.index("WriteDump()"))
+        self.assertIn("t_Inside = true;", helper)
+        self.assertLess(helper.index("Stage();"), helper.index("SetEvent(g_State.done);"))
+        self.assertLess(helper.index("SetEvent(g_State.done);"), helper.index("InterlockedExchange(&g_State.helperBusy, 0);"))
         install = strip_comments(function_body(self.trap, "inline std::string Install("))
         self.assertIn("CreateThread(nullptr, 0, &Helper, nullptr, 0, nullptr)", install)
         for name in ROUTE_FUNCTIONS:
             self.assertNotIn("CreateThread", self.body(name), name)
+
+    def test_the_staging_is_written_on_the_helper_thread_only(self):
+        stage = strip_comments(function_body(self.trap, "inline void Stage() noexcept"))
+        # The logs, then the dump, then the line it was taken for; the old
+        # line goes before the new dump moves in, each file under a temporary
+        # name first.
+        order = ("CopyLogTail(s.logSource[i], s.logTemp[i])", "MoveFileExA(s.logTemp[i], s.logCopy[i],",
+                 "WriteDump()", "DeleteFileA(s.dumpLine);", "MoveFileExA(s.dumpTemp, s.dump,",
+                 "WriteWhole(s.dumpLineTemp, s.pendingLine,", "MoveFileExA(s.dumpLineTemp, s.dumpLine,")
+        for before, after in zip(order, order[1:]):
+            self.assertLess(stage.index(before), stage.index(after), (before, after))
+        self.assertIn("CreateFileA(g_State.dumpTemp,", strip_comments(function_body(self.trap, "inline bool WriteDump() noexcept")))
+        self.assertIn('inline constexpr char kTempSuffix[] = ".tmp";', self.trap_code)
+        # Every move, copy and dump write is Stage's, and Stage is the helper's.
+        self.assertEqual(self.trap_code.count("MoveFileExA("), stage.count("MoveFileExA("))
+        self.assertEqual(len(re.findall(r"\bStage\(\)", self.trap_code)), 2)   # definition + the helper's call
+        staging_calls = ("MoveFileExA(", "CopyLogTail(", "WriteDump(", "writeDump(", "WriteWhole(", "Stage(")
+        for name in ROUTE_FUNCTIONS:
+            for call in staging_calls:
+                self.assertNotIn(call, self.body(name), f"{name}: {call}")
+        # Negative control: a route that copied a log itself would be caught.
+        self.assertTrue(any(call in self.body("FirstChance") + "CopyLogTail(a, b);" for call in staging_calls))
+
+    def test_two_named_limits_bound_the_staging_and_a_refusal_says_so_once(self):
+        self.assertIn("inline constexpr DWORD kStageMinIntervalMs = 60000;", self.trap_code)
+        self.assertIn("inline constexpr long kMaxStagedDumps = 4;", self.trap_code)
+        claim = self.body("ClaimStaging")
+        self.assertIn("s.staged >= kMaxStagedDumps", claim)
+        self.assertIn("now - s.lastStageTick < kStageMinIntervalMs", claim)
+        self.assertIn("InterlockedCompareExchange(&s.helperBusy, 1, 0) == 0", claim)
+        self.assertIn("InterlockedIncrement(&s.stageRefused);", claim)
+        self.assertIn("if (InterlockedExchange(&s.limitSaid, 1) == 0) WriteLimitLine();", claim)
+        limit = self.body("WriteLimitLine")
+        for part in ("kStageMinIntervalMs / 1000", "kMaxStagedDumps", '"staging limit reached: '):
+            self.assertIn(part, limit)
+        # Only the two names carry the numbers.
+        self.assertNotIn("60000", claim + limit)
+
+    # ---- ForgePact's own guarded reads ------------------------------------------------
+
+    def test_every_guarded_read_in_the_player_build_raises_the_depth(self):
+        sources = {"ModuleMain.cpp": self.player}
+        for header in sorted(HEADERS.glob("*.hpp")):
+            sources[header.name] = strip_comments(strip_research_blocks(read(header)))
+        found = {"IsBadReadPtr(": 0, "__try": 0}
+        for name, code in sources.items():
+            for site in unguarded_reads(code):
+                # The trap's own read of a C++ throw runs inside a route, under t_Inside.
+                if name == "CrashTrap.hpp" and site == "ReadCppType":
+                    continue
+                self.fail(f"{name}: {site} reads without the guarded-read depth")
+            for token in found:
+                found[token] += code.count(token)
+        # Positive controls: ReadablePtr and readmem, the frame profiler's six reads.
+        self.assertGreaterEqual(found["IsBadReadPtr("], 2)
+        self.assertGreaterEqual(found["__try"], 7)
+        self.assertIn("const ForgePact::CrashTrap::GuardedReadScope guarded;",
+                      strip_comments(function_body(self.plugin, "static bool ReadablePtr(const void* p, size_t bytes)")))
+        # The research blocks hold unguarded probes the check is not about.
+        self.assertTrue(unguarded_reads(strip_comments(self.plugin)))
+        # Negative control: an unguarded probe and an unguarded __try are caught.
+        self.assertEqual(unguarded_reads("static bool Probe(const void* p)\n{\n    return !IsBadReadPtr(p, 8);\n}\n"),
+                         ["Probe"])
+        self.assertEqual(unguarded_reads("inline bool Read(const void* p) noexcept\n{\n    __try {\n        return true;\n"
+                                         "    } __except (EXCEPTION_EXECUTE_HANDLER) {\n        return false;\n    }\n}\n"),
+                         ["Read"])
+        guarded = "static bool Probe(const void* p)\n{\n    const GuardedReadScope g;\n    return !IsBadReadPtr(p, 8);\n}\n"
+        self.assertEqual(unguarded_reads(guarded), [])
+        depth = strip_comments(self.trap_code[self.trap_code.index("struct GuardedReadScope {"):])
+        self.assertIn("GuardedReadScope() noexcept { ++t_GuardedReads; }", depth)
+        self.assertIn("~GuardedReadScope() { --t_GuardedReads; }", depth)
+        self.assertIn("inline thread_local long t_GuardedReads;", self.trap_code)
+
+    def test_the_trap_probe_is_research_only(self):
+        self.assertIn('if (sub == "trapprobe") {', self.plugin)
+        self.assertNotIn("trapprobe", self.player)
+        self.assertNotIn("IncidentTrapProbeFault", self.player)
+        start = self.plugin.index("kPlayerCommands = {")
+        self.assertNotIn("trapprobe", self.plugin[start:self.plugin.index("};", start)])
+        command = strip_comments(function_body(self.plugin, "static void IncidentCommand(const std::string& rest)"))
+        probe = command[command.index('if (sub == "trapprobe") {'):]
+        probe = probe[:probe.index("return;")]
+        for part in ('"incident: trapprobe "', '" | staged "', "ForgePact::CrashTrap::StagedCount()",
+                     "IncidentTrapProbeFault()"):
+            self.assertIn(part, probe)
+        # It must stage: no guarded-read depth around its fault.
+        fault = strip_comments(function_body(self.plugin, "static bool IncidentTrapProbeFault() noexcept"))
+        self.assertIn("__try", fault)
+        self.assertNotIn("GuardedRead", fault)
 
     def test_dbghelp_comes_from_the_system_directory_and_the_link_line_is_unchanged(self):
         install = strip_comments(function_body(self.trap, "inline std::string Install("))
@@ -310,10 +468,28 @@ class CrashTrapContractTests(unittest.TestCase):
         self.assertGreater(check.index("inc::SettleTrapPrev(trapPrev, false, true);"),
                            check.index("if (dir.empty())"))
         bundle = strip_comments(function_body(self.plugin, "static std::string IncidentWriteBundle("))
-        for name in ('"yytoolkit-tail.txt"', '"aurie-tail.txt"', '"crash.dmp"', '"trap.txt"', "inc::LogMissingText("):
+        for name in ('"yytoolkit-tail.txt"', '"aurie-tail.txt"', '"trap.txt"', "inc::LogMissingText("):
             self.assertIn(name, bundle)
         # The dump moves in before report.json says whether it is there.
-        self.assertLess(bundle.index('"crash.dmp"'), bundle.index('put("report.json"'))
+        self.assertIn("facts.dump = inc::TakeStagedDump(trapPrev.string(), pending.string(), moveFailed);", bundle)
+        self.assertLess(bundle.index("inc::TakeStagedDump("), bundle.index('put("report.json"'))
+        # Amendment 3: the staged dump is the crash's only when its line names
+        # the folded record; settled before the bundle takes it, said once.
+        settle = "if (inc::SettleStagedDump(trapPrev, haveRecord, record) == inc::StagedDump::mismatch)"
+        self.assertIn(settle + "\n        OutRaw(inc::StagedDumpMismatchLine());", check)
+        self.assertLess(check.index("monitor.bundles.Allow("), check.index(settle))
+        self.assertLess(check.index(settle), check.index("IncidentWriteBundle("))
+        # Every path that writes no crash bundle deletes the staging: no
+        # previous session, no monitor in it, the bundle limit, a failed bundle.
+        self.assertEqual(check.count("inc::SettleTrapPrev(trapPrev, false, false);"), 4)
+        for path in ('OutRaw("incident: no previous session to check");',
+                     'OutRaw("incident: the previous session ran without the incident monitor - not checked");',
+                     'OutRaw("incident: the report could not be written under bp_ipc\\\\reports");'):
+            block = check[check.rindex("{", 0, check.index(path)):check.index(path)]
+            self.assertIn("inc::SettleTrapPrev(trapPrev, false, false);", block, path)
+        refused = check[check.index("if (!monitor.bundles.Allow(inc::Kind::crash, 0.0)) {"):check.index(settle)]
+        self.assertIn("inc::SettleTrapPrev(trapPrev, false, false);", refused)
+        self.assertLess(check.index("const std::string trapPrev"), check.index("if (session.empty())"))
 
     # Whoever sets the top-level filter last owns it, so ours being on top is
     # measured, by the status line and the monitor thread's module refresh,
@@ -337,7 +513,8 @@ class CrashTrapContractTests(unittest.TestCase):
         self.assertIn("Out(ForgePact::CrashTrap::StatusLine());", command)
         status = strip_comments(function_body(self.trap, "inline std::string StatusLine()"))
         self.assertIn('std::string("incident: trap ")', status)
-        for part in ('"first-chance armed"', '"unhandled armed"', '"dump ready"', '"dump off - "'):
+        for part in ('"first-chance armed"', '"unhandled armed"', '"dump ready"', '"dump off - "',
+                     '" | staged "', '" refused by the limit)"', '" | guarded reads "'):
             self.assertIn(part, status)
 
     # ---- what the player build may carry --------------------------------------------

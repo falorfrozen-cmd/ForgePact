@@ -56,6 +56,7 @@
 #include <cstring>
 #include <deque>
 #include <filesystem>
+#include <fstream>
 #include <mutex>
 #include <string>
 #include <type_traits>
@@ -1491,16 +1492,94 @@ inline bool ParseTrapRecord(const std::string& text, TrapRecord& out)
 // "Hero_Siege.exe+0x64D0F3"
 inline std::string TrapWhere(const TrapRecord& r) { return r.module + "+" + r.offset; }
 
+// The crash trap's staging (#223, Amendment 3): beside trap.txt the trap
+// stages a dump at first chance, the record line that dump was taken for and
+// copies of the game's two loader logs. CrashTrap.hpp names its files with
+// these (a static_assert there), and the next load settles them by them.
+inline constexpr char kTrapDumpFile[] = "crash.dmp";
+inline constexpr char kTrapDumpLineFile[] = "dumpline.txt";
+inline constexpr const char* kTrapLogFiles[2] = { "YYToolkit.log", "aurie.log" };
+
 // After the next-load check (#223): a clean previous session's
 // bp_ipc\crashtrap.prev\ is deleted, and so is a crash's once it was folded
-// into a report; any other stays until the next load's rotation replaces it.
-// True when it was deleted.
+// into a report. Any other keeps its record until the next load's rotation
+// replaces it, but loses its staging (the dump, its line, the log copies), so
+// no stale staging reaches a later report. True when the folder was deleted.
 inline bool SettleTrapPrev(const std::string& prevDir, bool sessionClean, bool folded)
 {
-    if (!sessionClean && !folded) return false;
     std::error_code ec;
+    if (!sessionClean && !folded) {
+        const std::filesystem::path dir(prevDir);
+        for (const char* name : { kTrapDumpFile, kTrapDumpLineFile, kTrapLogFiles[0], kTrapLogFiles[1] })
+            std::filesystem::remove(dir / name, ec);
+        return false;
+    }
     std::filesystem::remove_all(prevDir, ec);
     return !ec && !std::filesystem::exists(prevDir, ec);
+}
+
+// Whether two record lines name the same exception: code, module, offset and
+// thread. The route may differ: the unhandled route takes no second dump of
+// an exception the first chance already staged.
+inline bool SameException(const TrapRecord& a, const TrapRecord& b)
+{
+    return a.exceptionCode == b.exceptionCode && a.module == b.module && a.offset == b.offset && a.threadId == b.threadId;
+}
+
+// What the next load did with a crashed session's staged dump.
+enum class StagedDump { none, kept, mismatch };
+
+inline const char* StagedDumpName(StagedDump d)
+{
+    return d == StagedDump::kept ? "kept" : d == StagedDump::mismatch ? "mismatch" : "none";
+}
+
+// At the next load, before the crash bundle takes it: the staged dump in
+// `prevDir` stays only when the record line written beside it names the
+// exception the fold picked (`record`); otherwise it and its line are deleted
+// (a dump with no line beside it cannot be matched and goes the same way).
+inline StagedDump SettleStagedDump(const std::string& prevDir, bool haveRecord, const TrapRecord& record)
+{
+    namespace fs = std::filesystem;
+    const fs::path dump = fs::path(prevDir) / kTrapDumpFile;
+    const fs::path line = fs::path(prevDir) / kTrapDumpLineFile;
+    std::error_code ec;
+    if (!fs::exists(dump, ec)) {
+        fs::remove(line, ec);
+        return StagedDump::none;
+    }
+    std::string text;
+    {
+        std::ifstream f(line, std::ios::binary);
+        if (f) text.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+    }
+    TrapRecord takenFor;
+    if (haveRecord && ParseTrapRecord(text, takenFor) && SameException(takenFor, record)) return StagedDump::kept;
+    fs::remove(dump, ec);
+    fs::remove(line, ec);
+    return StagedDump::mismatch;
+}
+
+// out.txt's one line when the staged dump was not the crash's.
+inline std::string StagedDumpMismatchLine()
+{
+    return "incident: the staged crash dump was taken for an earlier exception, not the one this report folds - "
+           "deleted, the report has no crash.dmp";
+}
+
+// The crash bundle takes the dump the settle kept: moved, binary and not
+// scrubbed, so the ten report folders kept bound the dumps too. True when it
+// is in the bundle; `failed` when one was there and could not be moved.
+inline bool TakeStagedDump(const std::string& prevDir, const std::string& bundleDir, bool& failed)
+{
+    namespace fs = std::filesystem;
+    const fs::path dump = fs::path(prevDir) / kTrapDumpFile;
+    std::error_code ec;
+    failed = false;
+    if (!fs::exists(dump, ec)) return false;
+    fs::rename(dump, fs::path(bundleDir) / kTrapDumpFile, ec);
+    failed = static_cast<bool>(ec);
+    return !failed;
 }
 
 // A log tail the bundle could not take (#223): a crash's comes from the copy

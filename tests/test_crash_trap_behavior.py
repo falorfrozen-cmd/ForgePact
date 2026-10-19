@@ -19,12 +19,25 @@ ours back on top; that filter calling ours again for the same exception walks
 down the chain and ends the search instead of looping; once the chain is full
 the other filter is left on top, said once.
 
+In-process (the first-chance staging, Amendment 3): the session's first fatal
+access violation outside a guarded read, handled by the harness's own
+`__try`, leaves an `MDMP` dump, both log copies and the record line it was
+taken for in the trap's folder, and the process carries on; two more inside
+kStageMinIntervalMs each write their line, stage nothing and leave one limit
+line between them; the same fault inside the guarded-read depth (a
+GuardedReadScope, IsBadReadPtr under it, GuardedRead around a `__try`) writes
+no line, stages nothing and is only counted.
+
 Children (the unhandled route), with Windows' crash dialog off: one dies of an
 access violation, one of an unhandled C++ exception, each holding two fake
 logs open for writing. Each leaves a `route=unhandled` line (the C++ one with
 its type), a crash.dmp that starts with the minidump signature `MDMP`, and the
-copies of both logs. A clean session started in the first child's directory
-afterwards rotates the crashed session's folder to crashtrap.prev whole.
+copies of both logs; the access violation's dump is the one staged at first
+chance, with no second one taken. A third child ends inside a frame handler's
+filter, so no top-level filter runs (Live 1's shape): its first-chance line,
+staged dump and log copies are all there, and no unhandled line. A clean
+session started in the first child's directory afterwards rotates the crashed
+session's folder to crashtrap.prev whole.
 
 Every record is read back through IncidentMonitor.hpp's parser, the one the
 next load folds into report.json.
@@ -43,6 +56,9 @@ OUTPUT = ROOT / "build" / "crash-trap-behavior"
 EXPECTED = (
     "install",
     "cpp-type-remembered",
+    "first-chance-stages-dump",
+    "stage-rate-limited",
+    "guarded-read-stages-nothing",
     "first-chance-av-line",
     "non-fatal-quiet",
     "continue-search-only",
@@ -51,6 +67,7 @@ EXPECTED = (
     "filter-left-on-top",
     "unhandled-av-child",
     "unhandled-cpp-child",
+    "first-chance-child-terminated",
     "rotation",
 )
 
@@ -138,7 +155,32 @@ class CrashTrapBehaviorTests(unittest.TestCase):
         self.assertIn(" in-hook=harness_hook in-mod=drops game-original=no cpp=none route=first-chance", detail)
 
     def test_baseline_a_code_that_is_not_fatal_writes_nothing(self):
-        self.assertIn("lines 1 -> 1", self.scenario("non-fatal-quiet"))
+        # The count before is whatever the earlier scenarios wrote; nothing is added.
+        detail = self.scenario("non-fatal-quiet")
+        self.assertRegex(detail, r"lines (\d+) -> \1$")
+
+    # Amendment 3, case a. Target: the first fatal fault outside a guarded read
+    # is staged, dump, logs and its own line, and the program carries on.
+    def test_target_a_first_chance_fatal_fault_stages_the_dump_and_the_logs(self):
+        detail = self.scenario("first-chance-stages-dump")
+        self.assertEqual(detail.split(" | ")[0], "carried on")
+        self.assertIn("| staged 0 -> 1 | dump MDMP ", detail)
+        self.assertIn("| logs copied | dump taken for the line just written", detail)
+        self.assertNotIn("temporary", detail)
+
+    # Target: inside kStageMinIntervalMs a fatal fault keeps its line, stages
+    # nothing, and the limit is said once.
+    def test_target_the_staging_is_rate_limited_and_says_so_once(self):
+        detail = self.scenario("stage-rate-limited")
+        self.assertTrue(detail.startswith("lines 1 -> 3 | staged 1 | refused 0 -> 2 | staging unchanged | limit lines 1 | "),
+                        detail)
+        self.assertIn("| limit lines 1 | staging limit reached", detail)
+
+    # Case b. Baseline beside case a: the same fault inside ForgePact's own
+    # guarded read is not a crash: no line, no staging, no refusal, counted.
+    def test_target_a_guarded_read_fault_stages_nothing(self):
+        self.assertEqual(self.scenario("guarded-read-stages-nothing"),
+                         "depth 1 inside, 0 after | lines 3 -> 3 | staged 1 | refused 0 | guarded faults counted 3")
 
     def test_the_vectored_route_only_ever_continues_the_search(self):
         detail = self.scenario("continue-search-only")
@@ -172,12 +214,28 @@ class CrashTrapBehaviorTests(unittest.TestCase):
         self.assertIn("| logs copied |", detail)
         self.assertIn("in-hook=harness_child_hook in-mod=mapreveal game-original=no cpp=none route=unhandled", detail)
 
+    # The unhandled route is the second trigger: it takes no second dump of an
+    # exception the first chance already staged.
+    def test_the_unhandled_route_takes_no_second_dump_of_a_staged_exception(self):
+        self.assertIn("| dump taken at first chance for this exception, 1 note of no second |",
+                      self.scenario("unhandled-av-child"))
+
     def test_target_an_unhandled_cpp_exception_names_its_type(self):
         detail = self.scenario("unhandled-cpp-child")
         self.assertIn("dump MDMP ", detail)
         self.assertIn("| logs copied |", detail)
         self.assertIn("exception 0xE06D7363 at ", detail)
         self.assertIn("cpp=.?AVruntime_error@std@@ route=unhandled", detail)
+        # A C++ exception never stages at first chance: the filter's dump is its only one.
+        self.assertIn("| dump taken by the unhandled route |", detail)
+
+    # Live 1's shape: the process ends before any top-level filter runs. The
+    # staging is the whole report, and it is whole.
+    def test_target_a_process_ended_after_first_chance_keeps_the_staging(self):
+        detail = self.scenario("first-chance-child-terminated")
+        self.assertTrue(detail.startswith("exit 0xC0000005 | dump MDMP "), detail)
+        self.assertIn("| logs copied |", detail)
+        self.assertIn(" route=first-chance | unhandled lines 0 | dump taken for that line |", detail)
 
     def test_the_next_session_rotates_the_crashed_one(self):
         detail = self.scenario("rotation")

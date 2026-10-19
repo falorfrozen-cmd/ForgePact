@@ -15,20 +15,32 @@
 //     put back on top; that filter calling ours again for the same exception
 //     walks down the chain instead of looping; once the chain is full the
 //     other filter is left on top and the status line says so.
+//   * the first-chance staging (Amendment 3): a fatal access violation
+//     outside a guarded read, handled by this process's own __try, leaves a
+//     staged dump, both log copies and the record line the dump was taken for
+//     in the trap's folder, and this process carries on; a second one inside
+//     kStageMinIntervalMs writes its line, stages nothing, and the limit line
+//     is written once; the same fault inside ForgePact's guarded-read depth
+//     writes no line and stages nothing, and is only counted.
 //   * children, each with an ipc directory of its own and with Windows'
 //     crash dialog off (SEM_NOGPFAULTERRORBOX): one dies of an access
 //     violation, one of an unhandled C++ exception. The parent then finds a
 //     `route=unhandled` line (with the type, for the second), a crash.dmp
 //     that starts with the minidump signature, and the copies of the two fake
-//     logs, which the child held open for writing as a logger does. A third
-//     child starts in the first one's directory and ends cleanly: its install
-//     must have rotated the crashed session's folder to crashtrap.prev.
+//     logs, which the child held open for writing as a logger does. The access
+//     violation's dump is the one staged at first chance: the unhandled route
+//     takes no second dump of the same exception. A third child faults under
+//     an __except whose filter ends the process with the exception code, so no
+//     top-level filter runs (the shape Live 1 measured): its staged dump, log
+//     copies and first-chance line are all there is, and all that is needed.
+//     A fourth child starts in the first one's directory and ends cleanly: its
+//     install must have rotated the crashed session's folder to crashtrap.prev.
 //
 // The records are read back through the incident monitor's own parser, so
 // the writer and the next-load fold are tested against each other.
 //
 // Usage:  crash_trap_harness.exe <work dir>
-//         crash_trap_harness.exe --child <av|cpp|clean> <ipc dir> <log dir>
+//         crash_trap_harness.exe --child <av|cpp|fcterm|clean> <ipc dir> <log dir>
 //
 // Each scenario prints one line, `<name> | <pass|fail> | <detail>`, and the
 // process exits 0 only when every scenario passed.
@@ -112,6 +124,72 @@ bool CustomCodeUnderTry(DWORD code)
     } __except (GetExceptionCode() == code ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
         return true;
     }
+}
+
+// Live 1's shape: a frame handler whose filter ends the process with the
+// exception code, so no top-level filter ever runs. The vectored route has
+// already run by then: it sees every exception before any frame handler.
+int TerminatedUnderExcept()
+{
+    __try {
+        int* volatile target = nullptr;
+        *target = 223;
+        return 0x7E3;
+    } __except (TerminateProcess(GetCurrentProcess(), GetExceptionCode()), EXCEPTION_EXECUTE_HANDLER) {
+        return 0x7E4;
+    }
+}
+
+// The fake logs the trap copies: what the crashed session's YYToolkit.log and
+// aurie.log would hold.
+constexpr char kYytkText[] = "YYToolkit 4.0.1 banner\r\n[hs] the crashed session's last YYToolkit line\r\n";
+constexpr char kAurieText[] = "[ArProcessAttach] Init done\r\nthe crashed session's last aurie line\r\n";
+
+void WriteFake(const fs::path& path, const char* text)
+{
+    std::ofstream f(path, std::ios::binary | std::ios::trunc);
+    f << text;
+}
+
+// The record's lines that start with `prefix`, in order.
+std::vector<std::string> LinesStarting(const fs::path& record, const std::string& prefix)
+{
+    std::vector<std::string> lines;
+    const std::string text = ReadAll(record);
+    size_t at = 0;
+    while (at < text.size()) {
+        size_t end = text.find('\n', at);
+        if (end == std::string::npos) end = text.size();
+        std::string line = text.substr(at, end - at);
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line.rfind(prefix, 0) == 0) lines.push_back(line);
+        at = end + 1;
+    }
+    return lines;
+}
+
+// What a staging left in a trap folder: the dump, the two log copies, the
+// record line the dump was taken for, and no half-written temporary.
+struct Staging {
+    bool dump = false;
+    std::string dumpBytes;
+    bool logs = false;
+    std::string line;
+    bool temporaries = false;
+};
+
+Staging Staged(const fs::path& dir)
+{
+    Staging s;
+    s.dumpBytes = ReadAll(dir / trap::kDumpFile);
+    s.dump = s.dumpBytes.size() > 4 && s.dumpBytes.compare(0, 4, "MDMP") == 0;
+    s.logs = ReadAll(dir / trap::kYytkLogFile) == kYytkText && ReadAll(dir / trap::kAurieLogFile) == kAurieText;
+    s.line = inc::FirstLine(ReadAll(dir / trap::kDumpLineFile));
+    while (!s.line.empty() && (s.line.back() == '\r' || s.line.back() == '\n')) s.line.pop_back();
+    std::error_code ec;
+    for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec))
+        if (it->path().extension() == ".tmp") s.temporaries = true;
+    return s;
 }
 
 // ---- in-process scenarios ---------------------------------------------------
@@ -201,6 +279,96 @@ void ContinueSearchOnly(const fs::path& record)
     Report("continue-search-only", always && capped && stat,
            "answers " + answers + "| lines " + std::to_string(lines) + " of " + std::to_string(trap::kMaxFirstChanceLines)
            + " | " + status);
+}
+
+// ---- the first-chance staging (Amendment 3) -------------------------------------
+
+// Target (case a): a fatal access violation outside a guarded read, handled by
+// this process's own __try, is staged: the folder then holds an MDMP dump,
+// both log copies and the record line the dump was taken for, which is the
+// line just written; and this process carries on.
+void FirstChanceStagesDump(const fs::path& dir)
+{
+    const fs::path record = dir / trap::kRecordFile;
+    const size_t before = ExceptionLines(record).size();
+    const long stagedBefore = trap::g_State.staged;
+    trap::NoteGameThread(GetCurrentThreadId());
+    bool carriedOn = false;
+    {
+        inc::IncidentScope scope(inc::Mod::ipc);
+        carriedOn = AccessViolationUnderTry();
+    }
+    const std::vector<std::string> lines = ExceptionLines(record);
+    const Staging s = Staged(dir);
+    const bool ok = carriedOn && lines.size() == before + 1 && trap::g_State.staged == stagedBefore + 1 && s.dump
+                    && s.logs && !s.temporaries && !lines.empty() && s.line == lines.back()
+                    && s.line.find(" route=first-chance") != std::string::npos;
+    Report("first-chance-stages-dump", ok,
+           std::string(carriedOn ? "carried on" : "did not carry on") + " | staged " + std::to_string(stagedBefore) + " -> "
+           + std::to_string(trap::g_State.staged) + " | dump " + (s.dump ? "MDMP " : "missing ")
+           + std::to_string(s.dumpBytes.size()) + " bytes | logs " + (s.logs ? "copied" : "missing")
+           + (s.temporaries ? " | a temporary was left" : "") + " | dump taken for "
+           + (s.line.empty() ? std::string("nothing") : s.line == (lines.empty() ? std::string() : lines.back())
+                                                            ? std::string("the line just written")
+                                                            : s.line));
+}
+
+// Target: a second fatal fault inside kStageMinIntervalMs writes its line,
+// stages nothing (the staged dump and its line stay byte for byte), and the
+// limit line is written once for both.
+void StageRateLimited(const fs::path& dir)
+{
+    const fs::path record = dir / trap::kRecordFile;
+    const size_t before = ExceptionLines(record).size();
+    const size_t limitBefore = LinesStarting(record, "staging limit reached").size();
+    const Staging was = Staged(dir);
+    const long staged = trap::g_State.staged;
+    const long refused = trap::g_State.stageRefused;
+    const bool first = AccessViolationUnderTry();
+    const bool second = AccessViolationUnderTry();
+    const Staging now = Staged(dir);
+    const size_t lines = ExceptionLines(record).size();
+    const std::vector<std::string> limit = LinesStarting(record, "staging limit reached");
+    const bool unchanged = now.dumpBytes == was.dumpBytes && now.line == was.line && now.dump;
+    const bool ok = first && second && lines == before + 2 && trap::g_State.staged == staged
+                    && trap::g_State.stageRefused == refused + 2 && unchanged && limitBefore == 0 && limit.size() == 1;
+    Report("stage-rate-limited", ok,
+           "lines " + std::to_string(before) + " -> " + std::to_string(lines) + " | staged " + std::to_string(trap::g_State.staged)
+           + " | refused " + std::to_string(refused) + " -> " + std::to_string(trap::g_State.stageRefused) + " | staging "
+           + (unchanged ? "unchanged" : "changed") + " | limit lines " + std::to_string(limit.size()) + " | "
+           + (limit.empty() ? std::string("none") : limit.back()));
+}
+
+// Target (case b): the same fault inside ForgePact's guarded-read depth (the
+// scope ModuleMain.cpp puts around IsBadReadPtr, and GuardedRead around the
+// frame profiler's __try reads) writes no line, stages nothing, is not a
+// refusal either, and is counted; the depth is back at zero after.
+void GuardedReadStagesNothing(const fs::path& dir)
+{
+    const fs::path record = dir / trap::kRecordFile;
+    const size_t before = ExceptionLines(record).size();
+    const long staged = trap::g_State.staged;
+    const long refused = trap::g_State.stageRefused;
+    const long guarded = trap::g_State.guardedFaults;
+    long depthInside = 0;
+    bool av = false, bad = false, wrapped = false;
+    {
+        const trap::GuardedReadScope scope;
+        depthInside = trap::GuardedReadDepth();
+        av = AccessViolationUnderTry();
+        bad = IsBadReadPtr(reinterpret_cast<const void*>(static_cast<uintptr_t>(0x10)), 8) != FALSE;
+    }
+    wrapped = trap::GuardedRead([]() noexcept { return AccessViolationUnderTry(); });
+    const long depthAfter = trap::GuardedReadDepth();
+    const size_t lines = ExceptionLines(record).size();
+    const long counted = trap::g_State.guardedFaults - guarded;
+    const bool ok = av && bad && wrapped && depthInside == 1 && depthAfter == 0 && lines == before
+                    && trap::g_State.staged == staged && trap::g_State.stageRefused == refused && counted == 3;
+    Report("guarded-read-stages-nothing", ok,
+           "depth " + std::to_string(depthInside) + " inside, " + std::to_string(depthAfter) + " after | lines "
+           + std::to_string(before) + " -> " + std::to_string(lines) + " | staged " + std::to_string(trap::g_State.staged)
+           + " | refused " + std::to_string(trap::g_State.stageRefused - refused) + " | guarded faults counted "
+           + std::to_string(counted));
 }
 
 // ---- the top-level filter, set over ours --------------------------------------
@@ -314,15 +482,6 @@ void FilterLeftOnTop(const fs::path& record)
 
 // ---- children -----------------------------------------------------------------
 
-constexpr char kYytkText[] = "YYToolkit 4.0.1 banner\r\n[hs] the crashed session's last YYToolkit line\r\n";
-constexpr char kAurieText[] = "[ArProcessAttach] Init done\r\nthe crashed session's last aurie line\r\n";
-
-void WriteFake(const fs::path& path, const char* text)
-{
-    std::ofstream f(path, std::ios::binary | std::ios::trunc);
-    f << text;
-}
-
 [[noreturn]] void ThrowUnhandled()
 {
     throw std::runtime_error("harness: nobody catches this");
@@ -348,6 +507,7 @@ int Child(const std::string& how, const std::string& ipcDir, const std::string& 
     inc::IncidentScope scope(inc::Mod::mapreveal);
     inc::IncidentHookTag tag("harness_child_hook");
     if (how == "cpp") ThrowUnhandled();
+    if (how == "fcterm") return TerminatedUnderExcept();
     int* volatile target = nullptr;
     *target = 223;
     return 0x7E2;
@@ -448,22 +608,60 @@ void UnhandledChildren(const fs::path& work)
     fs::create_directories(avIpc, ec);
     fs::create_directories(cppIpc, ec);
 
+    const fs::path termIpc = work / "child-fcterm";
+    fs::remove_all(termIpc, ec);
+    fs::create_directories(termIpc, ec);
+
+    // The access violation is staged at first chance, then reaches the
+    // filter: one dump, the staged one (its line is the first-chance line of
+    // the same exception), and the filter says it took no second.
     const ChildResult av = RunChild("av", avIpc, logs);
     const Left avLeft = Inspect(avIpc / trap::kDirName);
     const inc::TrapRecord& a = avLeft.record;
+    const Staging avStaged = Staged(avIpc / trap::kDirName);
+    inc::TrapRecord avDumpFor;
+    const bool avSame = inc::ParseTrapRecord(avStaged.line + "\n", avDumpFor) && avDumpFor.route == "first-chance"
+                        && inc::SameException(avDumpFor, a);
+    const size_t avNotes = LinesStarting(avIpc / trap::kDirName / trap::kRecordFile, "dump already staged").size();
     const bool avOk = av.finished && av.exitCode == EXCEPTION_ACCESS_VIOLATION && avLeft.read && a.route == "unhandled"
                       && a.exceptionCode == "0xC0000005" && a.module == ExeName() && a.thread == "game"
                       && a.inHook == "harness_child_hook" && a.inMod == "mapreveal" && a.cppType.empty()
-                      && avLeft.dump && avLeft.logs;
-    Report("unhandled-av-child", avOk, "exit " + Hex(av.exitCode) + " | " + avLeft.detail + " | child said: " + av.output);
+                      && avLeft.dump && avLeft.logs && avSame && avNotes == 1;
+    Report("unhandled-av-child", avOk, "exit " + Hex(av.exitCode) + " | " + avLeft.detail + " | dump taken "
+           + (avSame ? "at first chance for this exception" : "for " + avStaged.line) + ", "
+           + std::to_string(avNotes) + " note of no second | child said: " + av.output);
 
+    // A C++ exception never stages: the filter's dump is its only one.
     const ChildResult cpp = RunChild("cpp", cppIpc, logs);
     const Left cppLeft = Inspect(cppIpc / trap::kDirName);
     const inc::TrapRecord& c = cppLeft.record;
+    const Staging cppStaged = Staged(cppIpc / trap::kDirName);
+    const bool cppDumpFor = cppStaged.line.find(" route=unhandled") != std::string::npos;
     const bool cppOk = cpp.finished && cpp.exitCode != 0 && cppLeft.read && c.route == "unhandled"
                        && c.exceptionCode == "0xE06D7363" && c.cppType.find("runtime_error") != std::string::npos
-                       && c.thread == "game" && c.inMod == "mapreveal" && cppLeft.dump && cppLeft.logs;
-    Report("unhandled-cpp-child", cppOk, "exit " + Hex(cpp.exitCode) + " | " + cppLeft.detail + " | child said: " + cpp.output);
+                       && c.thread == "game" && c.inMod == "mapreveal" && cppLeft.dump && cppLeft.logs && cppDumpFor;
+    Report("unhandled-cpp-child", cppOk, "exit " + Hex(cpp.exitCode) + " | " + cppLeft.detail + " | dump taken "
+           + (cppDumpFor ? "by the unhandled route" : "for " + cppStaged.line) + " | child said: " + cpp.output);
+
+    // Live 1's shape: the process ends inside a frame handler's filter, no
+    // top-level filter runs, and the staging is all the evidence there is.
+    const ChildResult term = RunChild("fcterm", termIpc, logs);
+    const Left termLeft = Inspect(termIpc / trap::kDirName);
+    const Staging termStaged = Staged(termIpc / trap::kDirName);
+    const std::vector<std::string> termLines = ExceptionLines(termIpc / trap::kDirName / trap::kRecordFile);
+    size_t unhandledLines = 0;
+    for (const auto& line : termLines)
+        if (line.find(" route=unhandled") != std::string::npos) ++unhandledLines;
+    const inc::TrapRecord& t = termLeft.record;
+    const bool termOk = term.finished && term.exitCode == EXCEPTION_ACCESS_VIOLATION && termLeft.read
+                        && t.route == "first-chance" && t.exceptionCode == "0xC0000005" && t.thread == "game"
+                        && t.inMod == "mapreveal" && unhandledLines == 0 && termLeft.dump && termLeft.logs
+                        && !termLines.empty() && termStaged.line == termLines.back();
+    Report("first-chance-child-terminated", termOk,
+           "exit " + Hex(term.exitCode) + " | " + termLeft.detail + " | unhandled lines " + std::to_string(unhandledLines)
+           + " | dump taken for " + (!termLines.empty() && termStaged.line == termLines.back() ? std::string("that line")
+                                                                                          : termStaged.line)
+           + " | child said: " + term.output);
 
     // The next session in the same directory: the crashed one moves to .prev
     // whole, and the new folder holds only its own session line.
@@ -490,10 +688,17 @@ int main(int argc, char** argv)
     fs::remove_all(work / "inproc", ec);
     fs::create_directories(work / "inproc", ec);
     fs::create_directories(work / "logs", ec);
+    WriteFake(work / "logs" / "YYToolkit.log", kYytkText);
+    WriteFake(work / "logs" / "aurie.log", kAurieText);
     const std::string installed = trap::Install((work / "inproc").string(), (work / "logs").string());
     const fs::path record = work / "inproc" / trap::kDirName / trap::kRecordFile;
     Report("install", installed.rfind("incident: trap ", 0) == 0 && fs::exists(record), installed);
     CppTypeRemembered(record);
+    // The first fatal fault of the session stages; the next ones are inside
+    // kStageMinIntervalMs, so every later scenario's fault is refused.
+    FirstChanceStagesDump(work / "inproc" / trap::kDirName);
+    StageRateLimited(work / "inproc" / trap::kDirName);
+    GuardedReadStagesNothing(work / "inproc" / trap::kDirName);
     FirstChanceLine(record);
     NonFatalQuiet(record);
     ContinueSearchOnly(record);
