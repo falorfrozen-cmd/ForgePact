@@ -143,6 +143,15 @@ test('the three flight charms\' drop switches are entries while on and off by de
   assert.deepEqual(enabledControls(cfg(Object.fromEntries(keys.map((k) => [k, true])))), keys);
 });
 
+test('the Mark 1 set\'s switch is an entry while on and off by default', () => {
+  assert.ok(BOOLEAN_MODS.includes('mod_mark1_set'));
+  assert.equal(DEFAULTS.mod_mark1_set, false);
+  assert.deepEqual(enabledControls(cfg({ mod_mark1_set: true })), ['mod_mark1_set']);
+  assert.deepEqual(enabledControls(cfg({ mod_mark1_set: false })), []);
+  // After the flight charms, in the Items card's order.
+  assert.deepEqual(enabledControls(cfg({ mod_flight_broom: true, mod_mark1_set: true })), ['mod_flight_broom', 'mod_mark1_set']);
+});
+
 test('loot announcements is an entry while on and off by default', () => {
   assert.ok(BOOLEAN_MODS.includes('mod_loot_announce'));
   assert.equal(DEFAULTS.mod_loot_announce, false);

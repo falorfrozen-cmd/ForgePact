@@ -15,7 +15,8 @@ used to be) and `ICONS_SOURCE` is `panel/src/icons.js`, which replaced
 `ModsCategoryBaselineTests` pins what must survive the split: the five-tab
 sidebar, every control's card membership, the Items/Quality-of-Life
 classification rule (an Items row is for a specific item: its description
-names a forged Mechanic or calls the item a ForgePact charm, and no other
+names a forged Mechanic or calls the item a ForgePact charm or a ForgePact
+item set, and no other
 Mods-tab row's does), the parent/child groupings, and the three silent
 failure traps in the JS `preparePanelUI()` (the conversion loop's id list,
 the grouping condition's id, and the `SECTION_ICONS` key). It names no card
@@ -101,8 +102,10 @@ QOL_CONTROL_IDS = [
 ]
 # Items holds a row for a specific item: one forged with a Mechanic
 # (Headhunter, Tyrant's Crown, Beacon), or one of ForgePact's own items (the
-# three flight charms' drop switches, forgepact-158-flight-charms-mod).
-ITEMS_CONTROL_IDS = ["headhunter", "tyrant", "beacon", "mod_flight_elf", "mod_flight_wings", "mod_flight_broom"]
+# three flight charms' drop switches, forgepact-158-flight-charms-mod, and the
+# Mark 1 set's switch, forgepact-166-mark1-set-mod).
+ITEMS_CONTROL_IDS = ["headhunter", "tyrant", "beacon", "mod_flight_elf", "mod_flight_wings", "mod_flight_broom",
+                     "mod_mark1_set"]
 # The Gameplay sub-tab holds the Bosses select (issue #44), then Dungeon chest
 # opens early's switch and range and its countdown form's child select (issue
 # #31; the select, the owner's choice of 2026-10-04), and nothing else.
@@ -123,8 +126,9 @@ PARENT_CHILD_ROWS = [
 
 FORGED_MECHANIC_TEXT = "forged with Mechanic:"
 FORGEPACT_CHARM_TEXT = "a ForgePact charm"
+FORGEPACT_ITEM_SET_TEXT = "a ForgePact item set"
 # The phrases that make a row an Items row, one per row.
-ITEMS_RULE_TEXTS = (FORGED_MECHANIC_TEXT, FORGEPACT_CHARM_TEXT)
+ITEMS_RULE_TEXTS = (FORGED_MECHANIC_TEXT, FORGEPACT_CHARM_TEXT, FORGEPACT_ITEM_SET_TEXT)
 HINT_SUFFIX = "Settings apply immediately while the game is running."
 
 _CARD_OPEN_RE = re.compile(r'<div class="card')
@@ -262,14 +266,14 @@ class ModsCategoryBaselineTests(unittest.TestCase):
 
     def test_classification_rule_forged_mechanic_text(self):
         # The rule, made executable: a row whose description names a forged
-        # Mechanic, or calls its item a ForgePact charm, is an Items row, and
-        # only Items rows say either.
+        # Mechanic, or calls its item a ForgePact charm or a ForgePact item
+        # set, is an Items row, and only Items rows say any of them.
         cards = _mods_cards(HTML)
         for cid, body in cards:
             count = sum(body.count(text) for text in ITEMS_RULE_TEXTS)
             if cid == "itemsCard":
                 self.assertEqual(count, len(ITEMS_CONTROL_IDS),
-                    "itemsCard should have one forged-Mechanic or ForgePact-charm row per control")
+                    "itemsCard should have one forged-Mechanic, ForgePact-charm or ForgePact-item-set row per control")
             else:
                 self.assertEqual(count, 0,
                     f"{cid} has a row for a specific item; it belongs in itemsCard")

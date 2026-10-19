@@ -182,6 +182,12 @@
     <label class="switch"><input type="checkbox" id="mod_flight_broom" aria-label="Witch's Broomstick drops"><span class="sl"></span></label>
     <span class="val" id="mfbval">off</span>
   </div>
+  <!-- The Mark 1 set (#166): one switch for the full-set bonus; the plugin acts only while all four pieces are worn. -->
+  <div class="row" style="border:none">
+    <span class="lbl" style="width:auto;flex:1">Mark 1 set<br><span class="feature-description">Mark 1, a ForgePact item set: helmet, body armor, boots and gloves. While you wear all four, the skills on your Q, E, R and Y slots cast themselves whenever they are ready, and your jump goes three times as far, over scenery; in exchange you walk at half speed. Off by default.</span></span>
+    <label class="switch"><input type="checkbox" id="mod_mark1_set" aria-label="Mark 1 set"><span class="sl"></span></label>
+    <span class="val" id="mk1val">off</span>
+  </div>
 </div>
 
 <div class="card tab-card" data-tab="mods" id="gameplayCard" role="tabpanel" aria-labelledby="subtab-gameplay">
