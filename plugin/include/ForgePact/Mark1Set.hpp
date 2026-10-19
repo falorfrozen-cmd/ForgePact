@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdint>
 #include <functional>
+#include <initializer_list>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -31,6 +32,8 @@ namespace ForgePact::Mark1Set {
 //     character exists (the guide's Known Limitations item 8, as jumpscenery).
 //   - the `mark1set` command's forms and its `stat` line, whose automation,
 //     jump, art and movement fields the other cores' counters fill.
+//   - the pieces' art rule: armed by the session's first switch-on, and when
+//     a dressing may write our icon and the ground consumer may go in.
 //
 // It is game-independent by contract - numbers and strings, never an instance
 // or an RValue - so tests/mark1_set_harness.cpp compiles it whole. The adapter
@@ -191,17 +194,25 @@ inline std::string SetText(const SetRead& r)
 
 inline constexpr int kColumnCount = 4;  // bar columns 3..6: Q, E, R, Y
 
-// One automated column's counters, filled from Mark1Automation.hpp's.
+// One automated column's counters, filled from Mark1Automation.hpp's. The four
+// failures are never folded into a skip: `presses=0` has to say whether a read
+// or a write failed, or every column was skipped.
 struct ColumnCounts {
     uint64_t presses = 0;
-    uint64_t skipEmpty = 0;     // no skill on the column
-    uint64_t skipAura = 0;      // an aura, never automated
-    uint64_t skipToggleOn = 0;  // a toggle already on
-    uint64_t skipSettle = 0;    // a toggle inside its settle window
-    uint64_t skipNoState = 0;   // a toggle whose state could not be read
+    uint64_t skipEmpty = 0;           // no skill on the column
+    uint64_t skipAura = 0;            // an aura, never automated
+    uint64_t skipToggleOn = 0;        // a toggle already on
+    uint64_t skipSettle = 0;          // a toggle inside its settle window
+    uint64_t skipNoState = 0;         // a toggle whose state could not be read
+    uint64_t unreadable = 0;          // the bar column itself could not be read
+    uint64_t originalUnreadable = 0;  // a press planned, the entry's value unreadable: nothing pressed
+    uint64_t pressWriteFailed = 0;    // the press could not be written
+    uint64_t restoreFailed = 0;       // the original value could not be put back
 };
 
 // The jump's counters and its natural maximum M, filled from Mark1Jump.hpp's.
+// The refusals on a successful read (rejected*) are per candidate; a failed
+// read (unread*) is counted by what was being read, never as the game's answer.
 struct JumpCounts {
     uint64_t    granted = 0;
     uint64_t    backedOff = 0;
@@ -210,6 +221,22 @@ struct JumpCounts {
     uint64_t    refusedCursor = 0;
     double      max = 175;             // M
     std::string maxSource = "start";   // cap, reach or start
+    uint64_t    refusedUnreadable = 0; // vanilla: a read the decision needed failed
+    uint64_t    jumps = 0;
+    uint64_t    scaled = 0;            // skillsLeap calls whose displacement was rewritten
+    uint64_t    clamped = 0;
+    uint64_t    answered = 0;
+    uint64_t    excluded = 0;
+    uint64_t    rejectedRoom = 0;
+    uint64_t    rejectedFamily = 0;
+    uint64_t    rejectedGrid = 0;
+    uint64_t    rejectedGate = 0;
+    uint64_t    unreadTakeoff = 0;
+    uint64_t    unreadCursor = 0;
+    uint64_t    unreadRoom = 0;
+    uint64_t    unreadFamily = 0;
+    uint64_t    unreadGrid = 0;
+    uint64_t    unreadGate = 0;
 };
 
 // A movement lever's count, or `unavailable` when its route is `none`.
@@ -228,9 +255,15 @@ struct StatFields {
     uint64_t     unreadable = 0;
     uint64_t     reads = 0;
     ColumnCounts columns[kColumnCount];
+    uint64_t     gateCalls = 0;   // the gate's entries for the local player while the bonus was active
+    uint64_t     gateOther = 0;   // its entries with the switch on whose self was not the local player
+    uint64_t     threw = 0;       // calls whose original threw
     JumpCounts   jump;
     int          iconsLoaded = 0;
     int          iconsEmbedded = 0;
+    bool         artArmed = false;           // the art rule's sticky flag (Bonus::ArtArmed)
+    uint64_t     ground = 0;                 // ground items given our icon
+    std::string  groundRoute = "none";       // the shared LootGroundInit detour's route
     LeverCount   speed;
     LeverCount   penalty;
 };
@@ -262,8 +295,19 @@ inline std::string LeverText(const LeverCount& l)
     return l.available ? std::to_string(l.count) : std::string("unavailable");
 }
 
+inline std::string JoinCounts(std::initializer_list<uint64_t> counts)
+{
+    std::string s;
+    for (uint64_t c : counts) {
+        if (!s.empty()) s += "/";
+        s += std::to_string(c);
+    }
+    return s;
+}
+
 // `mark1set stat`. The line begins `mark1set: bonus=`; per-column counters are
-// Q/E/R/Y joined by `/`. Anything added goes after the existing fields.
+// Q/E/R/Y joined by `/`. A field added to a group goes after that group's
+// existing fields, so a check that reads one by name keeps finding it.
 inline std::string StatLine(const StatFields& f)
 {
     std::string s = "mark1set: bonus=" + std::string(f.bonus ? "on" : "off");
@@ -278,15 +322,79 @@ inline std::string StatLine(const StatFields& f)
     s += " skip-toggle-on=" + ColumnsText(f.columns, &ColumnCounts::skipToggleOn);
     s += " skip-settle=" + ColumnsText(f.columns, &ColumnCounts::skipSettle);
     s += " skip-no-state=" + ColumnsText(f.columns, &ColumnCounts::skipNoState);
-    s += " | jump granted=" + std::to_string(f.jump.granted);
-    s += " backed-off=" + std::to_string(f.jump.backedOff);
-    s += " refused-landing=" + std::to_string(f.jump.refusedLanding);
-    s += " refused-gate=" + std::to_string(f.jump.refusedGate);
-    s += " refused-cursor=" + std::to_string(f.jump.refusedCursor);
-    s += " max=" + NumberText(f.jump.max) + "(" + f.jump.maxSource + ")";
+    s += " col-unreadable=" + ColumnsText(f.columns, &ColumnCounts::unreadable);
+    s += " orig-unreadable=" + ColumnsText(f.columns, &ColumnCounts::originalUnreadable);
+    s += " write-failed=" + ColumnsText(f.columns, &ColumnCounts::pressWriteFailed);
+    s += " restore-failed=" + ColumnsText(f.columns, &ColumnCounts::restoreFailed);
+    s += " gate-calls=" + std::to_string(f.gateCalls);
+    s += " gate-other=" + std::to_string(f.gateOther);
+    s += " threw=" + std::to_string(f.threw);
+    const JumpCounts& j = f.jump;
+    s += " | jump granted=" + std::to_string(j.granted);
+    s += " backed-off=" + std::to_string(j.backedOff);
+    s += " refused-landing=" + std::to_string(j.refusedLanding);
+    s += " refused-gate=" + std::to_string(j.refusedGate);
+    s += " refused-cursor=" + std::to_string(j.refusedCursor);
+    s += " max=" + NumberText(j.max) + "(" + j.maxSource + ")";
+    s += " refused-unreadable=" + std::to_string(j.refusedUnreadable);
+    s += " jumps=" + std::to_string(j.jumps);
+    s += " scaled=" + std::to_string(j.scaled);
+    s += " clamped=" + std::to_string(j.clamped);
+    s += " answered=" + std::to_string(j.answered);
+    s += " excluded=" + std::to_string(j.excluded);
+    // Candidates refused by a successful read: room/family/grid/gate.
+    s += " rejected=" + JoinCounts({ j.rejectedRoom, j.rejectedFamily, j.rejectedGrid, j.rejectedGate });
+    // Failed reads: takeoff/cursor/room/family/grid/gate.
+    s += " unread=" + JoinCounts({ j.unreadTakeoff, j.unreadCursor, j.unreadRoom, j.unreadFamily, j.unreadGrid, j.unreadGate });
     s += " | icons=" + std::to_string(f.iconsLoaded) + "/" + std::to_string(f.iconsEmbedded);
+    s += " art=" + std::string(f.artArmed ? "armed" : "off");
+    s += " ground=" + std::to_string(f.ground);
+    s += " ground-route=" + f.groundRoute;
     s += " | speed=" + LeverText(f.speed) + " penalty=" + LeverText(f.penalty);
     return s;
+}
+
+// ---- the pieces' own art: the rule the adapter applies --------------------------
+//
+// The bag icon and the ground consumer go together, and both follow the switch:
+// the art is armed for the rest of the session by the first `mark1set bonus 1`
+// (Bonus keeps the flag; turning the switch off does not clear it). Until then
+// a piece shows its base item's own bag and ground sprites. Our runtime sprite
+// under "11" draws Error_spr on the ground unless the ground consumer sets the
+// ground item's sprite_index (RDM § 23.7), so the icon is written only where
+// that consumer can follow it.
+
+// The shared LootGroundInit detour's route, as hidden loot's RouteName() names
+// it. `none` (not in yet) and `both` allow the art; anything else is a route
+// known to be other than both, which compiled GML's direct calls pass by.
+inline bool GroundRouteAllowsArt(std::string_view route)
+{
+    return route == "none" || route == "both";
+}
+
+// A dressing writes our bag icon under "11" for a piece only while the art is
+// armed, its bag icon and its ground copy both loaded, and the ground route
+// allows it.
+inline bool ArtWritesIcon(bool armed, bool bagLoaded, bool groundLoaded, std::string_view groundRoute)
+{
+    return armed && bagLoaded && groundLoaded && GroundRouteAllowsArt(groundRoute);
+}
+
+// Whether the ground consumer still waits to be installed: armed, an icon
+// embedded and no try yet. The tick checks this before any game call, so an
+// unarmed session reads nothing for it.
+inline bool ArtGroundInstallPending(bool armed, int iconsEmbedded, bool tried)
+{
+    return armed && iconsEmbedded > 0 && !tried;
+}
+
+// Whether the adapter installs the ground consumer now: pending, setup done
+// and the local player resolved (never at character select, the guide's Known
+// Limitations item 8). The switch is not asked: once armed, it is wanted
+// whatever the switch now says.
+inline bool ArtWantsGroundInstall(bool armed, int iconsEmbedded, bool tried, bool setupDone, bool playerResolved)
+{
+    return ArtGroundInstallPending(armed, iconsEmbedded, tried) && setupDone && playerResolved;
 }
 
 // ---- the bonus: the switch, the install and the refreshed read -------------------
@@ -302,15 +410,20 @@ public:
     static constexpr unsigned long long kRefreshFrames = 30;
 
     // The `mark1set bonus 1|0` switch. Turning it off ends the bonus at once
-    // and forgets the last read, so turning it on again reads at once.
+    // and forgets the last read, so turning it on again reads at once. Turning
+    // it on also arms the pieces' art for the rest of the session.
     void SetEnabled(bool on)
     {
+        if (on) artArmed_ = true;
         if (on == enabled_) return;
         enabled_ = on;
         hasRead_ = false;
         full_ = false;
     }
     bool Enabled() const { return enabled_; }
+
+    // The art rule's sticky flag: set by the first switch-on, never cleared.
+    bool ArtArmed() const { return artArmed_; }
 
     // ---- the install: armed by the switch, hooked once a character exists ----
     // The guide's Known Limitations item 8: a hook installed at character
@@ -404,10 +517,12 @@ public:
         f.set = last_;
         f.unreadable = unreadable_;
         f.reads = reads_;
+        f.artArmed = artArmed_;
     }
 
 private:
     bool               enabled_ = false;
+    bool               artArmed_ = false;
     bool               installed_ = false;
     bool               refused_ = false;
     bool               tickTried_ = false;

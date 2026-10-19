@@ -15,7 +15,11 @@
 // number). Targets: four matching pieces with the switch on make the bonus
 // active (active/*); the install state's transitions (install/*); the
 // refresh period (refresh/*); the dressing (dressing/*); the stat line
-// (stat/*) and the command's forms (parse/*).
+// (stat/*) and the command's forms (parse/*). failure_counts/*: every field
+// the line prints is there once, in order, and each failure count reaches it
+// under its own name. art_rule/*: the pieces' art is armed by the first
+// switch-on of a session (baseline: a fresh one writes and installs nothing),
+// and the write and the ground install follow the rule.
 #include <cmath>
 #include <cstdint>
 #include <iostream>
@@ -107,6 +111,24 @@ static Bonus installedOn()
 
 static bool startsWith(const std::string& s, const std::string& p) { return s.rfind(p, 0) == 0; }
 static bool has(const std::string& s, const std::string& p) { return s.find(p) != std::string::npos; }
+
+// The stat line's `name=value` words: the names in order, and one value.
+static std::vector<std::string> fieldNames(const std::string& line)
+{
+    std::vector<std::string> out;
+    for (const std::string& w : words(line)) {
+        const size_t eq = w.find('=');
+        if (eq != std::string::npos) out.push_back(w.substr(0, eq));
+    }
+    return out;
+}
+
+static std::string field(const std::string& line, const std::string& name)
+{
+    for (const std::string& w : words(line))
+        if (w.rfind(name + "=", 0) == 0) return w.substr(name.size() + 1);
+    return "<missing>";
+}
 
 static std::string why(const std::string& args)
 {
@@ -416,8 +438,11 @@ int main()
             "mark1set: bonus=off active=no install=not-armed set=none unreadable=0 reads=0"
             " | automation presses=0/0/0/0 skip-empty=0/0/0/0 skip-aura=0/0/0/0 skip-toggle-on=0/0/0/0"
             " skip-settle=0/0/0/0 skip-no-state=0/0/0/0"
+            " col-unreadable=0/0/0/0 orig-unreadable=0/0/0/0 write-failed=0/0/0/0 restore-failed=0/0/0/0"
+            " gate-calls=0 gate-other=0 threw=0"
             " | jump granted=0 backed-off=0 refused-landing=0 refused-gate=0 refused-cursor=0 max=175(start)"
-            " | icons=0/0 | speed=unavailable penalty=unavailable";
+            " refused-unreadable=0 jumps=0 scaled=0 clamped=0 answered=0 excluded=0 rejected=0/0/0/0 unread=0/0/0/0/0/0"
+            " | icons=0/0 art=off ground=0 ground-route=none | speed=unavailable penalty=unavailable";
         check("stat/fresh_line_exact", fresh == expected, fresh);
 
         bool ok = true;
@@ -490,6 +515,148 @@ int main()
             && NumberText(0) == "0" && NumberText(std::nan("")) == "?";
         check("stat/number_text", ok);
         check("stat/no_double_space", fresh.find("  ") == std::string::npos && line.find("  ") == std::string::npos);
+    }
+
+    // ---- failure_counts: the automation's failures and the jump's reads -------------
+    {
+        // Every name the line prints, each exactly once (a field printed twice,
+        // or one whose name is another's, would let a check read the wrong one).
+        const std::vector<std::string> names = {
+            "bonus", "active", "install", "set", "unreadable", "reads",
+            "presses", "skip-empty", "skip-aura", "skip-toggle-on", "skip-settle", "skip-no-state",
+            "col-unreadable", "orig-unreadable", "write-failed", "restore-failed", "gate-calls", "gate-other", "threw",
+            "granted", "backed-off", "refused-landing", "refused-gate", "refused-cursor", "max",
+            "refused-unreadable", "jumps", "scaled", "clamped", "answered", "excluded", "rejected", "unread",
+            "icons", "art", "ground", "ground-route", "speed", "penalty" };
+        const std::string fresh = StatLine(StatFields{});
+        bool ok = fieldNames(fresh) == names;
+        check("failure_counts/every_field_once_in_order", ok, fresh);
+
+        // A distinct value in every new field, each found under its own name.
+        StatFields f;
+        for (int i = 0; i < kColumnCount; ++i) {
+            f.columns[i].unreadable = 21 + i;
+            f.columns[i].originalUnreadable = 31 + i;
+            f.columns[i].pressWriteFailed = 41 + i;
+            f.columns[i].restoreFailed = 51 + i;
+        }
+        f.gateCalls = 61;
+        f.gateOther = 62;
+        f.threw = 63;
+        f.jump.refusedUnreadable = 71;
+        f.jump.jumps = 72;
+        f.jump.scaled = 73;
+        f.jump.clamped = 74;
+        f.jump.answered = 75;
+        f.jump.excluded = 76;
+        f.jump.rejectedRoom = 81;
+        f.jump.rejectedFamily = 82;
+        f.jump.rejectedGrid = 83;
+        f.jump.rejectedGate = 84;
+        f.jump.unreadTakeoff = 91;
+        f.jump.unreadCursor = 92;
+        f.jump.unreadRoom = 93;
+        f.jump.unreadFamily = 94;
+        f.jump.unreadGrid = 95;
+        f.jump.unreadGate = 96;
+        f.artArmed = true;
+        f.ground = 101;
+        f.groundRoute = "table-only";
+        const std::string line = StatLine(f);
+        ok = field(line, "col-unreadable") == "21/22/23/24" && field(line, "orig-unreadable") == "31/32/33/34"
+            && field(line, "write-failed") == "41/42/43/44" && field(line, "restore-failed") == "51/52/53/54"
+            && field(line, "gate-calls") == "61" && field(line, "gate-other") == "62" && field(line, "threw") == "63";
+        check("failure_counts/automation_fields_under_their_own_names", ok, line);
+
+        ok = field(line, "refused-unreadable") == "71" && field(line, "jumps") == "72" && field(line, "scaled") == "73"
+            && field(line, "clamped") == "74" && field(line, "answered") == "75" && field(line, "excluded") == "76"
+            && field(line, "rejected") == "81/82/83/84" && field(line, "unread") == "91/92/93/94/95/96";
+        check("failure_counts/jump_fields_under_their_own_names", ok, line);
+
+        ok = field(line, "art") == "armed" && field(line, "ground") == "101" && field(line, "ground-route") == "table-only";
+        check("failure_counts/icons_fields_under_their_own_names", ok, line);
+
+        // The old fields keep their zeros: nothing new was folded into them.
+        ok = field(line, "skip-no-state") == "0/0/0/0" && field(line, "unreadable") == "0"
+            && field(line, "refused-landing") == "0" && field(line, "refused-gate") == "0"
+            && field(line, "refused-cursor") == "0" && field(line, "presses") == "0/0/0/0";
+        check("failure_counts/no_failure_folded_into_an_old_field", ok, line);
+        check("failure_counts/same_names_filled", fieldNames(line) == names, line);
+
+        // A column whose bar slot could not be read is not a toggle with no state.
+        StatFields u;
+        u.columns[2].unreadable = 9;
+        const std::string col = StatLine(u);
+        check("failure_counts/column_unreadable_never_in_skip_no_state",
+              field(col, "col-unreadable") == "0/0/9/0" && field(col, "skip-no-state") == "0/0/0/0", col);
+
+        // Each group's new fields come after that group's existing ones.
+        ok = col.find(" skip-no-state=") < col.find(" col-unreadable=") && col.find(" threw=") < col.find(" | jump ")
+            && col.find(" max=") < col.find(" refused-unreadable=") && col.find(" unread=") < col.find(" | icons=")
+            && col.find(" icons=") < col.find(" art=") && col.find(" ground-route=") < col.find(" | speed=");
+        check("failure_counts/new_fields_after_each_groups_own", ok, col);
+    }
+
+    // ---- art_rule: the pieces' art follows the switch ---------------------------------
+    {
+        // baseline: a fresh session is not armed, so nothing is written and the
+        // ground consumer is not wanted, whatever icons loaded.
+        Bonus fresh;
+        bool ok = !fresh.ArtArmed();
+        for (int bag = 0; bag < 2; ++bag)
+            for (int grd = 0; grd < 2; ++grd)
+                for (const char* route : { "none", "both", "table-only" })
+                    if (ArtWritesIcon(fresh.ArtArmed(), bag != 0, grd != 0, route)) ok = false;
+        ok = ok && !ArtGroundInstallPending(fresh.ArtArmed(), 8, false)
+            && !ArtWantsGroundInstall(fresh.ArtArmed(), 8, false, true, true);
+        check("art_rule/baseline_fresh_session_not_armed_writes_and_installs_nothing", ok);
+
+        StatFields sf;
+        fresh.FillStat(sf);
+        check("art_rule/baseline_fresh_stat_reads_art_off", field(StatLine(sf), "art") == "off", StatLine(sf));
+
+        // The first switch-on arms it for the session; switching off does not
+        // disarm, nor does a refused install (which turns the switch off).
+        Bonus b;
+        b.SetEnabled(true);
+        const bool armedOn = b.ArtArmed();
+        b.SetEnabled(false);
+        const bool stillArmed = b.ArtArmed();
+        Bonus r;
+        r.SetEnabled(true);
+        r.NoteInstall(false, false);
+        check("art_rule/switch_on_arms_and_off_does_not_disarm", armedOn && stillArmed && !b.Enabled()
+              && r.ArtArmed() && !r.Enabled());
+        StatFields sa;
+        b.FillStat(sa);
+        check("art_rule/armed_stat_reads_art_armed", field(StatLine(sa), "art") == "armed", StatLine(sa));
+
+        // Armed, a write needs the bag icon and its ground copy both loaded, and
+        // a shared detour not known to be other than both routes.
+        ok = ArtWritesIcon(true, true, true, "none") && ArtWritesIcon(true, true, true, "both")
+            && !ArtWritesIcon(true, true, true, "table-only") && !ArtWritesIcon(true, true, true, "")
+            && !ArtWritesIcon(true, true, true, "other")
+            && !ArtWritesIcon(true, false, true, "both") && !ArtWritesIcon(true, true, false, "both")
+            && !ArtWritesIcon(true, false, false, "both") && !ArtWritesIcon(false, true, true, "both");
+        check("art_rule/a_write_needs_both_copies_and_no_known_other_route", ok);
+        check("art_rule/route_names", GroundRouteAllowsArt("none") && GroundRouteAllowsArt("both")
+              && !GroundRouteAllowsArt("table-only") && !GroundRouteAllowsArt("BOTH"));
+
+        // The ground install: armed, an icon embedded, not tried, setup done and
+        // a character resolved; never at character select. The switch is not a
+        // parameter: once armed it is wanted whatever the switch now says.
+        ok = ArtWantsGroundInstall(true, 8, false, true, true)
+            && ArtWantsGroundInstall(true, 1, false, true, true)
+            && !ArtWantsGroundInstall(false, 8, false, true, true)
+            && !ArtWantsGroundInstall(true, 0, false, true, true)
+            && !ArtWantsGroundInstall(true, 8, true, true, true)
+            && !ArtWantsGroundInstall(true, 8, false, false, true)
+            && !ArtWantsGroundInstall(true, 8, false, true, false);   // character select: no player
+        check("art_rule/ground_install_wanted_only_when_armed_embedded_untried_and_in_game", ok);
+        ok = ArtGroundInstallPending(true, 8, false) && !ArtGroundInstallPending(false, 8, false)
+            && !ArtGroundInstallPending(true, 0, false) && !ArtGroundInstallPending(true, 8, true)
+            && ArtGroundInstallPending(stillArmed, 8, false);
+        check("art_rule/pending_is_the_tick_gate_before_any_game_call", ok);
     }
 
     // ---- the command -----------------------------------------------------------------

@@ -20,12 +20,17 @@
 // free), and a gate or lock on the segment refuses. back_off: a refused 3M
 // point backs off in 16 px steps to the farthest candidate past M that
 // passes, never one whose gate check did not run, and with none past M the
-// jump is vanilla; backed-off= is counted apart from the refusals. The clamp
-// at L, the natural length handed to the learner, the window, and the
-// granted jump's answers.
+// jump is vanilla; backed-off= is counted apart from the refusals.
+// refused_unreadable: every read the decision makes (take-off, cursor, room,
+// place_meeting, grid, gate line) failing by being unbound, throwing, false
+// or non-finite is counted under its kind, never passes a candidate, and a
+// jump ending vanilla on it is refused-unreadable; refusals on successful
+// reads are counted by reason. The clamp at L, the natural length handed to
+// the learner, the window, and the granted jump's answers.
 #include <cmath>
 #include <cstdint>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -62,6 +67,13 @@ struct World {
     std::vector<Box> gates;           // Gate_Parent_obj and Lock_obj
     bool gateThrows = false;
     bool placeThrows = false;
+    // Failed reads the real adapter can meet: a read that throws, and the
+    // grid's own Unreadable answer, everywhere or only at some points.
+    bool posThrows = false, cursorThrows = false, roomThrows = false;
+    bool gridUnreadable = false;
+    std::vector<Box> placeThrowAt;    // place_meeting throws at these points
+    std::vector<Box> gridUnreadAt;    // the grid cell reads Unreadable here
+    double gateThrowBeyondY = std::numeric_limits<double>::infinity();   // collision_line throws past this end
     long posReads = 0, cursorReads = 0, roomReads = 0, placeAsks = 0, gridAsks = 0, maxAsks = 0;
     std::vector<std::pair<double, double>> placeAsked;
     std::vector<std::pair<double, double>> gateAskedEnds;
@@ -82,51 +94,58 @@ struct World {
 };
 
 // Which callbacks make() leaves unwired.
-enum Skip : unsigned { NoGate = 1, NoGrid = 2, NoPlace = 4, NoLearn = 8 };
+enum Skip : unsigned { NoGate = 1, NoGrid = 2, NoPlace = 4, NoLearn = 8, NoCursor = 16, NoPosition = 32, NoRoom = 64 };
 
 static Core make(World& w, unsigned skip = 0)
 {
     Core c;
-    c.SetPlayerPosition([&w](double& x, double& y) {
-        ++w.posReads;
-        if (!w.posReadable) return false;
-        x = w.px;
-        y = w.py;
-        return true;
-    });
-    c.SetCursor([&w](double& x, double& y) {
-        ++w.cursorReads;
-        if (!w.cursorReadable) return false;
-        x = w.cx;
-        y = w.cy;
-        return true;
-    });
+    if (!(skip & NoPosition))
+        c.SetPlayerPosition([&w](double& x, double& y) {
+            ++w.posReads;
+            if (w.posThrows) throw std::runtime_error("position");
+            if (!w.posReadable) return false;
+            x = w.px;
+            y = w.py;
+            return true;
+        });
+    if (!(skip & NoCursor))
+        c.SetCursor([&w](double& x, double& y) {
+            ++w.cursorReads;
+            if (w.cursorThrows) throw std::runtime_error("cursor");
+            if (!w.cursorReadable) return false;
+            x = w.cx;
+            y = w.cy;
+            return true;
+        });
     c.SetMax([&w]() { ++w.maxAsks; return w.max; });
-    c.SetRoomSize([&w](double& rw, double& rh) {
-        ++w.roomReads;
-        if (!w.roomReadable) return false;
-        rw = w.roomW;
-        rh = w.roomH;
-        return true;
-    });
+    if (!(skip & NoRoom))
+        c.SetRoomSize([&w](double& rw, double& rh) {
+            ++w.roomReads;
+            if (w.roomThrows) throw std::runtime_error("room");
+            if (!w.roomReadable) return false;
+            rw = w.roomW;
+            rh = w.roomH;
+            return true;
+        });
     if (!(skip & NoPlace))
         c.SetPlaceMeeting([&w](double x, double y) {
             ++w.placeAsks;
             w.placeAsked.emplace_back(x, y);
-            if (w.placeThrows) throw std::runtime_error("place_meeting");
+            if (w.placeThrows || inside(w.placeThrowAt, x, y)) throw std::runtime_error("place_meeting");
             return inside(w.solids, x, y);
         });
     if (!(skip & NoGrid))
         c.SetGrid([&w](double x, double y) {
             ++w.gridAsks;
             if (w.gridThrows) throw std::runtime_error("grid");
+            if (w.gridUnreadable || inside(w.gridUnreadAt, x, y)) return Cell::Unreadable;
             if (!w.hasGrid) return Cell::NoGrid;
             return inside(w.gridBlocked, x, y) ? Cell::Blocked : Cell::Free;
         });
     if (!(skip & NoGate))
         c.SetGateOnLine([&w](double x0, double y0, double x1, double y1) {
             w.gateAskedEnds.emplace_back(x1, y1);
-            if (w.gateThrows) throw std::runtime_error("collision_line");
+            if (w.gateThrows || y1 > w.gateThrowBeyondY) throw std::runtime_error("collision_line");
             return w.gateOnLine(x0, y0, x1, y1);
         });
     if (!(skip & NoLearn))
@@ -187,7 +206,29 @@ static std::string counts(const Counters& c)
         + " backed-off=" + std::to_string(c.backedOff) + " refused-cursor=" + std::to_string(c.refusedCursor)
         + " refused-landing=" + std::to_string(c.refusedLanding) + " refused-gate=" + std::to_string(c.refusedGate)
         + " scaled=" + std::to_string(c.scaled) + " clamped=" + std::to_string(c.clamped)
-        + " answered=" + std::to_string(c.answered) + " excluded=" + std::to_string(c.excluded);
+        + " answered=" + std::to_string(c.answered) + " excluded=" + std::to_string(c.excluded)
+        + " refused-unreadable=" + std::to_string(c.refusedUnreadable)
+        + " rejected=" + std::to_string(c.rejectedRoom) + "/" + std::to_string(c.rejectedFamily) + "/"
+        + std::to_string(c.rejectedGrid) + "/" + std::to_string(c.rejectedGate)
+        + " unread=" + std::to_string(c.unreadTakeoff) + "/" + std::to_string(c.unreadCursor) + "/"
+        + std::to_string(c.unreadRoom) + "/" + std::to_string(c.unreadFamily) + "/" + std::to_string(c.unreadGrid) + "/"
+        + std::to_string(c.unreadGate);
+}
+
+// No failed read of any kind was counted.
+static bool noUnread(const Counters& c)
+{
+    return c.refusedUnreadable == 0 && c.unreadTakeoff == 0 && c.unreadCursor == 0 && c.unreadRoom == 0
+        && c.unreadFamily == 0 && c.unreadGrid == 0 && c.unreadGate == 0;
+}
+
+// The jump ended vanilla on a failed read: refused-unreadable, never one of
+// the refusals that mean the game answered, and nothing granted.
+static bool refusedUnreadableOnly(const Core& c)
+{
+    const Counters& k = c.Stats();
+    return c.LastDecision() == Decision::RefusedUnreadable && k.refusedUnreadable == 1 && k.granted == 0
+        && k.refusedLanding == 0 && k.refusedGate == 0 && k.refusedCursor == 0;
 }
 
 static std::string pos(const World& w) { return "pos=" + std::to_string(w.px) + "," + std::to_string(w.py); }
@@ -208,7 +249,11 @@ int main()
         && MaxSourceName(MaxSource::Cap) == "cap" && MaxSourceName(MaxSource::Reach) == "reach"
         && MaxSourceName(MaxSource::Start) == "start" && DecisionName(Decision::BackedOff) == "backed-off"
         && DecisionName(Decision::RefusedGate) == "refused-gate" && DecisionName(Decision::RefusedCursor) == "refused-cursor"
-        && DecisionName(Decision::RefusedLanding) == "refused-landing" && LandingName(Landing::Grid) == "grid");
+        && DecisionName(Decision::RefusedLanding) == "refused-landing" && LandingName(Landing::Grid) == "grid"
+        && DecisionName(Decision::RefusedUnreadable) == "refused-unreadable" && LandingName(Landing::Unread) == "unread"
+        && ReadKindName(ReadKind::Takeoff) == "takeoff" && ReadKindName(ReadKind::Cursor) == "cursor"
+        && ReadKindName(ReadKind::Room) == "room" && ReadKindName(ReadKind::Family) == "family"
+        && ReadKindName(ReadKind::Grid) == "grid" && ReadKindName(ReadKind::Gate) == "gate" && kReadKinds == 6);
 
     // ---- baseline: what the game does without the bonus -------------------
     {
@@ -239,9 +284,10 @@ int main()
         Core c = make(w);
         c.SetActive(true);
         const long writes = fly(c, w, 10, 0.0, 1.0, 175.0);
-        check("baseline/no_cursor_is_vanilla", c.LastDecision() == Decision::RefusedCursor
-            && c.Stats().refusedCursor == 1 && c.Stats().granted == 0 && writes == 0 && near(w.py, 1175.0)
-            && w.placeAsks == 0, counts(c.Stats()) + " " + pos(w));
+        // A cursor that could not be read is a failed read, not a cursor too
+        // close: still a vanilla jump, counted as refused-unreadable.
+        check("baseline/no_cursor_is_vanilla", refusedUnreadableOnly(c) && c.Stats().unreadCursor == 1
+            && writes == 0 && near(w.py, 1175.0) && w.placeAsks == 0, counts(c.Stats()) + " " + pos(w));
     }
     {
         World w;
@@ -257,7 +303,10 @@ int main()
         at(w, 1000.0, 1000.0);
         w.cx = std::nan("");
         const long nanWrites = fly(c, w, 30, 0.0, 1.0, 50.0);
-        check("baseline/near_cursor_is_vanilla", a == 0 && b == 0 && nanWrites == 0 && c.Stats().refusedCursor == 3
+        // Two readable cursors too close: refused-cursor. The non-finite one
+        // is a failed read: refused-unreadable, a vanilla jump all the same.
+        check("baseline/near_cursor_is_vanilla", a == 0 && b == 0 && nanWrites == 0 && c.Stats().refusedCursor == 2
+            && c.Stats().refusedUnreadable == 1 && c.Stats().unreadCursor == 1
             && c.Stats().granted == 0 && w.placeAsks == 0, counts(c.Stats()));
     }
     {
@@ -421,9 +470,18 @@ int main()
         const Landing noGrid = c.Check(1000.0, 1000.0, 0.0, 1.0, 525.0, w.roomW, w.roomH);
         w.hasGrid = true;
         w.gridThrows = true;
-        const Landing unread = c.Check(1000.0, 1000.0, 0.0, 1.0, 525.0, w.roomW, w.roomH);
+        ReadKind thrownKind = ReadKind::Takeoff;
+        const Landing unread = c.Check(1000.0, 1000.0, 0.0, 1.0, 525.0, w.roomW, w.roomH, &thrownKind);
+        w.gridThrows = false;
+        w.gridUnreadable = true;
+        ReadKind answeredKind = ReadKind::Takeoff;
+        const Landing unreadable = c.Check(1000.0, 1000.0, 0.0, 1.0, 525.0, w.roomW, w.roomH, &answeredKind);
+        // A cell that could not be read is never free: the candidate fails,
+        // as a failed grid read rather than a blocked cell.
         check("walkable/landing_and_band_need_a_free_grid_cell_and_a_missing_grid_counts_free",
-            band == Landing::Grid && on == Landing::Grid && noGrid == Landing::Ok && unread == Landing::Grid);
+            band == Landing::Grid && on == Landing::Grid && noGrid == Landing::Ok && unread == Landing::Unread
+            && thrownKind == ReadKind::Grid && unreadable == Landing::Unread && answeredKind == ReadKind::Grid,
+            std::string(LandingName(unread)) + " " + std::string(LandingName(unreadable)));
     }
     {
         World w;
@@ -440,16 +498,24 @@ int main()
     {
         World w;
         Core c = make(w);
+        // A read that fails never passes the candidate (fail closed), and it is
+        // reported as the read that failed, not as the family or a gate found.
         w.placeThrows = true;
-        const Landing place = c.Check(1000.0, 1000.0, 0.0, 1.0, 525.0, w.roomW, w.roomH);
+        ReadKind placeKind = ReadKind::Takeoff;
+        const Landing place = c.Check(1000.0, 1000.0, 0.0, 1.0, 525.0, w.roomW, w.roomH, &placeKind);
         w.placeThrows = false;
         w.gateThrows = true;
-        const Landing gate = c.Check(1000.0, 1000.0, 0.0, 1.0, 525.0, w.roomW, w.roomH);
+        ReadKind gateKind = ReadKind::Takeoff;
+        const Landing gate = c.Check(1000.0, 1000.0, 0.0, 1.0, 525.0, w.roomW, w.roomH, &gateKind);
         World u;
         Core bare = make(u, NoPlace | NoGrid | NoGate);
-        const Landing unwired = bare.Check(1000.0, 1000.0, 0.0, 1.0, 525.0, u.roomW, u.roomH);
-        check("walkable/an_unread_answer_counts_as_blocked", place == Landing::Family && gate == Landing::Gate
-            && unwired == Landing::Family);
+        ReadKind unwiredKind = ReadKind::Takeoff;
+        const Landing unwired = bare.Check(1000.0, 1000.0, 0.0, 1.0, 525.0, u.roomW, u.roomH, &unwiredKind);
+        const Landing noOut = bare.Check(1000.0, 1000.0, 0.0, 1.0, 525.0, u.roomW, u.roomH);   // the kind is optional
+        check("walkable/an_unread_answer_counts_as_blocked", place == Landing::Unread && placeKind == ReadKind::Family
+            && gate == Landing::Unread && gateKind == ReadKind::Gate && unwired == Landing::Unread
+            && unwiredKind == ReadKind::Family && noOut == Landing::Unread,
+            std::string(LandingName(place)) + " " + std::string(LandingName(gate)) + " " + std::string(LandingName(unwired)));
     }
     {
         World w;
@@ -457,7 +523,7 @@ int main()
         Core c = make(w);
         c.SetActive(true);
         const long writes = jumpToCursor(c, w, 10, 175.0);
-        check("walkable/an_unreadable_room_is_a_vanilla_jump", c.LastDecision() == Decision::RefusedLanding
+        check("walkable/an_unreadable_room_is_a_vanilla_jump", refusedUnreadableOnly(c) && c.Stats().unreadRoom == 1
             && writes == 0 && near(w.py, 1175.0) && w.placeAsks == 0, counts(c.Stats()));
     }
     {
@@ -467,8 +533,8 @@ int main()
         c.SetActive(true);
         c.OnLeapEntry(10, true);
         const Move m = c.OnLeapExit(10, true);
-        check("walkable/an_unreadable_take_off_is_a_vanilla_jump", c.LastDecision() == Decision::RefusedLanding
-            && !m.write && w.placeAsks == 0, counts(c.Stats()));
+        check("walkable/an_unreadable_take_off_is_a_vanilla_jump", refusedUnreadableOnly(c)
+            && c.Stats().unreadTakeoff == 1 && !m.write && w.placeAsks == 0, counts(c.Stats()));
     }
 
     // ---- back_off: a refused 3M point --------------------------------------
@@ -509,9 +575,13 @@ int main()
         Core d = make(t);
         d.SetActive(true);
         const long throwing = jumpToCursor(d, t, 10, 175.0);
-        check("back_off/a_skipped_gate_check_is_not_accepted", first == Decision::RefusedGate
-            && d.LastDecision() == Decision::RefusedGate && unwired == 0 && throwing == 0
-            && c.Stats().granted == 0 && d.Stats().granted == 0 && near(w.py, 1175.0) && near(t.py, 1175.0)
+        // Every candidate skipped on its failed gate read: refused-unreadable,
+        // never refused-gate (no gate was found), and nothing granted.
+        check("back_off/a_skipped_gate_check_is_not_accepted", first == Decision::RefusedUnreadable
+            && refusedUnreadableOnly(c) && refusedUnreadableOnly(d) && unwired == 0 && throwing == 0
+            && c.Stats().unreadGate == static_cast<uint64_t>(c.LastCandidates())
+            && d.Stats().unreadGate == static_cast<uint64_t>(d.LastCandidates()) && d.Stats().rejectedGate == 0
+            && near(w.py, 1175.0) && near(t.py, 1175.0)
             && t.gateAskedEnds.size() == static_cast<size_t>(d.LastCandidates()),
             counts(c.Stats()) + " | " + counts(d.Stats()));
     }
@@ -557,6 +627,234 @@ int main()
         const Counters& k = c.Stats();
         check("back_off/counted_apart_from_a_refusal", k.jumps == 3 && k.granted == 2 && k.backedOff == 1
             && k.refusedLanding == 1 && k.refusedGate == 0 && k.refusedCursor == 0, counts(k));
+    }
+
+    // ---- refused_unreadable: a failed read is counted as a failed read ------
+    // Failing closed stays: no candidate is accepted on a read that failed.
+    // But a read that is unbound, throws, answers false or gives a non-finite
+    // value is counted under its own kind, and a jump that ends vanilla on it
+    // is refused-unreadable, never refused-landing, -gate or -cursor.
+    {
+        // The take-off: unbound, throwing, false, non-finite.
+        bool ok = true;
+        std::string detail;
+        for (int v = 0; v < 4; ++v) {
+            World w;
+            if (v == 1) w.posThrows = true;
+            if (v == 2) w.posReadable = false;
+            if (v == 3) w.px = std::nan("");
+            Core c = make(w, v == 0 ? NoPosition : 0u);
+            c.SetActive(true);
+            c.OnLeapEntry(10, true);
+            const Move m = c.OnLeapExit(10, true);
+            const bool one = refusedUnreadableOnly(c) && c.Stats().unreadTakeoff == 1 && c.Stats().unreadCursor == 0
+                && !m.write && w.placeAsks == 0 && w.roomReads == 0;
+            if (!one) detail += " [v" + std::to_string(v) + " " + counts(c.Stats()) + "]";
+            ok = ok && one;
+        }
+        check("refused_unreadable/takeoff", ok, detail);
+    }
+    {
+        // The cursor: unbound, throwing, false, NaN, infinite.
+        bool ok = true;
+        std::string detail;
+        for (int v = 0; v < 5; ++v) {
+            World w;
+            if (v == 1) w.cursorThrows = true;
+            if (v == 2) w.cursorReadable = false;
+            if (v == 3) w.cy = std::nan("");
+            if (v == 4) w.cx = std::numeric_limits<double>::infinity();
+            Core c = make(w, v == 0 ? NoCursor : 0u);
+            c.SetActive(true);
+            const long writes = fly(c, w, 10, 0.0, 1.0, 175.0);
+            const bool one = refusedUnreadableOnly(c) && c.Stats().unreadCursor == 1 && c.Stats().unreadTakeoff == 0
+                && writes == 0 && near(w.py, 1175.0) && w.placeAsks == 0;
+            if (!one) detail += " [v" + std::to_string(v) + " " + counts(c.Stats()) + "]";
+            ok = ok && one;
+        }
+        check("refused_unreadable/cursor", ok, detail);
+    }
+    {
+        // A readable cursor within 16 px stays refused-cursor.
+        World w;
+        w.cy = 1010.0;
+        Core c = make(w);
+        c.SetActive(true);
+        jumpToCursor(c, w, 10, 175.0);
+        check("refused_unreadable/a_readable_near_cursor_stays_refused_cursor",
+            c.LastDecision() == Decision::RefusedCursor && c.Stats().refusedCursor == 1 && noUnread(c.Stats()),
+            counts(c.Stats()));
+    }
+    {
+        // The room: unbound, throwing, false, NaN width, infinite height.
+        bool ok = true;
+        std::string detail;
+        for (int v = 0; v < 5; ++v) {
+            World w;
+            if (v == 1) w.roomThrows = true;
+            if (v == 2) w.roomReadable = false;
+            if (v == 3) w.roomW = std::nan("");
+            if (v == 4) w.roomH = std::numeric_limits<double>::infinity();
+            Core c = make(w, v == 0 ? NoRoom : 0u);
+            c.SetActive(true);
+            const long writes = jumpToCursor(c, w, 10, 175.0);
+            const bool one = refusedUnreadableOnly(c) && c.Stats().unreadRoom == 1 && writes == 0
+                && near(w.py, 1175.0) && w.placeAsks == 0 && c.LastCandidates() == 0 && c.Stats().rejectedRoom == 0;
+            if (!one) detail += " [v" + std::to_string(v) + " " + counts(c.Stats()) + "]";
+            ok = ok && one;
+        }
+        check("refused_unreadable/room", ok, detail);
+    }
+    {
+        // place_meeting: unbound, throwing. Every candidate skipped on it.
+        bool ok = true;
+        std::string detail;
+        for (int v = 0; v < 2; ++v) {
+            World w;
+            if (v == 1) w.placeThrows = true;
+            Core c = make(w, v == 0 ? NoPlace : 0u);
+            c.SetActive(true);
+            const long writes = jumpToCursor(c, w, 10, 175.0);
+            const Counters& k = c.Stats();
+            const bool one = refusedUnreadableOnly(c) && c.LastCandidates() == 22
+                && k.unreadFamily == 22 && k.rejectedFamily == 0 && k.unreadGrid == 0 && k.unreadGate == 0
+                && writes == 0 && near(w.py, 1175.0) && w.gateAskedEnds.empty();
+            if (!one) detail += " [v" + std::to_string(v) + " " + counts(k) + "]";
+            ok = ok && one;
+        }
+        check("refused_unreadable/place_meeting", ok, detail);
+    }
+    {
+        // The grid: unbound, throwing, an Unreadable cell.
+        bool ok = true;
+        std::string detail;
+        for (int v = 0; v < 3; ++v) {
+            World w;
+            if (v == 1) w.gridThrows = true;
+            if (v == 2) w.gridUnreadable = true;
+            Core c = make(w, v == 0 ? NoGrid : 0u);
+            c.SetActive(true);
+            const long writes = jumpToCursor(c, w, 10, 175.0);
+            const Counters& k = c.Stats();
+            const bool one = refusedUnreadableOnly(c) && k.unreadGrid == 22 && k.rejectedGrid == 0
+                && k.unreadFamily == 0 && writes == 0 && near(w.py, 1175.0) && w.gateAskedEnds.empty();
+            if (!one) detail += " [v" + std::to_string(v) + " " + counts(k) + "]";
+            ok = ok && one;
+        }
+        check("refused_unreadable/grid", ok, detail);
+    }
+    {
+        // The gate line: unbound, throwing.
+        bool ok = true;
+        std::string detail;
+        for (int v = 0; v < 2; ++v) {
+            World w;
+            if (v == 1) w.gateThrows = true;
+            Core c = make(w, v == 0 ? NoGate : 0u);
+            c.SetActive(true);
+            const long writes = jumpToCursor(c, w, 10, 175.0);
+            const Counters& k = c.Stats();
+            const bool one = refusedUnreadableOnly(c) && k.unreadGate == 22 && k.rejectedGate == 0
+                && writes == 0 && near(w.py, 1175.0);
+            if (!one) detail += " [v" + std::to_string(v) + " " + counts(k) + "]";
+            ok = ok && one;
+        }
+        check("refused_unreadable/gate", ok, detail);
+    }
+    {
+        // A failed read on one candidate, a later candidate passing: the later
+        // one is granted, and the failed reads are counted.
+        World f;
+        f.placeThrowAt = { Box{ 900.0, 1520.0, 1100.0, 1545.0 } };   // the points at 1525 and 1541
+        Core cf = make(f);
+        cf.SetActive(true);
+        jumpToCursor(cf, f, 10, 175.0);
+        World g;
+        g.gridUnreadAt = { Box{ 900.0, 1520.0, 1100.0, 1545.0 } };
+        Core cg = make(g);
+        cg.SetActive(true);
+        jumpToCursor(cg, g, 10, 175.0);
+        World t;
+        t.gateThrowBeyondY = 1520.0;   // the 3M candidate's gate read fails, 509's does not
+        Core ct = make(t);
+        ct.SetActive(true);
+        jumpToCursor(ct, t, 10, 175.0);
+        const bool family = cf.LastDecision() == Decision::BackedOff && near(cf.LastLanding(), 493.0)
+            && cf.Stats().unreadFamily == 2 && cf.Stats().refusedUnreadable == 0 && near(f.py, 1493.0, 1e-6);
+        const bool grid = cg.LastDecision() == Decision::BackedOff && near(cg.LastLanding(), 493.0)
+            && cg.Stats().unreadGrid == 2 && cg.Stats().refusedUnreadable == 0 && near(g.py, 1493.0, 1e-6);
+        const bool gate = ct.LastDecision() == Decision::BackedOff && near(ct.LastLanding(), 509.0)
+            && ct.Stats().unreadGate == 1 && ct.Stats().refusedUnreadable == 0 && near(t.py, 1509.0, 1e-6);
+        check("refused_unreadable/a_failed_read_then_a_later_candidate_passing_is_granted", family && grid && gate,
+            counts(cf.Stats()) + " | " + counts(cg.Stats()) + " | " + counts(ct.Stats()));
+    }
+    {
+        // Candidates the game refused, mixed with one skipped on a failed read,
+        // and none passing: refused-unreadable, not refused-landing.
+        World w;
+        w.solids = { Box{ 900.0, 1180.0, 1100.0, 1700.0 } };
+        w.placeThrowAt = { Box{ 900.0, 1295.0, 1100.0, 1305.0 } };
+        Core c = make(w);
+        c.SetActive(true);
+        const long writes = jumpToCursor(c, w, 10, 175.0);
+        const Counters& k = c.Stats();
+        check("refused_unreadable/game_refusals_mixed_with_a_failed_read", refusedUnreadableOnly(c)
+            && k.unreadFamily > 0 && k.rejectedFamily > 0 && k.unreadFamily + k.rejectedFamily == 22
+            && writes == 0 && near(w.py, 1175.0), counts(k));
+    }
+    {
+        // Refusals on successful reads, counted by reason, per candidate.
+        World fam;
+        fam.solids = { Box{ 900.0, 1180.0, 1100.0, 1700.0 } };
+        Core cf = make(fam);
+        cf.SetActive(true);
+        jumpToCursor(cf, fam, 10, 175.0);
+        World grd;
+        grd.gridBlocked = { Box{ 900.0, 1180.0, 1100.0, 1700.0 } };
+        Core cg = make(grd);
+        cg.SetActive(true);
+        jumpToCursor(cg, grd, 10, 175.0);
+        World gat;
+        gat.gates = { Box{ 900.0, 1100.0, 1100.0, 1105.0 } };
+        Core ct = make(gat);
+        ct.SetActive(true);
+        jumpToCursor(ct, gat, 10, 175.0);
+        World rm;
+        rm.roomH = 1150.0;   // every candidate past M is outside the room
+        Core cr = make(rm);
+        cr.SetActive(true);
+        jumpToCursor(cr, rm, 10, 175.0);
+        World wall;
+        wall.solids = { Box{ 900.0, 1480.0, 1100.0, 1700.0 } };
+        Core cw = make(wall);
+        cw.SetActive(true);
+        jumpToCursor(cw, wall, 10, 175.0);
+        const Counters& f = cf.Stats();
+        const Counters& g = cg.Stats();
+        const Counters& t = ct.Stats();
+        const Counters& r = cr.Stats();
+        const Counters& b = cw.Stats();
+        const bool ok = cf.LastDecision() == Decision::RefusedLanding && f.rejectedFamily == 22 && f.rejectedGrid == 0
+                && f.rejectedRoom == 0 && f.rejectedGate == 0 && noUnread(f) && f.refusedLanding == 1
+            && cg.LastDecision() == Decision::RefusedLanding && g.rejectedGrid == 22 && g.rejectedFamily == 0
+                && noUnread(g) && g.refusedLanding == 1
+            && ct.LastDecision() == Decision::RefusedGate && t.rejectedGate == 22 && t.rejectedFamily == 0
+                && noUnread(t) && t.refusedGate == 1
+            && cr.LastDecision() == Decision::RefusedLanding && r.rejectedRoom == 22 && r.rejectedFamily == 0
+                && noUnread(r) && r.refusedLanding == 1
+            && cw.LastDecision() == Decision::BackedOff && b.rejectedFamily == 4 && noUnread(b);
+        check("refused_unreadable/refusals_on_successful_reads_counted_by_reason", ok,
+            counts(f) + " | " + counts(g) + " | " + counts(t) + " | " + counts(r) + " | " + counts(b));
+    }
+    {
+        // A room with no grid still counts free: granted, nothing unread.
+        World w;
+        w.hasGrid = false;
+        Core c = make(w);
+        c.SetActive(true);
+        jumpToCursor(c, w, 10, 175.0);
+        check("refused_unreadable/a_room_with_no_grid_is_still_free", c.LastDecision() == Decision::Granted
+            && noUnread(c.Stats()) && c.Stats().rejectedGrid == 0 && near(w.py, 1525.0, 1e-6), counts(c.Stats()));
     }
 
     // ---- the clamp at the landing distance ---------------------------------
@@ -637,7 +935,7 @@ int main()
         jumpToCursor(c, w, 30, 175.0);   // a vanilla jump is learned from as well
         check("learner/natural_length_includes_held_calls_and_vanilla_jumps", w.learned.size() == 2
             && near(w.learned[0].naturalLength, 175.0, 1e-6) && near(w.learned[1].naturalLength, 175.0, 1e-6)
-            && !w.learned[1].haveCursor && w.learned[1].decision == Decision::RefusedCursor);
+            && !w.learned[1].haveCursor && w.learned[1].decision == Decision::RefusedUnreadable);
     }
     {
         World w;

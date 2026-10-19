@@ -9,16 +9,23 @@ plugin/include/ForgePact/Mark1Jump.hpp, compiled whole.
 Baseline (`baseline` in the name): with the bonus inactive nothing is read,
 decided or rewritten and every query keeps its real answer; another self's
 jump is not the player's; no cursor, or one within 16 px of the take-off, is a
-vanilla jump. Target: the landing is 3M along the cursor's direction whether
+vanilla jump (refused-cursor= for a readable one too close, refused-unreadable=
+for one that could not be read). Target: the landing is 3M along the cursor's direction whether
 the cursor is inside M (`cursor_near_full_distance`: 100 px still lands at
 3M), between M and 3M or beyond 3M; f = L / min(d, M), with M from the cap,
 the reach or the 175 px start. `walkable`: the landing and the points 16 px
 either side need room, no family and a free path-grid cell (a room with no
 grid counts free), a gate or lock on the segment refuses, and an unread
-answer counts as blocked. `back_off`: a refused 3M point backs off in 16 px
-steps to the farthest candidate past M that passes the same test, never one
-whose gate check did not run; with none the jump is vanilla, refused-gate=
-when only gates refused; backed-off= is counted apart from the refusals. The
+answer never passes a candidate. `refused_unreadable`: a failed read (the
+take-off, the cursor, the room, place_meeting, the grid cell, the gate line;
+unbound, throwing, false or non-finite) still fails closed but is counted
+under its own kind, and a jump that ends vanilla on one is
+refused-unreadable, never refused-landing, -gate or -cursor; refusals on
+successful reads are counted by reason. `back_off`: a refused 3M point backs
+off in 16 px steps to the farthest candidate past M that passes the same
+test, never one whose gate check did not run; with none the jump is vanilla,
+refused-gate= when only gates refused; backed-off= is counted apart from the
+refusals. The
 clamp at L, the natural length handed to the learner, a new jump after a
 two-frame gap, and a granted window's answers.
 """
@@ -137,6 +144,27 @@ class Mark1JumpBehaviorTests(unittest.TestCase):
         self.assertScenarios("walkable/an_unread_answer_counts_as_blocked",
                              "walkable/an_unreadable_room_is_a_vanilla_jump",
                              "walkable/an_unreadable_take_off_is_a_vanilla_jump")
+
+    # ---- refused_unreadable: a failed read is counted as one ----------------
+
+    def test_refused_unreadable_takeoff_cursor_and_room(self):
+        """Unbound, throwing, false or non-finite: refused-unreadable, never
+        refused-landing or refused-cursor, and the kind counted."""
+        self.assertScenarios("refused_unreadable/takeoff", "refused_unreadable/cursor", "refused_unreadable/room")
+
+    def test_refused_unreadable_a_readable_near_cursor_stays_refused_cursor(self):
+        self.assertScenarios("refused_unreadable/a_readable_near_cursor_stays_refused_cursor")
+
+    def test_refused_unreadable_place_meeting_grid_and_gate(self):
+        self.assertScenarios("refused_unreadable/place_meeting", "refused_unreadable/grid",
+                             "refused_unreadable/gate", "refused_unreadable/game_refusals_mixed_with_a_failed_read")
+
+    def test_refused_unreadable_a_later_candidate_passing_is_granted(self):
+        self.assertScenarios("refused_unreadable/a_failed_read_then_a_later_candidate_passing_is_granted")
+
+    def test_refused_unreadable_refusals_on_successful_reads_counted_by_reason(self):
+        self.assertScenarios("refused_unreadable/refusals_on_successful_reads_counted_by_reason",
+                             "refused_unreadable/a_room_with_no_grid_is_still_free")
 
     # ---- back_off: a refused 3M point ----------------------------------------
 

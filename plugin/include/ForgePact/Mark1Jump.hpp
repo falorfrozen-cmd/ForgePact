@@ -24,9 +24,10 @@ namespace ForgePact::Mark1Jump {
 //     frames or more (jumpscenery's window rule), decided once, at that
 //     entry, before the original runs, while the bonus is active. Inactive,
 //     nothing is read and nothing is decided.
-//   - the direction: the cursor read at take-off. No cursor, or a cursor
-//     closer than kMinCursorPx to the take-off (no usable direction), and the
-//     jump is vanilla (refused-cursor=).
+//   - the direction: the cursor read at take-off. A cursor closer than
+//     kMinCursorPx to the take-off (no usable direction), and the jump is
+//     vanilla (refused-cursor=); no readable cursor, and it is vanilla too
+//     (refused-unreadable=).
 //   - M, the natural maximum: jumpscenery's learned cap, else its learned
 //     reach, else its 175 px start value (ChooseMax).
 //   - the landing is always the full distance: the first candidate is
@@ -40,6 +41,14 @@ namespace ForgePact::Mark1Jump {
 //     one accepted is the landing (backed-off=). When none is, the jump is
 //     vanilla: refused-gate= when every candidate was walkable and failed only
 //     on a gate or lock, refused-landing= otherwise.
+//   - a failed read (unbound, throwing, false or non-finite) still fails
+//     closed, but is counted by its kind and never as the game outcome it
+//     guards: an unreadable take-off, cursor or room is refused-unreadable=
+//     (a readable cursor too close stays refused-cursor=); a candidate whose
+//     family, grid or gate read failed is skipped and the back-off goes on;
+//     with no candidate accepted and any skipped on a failed read, the jump is
+//     refused-unreadable=. Candidates refused by a successful read are counted
+//     by reason (room, family, grid, gate).
 //   - the scale: L is the landing's distance, N = min(cursor distance, M) the
 //     natural length (a vanilla jump ends at a cursor inside M), f = L / N.
 //     After each local skillsLeap call that moved the player, the call's
@@ -114,8 +123,10 @@ inline Max ChooseMax(bool haveCap, double cap, bool haveReach, double reach)
 }
 
 // How a jump was decided. Granted lands at 3M; BackedOff at a nearer
-// candidate past M; the three refusals are vanilla jumps.
-enum class Decision : int { None, Granted, BackedOff, RefusedCursor, RefusedLanding, RefusedGate };
+// candidate past M; the four refusals are vanilla jumps. RefusedCursor,
+// RefusedLanding and RefusedGate mean every read succeeded and the game's
+// answer refused; RefusedUnreadable means a read the decision needed failed.
+enum class Decision : int { None, Granted, BackedOff, RefusedCursor, RefusedLanding, RefusedGate, RefusedUnreadable };
 
 inline constexpr std::string_view DecisionName(Decision d)
 {
@@ -126,16 +137,18 @@ inline constexpr std::string_view DecisionName(Decision d)
     case Decision::RefusedCursor:  return "refused-cursor";
     case Decision::RefusedLanding: return "refused-landing";
     case Decision::RefusedGate:    return "refused-gate";
+    case Decision::RefusedUnreadable: return "refused-unreadable";
     }
     return "?";
 }
 
 inline constexpr bool IsGranted(Decision d) { return d == Decision::Granted || d == Decision::BackedOff; }
 
-// What the landing test found for one candidate: Ok, or the first thing that
-// refused it (the room, the family, the path grid on one of the three points,
-// then the gate or lock on the segment).
-enum class Landing : int { Ok, Room, Family, Grid, Gate };
+// What the landing test found for one candidate: Ok, the first thing the
+// game's answer refused it on (the room, the family, the path grid on one of
+// the three points, then the gate or lock on the segment), or Unread when a
+// read failed first. An Unread candidate is never accepted.
+enum class Landing : int { Ok, Room, Family, Grid, Gate, Unread };
 
 inline constexpr std::string_view LandingName(Landing l)
 {
@@ -145,25 +158,60 @@ inline constexpr std::string_view LandingName(Landing l)
     case Landing::Family: return "family";
     case Landing::Grid:   return "grid";
     case Landing::Gate:   return "gate";
+    case Landing::Unread: return "unread";
     }
     return "?";
 }
 
-// The path-grid cell under a point. NoGrid (the room has none) counts free.
-enum class Cell : int { Free, Blocked, NoGrid };
+// The reads a decision makes, for counting the one that failed.
+enum class ReadKind : int { Takeoff, Cursor, Room, Family, Grid, Gate };
+inline constexpr int kReadKinds = 6;
+
+inline constexpr std::string_view ReadKindName(ReadKind k)
+{
+    switch (k) {
+    case ReadKind::Takeoff: return "takeoff";
+    case ReadKind::Cursor:  return "cursor";
+    case ReadKind::Room:    return "room";
+    case ReadKind::Family:  return "family";
+    case ReadKind::Grid:    return "grid";
+    case ReadKind::Gate:    return "gate";
+    }
+    return "?";
+}
+
+// The path-grid cell under a point. NoGrid (the room has none) counts free;
+// Unreadable (the adapter could not read the cell) is a failed read.
+enum class Cell : int { Free, Blocked, NoGrid, Unreadable };
 
 // What the stat line prints. Kept across off/on.
 struct Counters {
     uint64_t jumps = 0;           // local jumps that started while the bonus was active
     uint64_t granted = 0;         // jumps given a landing past M, backed off or not
     uint64_t backedOff = 0;       // of those, the ones whose 3M point was refused
-    uint64_t refusedCursor = 0;   // vanilla: no cursor, or one too close to give a direction
-    uint64_t refusedLanding = 0;  // vanilla: no candidate past M walkable (or the take-off unreadable)
-    uint64_t refusedGate = 0;     // vanilla: every candidate walkable but behind a gate or lock
+    uint64_t refusedCursor = 0;   // vanilla: a cursor read, too close to give a direction
+    uint64_t refusedLanding = 0;  // vanilla: every candidate read, none past M walkable
+    uint64_t refusedGate = 0;     // vanilla: every candidate read and walkable but behind a gate or lock
     uint64_t scaled = 0;          // skillsLeap calls whose displacement was rewritten
     uint64_t clamped = 0;         // granted jumps that reached their landing distance
     uint64_t answered = 0;        // family queries answered "no collision"
     uint64_t excluded = 0;        // granted-window queries a gate or lock blocked, or named
+    // vanilla: the take-off, the cursor or the room could not be read, or no
+    // candidate passed and at least one was skipped on a failed read
+    uint64_t refusedUnreadable = 0;
+    // Candidates refused by a successful read, by the reason the test gave.
+    uint64_t rejectedRoom = 0;
+    uint64_t rejectedFamily = 0;
+    uint64_t rejectedGrid = 0;
+    uint64_t rejectedGate = 0;
+    // Failed reads, by kind: per jump for the take-off, the cursor and the
+    // room; per candidate for the family, the grid and the gate line.
+    uint64_t unreadTakeoff = 0;
+    uint64_t unreadCursor = 0;
+    uint64_t unreadRoom = 0;
+    uint64_t unreadFamily = 0;
+    uint64_t unreadGrid = 0;
+    uint64_t unreadGate = 0;
 };
 
 // The position OnLeapExit asks the adapter to write, when write is true.
@@ -192,15 +240,19 @@ public:
     using CursorFn = std::function<bool(double& x, double& y)>;
     // M, asked once per jump at take-off; unset, the start value.
     using MaxFn = std::function<Max()>;
-    // room_width / room_height; false when they cannot be read.
+    // room_width / room_height; false when they cannot be read. A non-finite
+    // value counts as unreadable.
     using RoomSizeFn = std::function<bool(double& width, double& height)>;
     // The original place_meeting(x, y, Collision_Parent_obj) with the player
-    // as self: true when the family is there.
+    // as self: true when the family is there. The adapter reports a failed
+    // read by throwing; unset, every read fails.
     using PlaceMeetingFn = std::function<bool(double x, double y)>;
-    // The global.pathGrid cell under (x, y).
+    // The global.pathGrid cell under (x, y); Cell::Unreadable, a throw or an
+    // unset callback is a failed read.
     using GridFn = std::function<Cell(double x, double y)>;
     // The original collision_line from (x0, y0) to (x1, y1) against
-    // Gate_Parent_obj and Lock_obj: true when either is on it.
+    // Gate_Parent_obj and Lock_obj: true when either is on it. A failed read
+    // throws; unset, every read fails.
     using GateOnLineFn = std::function<bool(double x0, double y0, double x1, double y1)>;
     using LearnFn = std::function<void(const Learned&)>;
 
@@ -316,8 +368,11 @@ public:
     }
 
     // The landing test for the candidate `dist` px from (tx, ty) along the
-    // unit (ux, uy), with the room already read.
-    Landing Check(double tx, double ty, double ux, double uy, double dist, double roomW, double roomH) const
+    // unit (ux, uy), with the room already read. Stops at the first refusal
+    // or failed read; on Landing::Unread, `failed` (when given) names the
+    // read that failed.
+    Landing Check(double tx, double ty, double ux, double uy, double dist, double roomW, double roomH,
+        ReadKind* failed = nullptr) const
     {
         const double lx = tx + dist * ux, ly = ty + dist * uy;
         const double px[3] = { lx - kBandPx * ux, lx, lx + kBandPx * ux };
@@ -327,12 +382,18 @@ public:
             if (!(px[k] >= 0.0 && px[k] < roomW && py[k] >= 0.0 && py[k] < roomH)) return Landing::Room;
         }
         for (int k = 0; k < 3; ++k) {
-            if (FamilyAt(px[k], py[k])) return Landing::Family;
+            bool meets = true;
+            if (!ReadFamily(px[k], py[k], meets)) return Unread(failed, ReadKind::Family);
+            if (meets) return Landing::Family;
         }
         for (int k = 0; k < 3; ++k) {
-            if (GridBlocked(px[k], py[k])) return Landing::Grid;
+            Cell c = Cell::Blocked;
+            if (!ReadGrid(px[k], py[k], c)) return Unread(failed, ReadKind::Grid);
+            if (c == Cell::Blocked) return Landing::Grid;
         }
-        if (GateOn(tx, ty, lx, ly)) return Landing::Gate;
+        bool gate = true;
+        if (!ReadGate(tx, ty, lx, ly, gate)) return Unread(failed, ReadKind::Gate);
+        if (gate) return Landing::Gate;
         return Landing::Ok;
     }
 
@@ -401,31 +462,40 @@ private:
     bool ReadRoom(double& w, double& h) const
     {
         if (!roomSize_) return false;
-        try { return roomSize_(w, h); } catch (...) { return false; }
+        bool ok = false;
+        try { ok = roomSize_(w, h); } catch (...) { return false; }
+        return ok && std::isfinite(w) && std::isfinite(h);
     }
 
-    // Unreadable counts as blocked, so an unread landing is never accepted.
-    bool FamilyAt(double x, double y) const
+    static Landing Unread(ReadKind* failed, ReadKind kind)
     {
-        if (!placeMeeting_) return true;
-        try { return placeMeeting_(x, y); } catch (...) { return true; }
+        if (failed) *failed = kind;
+        return Landing::Unread;
     }
 
-    // A room with no grid counts free; an unread cell counts blocked.
-    bool GridBlocked(double x, double y) const
+    // Each landing read answers whether it succeeded; the caller treats a
+    // failed one as a candidate it cannot accept, and never as the game's
+    // answer (so a skipped gate check is never a pass, nor a gate found).
+    bool ReadFamily(double x, double y, bool& meets) const
     {
-        if (!grid_) return true;
-        Cell c = Cell::Blocked;
-        try { c = grid_(x, y); } catch (...) { return true; }
-        return c == Cell::Blocked;
+        if (!placeMeeting_) return false;
+        try { meets = placeMeeting_(x, y); } catch (...) { return false; }
+        return true;
     }
 
-    // A gate check that cannot run counts as a gate: a candidate is never
-    // accepted because its gate check was skipped.
-    bool GateOn(double x0, double y0, double x1, double y1) const
+    // A room with no grid counts free.
+    bool ReadGrid(double x, double y, Cell& c) const
     {
-        if (!gateOnLine_) return true;
-        try { return gateOnLine_(x0, y0, x1, y1); } catch (...) { return true; }
+        if (!grid_) return false;
+        try { c = grid_(x, y); } catch (...) { return false; }
+        return c == Cell::Free || c == Cell::Blocked || c == Cell::NoGrid;
+    }
+
+    bool ReadGate(double x0, double y0, double x1, double y1, bool& gate) const
+    {
+        if (!gateOnLine_) return false;
+        try { gate = gateOnLine_(x0, y0, x1, y1); } catch (...) { return false; }
+        return true;
     }
 
     void StartJump(int64_t frame)
@@ -439,35 +509,77 @@ private:
         jump_.beforeX = jump_.takeoffX;
         jump_.beforeY = jump_.takeoffY;
         jump_.haveCursor = ReadCursor(jump_.cursorX, jump_.cursorY);
+        if (!jump_.haveTakeoff) ++counters_.unreadTakeoff;
+        if (!jump_.haveCursor) ++counters_.unreadCursor;
         Decide();
     }
 
+    // Fails closed throughout: a candidate is never accepted on a read that
+    // failed. A failed read is counted by its kind and the jump that ends
+    // vanilla on one is refused-unreadable, so refused-landing, refused-gate
+    // and refused-cursor only ever mean the game's own answer.
     void Decide()
     {
         last_ = Last{};
         last_.max = ReadMax();
-        if (!jump_.haveTakeoff) { Refuse(Decision::RefusedLanding); return; }
-        if (!jump_.haveCursor) { Refuse(Decision::RefusedCursor); return; }
+        if (!jump_.haveTakeoff || !jump_.haveCursor) { Refuse(Decision::RefusedUnreadable); return; }
         const double cx = jump_.cursorX - jump_.takeoffX, cy = jump_.cursorY - jump_.takeoffY;
         const double d = std::hypot(cx, cy);
         if (!(d >= kMinCursorPx)) { Refuse(Decision::RefusedCursor); return; }
         const double ux = cx / d, uy = cy / d;
         const double m = last_.max.value;
         double w = 0.0, h = 0.0;
-        const bool room = ReadRoom(w, h);
+        if (!ReadRoom(w, h)) {
+            ++counters_.unreadRoom;
+            Refuse(Decision::RefusedUnreadable);
+            return;
+        }
         bool allGated = true;
+        bool anyUnread = false;
         for (int k = 0;; ++k) {
             const double dist = kScale * m - kStepPx * k;
             if (!(dist > m)) break;
             ++last_.candidates;
-            const Landing l = room ? Check(jump_.takeoffX, jump_.takeoffY, ux, uy, dist, w, h) : Landing::Room;
+            ReadKind failed = ReadKind::Family;
+            const Landing l = Check(jump_.takeoffX, jump_.takeoffY, ux, uy, dist, w, h, &failed);
             if (l == Landing::Ok) {
                 Grant(k == 0 ? Decision::Granted : Decision::BackedOff, dist, dist / std::min(d, m));
                 return;
             }
+            if (l == Landing::Unread) {
+                anyUnread = true;
+                CountUnread(failed);
+                continue;
+            }
+            CountRejected(l);
             if (l != Landing::Gate) allGated = false;
         }
-        Refuse(allGated && last_.candidates > 0 ? Decision::RefusedGate : Decision::RefusedLanding);
+        if (anyUnread) Refuse(Decision::RefusedUnreadable);
+        else Refuse(allGated && last_.candidates > 0 ? Decision::RefusedGate : Decision::RefusedLanding);
+    }
+
+    void CountUnread(ReadKind kind)
+    {
+        switch (kind) {
+        case ReadKind::Takeoff: ++counters_.unreadTakeoff; break;
+        case ReadKind::Cursor:  ++counters_.unreadCursor; break;
+        case ReadKind::Room:    ++counters_.unreadRoom; break;
+        case ReadKind::Family:  ++counters_.unreadFamily; break;
+        case ReadKind::Grid:    ++counters_.unreadGrid; break;
+        case ReadKind::Gate:    ++counters_.unreadGate; break;
+        }
+    }
+
+    void CountRejected(Landing l)
+    {
+        switch (l) {
+        case Landing::Room:   ++counters_.rejectedRoom; break;
+        case Landing::Family: ++counters_.rejectedFamily; break;
+        case Landing::Grid:   ++counters_.rejectedGrid; break;
+        case Landing::Gate:   ++counters_.rejectedGate; break;
+        case Landing::Ok:
+        case Landing::Unread: break;
+        }
     }
 
     void Grant(Decision d, double landing, double factor)
@@ -488,6 +600,7 @@ private:
         last_.decision = d;
         if (d == Decision::RefusedCursor) ++counters_.refusedCursor;
         else if (d == Decision::RefusedGate) ++counters_.refusedGate;
+        else if (d == Decision::RefusedUnreadable) ++counters_.refusedUnreadable;
         else ++counters_.refusedLanding;
     }
 

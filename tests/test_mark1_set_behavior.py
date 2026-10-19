@@ -15,6 +15,13 @@ band in use; recognition ignores `b` and `c` and needs `j` 0. Targets: four
 matching pieces with the switch on make the bonus active; the install state's
 transitions; the 30-frame refresh period; the dressing; the stat line, fresh
 (`mark1set: bonus=off` first) and filled, and the command's forms.
+`failure_counts`: the automation's four per-column failures, the gate's
+entries and throws, and the jump's failed reads and per-reason rejections
+each reach the line under their own name (a bar column that could not be read
+never lands in `skip-no-state=`). `art_rule`: the pieces' art is armed by the
+session's first switch-on and stays armed; a dressing writes our icon only
+when armed, with both copies loaded and a ground detour not known to be
+table-only; the ground consumer is wanted only when armed, in game.
 """
 import os
 import re
@@ -193,6 +200,38 @@ class Mark1SetBehaviorTests(unittest.TestCase):
     def test_stat_line_named_fields(self):
         self.assertScenarios("stat/named_fields", "stat/filled_fields", "stat/partial_set", "stat/full_set",
                              "stat/failed_read", "stat/waiting_for_character", "stat/number_text")
+
+    # ---- failure_counts: what `presses=0` or a vanilla jump came from ----------
+
+    def test_stat_line_failure_counts_every_field_once_in_order(self):
+        self.assertScenarios("failure_counts/every_field_once_in_order", "failure_counts/same_names_filled",
+                             "failure_counts/new_fields_after_each_groups_own")
+
+    def test_stat_line_failure_counts_each_under_its_own_name(self):
+        self.assertScenarios("failure_counts/automation_fields_under_their_own_names",
+                             "failure_counts/jump_fields_under_their_own_names",
+                             "failure_counts/icons_fields_under_their_own_names",
+                             "failure_counts/no_failure_folded_into_an_old_field")
+
+    def test_stat_line_failure_counts_column_unreadable_is_not_skip_no_state(self):
+        self.assertScenarios("failure_counts/column_unreadable_never_in_skip_no_state")
+
+    # ---- art_rule: the pieces' art follows the switch ------------------------
+
+    def test_art_rule_baseline_unarmed_session_writes_and_installs_nothing(self):
+        self.assertScenarios("art_rule/baseline_fresh_session_not_armed_writes_and_installs_nothing",
+                             "art_rule/baseline_fresh_stat_reads_art_off")
+
+    def test_art_rule_first_switch_on_arms_for_the_session(self):
+        self.assertScenarios("art_rule/switch_on_arms_and_off_does_not_disarm",
+                             "art_rule/armed_stat_reads_art_armed")
+
+    def test_art_rule_a_write_needs_both_copies_and_the_route(self):
+        self.assertScenarios("art_rule/a_write_needs_both_copies_and_no_known_other_route", "art_rule/route_names")
+
+    def test_art_rule_ground_install_only_armed_and_in_game(self):
+        self.assertScenarios("art_rule/ground_install_wanted_only_when_armed_embedded_untried_and_in_game",
+                             "art_rule/pending_is_the_tick_gate_before_any_game_call")
 
     def test_command_forms(self):
         self.assertScenarios("parse/accepted_forms", "parse/refused_forms_print_the_usage",
