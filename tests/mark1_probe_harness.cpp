@@ -35,6 +35,10 @@
 // pst array and builtin watch names parse back as targets; `pos` measures its
 // modal step and frame time from the samples alone; `base`'s key, definition
 // and line; and every lever reply names its start frame.
+//
+// The Mark 1 set's adapter (labels spawn/*): `spawn`'s pieces by word, each
+// piece's definition and loader key from Mark1Set.hpp's own row, the form's
+// parse, and its line placed, refused at the ground and not built.
 #include <cmath>
 #include <cstdint>
 #include <iostream>
@@ -1020,6 +1024,49 @@ int main()
               BaseLine(r) + " | " + BaseLine(n));
     }
 
+    // ---- spawn -------------------------------------------------------------------
+    {
+        // The Mark 1 set's pieces, from Mark1Set.hpp's table: one word places
+        // one piece, `set` all four in slot order; anything else none.
+        const std::vector<ForgePact::Mark1Set::Piece> all = SpawnPieces("set");
+        const std::vector<ForgePact::Mark1Set::Piece> one = SpawnPieces("boots");
+        const bool pieces = all.size() == 4 && all[0] == ForgePact::Mark1Set::Piece::Helmet
+            && all[1] == ForgePact::Mark1Set::Piece::Body && all[2] == ForgePact::Mark1Set::Piece::Boots
+            && all[3] == ForgePact::Mark1Set::Piece::Gloves
+            && one.size() == 1 && one[0] == ForgePact::Mark1Set::Piece::Boots && SpawnPieces("ring").empty();
+        check("spawn/pieces_by_word", pieces);
+        const ForgePact::Mark1Set::PieceRow& helmet = ForgePact::Mark1Set::RowOf(ForgePact::Mark1Set::Piece::Helmet);
+        check("spawn/definition_is_the_rows_seed_and_base",
+              PieceJson(helmet.seed, helmet.baseB) == "{\"w\":1,\"a\":777500,\"j\":0,\"b\":7,\"c\":0,\"o\":1}"
+                  && BaseKey(1700000000000LL, ForgePact::Mark1Set::RowOf(ForgePact::Mark1Set::Piece::Gloves).itemType)
+                         == "0-0-1700000000000-4",
+              PieceJson(helmet.seed, helmet.baseB));
+        const Command s1 = parsed("spawn SET");
+        const Command s2 = parsed("spawn gloves");
+        check("spawn/parse", s1.form == Form::Spawn && s1.piece == "set" && s2.form == Form::Spawn && s2.piece == "gloves");
+        SpawnResult placed;
+        placed.piece = "helmet";
+        placed.built = true;
+        placed.t = 0;
+        placed.b = 7;
+        placed.a = 777500;
+        placed.dressed = true;
+        placed.ground = "ref:100234";
+        SpawnResult refused = placed;
+        refused.piece = "body";
+        refused.dressed = false;
+        refused.ground.reset();
+        refused.why = "LootGroundCreateFromItem-st=3";
+        SpawnResult unbuilt;
+        unbuilt.piece = "gloves";
+        unbuilt.why = "InitItemFromJson-st=3-gave-undefined";
+        check("spawn/line_placed_refused_and_not_built",
+              SpawnLine(placed) == "mark1probe spawn: piece=helmet t=0 b=7 a=777500 dressed=yes ground=ref:100234"
+                  && SpawnLine(refused) == "mark1probe spawn: piece=body t=0 b=7 a=777500 dressed=no ground=none why=LootGroundCreateFromItem-st=3"
+                  && SpawnLine(unbuilt) == "mark1probe spawn: piece=gloves built=no why=InitItemFromJson-st=3-gave-undefined",
+              SpawnLine(placed) + " | " + SpawnLine(refused) + " | " + SpawnLine(unbuilt));
+    }
+
     // ---- walkable -------------------------------------------------------------
     {
         WalkPoint w;
@@ -1237,7 +1284,7 @@ int main()
     }
     {
         const std::vector<std::pair<std::string, std::string>> refused = {
-            { "bogus", "unknown form bogus (hook, off, show, args, watch, set, scale, hold, move, stat, statpin, statlog, count, pos, base or walkable)" },
+            { "bogus", "unknown form bogus (hook, off, show, args, watch, set, scale, hold, move, stat, statpin, statlog, count, pos, base, spawn or walkable)" },
             { "statlog 64", "usage: statlog <id> <frames>" },
             { "statlog 1000 60", "stat id must be a whole number 0..999, not 1000" },
             { "statlog 64 0", "frames must be a whole number 1..3600, not 0" },
@@ -1255,6 +1302,9 @@ int main()
             { "base 20 0", "class must be a whole number 0..19, not 20" },
             { "base 0 10000", "b must be a whole number 0..9999, not 10000" },
             { "base 0 -1", "b must be a whole number 0..9999, not -1" },
+            { "spawn", "usage: spawn <helmet|body|boots|gloves|set>" },
+            { "spawn helmet boots", "usage: spawn <helmet|body|boots|gloves|set>" },
+            { "spawn ring", "usage: spawn <helmet|body|boots|gloves|set>, not ring" },
             { "hook now", "usage: mark1probe hook" },
             { "off 1", "usage: mark1probe off" },
             { "show all", "usage: mark1probe show [reset]" },
@@ -1321,7 +1371,7 @@ int main()
         const std::vector<std::string> usage = Usage();
         bool every = true;
         for (const char* f : { "hook", "off", "show", "args", "watch", "set", "scale", "hold", "move", "stat", "statpin", "statlog",
-                               "count", "pos", "base", "walkable" }) {
+                               "count", "pos", "base", "spawn", "walkable" }) {
             bool found = false;
             for (const std::string& l : usage) found = found || l.find(std::string("mark1probe ") + f) != std::string::npos;
             every = every && found;

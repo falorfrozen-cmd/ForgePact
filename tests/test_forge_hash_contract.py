@@ -137,6 +137,9 @@ EXPECTED_PLAYER_COMMANDS = {
     # HS Offline Tracker's sensor, `tracker 1|0|stat` (ForgePact #185;
     # test_tracker_mod_contract.py).
     "tracker",
+    # The Mark 1 set, Mods > Items: `mark1set bonus 1|0|stat` (ForgePact #166;
+    # test_mark1_set_contract.py pins it).
+    "mark1set",
 }
 
 

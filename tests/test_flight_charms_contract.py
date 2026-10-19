@@ -127,10 +127,12 @@ class FlightCharmsForgeContract(unittest.TestCase):
         self.assertEqual(forge.count("FlightCharmForgeEntry("), 1)
         # The ranges are tried only once every entry missed: the extra pass
         # after the last entry, and the entries' own test skipped for it.
-        self.assertIn("for (size_t i = 0; i <= entryCount; ++i)", forge)
+        # (ForgePact #166's Mark 1 pieces take one more pass after it, which
+        # tests/test_mark1_set_contract.py pins.)
+        self.assertIn("for (size_t i = 0; i <= entryCount + 1; ++i)", forge)
         self.assertIn("const bool flightMatched = i == entryCount;", forge)
         self.assertIn("if (flightMatched && !FlightCharmForgeEntry(", forge)
-        self.assertIn("if (!flightMatched && !CustomForgeMatches(entry, *candidate, definition)) continue;", forge)
+        self.assertIn("if (!flightMatched && !mark1Matched && !CustomForgeMatches(entry, *candidate, definition)) continue;", forge)
 
     def test_the_selector_index_lets_the_ranges_through(self):
         could = self.body("could_match")

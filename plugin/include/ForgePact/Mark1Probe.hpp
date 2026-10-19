@@ -11,6 +11,8 @@
 #include <utility>
 #include <vector>
 
+#include <ForgePact/Mark1Set.hpp>
+
 namespace ForgePact::Mark1Probe {
 
 // ---- mark1probe's core (ForgePact #166 phase 1, research build only) -------
@@ -45,6 +47,10 @@ namespace ForgePact::Mark1Probe {
 // started; `hold`, a `set` restored once, when it ends; the `effect`, `pst`
 // array and `builtin` watch scopes; `pos`'s modal step and frame time; and
 // `base`, a scratch item of one class and base, never placed.
+//
+// The set itself (phase 2's set adapter) adds `spawn`: the Mark 1 pieces, built
+// from Mark1Set.hpp's table through the game's loader and placed at the
+// player, so the live session has pieces to wear.
 
 // ---- the rows ----------------------------------------------------------------
 
@@ -387,7 +393,7 @@ inline std::string LeverReply(const Lever& l, int64_t from, const std::string& r
 
 enum class Form : int {
     Status, Hook, Off, Show, ShowReset, Args, Watch, Set, Scale, Move, Stat, Count, Pos, WalkHere, WalkAt, WalkScan,
-    Statlog, Statpin, Hold, Base,
+    Statlog, Statpin, Hold, Base, Spawn,
 };
 
 struct Command {
@@ -403,6 +409,7 @@ struct Command {
     long long   statId = 0;                // Statlog
     long long   itemClass = 0;             // Base: the class (hs_game_sdk ItemType) and the base b
     long long   base = 0;
+    std::string piece;                     // Spawn: helmet, body, boots, gloves or set
 };
 
 inline const std::string& RowList()
@@ -503,6 +510,7 @@ inline bool ParseRowArg(std::string_view s, Row& out, std::string& why)
 } // namespace detail
 
 inline constexpr const char* kWalkUsage = "usage: walkable here <dx> <dy> | walkable at <x> <y> | walkable scan <deg> <step> <count>";
+inline constexpr const char* kSpawnUsage = "usage: spawn <helmet|body|boots|gloves|set>";
 
 // `tok` is everything after the command word. False with `why` naming the
 // first thing refused; `c` is then unspecified.
@@ -633,6 +641,15 @@ inline bool Parse(const std::vector<std::string>& tok, Command& c, std::string& 
         c.form = Form::Base;
         return true;
     }
+    if (head == "spawn") {
+        if (n != 2) { why = kSpawnUsage; return false; }
+        const std::string word = LowerText(tok[1]);
+        Mark1Set::Piece piece = Mark1Set::Piece::Helmet;
+        if (word != "set" && !Mark1Set::PieceFromKey(word, piece)) { why = std::string(kSpawnUsage) + ", not " + tok[1]; return false; }
+        c.piece = word;
+        c.form = Form::Spawn;
+        return true;
+    }
     if (head == "count") {
         if (n != 3) { why = "usage: count <object name> <frames>"; return false; }
         if (!IsName(tok[1])) { why = "an object name is 1..64 letters, digits or _, not " + tok[1]; return false; }
@@ -666,7 +683,7 @@ inline bool Parse(const std::vector<std::string>& tok, Command& c, std::string& 
         return true;
     }
     why = "unknown form " + tok[0]
-        + " (hook, off, show, args, watch, set, scale, hold, move, stat, statpin, statlog, count, pos, base or walkable)";
+        + " (hook, off, show, args, watch, set, scale, hold, move, stat, statpin, statlog, count, pos, base, spawn or walkable)";
     return false;
 }
 
@@ -688,6 +705,7 @@ inline std::vector<std::string> Usage()
         "  mark1probe count <object name> <frames>              instance_number per frame, one line per change",
         "  mark1probe pos <frames>                              the cursor, each moving call's dx dy, moves outside the rows, mode, ms",
         "  mark1probe base <class> <b>                          build a scratch item of that class and base (never placed)",
+        "  mark1probe spawn <helmet|body|boots|gloves|set>      build Mark 1 pieces through the loader and place them at the player",
         "  mark1probe walkable here <dx> <dy> | at <x> <y> | scan <deg> <step> <count>",
         "  frames default 600, at most 3600; one lever at a time, a new one replaces it",
     };
@@ -759,6 +777,52 @@ inline std::string BaseLine(const BaseResult& r)
     if (r.spriteExists) out += std::string(" sprite-exists=") + (*r.spriteExists ? "yes" : "no");
     out += " name=" + (r.name.empty() ? std::string("none") : "\"" + r.name + "\"");
     return out;
+}
+
+// ---- `spawn` -----------------------------------------------------------------------
+// The Mark 1 pieces, built the way the boss soul pieces are (json_parse, then
+// InitItemFromJson with the global instance as self, which keeps the seed;
+// then LootGroundCreateFromItem at the player), each from its row of
+// Mark1Set.hpp's table: its class in the loader's key, its seed `a` and base
+// `b` in the definition. The game's own CreateItemNew dresses it on the way,
+// as it dresses a piece loaded from a save; `dressed=` reads whether it did.
+
+// The pieces one `spawn` word places: one, or all four in slot order.
+inline std::vector<Mark1Set::Piece> SpawnPieces(std::string_view word)
+{
+    if (word == "set") return { Mark1Set::Piece::Helmet, Mark1Set::Piece::Body, Mark1Set::Piece::Boots, Mark1Set::Piece::Gloves };
+    Mark1Set::Piece p = Mark1Set::Piece::Helmet;
+    if (Mark1Set::PieceFromKey(word, p)) return { p };
+    return {};
+}
+
+// A piece's definition: the signature items' shape, no unique (`j` 0).
+inline std::string PieceJson(long long a, long long b)
+{
+    return "{\"w\":1,\"a\":" + std::to_string(a) + ",\"j\":0,\"b\":" + std::to_string(b) + ",\"c\":0,\"o\":1}";
+}
+
+// What one piece's spawn gave. t, b and a are read back from the built item
+// (its itemType and its definition), `dressed` is whether it carries
+// fp_mechanic = mark1, and `ground` is what LootGroundCreateFromItem returned;
+// with no ground, `why` says which step refused.
+struct SpawnResult {
+    std::string                piece;
+    bool                       built = false;
+    std::optional<double>      t, b, a;
+    bool                       dressed = false;
+    std::optional<std::string> ground;
+    std::string                why;
+};
+
+inline std::string SpawnLine(const SpawnResult& r)
+{
+    auto num = [](const std::optional<double>& v) { return v ? NumberText(*v) : std::string("?"); };
+    std::string out = "mark1probe spawn: piece=" + r.piece;
+    if (!r.built) return out + " built=no why=" + (r.why.empty() ? std::string("?") : r.why);
+    out += " t=" + num(r.t) + " b=" + num(r.b) + " a=" + num(r.a) + " dressed=" + (r.dressed ? "yes" : "no");
+    if (r.ground) return out + " ground=" + *r.ground;
+    return out + " ground=none why=" + (r.why.empty() ? std::string("?") : r.why);
 }
 
 // ---- `walkable` ---------------------------------------------------------------------

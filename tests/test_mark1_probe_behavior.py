@@ -35,6 +35,10 @@ the `effect`, `pst` array and `builtin` watch scopes, whose names parse back
 as targets; `pos`'s `mode=` and `ms=` from the frame samples alone, with no
 row hooked; `base`'s key, definition and line; and every lever reply's
 `from f=`.
+
+The Mark 1 set's adapter adds `spawn`: the pieces one word places, each
+piece's definition from Mark1Set.hpp's own row, the form's parse and refusals,
+and its line (placed, refused at the ground, not built).
 """
 import os
 import shutil
@@ -185,6 +189,13 @@ class Mark1ProbeBehaviorTests(unittest.TestCase):
 
     def test_base_key_definition_and_line(self):
         self.assertScenarios("base/key_and_definition", "base/line_built_and_not_built")
+
+    def test_spawn_pieces_definition_parse_and_line(self):
+        # The Mark 1 set's adapter: `spawn` builds each piece from
+        # Mark1Set.hpp's own row (seed, base, class) and prints one line per
+        # piece - placed, refused at the ground, or not built.
+        self.assertScenarios("spawn/pieces_by_word", "spawn/definition_is_the_rows_seed_and_base", "spawn/parse",
+                             "spawn/line_placed_refused_and_not_built")
 
     # ---- the lines -------------------------------------------------------------
 

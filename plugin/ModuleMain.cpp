@@ -581,6 +581,23 @@ namespace FcNs = ForgePact::FlightCharms;
 static ForgePact::FlightCharms::Flight g_Flight;
 static bool g_FlightBusy = false;   // game thread only: the flight adapter's own calls inside a detour
 static const char* FlightPlayerCheck();   // the trace line's ` player=`; defined with the flight adapter
+// Mark 1 set (`mark1set`, ForgePact #166): the set's decision core and the
+// owner's icons for the four pieces. The Custom Forge recognises and dresses
+// the pieces (what it reads sits just after the flight charms', before
+// TryApplyCustomForge); the adapter - the worn read, the CheckTalentUse
+// detour, the art and the command - sits just before the research probe of
+// the set, near the end of the file.
+#include <ForgePact/Mark1Set.hpp>
+#include <ForgePact/Mark1Icons.hpp>
+namespace M1sNs = ForgePact::Mark1Set;
+static ForgePact::Mark1Set::Bonus g_Mark1;
+static bool g_M1sBusy = false;   // game thread only: the adapter's own game calls inside its detour
+#ifndef FORGEPACT_RELEASE
+// "mark1set" when the set's own detour holds this script, else "": the
+// research probes' holder checks (SpHolder, TgProbeAttach) name it. Defined
+// with the adapter.
+static std::string Mark1SetHolder(std::string_view runtimeName);
+#endif
 // Boss soul pieces (`soulpiece`, ForgePact #197): the decision core. The
 // research build's `soulprobe` prints its decisions; the mod's adapter uses it too.
 #include <ForgePact/SoulPieceMod.hpp>
@@ -4484,6 +4501,10 @@ static bool ForgeCouldMatch(const RValue& item)
         // exact index (TryApplyCustomForge, FlightCharmForgeEntry).
         FcNs::Rolled flight;
         if (t == FcNs::kCharmTypeT && b == FcNs::kCharmBaseB && FcNs::DecodeSeed((long long)a, flight)) return true;
+        // So are the Mark 1 pieces, by class and seed (j is checked when
+        // the entry is tried; this is only the index's could-match).
+        M1sNs::Piece mark1 = M1sNs::Piece::Helmet;
+        if (M1sNs::IsPiece(t, a, b, 0, 0, mark1)) return true;
         return g_ForgeSelectorKeys.count(std::to_string((long long)t) + "|" + std::to_string((long long)a) + "|" + std::to_string((long long)b)) > 0;
     } catch (...) { return true; }
 }
@@ -4667,6 +4688,68 @@ static bool FlightGuardHolds(std::string_view runtimeName);
 static void FlightDropNoteBuilt(FcNs::Charm charm);
 // ---- end of what the Custom Forge reads for the flight charms ----------------
 
+// ---- Mark 1 set (Mark1Set.hpp): what the Custom Forge reads -----------------
+// The four pieces (helmet, body armor, boots, gloves) are built-in Custom Forge
+// entries, recognition only, like the flight charms': a piece is saved as its
+// base item of its own class with the piece's fixed seed `a` and `j` 0, and is
+// recognised by those three alone (Mark1Set.hpp's IsPiece), so a later change
+// of base does not orphan a piece. TryApplyCustomForge tries the pieces only
+// after every loaded entry and the flight charms missed. A piece is dressed
+// whatever the `mark1set` switch says; dressing arms and installs nothing.
+
+// A piece by its own fields. The type is read first, so every other item the
+// game builds costs one read.
+static bool Mark1PieceDecode(const RValue& item, const RValue& definition, M1sNs::Piece& piece)
+{
+    double t = 0, a = 0, b = 0, c = 0, j = 0;
+    if (!FlightNumber(item, "itemType", t)) return false;
+    if (t != M1sNs::kPieces[0].itemType && t != M1sNs::kPieces[1].itemType && t != M1sNs::kPieces[2].itemType
+        && t != M1sNs::kPieces[3].itemType) return false;
+    if (!FlightNumber(definition, "a", a) || !FlightNumber(definition, "j", j)) return false;
+    FlightNumber(definition, "b", b);   // not part of recognition
+    FlightNumber(definition, "c", c);
+    return M1sNs::IsPiece(t, a, b, c, j, piece);
+}
+
+static bool Mark1PieceOf(const RValue& item, M1sNs::Piece& piece)
+{
+    RValue definition;
+    if (!FlightField(item, "itemDefinitionStruct", definition)) return false;
+    return Mark1PieceDecode(item, definition, piece);
+}
+
+// The built-in entry for one piece: its display name, rarity Heroic, the gold
+// rows (the first reads exactly `Mark 1`), fp_mechanic = mark1, the native
+// stats removed and none of its own. No tier and no lore. The selector is the
+// item's own.
+static bool Mark1ForgeEntry(const RValue& item, const RValue& definition, CustomForgeEntry& entry, M1sNs::Piece& piece)
+{
+    if (!Mark1PieceDecode(item, definition, piece)) return false;
+    double t = 0, a = 0, b = 0, c = 0, j = 0;
+    FlightNumber(item, "itemType", t);
+    FlightNumber(definition, "a", a);
+    FlightNumber(definition, "b", b);
+    FlightNumber(definition, "c", c);
+    FlightNumber(definition, "j", j);
+    const M1sNs::PieceRow& row = M1sNs::RowOf(piece);
+    entry = CustomForgeEntry{};
+    entry.selector = { {"t", t}, {"a", a}, {"b", b}, {"c", c}, {"j", j} };
+    entry.keepNative = false;
+    entry.rarity = M1sNs::kRarity;
+    entry.name = std::string(row.name);
+    std::string rows;
+    for (const std::string_view r : M1sNs::kAffixRows) rows += (rows.empty() ? "" : "\n") + std::string(r);
+    entry.affix = rows;   // fp_affix: newline-separated rows, at most three
+    entry.mechanic = std::string(M1sNs::kMechanic);
+    entry.builtin = true;   // recognition only, as the flight charms' entries
+    return true;
+}
+
+// Defined with the adapter: our bag icon under "11", on CreateItemNew's
+// outermost return, before the item's hash is refreshed.
+static void Mark1DressFinal(RValue& item, M1sNs::Piece piece);
+// ---- end of what the Custom Forge reads for the Mark 1 set ------------------
+
 static volatile LONG g_CustomForgeHashMisses = 0;
 #ifndef FORGEPACT_RELEASE
 // Per-route counters for `forgehash stat`. Research build only: none of these
@@ -4731,16 +4814,21 @@ static bool TryApplyCustomForge(RValue* candidate, bool finalPass = false)
         }
 
         // The loaded entries first (sidecar lines, then the signature items);
-        // only once every one missed, the flight charms' seed ranges, so a
-        // sidecar entry for the same item still wins.
+        // only once every one missed, the flight charms' seed ranges, and
+        // after those the Mark 1 pieces' seeds, so a sidecar entry for the
+        // same item still wins.
         const size_t entryCount = g_CustomForgeEntries.size();
         CustomForgeEntry flightEntry;
         FcNs::Rolled flightRolled;
-        for (size_t i = 0; i <= entryCount; ++i) {
+        CustomForgeEntry mark1Entry;
+        M1sNs::Piece mark1Piece = M1sNs::Piece::Helmet;
+        for (size_t i = 0; i <= entryCount + 1; ++i) {
             const bool flightMatched = i == entryCount;
-            if (flightMatched && !FlightCharmForgeEntry(*candidate, definition, flightEntry, flightRolled)) break;
-            const CustomForgeEntry& entry = flightMatched ? flightEntry : g_CustomForgeEntries[i];
-            if (!flightMatched && !CustomForgeMatches(entry, *candidate, definition)) continue;
+            const bool mark1Matched = i == entryCount + 1;
+            if (flightMatched && !FlightCharmForgeEntry(*candidate, definition, flightEntry, flightRolled)) continue;
+            if (mark1Matched && !Mark1ForgeEntry(*candidate, definition, mark1Entry, mark1Piece)) break;
+            const CustomForgeEntry& entry = flightMatched ? flightEntry : mark1Matched ? mark1Entry : g_CustomForgeEntries[i];
+            if (!flightMatched && !mark1Matched && !CustomForgeMatches(entry, *candidate, definition)) continue;
             if (finalPass) SignatureNoteBuilt(entry.selector);   // #74: a game-built Headhunter / Tyrant's Crown
             if (finalPass && flightMatched) FlightDropNoteBuilt(flightRolled.charm);   // #158: a game-built flight charm drop
             if (!entry.keepNative) {
@@ -4866,6 +4954,9 @@ static bool TryApplyCustomForge(RValue* candidate, bool finalPass = false)
             // A flight charm's footprint and bag icon: CreateItemNew's
             // outermost return only, and before the hash below covers them.
             if (finalPass && flightMatched) FlightCharmDressFinal(*candidate, flightRolled);
+            // A Mark 1 piece's bag icon (once the owner's art loaded; with
+            // none the piece keeps its base item's icon), the same moment.
+            if (finalPass && mark1Matched) Mark1DressFinal(*candidate, mark1Piece);
             {
                 const std::string before = ReadItemHash(*candidate);
                 std::string how;
@@ -36319,6 +36410,12 @@ static void TgProbeAttach(TgProbeTarget& t)
         TgProbeSetMode(t, kTgViaNative, "via " + std::string(t.viaHook) + " (native)");
         return;
     }
+    // The Mark 1 set's detour (ForgePact #166) holds this one: say whose.
+    const std::string mark1 = Mark1SetHolder(runtimeName);
+    if (!mark1.empty()) {
+        TgProbeSetMode(t, kTgBlocked, "blocked: held by " + mark1 + " (its inline detour owns this function)");
+        return;
+    }
     TgProbeSetMode(t, kTgBlocked, "blocked: table entry is not code inside Hero_Siege.exe");
 }
 
@@ -47516,6 +47613,10 @@ static std::string SpHolder(std::string_view name, volatile long*& calls)
         if (name == t.runtimeName && t.origSlot && *t.origSlot) { calls = t.nativeCalls; return "citrace nativetrace"; }
     if (MkHolds(name)) return "mapkeep on";
     if (CmHolds(name)) return "craftmats 1";
+    // The Mark 1 set's CheckTalentUse detour (ForgePact #166): the probes
+    // that ask here refuse the row, naming it.
+    const std::string mark1 = Mark1SetHolder(name);
+    if (!mark1.empty()) return mark1;
     return "";
 }
 
@@ -53496,13 +53597,16 @@ static void FarSleepCommand(const std::string& rest)
 // detour hands the call to each consumer in turn - hidden loot, then
 // LootAnnounceOnInit, which returns at once while `lootann` is off, then
 // (ForgePact #158) FlightCharmOnGroundInit, which returns at once while no
-// flight charm's ground icon has loaded, then (ForgePact #185) TrackerOnInit,
-// which returns at once while `tracker` is off.
+// flight charm's ground icon has loaded, then (ForgePact #166)
+// Mark1OnGroundInit, which returns at once while no Mark 1 piece's ground icon
+// has loaded, then (ForgePact #185) TrackerOnInit, which returns at once while
+// `tracker` is off.
 static PFUNC_YYGMLScript g_Orig_LootGroundInit = nullptr;
 static bool g_HiddenLootInstallTried = false;
 static bool g_HiddenLootVisibleNoted = false;
 static void LootAnnounceOnInit(CInstance* S, int argc, RValue** A);   // the loot announcement adapter, below
 static void TrackerOnInit(CInstance* S, int argc, RValue** A);        // the tracker adapter, below
+static void Mark1OnGroundInit(int argc, RValue** A);                  // the Mark 1 set adapter, below
 static RValue& HookHiddenLootInit(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
     RValue& result = g_Orig_LootGroundInit(S, O, R, argc, A);
@@ -53515,6 +53619,9 @@ static RValue& HookHiddenLootInit(CInstance* S, CInstance* O, RValue& R, int arg
     // The third consumer (ForgePact #158): a flight charm's ground icon, set
     // after the game picked its sprite; returns at once while none loaded.
     FlightCharmOnGroundInit(argc, A);
+    // Then a Mark 1 piece's ground icon (ForgePact #166), the same way;
+    // returns at once while none loaded.
+    Mark1OnGroundInit(argc, A);
     // The fourth (ForgePact #185): the tracker notes the call's handles, as
     // Loot announcements does, and decides the item at the end of the frame.
     TrackerOnInit(S, argc, A);
@@ -62716,6 +62823,402 @@ static void GambaPityCommand(const std::string& rest)
     Out(g_GambaPity.StatusLine());
 }
 
+// ---- Mark 1 set (Mark1Set.hpp): the adapter ------------------------------------
+// ForgePact #166, phase 2. Four built-in Heroic pieces; while all four are
+// worn, each in its own slot, and the Mods -> Items switch "Mark 1 set" is on
+// (`mark1set bonus 1`), the set bonus is active. Mark1Set.hpp decides; this
+// adapter supplies the game reads, all by name:
+//   - the worn read: the four worn slots of global.equippedItems[mplr][0]
+//     (fingerprint strings, RDM "Equipment Slots Layout", measured), each
+//     resolved through GetOnlinePlayerItemOwner and GetItemFromFingerprint,
+//     as MinerHelmetMod.hpp's ReadWorn reads the helmet. Done at the point of
+//     use, inside the CheckTalentUse detour (the core reads at most once
+//     every 30 frames), and on `mark1set stat`.
+//   - the install, armed as jumpscenery's since 2.2.1 (the guide's Known
+//     Limitations item 8): `mark1set bonus 1` with no character only arms, and
+//     the tick installs once the local player resolves. CheckTalentUse is
+//     hooked by HookOneScript and refused unless its inline detour went in; a
+//     research probe holding the script refuses it too, naming the holder.
+//     The automation inside the detour is the automation adapter's part.
+//   - the pieces' own art, by the flight charms' route (ForgePact #158): the
+//     owner's PNGs embedded in Mark1Icons.hpp, written under bp_ipc\mark1\
+//     only when no file of that name is there, loaded once a session; "11"
+//     written on dressing once a piece's bag icon loaded (RDM § 23.5), and the
+//     ground sprite set by the shared LootGroundInit detour's consumer after
+//     the game picked its own (RDM § 23.7). With no icon embedded, or one that
+//     failed, nothing is written, loaded or overridden: the piece keeps its
+//     base item's own bag and ground sprites.
+//   - the `mark1set` command; its forms, replies and stat line are the core's.
+// tests/test_mark1_set_contract.py pins this adapter.
+
+// ---- the pieces' own art ----
+static bool g_M1sIconsTried = false;
+// sprite_add's answers as they came, and which loaded. Sized by the most icons
+// there can be, since kIconCount may be 0.
+static RValue g_M1sIconSprite[ForgePact::Mark1Icons::kMaxIcons];
+static bool g_M1sIconOk[ForgePact::Mark1Icons::kMaxIcons] = {};
+static bool g_M1sGroundReady = false;   // at least one ground icon loaded: the ground consumer has work
+static uint64_t g_M1sGround = 0;        // ground items given our icon
+
+// The icon of one piece (its bag icon, or its ground copy); kIconCount when
+// none is embedded for it.
+static size_t Mark1IconIndex(M1sNs::Piece piece, bool ground)
+{
+    const std::string_view key = M1sNs::RowOf(piece).key;
+    for (size_t k = 0; k < ForgePact::Mark1Icons::kIconCount; ++k) {
+        const ForgePact::Mark1Icons::Icon& icon = ForgePact::Mark1Icons::kIcons[k];
+        if (key == icon.piece && icon.ground == ground) return k;
+    }
+    return ForgePact::Mark1Icons::kIconCount;
+}
+
+// One icon as a path GameMaker can open: the embedded PNG is written to
+// bp_ipc\mark1\ only when no file of that name is there, so a player's own
+// design is kept and used (FlightIconPath's rule).
+static bool Mark1IconPath(size_t k, std::string& gmlPath, std::string& absolutePath)
+{
+    if (k >= ForgePact::Mark1Icons::kIconCount) return false;
+    const ForgePact::Mark1Icons::Icon& icon = ForgePact::Mark1Icons::kIcons[k];
+    const std::string dir = IPC_DIR + "\\mark1";
+    const std::string file = dir + "\\" + icon.file;
+    try {
+        std::error_code ec;
+        std::filesystem::create_directories(dir, ec);
+        if (!std::filesystem::exists(file, ec)) {
+            std::ofstream f(file, std::ios::binary | std::ios::trunc);
+            if (!f) return false;
+            f.write(reinterpret_cast<const char*>(icon.data), static_cast<std::streamsize>(icon.size));
+            if (!f) return false;
+        }
+    } catch (...) { return false; }
+    gmlPath = std::string("bp_ipc\\mark1\\") + icon.file;
+    absolutePath = file;
+    return true;
+}
+
+// Every embedded icon, once a session: sprite_add with the relative path first
+// and the absolute one second, the origin at the centre, re-centred when a
+// player's PNG is another size (FlightIconsLoad's way). A failed icon prints
+// one line naming the files; those pieces keep their base item's art.
+static void Mark1IconsLoad()
+{
+    if (g_M1sIconsTried) return;
+    g_M1sIconsTried = true;
+    std::string failed;
+    for (size_t k = 0; k < ForgePact::Mark1Icons::kIconCount; ++k) {
+        const ForgePact::Mark1Icons::Icon& icon = ForgePact::Mark1Icons::kIcons[k];
+        std::string relative, absolute;
+        if (Mark1IconPath(k, relative, absolute)) {
+            for (const std::string* path : { &relative, &absolute }) {
+                try {
+                    const RValue r = g_Yytk->CallBuiltin("sprite_add", { RValue(path->c_str()), RValue(1.0), RValue(0.0), RValue(0.0),
+                                                                         RValue(std::floor(icon.width / 2.0)), RValue(std::floor(icon.height / 2.0)) });
+                    const bool usable = r.m_Kind == VALUE_REAL || r.m_Kind == VALUE_INT32 || r.m_Kind == VALUE_INT64 || r.m_Kind == VALUE_REF;
+                    const double idx = usable ? r.ToDouble() : -1.0;
+                    if (!std::isfinite(idx) || idx < 0) continue;
+                    g_M1sIconSprite[k] = r;
+                    g_M1sIconOk[k] = true;
+                    const double w = g_Yytk->CallBuiltin("sprite_get_width", { RValue(idx) }).ToDouble();
+                    const double h = g_Yytk->CallBuiltin("sprite_get_height", { RValue(idx) }).ToDouble();
+                    if (std::isfinite(w) && std::isfinite(h) && w > 0 && h > 0 && (w != icon.width || h != icon.height))
+                        g_Yytk->CallBuiltin("sprite_set_offset", { RValue(idx), RValue(std::floor(w / 2)), RValue(std::floor(h / 2)) });
+                    break;
+                } catch (...) {}
+            }
+        }
+        if (!g_M1sIconOk[k]) {
+            failed += (failed.empty() ? "" : ", ") + std::string(icon.file);
+        } else if (icon.ground) {
+            g_M1sGroundReady = true;
+        }
+    }
+    if (!failed.empty())
+        Out("mark1set: icons failed - " + failed + " did not load; those pieces keep their base item's own art");
+}
+
+// The `icons=` field's loaded count.
+static int Mark1IconsLoaded()
+{
+    int loaded = 0;
+    for (size_t k = 0; k < ForgePact::Mark1Icons::kIconCount; ++k)
+        if (g_M1sIconOk[k]) ++loaded;
+    return loaded;
+}
+
+// On CreateItemNew's outermost return, for a dressed piece: our bag icon under
+// "11", only once that piece's icon loaded. Not saved by the game, so written
+// again on every dressing (RDM § 23.5).
+static void Mark1DressFinal(RValue& item, M1sNs::Piece piece)
+{
+    if (g_TruthDepth != 0) return;
+    if (ForgePact::Mark1Icons::kIconCount == 0) return;   // nothing embedded: the base item's own art
+    RValue info;
+    if (!FlightField(item, "itemInfoStruct", info)) return;
+    try {
+        Mark1IconsLoad();
+        const size_t k = Mark1IconIndex(piece, false);
+        if (k >= ForgePact::Mark1Icons::kIconCount) return;
+        if (g_M1sIconOk[k])
+            g_Yytk->CallBuiltin("variable_struct_set", { info, RValue("11"), g_M1sIconSprite[k] });
+    } catch (...) {}
+}
+
+// The shared LootGroundInit detour's consumer after the flight charms', after
+// the game's own call returned. The ground item is identified by what it is:
+// a piece by its class and seed, and our own bag sprite under "11", which only
+// our dressing writes. Argument 0 is the new ground instance (RDM § 16.11);
+// its kind is never checked.
+static void Mark1OnGroundInit(int argc, RValue** A)
+{
+    if (!g_M1sGroundReady) return;
+    if (argc < 1 || !A || !A[0]) return;
+    try {
+        const RValue& ground = *A[0];
+        const std::string field(HeroSiege::Player::kGroundItemInstanceField);
+        if (!g_Yytk->CallBuiltin("variable_instance_exists", { ground, RValue(field) }).ToBoolean()) return;
+        const RValue item = g_Yytk->CallBuiltin("variable_instance_get", { ground, RValue(field) });
+        M1sNs::Piece piece = M1sNs::Piece::Helmet;
+        if (!Mark1PieceOf(item, piece)) return;
+        const size_t bag = Mark1IconIndex(piece, false);
+        const size_t k = Mark1IconIndex(piece, true);
+        if (bag >= ForgePact::Mark1Icons::kIconCount || k >= ForgePact::Mark1Icons::kIconCount) return;
+        if (!g_M1sIconOk[bag] || !g_M1sIconOk[k]) return;
+        RValue info, shown;
+        if (!FlightField(item, "itemInfoStruct", info) || !FlightField(info, "11", shown)) return;
+        if (shown.ToDouble() != g_M1sIconSprite[bag].ToDouble()) return;
+        g_Yytk->CallBuiltin("variable_instance_set", { ground, RValue("sprite_index"), g_M1sIconSprite[k] });
+        ++g_M1sGround;
+    } catch (...) {}
+}
+
+// The ground consumer rides hidden loot's one LootGroundInit detour, put in
+// through the flight charms' install; never a second hook. With no icon
+// embedded no consumer of ours has work, so nothing is installed for it.
+static void Mark1GroundIconInstall()
+{
+    if (ForgePact::Mark1Icons::kIconCount == 0) return;
+    FlightGroundIconInstall();
+}
+
+// ---- the local player and the worn read ----
+static CInstance* g_M1sPlayer = nullptr;   // the local player, refreshed by the tick once installed
+
+static bool Mark1PlayerResolves()
+{
+    bool ok = false;
+    const bool busy = g_M1sBusy;
+    g_M1sBusy = true;
+    try {
+        RValue p;
+        ok = HhResolveLocalPlayer(p) && HhResolveInstance(p) != nullptr;
+    } catch (...) { ok = false; }
+    g_M1sBusy = busy;
+    return ok;
+}
+
+static void Mark1RefreshPlayer()
+{
+    CInstance* inst = nullptr;
+    const bool busy = g_M1sBusy;
+    g_M1sBusy = true;
+    try {
+        RValue p;
+        if (HhResolveLocalPlayer(p)) inst = HhResolveInstance(p);
+    } catch (...) { inst = nullptr; }
+    g_M1sBusy = busy;
+    g_M1sPlayer = inst;
+}
+
+// The four worn slots (helmet, body, boots, gloves), for Mark1Set.hpp's
+// Evaluate. False when the read failed as a whole (no local player, no
+// readable equippedItems or owner); a slot whose fingerprint or item could not
+// be resolved is Unreadable, an empty string is Empty. A fingerprint that is
+// not a string never reaches the game's resolver (MinerHelmetMod.hpp's rule).
+static bool Mark1ReadWorn(M1sNs::WornSlots& slots)
+{
+    for (M1sNs::WornSlot& s : slots) s = M1sNs::WornSlot{};
+    try {
+        RValue player;
+        if (!HhResolveLocalPlayer(player)) return false;
+        double index = -1;
+        if (!ForgePact::MiningOre::WholeNumber(g_Yytk->CallBuiltin("variable_global_get", { RValue("mplr") }), index)
+            || index < 0 || index > 4) return false;
+        const RValue all = g_Yytk->CallBuiltin("variable_global_get", { RValue("equippedItems") });
+        RValue ownerSlots, worn;
+        if (!ForgePact::MinerHelmet::Index(all, (int)index, ownerSlots) || !ForgePact::MinerHelmet::Index(ownerSlots, 0, worn))
+            return false;
+        CInstance* global = nullptr;
+        g_Yytk->GetGlobalInstance(&global);
+        if (!global) return false;
+        RValue owner;
+        if (!AurieSuccess(g_Yytk->CallGameScriptEx(owner, HeroSiege::Scripts::gml_Script_GetOnlinePlayerItemOwner.data(),
+                                                    global, global, { RValue(index) }))) return false;
+        for (int i = 0; i < M1sNs::kPieceCount; ++i) {
+            M1sNs::WornSlot& s = slots[static_cast<size_t>(i)];
+            s.read = M1sNs::SlotRead::Unreadable;
+            RValue fingerprint;
+            if (!ForgePact::MinerHelmet::Index(worn, M1sNs::kPieces[i].slot, fingerprint)) continue;
+            if (fingerprint.m_Kind == VALUE_UNDEFINED) { s.read = M1sNs::SlotRead::Empty; continue; }
+            if (fingerprint.m_Kind != VALUE_STRING) continue;
+            if (fingerprint.ToString().empty()) { s.read = M1sNs::SlotRead::Empty; continue; }
+            RValue item;
+            if (!AurieSuccess(g_Yytk->CallGameScriptEx(item, HeroSiege::Scripts::gml_Script_GetItemFromFingerprint.data(),
+                                                        global, global, { fingerprint, owner }))) continue;
+            RValue definition;
+            double t = 0, a = 0, b = 0, c = 0, j = 0;
+            if (!FlightField(item, "itemDefinitionStruct", definition) || !FlightNumber(item, "itemType", t)
+                || !FlightNumber(definition, "a", a) || !FlightNumber(definition, "j", j)) continue;
+            FlightNumber(definition, "b", b);   // not part of recognition
+            FlightNumber(definition, "c", c);
+            s.read = M1sNs::SlotRead::Item;
+            s.itemType = t;
+            s.a = a;
+            s.b = b;
+            s.c = c;
+            s.j = j;
+        }
+        return true;
+    } catch (...) { return false; }
+}
+
+// ---- the CheckTalentUse detour ----
+static PFUNC_YYGMLScript g_M1sOrigCheckTalentUse = nullptr;
+static bool g_M1sCtuNative = false;   // the inline detour went in: the bonus is allowed to arm
+
+// The point of use: the local player's own call of the cast gate, once a
+// frame. With the switch off, inside the adapter's own calls, or for any other
+// self, the original alone. Otherwise the set is read (at most once every 30
+// frames, Mark1Set.hpp's Active); the automation (Mark1Automation.hpp) is the
+// automation adapter's part and does nothing yet.
+static RValue& Mark1HookCheckTalentUse(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    if (!g_Mark1.Enabled() || g_M1sBusy || !S || S != g_M1sPlayer) return g_M1sOrigCheckTalentUse(S, O, R, argc, A);
+    bool active = false;
+    g_M1sBusy = true;
+    try { active = g_Mark1.Active((unsigned long long)g_RuntimeFrame, Mark1ReadWorn); } catch (...) { active = false; }
+    g_M1sBusy = false;
+    (void)active;
+    return g_M1sOrigCheckTalentUse(S, O, R, argc, A);
+}
+
+#ifndef FORGEPACT_RELEASE
+// The set's research probe's hold on a script ("" when none): defined with
+// that probe, below.
+static std::string M1pScriptHolder(std::string_view runtimeName);
+
+static std::string Mark1SetHolder(std::string_view runtimeName)
+{
+    if (!g_M1sOrigCheckTalentUse) return "";
+    if (runtimeName != HeroSiege::Scripts::gml_Script_CheckTalentUse
+        && runtimeName != std::string_view(SdkShortScriptName(HeroSiege::Scripts::gml_Script_CheckTalentUse))) return "";
+    return "mark1set";
+}
+
+// A research probe that holds CheckTalentUse now, by name ("" when none):
+// skillprobe and every holder it knows (tgprobe, craftprobe and the rest,
+// JpHolder), jumpprobe, and the set's own research probe. Decided from each
+// holder's own record, never by trying a second detour.
+static std::string Mark1SetResearchHolder()
+{
+    const std::string_view name = HeroSiege::Scripts::gml_Script_CheckTalentUse;
+    volatile long* calls = nullptr;
+    const std::string holder = JpHolder(name, calls);
+    if (!holder.empty()) return holder;
+    for (const JpRow& r : g_JpRows)
+        if (r.installed && std::string_view(r.runtimeName) == name) return "jumpprobe hook";
+    return M1pScriptHolder(name);
+}
+#endif
+
+// The one install path, through Mark1InstallIfReady: "" when every hook is in,
+// otherwise why the bonus stays off. A hook that went in stays in, and its
+// detour returns the original while the switch is off.
+static std::string Mark1SetInstall()
+{
+#ifndef FORGEPACT_RELEASE
+    const std::string holder = Mark1SetResearchHolder();
+    if (!holder.empty())
+        return holder + " holds CheckTalentUse (a script takes one inline detour; a second install would be table-only"
+               " and blind); the bonus stays off. Relaunch without it to use mark1set.";
+#endif
+    if (!g_M1sOrigCheckTalentUse
+        && !HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_CheckTalentUse), "fp_mark1set_ctu",
+                          (PVOID)Mark1HookCheckTalentUse, &g_M1sOrigCheckTalentUse, &g_M1sCtuNative))
+        return "CheckTalentUse was not found by name (see the hook line above)";
+    if (!g_M1sCtuNative)
+        return "CheckTalentUse went in TABLE-ONLY (no inline detour): compiled GML's direct calls would pass it by";
+    Mark1GroundIconInstall();
+    return "";
+}
+
+static unsigned long long g_M1sArmedFrames = 0;   // frames the tick ran while armed and not installed
+
+// Installs when the core says so (Mark1Set.hpp's ShouldInstall): the switch
+// on, the hooks not in, setup done, the local player resolved and, from the
+// tick, no try of its own yet. Before a character exists it installs nothing.
+// A refusal prints its one line and the core turns the switch off.
+static void Mark1InstallIfReady(bool fromTick)
+{
+    const bool havePlayer = g_Mark1.ShouldInstall(g_Setup, true, fromTick) && Mark1PlayerResolves();
+    if (!g_Mark1.ShouldInstall(g_Setup, havePlayer, fromTick)) return;
+    const std::string why = Mark1SetInstall();
+    g_Mark1.NoteInstall(why.empty(), fromTick);
+    if (!why.empty()) { Out("mark1set: refused - " + why); return; }
+    Mark1RefreshPlayer();
+}
+
+// The per-frame tick. Returns at once while the switch is off; while armed and
+// not installed, looks for the local player every kInstallPollFrames frames;
+// once installed, only the local player refreshed. The decisions happen
+// inside the hooked call, at the point of use.
+static void Mark1SetTick()
+{
+    if (!g_Mark1.Enabled()) return;
+    if (!g_Mark1.Installed()) {
+        if (g_Mark1.TickNeeded() && M1sNs::Bonus::LooksForPlayer(g_M1sArmedFrames++)) Mark1InstallIfReady(true);
+        return;
+    }
+    Mark1RefreshPlayer();
+}
+
+// The stat line's fields this adapter knows: the set's part and the art's.
+// The automation, the jump and the movement levers fill theirs when they land.
+static M1sNs::StatFields Mark1SetStatFields()
+{
+    M1sNs::StatFields f;
+    g_Mark1.FillStat(f);
+    f.iconsLoaded = Mark1IconsLoaded();
+    f.iconsEmbedded = (int)ForgePact::Mark1Icons::kIconCount;
+    return f;
+}
+
+// `mark1set bonus 1|0` (the panel's switch); bare `mark1set` or `stat` reads
+// the set afresh when a character is loaded and prints the core's line.
+static void Mark1SetCommand(const std::string& rest)
+{
+    std::vector<std::string> args;
+    { std::stringstream ss(Lower(TrimCopy(rest))); std::string w; while (ss >> w) args.push_back(w); }
+    M1sNs::Command c;
+    std::string why;
+    if (!M1sNs::ParseCommand(args, c, why)) { Out(why); return; }
+    if (c.form == M1sNs::CommandForm::Bonus) {
+        g_Mark1.SetEnabled(c.on);
+        // In game, with a character loaded: at once. At character select (the
+        // launch commands): armed only, and the tick installs later.
+        if (c.on && !g_Mark1.Installed()) Mark1InstallIfReady(false);
+        else if (c.on) Mark1RefreshPlayer();
+        Out(M1sNs::BonusReply(g_Mark1));
+        return;
+    }
+    if (g_Setup && Mark1PlayerResolves()) {
+        g_M1sBusy = true;
+        try { g_Mark1.ReadNow((unsigned long long)g_RuntimeFrame, Mark1ReadWorn); } catch (...) {}
+        g_M1sBusy = false;
+    }
+    Out(M1sNs::StatLine(Mark1SetStatFields()));
+}
+// ---- end of the Mark 1 set adapter ----------------------------------------------
+
 #ifndef FORGEPACT_RELEASE
 // ---- mark1probe: the Mark 1 set's phase 1 instrument (ForgePact #166) ----
 // docs/mark1-set-research.md holds the static readings, the live procedures
@@ -63259,10 +63762,20 @@ static void M1pOnBuiltin(int row, RValue& Result, CInstance* S, CInstance* O, in
 
 // ---- hook -------------------------------------------------------------------------
 
+// This probe's own hold on a script, for the Mark 1 set's install (declared
+// with the set's adapter): "mark1probe hook" once `hook` put a row on it in.
+static std::string M1pScriptHolder(std::string_view runtimeName)
+{
+    for (const M1pRow& t : g_M1pRows)
+        if (t.orig && std::string_view(t.runtimeName) == runtimeName) return "mark1probe hook";
+    return "";
+}
+
 // Whether another ForgePact hook holds this row's script now, and its name
 // where an existing holder check knows it ("" lets the core say `an earlier
 // hook (table-only)`). Decided from each holder's own record and from the
-// script table, never by trying a second detour.
+// script table, never by trying a second detour. The Mark 1 set's own detour
+// is one SpHolder knows (through JpHolder), named `mark1set`.
 static bool M1pHeldBy(const M1pRow& t, std::string& holder)
 {
     holder.clear();
@@ -63656,6 +64169,73 @@ static void M1pBase(const M1pNs::Command& c)
     Out(M1pNs::BaseLine(r));
 }
 
+// `spawn <helmet|body|boots|gloves|set>` (the Mark 1 set's Live procedure 2):
+// each piece built from Mark1Set.hpp's row by the game's own loader
+// (json_parse, then InitItemFromJson with the global instance as self, which
+// keeps the seed), then placed by LootGroundCreateFromItem with the local
+// player as self, at the player - the boss soul pieces' route (SoulPiecePlace).
+// CreateItemNew dresses it on the way, as it dresses a piece from a save. One
+// line per piece: its t, b and a read back, whether it was dressed, and the
+// ground id or why not. The pieces' ground icon goes in first, the way the
+// set's own install puts it in. Writes no member of anything itself.
+static void M1pSpawn(const M1pNs::Command& c)
+{
+    CInstance* g = nullptr;
+    g_Yytk->GetGlobalInstance(&g);
+    M1pRefreshPlayer();
+    M1pNs::Value vx, vy;
+    if (!g || !g_M1pPlayer || !M1pReadTarget(g_M1pPlayer, M1pNs::Target{ M1pNs::Scope::Player, "x" }, vx)
+        || !M1pReadTarget(g_M1pPlayer, M1pNs::Target{ M1pNs::Scope::Player, "y" }, vy) || vx.isBool || vy.isBool) {
+        Out("mark1probe spawn: refused - no local player with a position (load a character first)");
+        return;
+    }
+    Mark1GroundIconInstall();
+    const std::vector<M1sNs::Piece> pieces = M1pNs::SpawnPieces(c.piece);
+    static long long s_LastStamp = 0;
+    for (size_t i = 0; i < pieces.size(); ++i) {
+        const M1sNs::PieceRow& row = M1sNs::RowOf(pieces[i]);
+        M1pNs::SpawnResult r;
+        r.piece = std::string(row.key);
+        M1pBusyScope busy;
+        try {
+            const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+            const long long stamp = ms > s_LastStamp ? ms : s_LastStamp + 1;
+            s_LastStamp = stamp;
+            RValue parsed;
+            g_Yytk->CallBuiltinEx(parsed, "json_parse", g, g, { RValue(M1pNs::PieceJson(row.seed, row.baseB)) });
+            if (parsed.m_Kind != VALUE_OBJECT) { r.why = "json_parse-gave-" + M1pValueToken(parsed); Out(M1pNs::SpawnLine(r)); continue; }
+            RValue item;
+            const AurieStatus st = g_Yytk->CallGameScriptEx(item, HeroSiege::Scripts::gml_Script_InitItemFromJson, g, g,
+                                                            { parsed, RValue(M1pNs::BaseKey(stamp, row.itemType)) });
+            if (!AurieSuccess(st) || item.m_Kind != VALUE_OBJECT) {
+                r.why = "InitItemFromJson-st=" + std::to_string((int)st) + "-gave-" + M1pValueToken(item);
+                Out(M1pNs::SpawnLine(r));
+                continue;
+            }
+            r.built = true;
+            const M1pScopeRef itemRef{ item, true, "item" };
+            RValue v, definition;
+            if (M1pGet(itemRef, "itemType", v) && N1Numeric(v)) r.t = v.ToDouble();
+            if (M1pGet(itemRef, "itemDefinitionStruct", definition) && definition.m_Kind == VALUE_OBJECT) {
+                const M1pScopeRef defRef{ definition, true, "itemDefinitionStruct" };
+                if (M1pGet(defRef, "b", v) && N1Numeric(v)) r.b = v.ToDouble();
+                if (M1pGet(defRef, "a", v) && N1Numeric(v)) r.a = v.ToDouble();
+            }
+            r.dressed = M1pGet(itemRef, "fp_mechanic", v) && v.m_Kind == VALUE_STRING && v.ToString() == M1sNs::kMechanic;
+            // Side by side at the player, a cell apart, so each can be picked up.
+            const double x = vx.number + (static_cast<double>(i) - (pieces.size() - 1) / 2.0) * 32.0;
+            RValue res;
+            const AurieStatus st2 = g_Yytk->CallGameScriptEx(res, HeroSiege::Scripts::gml_Script_LootGroundCreateFromItem, g_M1pPlayer,
+                                                             g_M1pPlayer, { RValue(x), RValue(vy.number), item });
+            if (!AurieSuccess(st2)) r.why = "LootGroundCreateFromItem-st=" + std::to_string((int)st2);
+            else r.ground = M1pValueToken(res);
+        } catch (...) {
+            r.why = "the-spawn-threw";
+        }
+        Out(M1pNs::SpawnLine(r));
+    }
+}
+
 // ---- walkable ----------------------------------------------------------------------
 
 // A builtin's answer as the core reads it: the kind's name, and its value
@@ -63923,6 +64503,7 @@ static void M1pCommand(const std::string& rest)
     case M1pNs::Form::Statpin: M1pLever(c); return;
     case M1pNs::Form::Statlog: M1pStatlog(c); return;
     case M1pNs::Form::Base: M1pBase(c); return;
+    case M1pNs::Form::Spawn: M1pSpawn(c); return;
     case M1pNs::Form::Count: M1pCount(c.object, c.frames); return;
     case M1pNs::Form::Pos: M1pPos(c.frames); return;
     case M1pNs::Form::WalkHere:
@@ -64001,7 +64582,7 @@ static void RunCommand(const std::string& line)
         "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem", "frameprof", "farsleep",
         "stashmoveall", "stashmove", "densityroll", "hiddenloot", "bossrarity", "incident", "dungeonchest",
         "jumpscenery", "skillslider", "gambapity", "lootann", "pillartips", "flightcharm", "soulpiece",
-        "tracker"
+        "tracker", "mark1set"
     };
     if (kPlayerCommands.find(lc) == kPlayerCommands.end()) {
         Out("command unavailable in player build: " + cmd);
@@ -64169,6 +64750,9 @@ static void RunCommand(const std::string& line)
     if (lc == "jumpscenery") { JumpSceneryCommand(rest); return; }
     // Flight charms: the Items tab's drop switches and `stat`, the same early return.
     if (lc == "flightcharm") { FlightCharmCommand(rest); return; }
+    // Mark 1 set (Mods > Items, ForgePact #166): the switch's command and
+    // `stat`, the same standalone early return.
+    if (lc == "mark1set") { Mark1SetCommand(rest); return; }
 #ifndef FORGEPACT_RELEASE
     // Flight charms' research instrument (research build only, not a player
     // command): the same standalone early return.
@@ -65703,6 +66287,11 @@ void FrameCallback(FWFrame& FrameContext)
     // local player refreshed. The decisions happen inside the hooked calls, at
     // the point of use.
     if (g_Setup) FlightCharmTick();
+
+    // Mark 1 set (ForgePact #166): returns at once while its switch is off;
+    // while armed, the install once a character exists; then the local player
+    // refreshed. The set is read inside the hooked cast gate, at the point of use.
+    if (g_Setup) Mark1SetTick();
 
     // Goburin's Head pity, toggled by `gambapity <count>`: the gamba machines'
     // sprites, once a frame, and each explosion's decision at its deadline

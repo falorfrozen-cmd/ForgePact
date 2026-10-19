@@ -34,6 +34,14 @@ restore, written through the core like every lever write; statpin's answer
 through the same SetResult as stat; `pos` sampling (with a clock) whether or
 not a row is hooked; and `base`, whose one game-script call is InitItemFromJson
 by its SDK constant, never placing what it builds.
+
+The Mark 1 set's adapter (phase 2) adds `spawn`, research build only like the
+rest: the pieces built from Mark1Set.hpp's table through the same loader and
+placed by LootGroundCreateFromItem with the local player as self, both by
+their SDK constants, the pieces' ground icon installed first the way the
+set's own install puts it in, and nothing written by the probe itself; and
+`M1pScriptHolder`, the probe's own hold on a script, which the set's install
+asks before it hooks CheckTalentUse.
 """
 import re
 import sys
@@ -86,13 +94,14 @@ BUILTIN_ROWS = (
 )
 
 # Builtins and calls that change game state. The adapter may use the first
-# three only inside M1pWriteTarget; the rest never. A game script is called
-# in one place only, `base`'s InitItemFromJson (its own test below).
+# three only inside M1pWriteTarget; the rest never. Game scripts are called
+# by `base` (InitItemFromJson) and `spawn` (InitItemFromJson, then
+# LootGroundCreateFromItem) only, each pinned by its own test below.
 MEMBER_WRITES = ("variable_instance_set", "variable_struct_set", "array_set")
 NEVER = ("variable_global_set", "instance_create", "instance_destroy", "instance_deactivate", "instance_activate",
          "ds_list_add", "ds_list_set", "ds_list_delete", "ds_map_set", "ds_map_add", "ds_map_delete",
          "mp_grid_add", "mp_grid_clear", "tilemap_set", "layer_set", "keyboard_key_press",
-         "io_clear", "game_set_speed", "alarm_set", "LootGroundCreate", "CallGameScript(")
+         "io_clear", "game_set_speed", "alarm_set", "LootGroundCreate(", "CallGameScript(")
 
 
 class Mark1ProbeContract(unittest.TestCase):
@@ -120,7 +129,8 @@ class Mark1ProbeContract(unittest.TestCase):
                          "M1pRefreshPlayer", "M1pResolveScope", "M1pReadTarget", "M1pWriteTarget", "M1pSnapshot",
                          "M1pWalkable", "M1pCount", "M1pPos", "g_M1pRows", "g_M1pProbe", "g_M1pPlayer",
                          "M1pOnBuiltin", "M1pInstallBuiltins", "M1pBuiltinHeldBy", "M1pRowInstalled", "g_M1pBuiltinRows",
-                         "M1pStatlog", "M1pBase", "M1pRestoreHold", "M1pSnapshotPlayerArrays", "M1pAlarmGet"):
+                         "M1pStatlog", "M1pBase", "M1pRestoreHold", "M1pSnapshotPlayerArrays", "M1pAlarmGet",
+                         "M1pSpawn", "M1pScriptHolder"):
             self.assertIn(expected, symbols)
         # Negative control: the strip keeps player code, so an absence below
         # is the strip working, not an empty string.
@@ -263,8 +273,11 @@ class Mark1ProbeContract(unittest.TestCase):
 
     def test_research_only_base_builds_through_the_loader_by_its_sdk_constant_and_places_nothing(self):
         base = self.body("static void M1pBase(const M1pNs::Command& c)")
-        # The adapter's one game-script call.
-        self.assertEqual(self.code.count("CallGameScriptEx("), 1)
+        spawn = self.body("static void M1pSpawn(const M1pNs::Command& c)")
+        # base's one game-script call; spawn's two are the only others.
+        self.assertEqual(base.count("CallGameScriptEx("), 1)
+        self.assertEqual(spawn.count("CallGameScriptEx("), 2)
+        self.assertEqual(self.code.count("CallGameScriptEx("), 3)
         self.assertIn("g_Yytk->CallGameScriptEx(item, HeroSiege::Scripts::gml_Script_InitItemFromJson, g, g,", base)
         self.assertIn('g_Yytk->CallBuiltinEx(parsed, "json_parse", g, g, { RValue(M1pNs::BaseJson(c.base)) });', base)
         self.assertIn("M1pNs::BaseKey(ms, c.itemClass)", base)
@@ -278,6 +291,37 @@ class Mark1ProbeContract(unittest.TestCase):
         self.assertIn("inline constexpr long long kBaseScratchSeed = 779000;", self.header)
         command = self.body("static void M1pCommand(const std::string& rest)")
         self.assertIn("case M1pNs::Form::Base: M1pBase(c); return;", command)
+
+    def test_research_only_spawn_builds_the_set_pieces_and_places_them_at_the_player(self):
+        spawn = self.body("static void M1pSpawn(const M1pNs::Command& c)")
+        # The loader, by its SDK constant, with the global instance as self,
+        # from the piece's own row of Mark1Set.hpp.
+        self.assertIn('g_Yytk->CallBuiltinEx(parsed, "json_parse", g, g, { RValue(M1pNs::PieceJson(row.seed, row.baseB)) });', spawn)
+        self.assertIn("g_Yytk->CallGameScriptEx(item, HeroSiege::Scripts::gml_Script_InitItemFromJson, g, g,", spawn)
+        self.assertIn("M1pNs::BaseKey(stamp, row.itemType)", spawn)
+        self.assertIn("M1pNs::SpawnPieces(c.piece)", spawn)
+        # Placed at the player, with the player as self (the soul pieces' route).
+        self.assertIn("g_Yytk->CallGameScriptEx(res, HeroSiege::Scripts::gml_Script_LootGroundCreateFromItem, g_M1pPlayer,", spawn)
+        self.assertLess(spawn.index("gml_Script_InitItemFromJson"), spawn.index("gml_Script_LootGroundCreateFromItem"))
+        self.assertEqual(self.code.count("LootGroundCreate"), spawn.count("LootGroundCreate"),
+                         "only spawn places anything on the ground")
+        # The ground icon goes in first, the way the set's own install does it.
+        self.assertLess(spawn.index("Mark1GroundIconInstall();"), spawn.index("gml_Script_LootGroundCreateFromItem"))
+        # It writes no member of anything itself: dressing is the game's own
+        # CreateItemNew's, through the Custom Forge.
+        for name in MEMBER_WRITES:
+            self.assertNotIn(name, spawn)
+        self.assertNotIn("M1pWriteTarget", spawn)
+        self.assertIn("M1pNs::SpawnLine(r)", spawn)
+        command = self.body("static void M1pCommand(const std::string& rest)")
+        self.assertIn("case M1pNs::Form::Spawn: M1pSpawn(c); return;", command)
+
+    def test_research_only_the_probes_own_hold_is_named_for_the_set(self):
+        holder = self.body("static std::string M1pScriptHolder(std::string_view runtimeName)")
+        self.assertIn("for (const M1pRow& t : g_M1pRows)", holder)
+        self.assertIn('return "mark1probe hook";', holder)
+        # The set's own detour is a holder this probe's check knows, through JpHolder.
+        self.assertIn("Mark1SetHolder(name)", self.body("static std::string SpHolder(std::string_view name, volatile long*& calls)"))
 
     def test_research_only_pos_samples_with_a_clock_whether_or_not_a_row_is_hooked(self):
         tick = self.body("static void M1pFrameTick()")
