@@ -11,7 +11,9 @@ crash report now says what crashed.
   during the extra rolls, but the game goes on to use that text, and the error
   that followed was passed back to the game. Now the extra rolls make their
   floating XP text as the game expects, and ForgePact removes those extra texts
-  as each roll ends, so a node is meant to show one XP text, as without the mod.
+  as each roll ends, so a node shows one XP text, as without the mod, and it
+  carries the dig's real mining XP. Checked in a game session: digs with 3 extra
+  rolls on a character still gaining mining XP no longer crash the game.
   If an extra roll ever fails anyway, ForgePact no longer passes the error back
   to the game: it stops rolling, leaves the node dug out, turns extra rolls off
   until you restart the game (the ore multiplier keeps working) and writes one

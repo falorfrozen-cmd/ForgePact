@@ -33,7 +33,7 @@ none of these diagnostic hooks or the recorder. See
 | **Special Content** | Rift Portals, Battlefields, Cursed Orbs, Summon Portals, Chaos Pillars, Chaos Tower — up to 100× per zone |
 | **Drop Rates** | Gold, Dungeon Keys, Angelic Keys, Chaos + Crystal Keys, Bifröst Key, Relics and Prime Evil Parts (Key of Terror, bosses only) — up to 100×. Gold multiplies the amount per drop: each gold drop is still one coin, worth that many times as much; the other drops multiply as before |
 | **Mining Ore Multiplier** | Loot → Mining Ore Multiplier, 1–10×. Scales the stack quantity of ore awarded by mining; x1 is normal. A worn Miner's Helmet replaces it with 4× instead of stacking |
-| **Mining Ore Extra Rolls** | Loot → Mining Ore Extra Rolls, 1–10, off at 1 (the default). Every mining node you finish pays out that many times: that many sets of the node's ore, and that many chances at the dig's rare bonus finds, which still only come if your character has the find stats for them. Character and guild XP still count once per node (measured); mining XP and quest progress are meant to as well, but that is not confirmed, so until a dig shows otherwise they may come once per roll. The floating XP texts of the extra rolls are removed as each roll ends, so one is meant to show per node (not yet checked in play). If an extra roll ever fails, ForgePact stops rolling, leaves the node dug out, turns extra rolls off until you restart the game and writes one `miningrolls: an extra roll failed` line to `out.txt`, instead of passing the failure back to the game (the 2.3.0 crash, #222). Works together with the Mining Ore Multiplier (each set is multiplied); a worn Miner's Helmet is built to give each set its 4×, but that combination has not been measured in play. Checked in play on 2026-10-02 through the panel: 3 rolls dropped three stacks of a Copper Vein's ore, 1 roll one stack ([details](docs/mining-ore-research.md)) |
+| **Mining Ore Extra Rolls** | Loot → Mining Ore Extra Rolls, 1–10, off at 1 (the default). Every mining node you finish pays out that many times: that many sets of the node's ore, and that many chances at the dig's rare bonus finds, which still only come if your character has the find stats for them. Character, guild and mining XP count once per node (measured; mining XP checked in play on 2026-10-19: the extra rolls repeat the ore, not the mining XP); quest progress is meant to as well, but that is not confirmed, so until a dig shows otherwise it may come once per roll. The floating XP texts of the extra rolls are removed as each roll ends, so one XP text shows per node, carrying the dig's real mining XP (seen in play on 2026-10-19). If an extra roll ever fails, ForgePact stops rolling, leaves the node dug out, turns extra rolls off until you restart the game and writes one `miningrolls: an extra roll failed` line to `out.txt`, instead of passing the failure back to the game (the 2.3.0 crash, #222); the 2.3.1 fix was checked in a game session on 2026-10-19, digging with 3 rolls, with no crash. Works together with the Mining Ore Multiplier (each set is multiplied); a worn Miner's Helmet is built to give each set its 4×, but that combination has not been measured in play. Checked in play on 2026-10-02 through the panel: 3 rolls dropped three stacks of a Copper Vein's ore, 1 roll one stack ([details](docs/mining-ore-research.md)) |
 | **Miner's Helmet** | A signature helmet forged in the Item Editor. While worn: 4× ore from every mining node, and Vein Resonance - finishing a dig also digs the two nearest veins within 192 units that you could mine yourself (4× each, no chaining). Mods → Items shows whether it is worn ([details](#miners-helmet)) |
 | **Angelic / Unholy Drops (Experimental)** | ForgePact's own die per kill; on a hit it builds one of the game's real Angelic / Unholy uniques (never a signature item, see [Signature drops](#signature-drops)). x2 = 1 in 7,500 kills, each step adds a die, typable |
 | **Combat Modifiers** | Total Damage, Attack Speed, Faster Cast Rate, Skill Haste, All Skills, Defense, Life/Mana Replenish, physical and spell Critical Chance/Damage ([Skill Haste and All Skills](#skill-haste-and-all-skills)), and for your own skills Projectile Speed, Projectile Amount and Area of Effect, each off by default ([Skill sliders](#skill-sliders-projectile-speed-projectile-amount-and-area-of-effect)) |
@@ -102,12 +102,14 @@ rolls make the game run its own dig completion again for the node you just finis
 so each extra roll pays the node's ore stacks again and rolls the dig's stat-gated
 bonus finds again. Nothing is forced: a bonus find still needs your character's own
 find stats, and an extra roll that pays nothing ends the loop for that node.
-Character and guild XP happen once per node (measured); mining XP, quest progress and
-the floating XP text are meant to as well, but a test dig never showed the game paying
-them through the calls the plugin holds back, so that is not confirmed: until a dig
-shows otherwise they may come once per roll, ten times at 10 rolls. (The 2026-10-02
-check could not read mining XP, because its character's mining level was at the
-cap.) The two sliders are independent and multiply: at 3 rolls with the multiplier at 5, a
+Character and guild XP happen once per node (measured), and so does mining XP:
+checked in play on 2026-10-19, a dig at 1 roll gained 7 mining XP and a dig at 3
+rolls 6, each shown as one XP text, so the extra rolls repeat the ore, not the mining
+XP. Quest progress is meant to come once per node as well, but a test dig never showed
+the game paying it through the calls the plugin holds back, so that is not confirmed:
+until a dig shows otherwise it may come once per roll, ten times at 10 rolls. (The
+2026-10-02 check could not read mining XP, because its character's mining XP was at
+the cap.) The two sliders are independent and multiply: at 3 rolls with the multiplier at 5, a
 node pays three sets of stacks, each 5×; a worn Miner's Helmet is built to give each set its 4×
 in place of the multiplier, but that combination has not been measured in play. At 1 it installs nothing, and the multiplier on its own
 keeps working exactly as before. If the plugin cannot attach what the extra rolls
@@ -122,15 +124,17 @@ In 2.3.0, with extra rolls above 1, a dig that gives mining XP could crash the
 game (#222): ForgePact held back the floating XP text in the extra rolls, but the
 game goes on to use that text, and the error that followed was passed back to the
 game. Since 2.3.1 the extra rolls make their floating XP text as the game expects
-and ForgePact removes those extra texts as each roll ends, so the node is meant to
-show one, as without the mod. If an extra roll fails anyway, ForgePact stops the
+and ForgePact removes those extra texts as each roll ends, so the node shows one, as
+without the mod, and that one text is the dig's real mining XP. If an extra roll fails anyway, ForgePact stops the
 error there instead of passing it back to the game: it stops rolling, leaves the
 node dug out (it keeps what the rolls before paid), turns extra rolls off until you
 restart the game, and writes one line to `out.txt` that starts `miningrolls: an
 extra roll failed` and names the error's type. Setting the slider again that
 session then answers `miningrolls: unavailable - ...`; the multiplier keeps
-working. This is tested outside the game and has not yet been checked in a game
-session.
+working. The fix was checked in a game session on 2026-10-19: digs at 3 rolls on a
+character still gaining mining XP finished without a crash, the extra rolls' texts
+were removed and one XP text showed per node. No extra roll failed in that session,
+so the failure path is tested outside the game only ([details](docs/mining-ore-research.md)).
 
 Dungeon Keys, Angelic Keys and Relics are also gated a second time: outside their home
 zone the game rolls their drop type at zero chance, so the item can never come up no
