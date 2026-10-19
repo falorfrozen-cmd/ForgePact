@@ -263,7 +263,7 @@ struct StatFields {
     int          iconsEmbedded = 0;
     bool         artArmed = false;           // the art rule's sticky flag (Bonus::ArtArmed)
     uint64_t     ground = 0;                 // ground items given our icon
-    std::string  groundRoute = "none";       // the shared LootGroundInit detour's route
+    std::string  groundRoute = "not-installed";  // GroundRouteName(): the shared LootGroundInit detour's route
     LeverCount   speed;
     LeverCount   penalty;
 };
@@ -364,12 +364,27 @@ inline std::string StatLine(const StatFields& f)
 // ground item's sprite_index (RDM § 23.7), so the icon is written only where
 // that consumer can follow it.
 
-// The shared LootGroundInit detour's route, as hidden loot's RouteName() names
-// it. `none` (not in yet) and `both` allow the art; anything else is a route
-// known to be other than both, which compiled GML's direct calls pass by.
+// The shared LootGroundInit detour's route as the art rule and the stat line
+// name it. Before the one install attempt it is `not-installed` (the name the
+// loot announcement's `init-hook=` prints for the same state); after it, hidden
+// loot's RouteName(): `both`, `table-only`, or `none` when the install was
+// tried and refused. RouteName() alone reads `none` both before the attempt
+// and after a refused one, so the adapter passes the install state here and
+// never RouteName() bare.
+inline constexpr const char* kGroundRouteNotInstalled = "not-installed";
+inline std::string GroundRouteName(bool installTried, std::string_view routeName)
+{
+    return installTried ? std::string(routeName) : std::string(kGroundRouteNotInstalled);
+}
+
+// `not-installed` (not in yet: the tick installs the consumer once the art is
+// armed) and `both` allow the art. Anything else refuses it: `table-only`,
+// which compiled GML's direct calls pass by, and `none`, a refused install, so
+// the consumer never runs and our sprite under "11" would draw Error_spr on the
+// ground. A bare RouteName() `none` therefore fails closed.
 inline bool GroundRouteAllowsArt(std::string_view route)
 {
-    return route == "none" || route == "both";
+    return route == kGroundRouteNotInstalled || route == "both";
 }
 
 // A dressing writes our bag icon under "11" for a piece only while the art is
