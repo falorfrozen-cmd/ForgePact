@@ -63,9 +63,15 @@ inline bool loggedRollFailed = false;
 // checks read what the plugin did, not what it is set to. removedTexts: the
 // extra runs' Combat_Text_obj instances destroyed; textsLeft: what an extra
 // run's CombatText returned that was not one, or could not be checked, and
-// was left alone.
+// was left alone. textsLeft is the total of the four routes that leave a text:
+// textsUnresolved (Combat_Text_obj did not resolve by name, so nothing was
+// checked), textsNotInstance (undefined, a string, or instance_exists false),
+// textsWrongObject (object_index unreadable or another object) and
+// textsDestroyFailed (instance_destroy threw).
 inline uint64_t extraRuns = 0, extraRunsUnpaid = 0, silencedCalls = 0;
 inline uint64_t removedTexts = 0, textsLeft = 0;
+inline uint64_t textsUnresolved = 0, textsNotInstance = 0, textsWrongObject = 0, textsDestroyFailed = 0;
+inline bool loggedTextsUnresolved = false;
 // The type of this thread's last C++ exception, as the crash trap recorded it;
 // ModuleMain.cpp sets it. Null, or a null answer, reads "unknown type".
 inline const char* (*exceptionType)() = nullptr;
@@ -212,29 +218,46 @@ inline bool IndexRead(const RValue& value, double& out) {
 // one left on screen. Each value is identified by what it is: a live instance
 // whose object_index is Combat_Text_obj, resolved by name, never by its
 // number. Anything else, and everything while the name does not resolve, is
-// left alone and counted in textsLeft.
+// left alone and counted in textsLeft and in the route that refused it, so a
+// failed check says which one it was. An unresolved name turns the removal off
+// for every text, so it is also logged once per session, in both builds.
 inline void RemoveTexts(const std::vector<RValue>& texts) {
     if (texts.empty()) return;
     double textObject = -1;
+    std::string name;
     try {
-        const std::string name(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Combat_Text_obj));
+        name = HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Combat_Text_obj);
         if (!IndexRead(g_Yytk->CallBuiltin("asset_get_index", {RValue(name.c_str())}), textObject)) textObject = -1;
     } catch (...) { textObject = -1; }
-    for (const RValue& text : texts) {
-        bool removed = false;
-        // Nothing returned (undefined) or a string is no instance to ask about.
-        if (textObject >= 0 && text.m_Kind != VALUE_UNDEFINED && text.m_Kind != VALUE_STRING) {
-            try {
-                double index = -1;
-                if (g_Yytk->CallBuiltin("instance_exists", {text}).ToBoolean()
-                    && IndexRead(g_Yytk->CallBuiltin("variable_instance_get", {text, RValue("object_index")}), index)
-                    && index == textObject) {
-                    g_Yytk->CallBuiltin("instance_destroy", {text});
-                    removed = true;
-                }
-            } catch (...) {}
+    if (textObject < 0) {
+        textsUnresolved += texts.size();
+        textsLeft += texts.size();
+        if (!loggedTextsUnresolved) {
+            loggedTextsUnresolved = true;
+            Out("miningrolls: " + (name.empty() ? std::string("the floating text object") : name)
+                + " did not resolve - extra-roll texts are not removed");
         }
-        if (removed) ++removedTexts; else ++textsLeft;
+        return;
+    }
+    for (const RValue& text : texts) {
+        // Nothing returned (undefined) or a string is no instance to ask about.
+        if (text.m_Kind == VALUE_UNDEFINED || text.m_Kind == VALUE_STRING) { ++textsNotInstance; ++textsLeft; continue; }
+        uint64_t* refused = &textsNotInstance;
+        try {
+            if (g_Yytk->CallBuiltin("instance_exists", {text}).ToBoolean()) {
+                refused = &textsWrongObject;
+                double index = -1;
+                if (IndexRead(g_Yytk->CallBuiltin("variable_instance_get", {text, RValue("object_index")}), index)
+                    && index == textObject) {
+                    refused = &textsDestroyFailed;
+                    g_Yytk->CallBuiltin("instance_destroy", {text});
+                    refused = nullptr;
+                }
+            }
+        } catch (...) {}
+        if (!refused) { ++removedTexts; continue; }
+        ++*refused;
+        ++textsLeft;
     }
 }
 
@@ -718,9 +741,12 @@ inline void RollsStat() {
     for (const auto& script : silencedScripts)
         line += std::string(" ") + script.name + "=" + std::to_string(script.passed) + "/" + std::to_string(script.silenced);
     // CombatText's calls outside / inside extra runs (both reach the game), the
-    // extra runs' texts destroyed, and their returns left alone.
+    // extra runs' texts destroyed, and their returns left alone, in total and
+    // by the route that refused each.
     line += " CombatText=" + std::to_string(CombatText::passedCalls) + "/" + std::to_string(CombatText::extraRunCalls);
-    line += " removedTexts=" + std::to_string(removedTexts) + " textsLeft=" + std::to_string(textsLeft);
+    line += " removedTexts=" + std::to_string(removedTexts) + " textsLeft=" + std::to_string(textsLeft)
+        + " textsUnresolved=" + std::to_string(textsUnresolved) + " textsNotInstance=" + std::to_string(textsNotInstance)
+        + " textsWrongObject=" + std::to_string(textsWrongObject) + " textsDestroyFailed=" + std::to_string(textsDestroyFailed);
     // Before the rolls reach it, an installed CombatText can only be the slider's.
     line += " combatTextFirst=" + (!combatTextFirst.empty() ? combatTextFirst
         : CombatText::installTried ? std::string("experience") : std::string("none"));
