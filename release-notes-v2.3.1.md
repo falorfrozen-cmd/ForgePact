@@ -26,9 +26,9 @@ crash report now says what crashed.
   `unknown`, and when Windows kept no record of the crash, nothing named what
   crashed either. ForgePact now writes down, the moment the error happens, the
   error code, the file it happened in (the game, ForgePact's plugin or another
-  DLL) and where in that file, whether it was the game's main thread, which
-  ForgePact hook and mod were running, and, for an error thrown as a C++
-  exception, its type. At the same moment it saves the end of the game's
+  DLL) and where in that file, whether it was the game's main thread, and
+  which ForgePact hook and mod were running. At the same moment it saves the
+  end of the game's
   `YYToolkit.log` and `aurie.log` and a small crash dump, `crash.dmp`, that
   holds the stack of every thread and the list of loaded files but none of the
   game's other memory. Because they are taken at the error itself, a crash

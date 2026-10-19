@@ -1387,9 +1387,8 @@ What counts as an incident:
   Since 2.3.1 the crash report also says what crashed: as the game dies,
   ForgePact writes down the error code Windows raised, the file it happened in
   (the game, ForgePact's plugin or another DLL) and where in that file,
-  whether it was the game's main thread, which ForgePact hook and mod were
-  running at that moment (or `none`), and, for an error thrown as a C++
-  exception, the exception's type. The next load folds that into the report
+  whether it was the game's main thread, and which ForgePact hook and mod were
+  running at that moment (or `none`). The next load folds that into the report
   (`report.json`'s `trap` entry and its in-hook and in-mod fields), and the
   `CRASH ...` line names the file even without the panel. A game that was
   killed, or that ended itself at once without raising an error, leaves no
