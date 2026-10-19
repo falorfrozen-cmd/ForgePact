@@ -589,9 +589,13 @@ static const char* FlightPlayerCheck();   // the trace line's ` player=`; define
 // the set, near the end of the file.
 #include <ForgePact/Mark1Set.hpp>
 #include <ForgePact/Mark1Icons.hpp>
+#include <ForgePact/Mark1Automation.hpp>
 namespace M1sNs = ForgePact::Mark1Set;
 static ForgePact::Mark1Set::Bonus g_Mark1;
 static bool g_M1sBusy = false;   // game thread only: the adapter's own game calls inside its detour
+// The automated columns' border, Hook_DrawHudBuffs's one call after the toggle
+// border's; defined with the adapter.
+static void Mark1BorderDraw();
 #ifndef FORGEPACT_RELEASE
 // "mark1set" when the set's own detour holds this script, else "": the
 // research probes' holder checks (SpHolder, TgProbeAttach) name it. Defined
@@ -8619,6 +8623,7 @@ static RValue& Hook_DrawHudBuffs(CInstance* S, CInstance* O, RValue& R, int argc
     ++g_HhHudCalls;
     HhDrawHeadLabels();
     ToggleIndicatorDraw();
+    Mark1BorderDraw();
     SkillTimerDraw();
     ForgePact::MinerHelmet::Draw();
     DungeonChestDraw();
@@ -62839,7 +62844,12 @@ static void GambaPityCommand(const std::string& rest)
 //     the tick installs once the local player resolves. CheckTalentUse is
 //     hooked by HookOneScript and refused unless its inline detour went in; a
 //     research probe holding the script refuses it too, naming the holder.
-//     The automation inside the detour is the automation adapter's part.
+//   - the automation (Mark1Automation.hpp), inside that detour while the bonus
+//     is active: bar columns 3..6 read at the point of use, toggles through
+//     the toggle border's read, each planned column pressed in the profile
+//     slot's `inputState` and put back after the original; and the border on
+//     every automated column that is neither empty nor an aura, from one line
+//     in Hook_DrawHudBuffs after the toggle border's.
 //   - the pieces' own art, by the flight charms' route (ForgePact #158): the
 //     owner's PNGs embedded in Mark1Icons.hpp, written under bp_ipc\mark1\
 //     only when no file of that name is there, loaded once a session; "11"
@@ -63051,6 +63061,8 @@ static void Mark1RefreshPlayer()
         if (HhResolveLocalPlayer(p)) inst = HhResolveInstance(p);
     } catch (...) { inst = nullptr; }
     g_M1sBusy = busy;
+    // A new character: every column's toggle settle window is forgotten.
+    if (inst != g_M1sPlayer) ForgePact::Mark1Automation::Instance().ForgetPresses();
     g_M1sPlayer = inst;
 }
 
@@ -63106,24 +63118,242 @@ static bool Mark1ReadWorn(M1sNs::WornSlots& slots)
     } catch (...) { return false; }
 }
 
+// ---- the automation (Mark1Automation.hpp): the bar's Q, E, R and Y ----
+// The core decides each column and does the press and its restore; these are
+// its reads and writes, all by name and all at the point of use: the bar
+// (UI_Hud_Talent_obj's `row0`, RDM § 8.3), the toggle state (the toggle
+// border's own read, ToggleIndicatorReadRow, with the row's own ON
+// discriminator) and the profile slot's `inputState` the gate reads.
+static_assert(M1sNs::kColumnCount == ForgePact::kMark1ColumnCount, "the stat line has one column per automated column");
+static uint64_t g_M1sGateCalls = 0;   // the gate's entries for the local player while the bonus was active
+static uint64_t g_M1sGateOther = 0;   // its entries with the switch on whose self was not the local player
+
+// One bar column as read now: the core's view of it, and what the toggle read
+// and the border need beside it.
+struct Mark1HudColumn {
+    ForgePact::Mark1ColumnRead read;
+    int    talentId = -1;
+    int    toggleRow = -1;
+    RValue element;
+};
+
+// UI_Hud_Talent_obj instance 0's `row0`, the drawn bar.
+static bool Mark1HudRow(RValue& row0)
+{
+    try {
+        const double obj = g_Yytk->CallBuiltin("asset_get_index",
+            { RValue(std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::UI_Hud_Talent_obj))) }).ToDouble();
+        if (!(obj >= 0)) return false;
+        const RValue hud = g_Yytk->CallBuiltin("instance_find", { RValue(obj), RValue(0.0) });
+        if (hud.m_Kind == VALUE_UNDEFINED) return false;
+        row0 = g_Yytk->CallBuiltin("variable_instance_get", { hud, RValue("row0") });
+        return row0.m_Kind == VALUE_ARRAY;
+    } catch (...) { return false; }
+}
+
+// One column of the bar: its element, talent id (0 is an empty column) and
+// aura flag, and its toggle table row. Unreadable when the element or its
+// talent id is not there, when a set talent's `auraSkill` reads as neither a
+// bool nor a number, and for every set talent until the toggle table's first
+// walk has run (ToggleTableResolveIds): before it a toggle could not be told
+// from a skill to press on every gate call.
+static Mark1HudColumn Mark1ReadHudColumn(const RValue& row0, int column)
+{
+    Mark1HudColumn c;
+    try {
+        if (column < 0 || (double)column >= g_Yytk->CallBuiltin("array_length", { row0 }).ToDouble()) return c;
+        c.element = g_Yytk->CallBuiltin("array_get", { row0, RValue((double)column) });
+        if (c.element.m_Kind != VALUE_OBJECT && c.element.m_Kind != VALUE_REF) return c;
+        const RValue tid = g_Yytk->CallBuiltin("variable_struct_get", { c.element, RValue("talentId") });
+        if (!N1Numeric(tid)) return c;
+        const double id = tid.ToDouble();
+        if (!std::isfinite(id)) return c;
+        c.read.talentId = id;
+        if (!(id > 0)) { c.read.readable = true; return c; }
+        bool aura = false;
+        if (!ToggleIndicatorReadTruth(g_Yytk->CallBuiltin("variable_struct_get", { c.element, RValue("auraSkill") }), aura)) return c;
+        if (g_ToggleResolveWalks == 0) return c;
+        c.talentId = (int)id;
+        c.toggleRow = ToggleTableRowForTalentId(c.talentId);
+        c.read.aura = aura;
+        c.read.toggle = c.toggleRow >= 0;
+        c.read.readable = true;
+    } catch (...) { c.read.readable = false; }
+    return c;
+}
+
+// A toggle column's state, through the toggle border's own read of its row.
+static ForgePact::Mark1ToggleState Mark1ReadToggle(const Mark1HudColumn& c)
+{
+    if (c.toggleRow < 0 || c.toggleRow >= ForgePact::kToggleSkillRowCount) return ForgePact::Mark1ToggleState::Unreadable;
+    const ForgePact::ToggleSkillRow& row = ForgePact::kToggleSkillRows[c.toggleRow];
+    ForgePact::ToggleIndicatorReadDetail detail;
+    ToggleIndicatorReadRow(row, c.talentId, &detail, /*treatOwnAsForeign=*/false);
+    switch (ForgePact::ToggleIndicatorModel::Decide(detail, ForgePact::ToggleRowRequiresMark(row))) {
+        case ForgePact::ToggleIndicatorState::On:  return ForgePact::Mark1ToggleState::On;
+        case ForgePact::ToggleIndicatorState::Off: return ForgePact::Mark1ToggleState::Off;
+        default:                                   return ForgePact::Mark1ToggleState::Unreadable;
+    }
+}
+
+// The `inputState` array the gate reads: Input_Device_Manager_obj instance
+// 0's playerProfileSlot entry at the gate's third argument (the static reading
+// of CheckTalentUse, docs/mark1-set-research.md; measured 1), an instance or a
+// struct. False when any step does not resolve, and then nothing is pressed.
+static bool Mark1InputState(int argc, RValue** A, RValue& out)
+{
+    try {
+        if (argc < 3 || !A || !A[2] || !N1Numeric(*A[2])) return false;
+        const double slot = A[2]->ToDouble();
+        const double device = g_Yytk->CallBuiltin("asset_get_index",
+            { RValue(std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Input_Device_Manager_obj))) }).ToDouble();
+        if (!(device >= 0)) return false;
+        if (!(g_Yytk->CallBuiltin("instance_number", { RValue(device) }).ToDouble() > 0)) return false;
+        const RValue manager = g_Yytk->CallBuiltin("instance_find", { RValue(device), RValue(0.0) });
+        if (!HeroSiege::Player::IsInstanceHandle(manager) && !N1Numeric(manager)) return false;
+        if (!g_Yytk->CallBuiltin("variable_instance_exists", { manager, RValue("playerProfileSlot") }).ToBoolean()) return false;
+        const RValue slots = g_Yytk->CallBuiltin("variable_instance_get", { manager, RValue("playerProfileSlot") });
+        if (slots.m_Kind != VALUE_ARRAY) return false;
+        const double length = g_Yytk->CallBuiltin("array_length", { slots }).ToDouble();
+        if (!(slot >= 0 && slot < length && slot == std::floor(slot))) return false;
+        const RValue entry = g_Yytk->CallBuiltin("array_get", { slots, RValue(slot) });
+        RValue input;
+        if (entry.m_Kind == VALUE_OBJECT && g_Yytk->CallBuiltin("is_struct", { entry }).ToBoolean()) {
+            if (!g_Yytk->CallBuiltin("variable_struct_exists", { entry, RValue("inputState") }).ToBoolean()) return false;
+            input = g_Yytk->CallBuiltin("variable_struct_get", { entry, RValue("inputState") });
+        } else if ((HeroSiege::Player::IsInstanceHandle(entry) || N1Numeric(entry))
+                   && g_Yytk->CallBuiltin("instance_exists", { entry }).ToBoolean()) {
+            if (!g_Yytk->CallBuiltin("variable_instance_exists", { entry, RValue("inputState") }).ToBoolean()) return false;
+            input = g_Yytk->CallBuiltin("variable_instance_get", { entry, RValue("inputState") });
+        } else {
+            return false;
+        }
+        if (input.m_Kind != VALUE_ARRAY) return false;
+        out = input;
+        return true;
+    } catch (...) { return false; }
+}
+
+// One `inputState` entry's value, a number or it does not count as read.
+static bool Mark1InputGet(const RValue& input, int entry, RValue& out)
+{
+    try {
+        if (entry < 0 || (double)entry >= g_Yytk->CallBuiltin("array_length", { input }).ToDouble()) return false;
+        out = g_Yytk->CallBuiltin("array_get", { input, RValue((double)entry) });
+        return N1Numeric(out);
+    } catch (...) { return false; }
+}
+
+// Writes one `inputState` entry; true only when it reads back as written, so a
+// write that did not land is never counted as a press or a restore.
+static bool Mark1InputSet(const RValue& input, int entry, const RValue& value)
+{
+    try {
+        if (entry < 0 || (double)entry >= g_Yytk->CallBuiltin("array_length", { input }).ToDouble()) return false;
+        g_Yytk->CallBuiltin("array_set", { input, RValue((double)entry), value });
+        const RValue back = g_Yytk->CallBuiltin("array_get", { input, RValue((double)entry) });
+        return N1Numeric(back) && back.ToDouble() == value.ToDouble();
+    } catch (...) { return false; }
+}
+
+// The border: while the bonus is active, the toggle border's marker on every
+// automated column that is neither empty nor an aura (Mark1Automation's
+// BorderMask), at the box the toggle border derives from the slot's own
+// navBbox. One call a draw from Hook_DrawHudBuffs, after the toggle border's
+// and not inside it (ToggleIndicatorDraw returns at once while its own switch
+// is off). The bar is read afresh each draw; the colour and alpha are put
+// back on every path, as the toggle border does.
+static void Mark1BorderDraw()
+{
+    if (!g_Mark1.ActiveCached()) return;
+    RValue row0;
+    if (!Mark1HudRow(row0)) return;
+    Mark1HudColumn columns[ForgePact::kMark1ColumnCount];
+    const unsigned mask = ForgePact::Mark1Automation::Instance().BorderMask(true, [&](int column) {
+        Mark1HudColumn& c = columns[column - ForgePact::kMark1FirstColumn];
+        c = Mark1ReadHudColumn(row0, column);
+        return c.read;
+    });
+    if (mask == 0u) return;
+    try {
+        const RValue prevColour = g_Yytk->CallBuiltin("draw_get_colour", {});
+        const RValue prevAlpha = g_Yytk->CallBuiltin("draw_get_alpha", {});
+        for (int i = 0; i < ForgePact::kMark1ColumnCount; ++i) {
+            if (!(mask & (1u << i))) continue;
+            try {
+                const RValue& e = columns[i].element;
+                const double bx = g_Yytk->CallBuiltin("variable_struct_get", { e, RValue("navBboxX") }).ToDouble();
+                const double by = g_Yytk->CallBuiltin("variable_struct_get", { e, RValue("navBboxY") }).ToDouble();
+                const double bw = g_Yytk->CallBuiltin("variable_struct_get", { e, RValue("navBboxWidth") }).ToDouble();
+                const double bh = g_Yytk->CallBuiltin("variable_struct_get", { e, RValue("navBboxHeight") }).ToDouble();
+                if (!std::isfinite(bx) || !std::isfinite(by) || !std::isfinite(bw) || !std::isfinite(bh)) continue;
+                double x = 0, y = 0, w = 0, h = 0;
+                ToggleIndicatorMarkerBox(bx, by, bw, bh, x, y, w, h);
+                ToggleIndicatorDrawMarker(x, y, w, h);
+            } catch (...) {}
+        }
+        try { g_Yytk->CallBuiltin("draw_set_alpha", { prevAlpha }); } catch (...) {}
+        try { g_Yytk->CallBuiltin("draw_set_colour", { prevColour }); } catch (...) {}
+    } catch (...) {}   // the state reads themselves failed: nothing was set, so there is nothing to put back
+}
+
 // ---- the CheckTalentUse detour ----
 static PFUNC_YYGMLScript g_M1sOrigCheckTalentUse = nullptr;
 static bool g_M1sCtuNative = false;   // the inline detour went in: the bonus is allowed to arm
 
 // The point of use: the local player's own call of the cast gate, once a
 // frame. With the switch off, inside the adapter's own calls, or for any other
-// self, the original alone. Otherwise the set is read (at most once every 30
-// frames, Mark1Set.hpp's Active); the automation (Mark1Automation.hpp) is the
-// automation adapter's part and does nothing yet.
+// self, the original alone (another self is counted, so a stale player shows).
+// Otherwise the set is read (at most once every 30 frames, Mark1Set.hpp's
+// Active), and while the bonus is active the automation runs around the
+// original: each column decided, the planned columns pressed in the profile
+// slot the gate's third argument names, and every pressed entry put back
+// after the original returns or throws. The game's gate then decides the cast.
 static RValue& Mark1HookCheckTalentUse(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
-    if (!g_Mark1.Enabled() || g_M1sBusy || !S || S != g_M1sPlayer) return g_M1sOrigCheckTalentUse(S, O, R, argc, A);
+    if (!g_Mark1.Enabled() || g_M1sBusy || !S) return g_M1sOrigCheckTalentUse(S, O, R, argc, A);
+    if (S != g_M1sPlayer) { ++g_M1sGateOther; return g_M1sOrigCheckTalentUse(S, O, R, argc, A); }
     bool active = false;
     g_M1sBusy = true;
     try { active = g_Mark1.Active((unsigned long long)g_RuntimeFrame, Mark1ReadWorn); } catch (...) { active = false; }
     g_M1sBusy = false;
-    (void)active;
-    return g_M1sOrigCheckTalentUse(S, O, R, argc, A);
+    if (!active) return g_M1sOrigCheckTalentUse(S, O, R, argc, A);
+    ++g_M1sGateCalls;
+    ForgePact::Mark1Automation& automation = ForgePact::Mark1Automation::Instance();
+    Mark1HudColumn columns[ForgePact::kMark1ColumnCount];
+    ForgePact::Mark1FramePlan plan;
+    RValue input;
+    bool haveInput = false;
+    g_M1sBusy = true;
+    try {
+        RValue row0;
+        const bool haveRow = Mark1HudRow(row0);
+        plan = automation.Plan(true, (long long)g_RuntimeFrame,
+            [&](int column) {
+                Mark1HudColumn& c = columns[column - ForgePact::kMark1FirstColumn];
+                if (haveRow) c = Mark1ReadHudColumn(row0, column);
+                return c.read;
+            },
+            [&](int column) { return Mark1ReadToggle(columns[column - ForgePact::kMark1FirstColumn]); });
+        haveInput = plan.PressCount() > 0 && Mark1InputState(argc, A, input);
+    } catch (...) { plan = ForgePact::Mark1FramePlan{}; }
+    g_M1sBusy = false;
+    return automation.PressAround<RValue>(plan,
+        [&](int entry, RValue& out) {
+            const bool busy = g_M1sBusy;
+            g_M1sBusy = true;
+            const bool ok = haveInput && Mark1InputGet(input, entry, out);
+            g_M1sBusy = busy;
+            return ok;
+        },
+        [&](int entry, const RValue& value) {
+            const bool busy = g_M1sBusy;
+            g_M1sBusy = true;
+            const bool ok = haveInput && Mark1InputSet(input, entry, value);
+            g_M1sBusy = busy;
+            return ok;
+        },
+        [&]() -> RValue& { return g_M1sOrigCheckTalentUse(S, O, R, argc, A); });
 }
 
 #ifndef FORGEPACT_RELEASE
@@ -63225,13 +63455,33 @@ static void Mark1SetTick()
     Mark1RefreshPlayer();
 }
 
-// The stat line's fields this adapter knows: the set's part and the art's
-// (`art=` through FillStat, the ground count and the shared detour's route).
-// The automation, the jump and the movement levers fill theirs when they land.
+// The stat line's fields this adapter knows: the set's part, the automation's
+// (each column's ten counters from Mark1Automation, the gate's entries and the
+// calls whose original threw) and the art's (`art=` through FillStat, the
+// ground count and the shared detour's route). The jump and the movement
+// levers fill theirs when they land.
 static M1sNs::StatFields Mark1SetStatFields()
 {
     M1sNs::StatFields f;
     g_Mark1.FillStat(f);
+    const ForgePact::Mark1Automation& automation = ForgePact::Mark1Automation::Instance();
+    for (int i = 0; i < M1sNs::kColumnCount; ++i) {
+        const ForgePact::Mark1ColumnCounters k = automation.Counters(ForgePact::kMark1FirstColumn + i);
+        M1sNs::ColumnCounts& c = f.columns[i];
+        c.presses = (uint64_t)k.presses;
+        c.skipEmpty = (uint64_t)k.empty;
+        c.skipAura = (uint64_t)k.aura;
+        c.skipToggleOn = (uint64_t)k.toggleOn;
+        c.skipSettle = (uint64_t)k.toggleSettling;
+        c.skipNoState = (uint64_t)k.toggleUnreadable;
+        c.unreadable = (uint64_t)k.unreadable;
+        c.originalUnreadable = (uint64_t)k.originalUnreadable;
+        c.pressWriteFailed = (uint64_t)k.pressWriteFailed;
+        c.restoreFailed = (uint64_t)k.restoreFailed;
+    }
+    f.gateCalls = g_M1sGateCalls;
+    f.gateOther = g_M1sGateOther;
+    f.threw = (uint64_t)automation.CallsThrew();
     f.iconsLoaded = Mark1IconsLoaded();
     f.iconsEmbedded = (int)ForgePact::Mark1Icons::kIconCount;
     f.ground = g_M1sGround;

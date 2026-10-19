@@ -25,6 +25,18 @@ text, comments stripped, and pins the adapter around it:
   unless its inline detour went in, and refused while a research probe holds
   the script, naming the holder; the research probes name `mark1set` for a
   row Mark 1 holds;
+- the automation (Mark1Automation.hpp, applied here): the one game write is
+  the press, made only inside the CheckTalentUse detour, for the local
+  player, into the `inputState` of the profile slot the gate's third argument
+  names, read back as written and put back after the original in every path
+  (this replaces Round 0's "the detour writes nothing" pin); the bar and the
+  toggle state are read by name at the point of use;
+- failure_counts: every column counter reaches its ColumnCounts field, the
+  four failures by their own names; `gate-calls`, `gate-other` and `threw`
+  come from the detour's own counts and CallsThrew();
+- border_line: Hook_DrawHudBuffs holds one `Mark1BorderDraw();` line directly
+  after `ToggleIndicatorDraw();`, outside every research block, and the
+  border draws only while the bonus is active;
 - `mark1probe spawn` sits inside the research block;
 - art_fallback: the pieces' own art takes the flight charms' route, and with no
   icon embedded, or one that failed to load, nothing is written, loaded or
@@ -76,6 +88,16 @@ SIGNATURES = {
     "art_install_if_ready": "static void Mark1ArtInstallIfReady()",
     "read_worn": "static bool Mark1ReadWorn(M1sNs::WornSlots& slots)",
     "detour": "static RValue& Mark1HookCheckTalentUse(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)",
+    "refresh": "static void Mark1RefreshPlayer()",
+    "hud_row": "static bool Mark1HudRow(RValue& row0)",
+    "hud_column": "static Mark1HudColumn Mark1ReadHudColumn(const RValue& row0, int column)",
+    "read_toggle": "static ForgePact::Mark1ToggleState Mark1ReadToggle(const Mark1HudColumn& c)",
+    "input_state": "static bool Mark1InputState(int argc, RValue** A, RValue& out)",
+    "input_get": "static bool Mark1InputGet(const RValue& input, int entry, RValue& out)",
+    "input_set": "static bool Mark1InputSet(const RValue& input, int entry, const RValue& value)",
+    "border": "static void Mark1BorderDraw()",
+    "hud": "static RValue& Hook_DrawHudBuffs(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)",
+    "toggle_draw": "static void ToggleIndicatorDraw()",
     "install": "static std::string Mark1SetInstall()",
     "install_if_ready": "static void Mark1InstallIfReady(bool fromTick)",
     "tick": "static void Mark1SetTick()",
@@ -96,7 +118,9 @@ SIGNATURES = {
 }
 
 SHIPPED = ("decode", "of", "entry", "final", "icon_index", "icon_path", "icons_load", "ground", "ground_install",
-           "ground_route", "art_install_if_ready", "read_worn", "detour", "install", "install_if_ready", "tick", "stat_fields", "command")
+           "ground_route", "art_install_if_ready", "read_worn", "detour", "install", "install_if_ready", "tick", "stat_fields", "command",
+           "refresh", "hud_row", "hud_column", "read_toggle", "input_state", "input_get", "input_set", "border")
+AUTOMATION_HEADER = ROOT / "plugin" / "include" / "ForgePact" / "Mark1Automation.hpp"
 
 
 class Mark1SetContract(unittest.TestCase):
@@ -122,7 +146,8 @@ class Mark1SetContract(unittest.TestCase):
         for name in SHIPPED:
             with self.subTest(function=name):
                 self.assertIn(SIGNATURES[name], player)
-        for header in ("#include <ForgePact/Mark1Set.hpp>", "#include <ForgePact/Mark1Icons.hpp>"):
+        for header in ("#include <ForgePact/Mark1Set.hpp>", "#include <ForgePact/Mark1Icons.hpp>",
+                       "#include <ForgePact/Mark1Automation.hpp>"):
             self.assertIn(header, self.shipped)
         self.assertIn("static ForgePact::Mark1Set::Bonus g_Mark1;", self.shipped)
         # The research probe's own words stay out of the player build even in
@@ -318,16 +343,173 @@ class Mark1SetContract(unittest.TestCase):
 
     def test_the_detour_reads_the_set_at_the_point_of_use_for_the_local_player(self):
         detour = self.body("detour")
-        first = self.lines("detour")[0]
-        self.assertEqual(first, "if (!g_Mark1.Enabled() || g_M1sBusy || !S || S != g_M1sPlayer) "
-                                "return g_M1sOrigCheckTalentUse(S, O, R, argc, A);")
+        lines = self.lines("detour")
+        # Switch off, the adapter's own calls, no self: the original alone,
+        # nothing read or counted. Any other self: the original alone, counted.
+        self.assertEqual(lines[0], "if (!g_Mark1.Enabled() || g_M1sBusy || !S) "
+                                   "return g_M1sOrigCheckTalentUse(S, O, R, argc, A);")
+        self.assertEqual(lines[1], "if (S != g_M1sPlayer) { ++g_M1sGateOther; "
+                                   "return g_M1sOrigCheckTalentUse(S, O, R, argc, A); }")
         self.assertIn("g_Mark1.Active(", detour)
         self.assertIn("Mark1ReadWorn", detour)
         self.assertIn("g_RuntimeFrame", detour)
         self.assertLess(detour.index("g_Mark1.Active("), detour.rindex("g_M1sOrigCheckTalentUse(S, O, R, argc, A)"))
-        # Nothing is written to the game here yet (the automation item fills it).
+        # The local player is HhResolveLocalPlayer's (which accepts the
+        # VALUE_REF this runner returns), resolved to its instance by the tick.
+        refresh = self.body("refresh")
+        self.assertIn("HhResolveLocalPlayer(p)", refresh)
+        self.assertIn("g_M1sPlayer = inst;", refresh)
+        self.assertNotIn("VALUE_OBJECT", refresh)
+
+    # ---- the automation: the press inside the gate ------------------------------------
+
+    def automation_header(self):
+        return strip_comments(AUTOMATION_HEADER.read_text(encoding="utf-8").replace("\r\n", "\n"))
+
+    def test_automation_the_press_is_written_only_inside_the_gate_and_restored_in_every_path(self):
+        # Replaces Round 0's "the detour writes nothing" pin: the one write is
+        # the press (and its restore), reached only from the detour's core call.
+        detour = self.body("detour")
+        lines = self.lines("detour")
+        # Inactive: the original alone, before anything is read for the automation.
+        inactive = lines.index("if (!active) return g_M1sOrigCheckTalentUse(S, O, R, argc, A);")
+        for later in ("automation.Plan(", "Mark1InputState(", "automation.PressAround<RValue>("):
+            with self.subTest(later=later):
+                self.assertLess(detour.index(lines[inactive]), detour.index(later))
+        # The original runs inside the core's PressAround, which presses the
+        # planned columns before it and puts each pressed entry back after it.
+        self.assertIn("return automation.PressAround<RValue>(plan,", detour)
+        self.assertIn("[&]() -> RValue& { return g_M1sOrigCheckTalentUse(S, O, R, argc, A); });", detour)
+        self.assertIn("haveInput && Mark1InputGet(input, entry, out)", detour)
+        self.assertIn("haveInput && Mark1InputSet(input, entry, value)", detour)
+        # The detour itself writes nothing to the game.
         for write in ("variable_instance_set", "variable_struct_set", "array_set", "variable_global_set"):
-            self.assertNotIn(write, detour)
+            with self.subTest(write=write):
+                self.assertNotIn(write, detour)
+        # The write: the profile slot's inputState entry, read back as written.
+        put = self.body("input_set")
+        self.assertIn('g_Yytk->CallBuiltin("array_set", { input, RValue((double)entry), value });', put)
+        self.assertIn("return N1Numeric(back) && back.ToDouble() == value.ToDouble();", put)
+        self.assertLess(put.index('"array_set"'), put.index("return N1Numeric(back)"))
+        # The one array_set and the one write path in the adapter.
+        self.assertEqual(self.code.count('"array_set"'), 1)
+        self.assertNotIn("variable_global_set", self.code)
+        # The adapter's one variable_instance_set is the ground consumer's sprite.
+        self.assertEqual(self.code.count('"variable_instance_set"'), 1)
+        self.assertIn('"variable_instance_set"', self.body("ground"))
+        self.assertEqual(len(re.findall(r"\bMark1InputSet\(", self.code)), 2)   # definition and the detour's write
+        self.assertEqual(len(re.findall(r"\bMark1InputGet\(", self.code)), 2)
+        # The original value is read before the press and an unreadable one
+        # is never pressed; the restore runs after a return and after a throw.
+        around = function_body(self.automation_header(), "decltype(auto) PressAround(")
+        self.assertIn("if (!readOk) { ++m_Counters[i].originalUnreadable; continue; }", around)
+        self.assertLess(around.index("read(entry, originals[i])"), around.index("write(entry, Value(kMark1PressValue))"))
+        self.assertIn("++m_CallsThrew;", around)
+        catch = around[around.rindex("++m_CallsThrew;"):]
+        self.assertLess(catch.index("restore();"), catch.index("throw;"))
+        self.assertGreaterEqual(around.count("restore();"), 3)   # after a void call, after a value, after a throw
+
+    def test_automation_the_profile_slot_is_the_one_the_gates_third_argument_names(self):
+        state = self.body("input_state")
+        self.assertIn("if (argc < 3 || !A || !A[2] || !N1Numeric(*A[2])) return false;", state)
+        self.assertIn("const double slot = A[2]->ToDouble();", state)
+        self.assertIn("HeroSiege::Objects::GameObject::Input_Device_Manager_obj", state)
+        self.assertIn('RValue("playerProfileSlot")', state)
+        self.assertIn('RValue("inputState")', state)
+        self.assertIn("if (!(slot >= 0 && slot < length && slot == std::floor(slot))) return false;", state)
+        # An instance is any handle kind, never a VALUE_OBJECT check alone.
+        self.assertIn("HeroSiege::Player::IsInstanceHandle(manager)", state)
+        self.assertIn("HeroSiege::Player::IsInstanceHandle(entry)", state)
+        # Resolved only when a column is to be pressed, and only for the local player.
+        detour = self.body("detour")
+        self.assertIn("haveInput = plan.PressCount() > 0 && Mark1InputState(argc, A, input);", detour)
+        self.assertLess(detour.index("if (S != g_M1sPlayer)"), detour.index("Mark1InputState("))
+        self.assertEqual(len(re.findall(r"\bMark1InputState\(", self.code)), 2)
+
+    def test_automation_the_columns_and_the_toggle_state_are_read_by_name_at_the_point_of_use(self):
+        detour = self.body("detour")
+        self.assertIn("plan = automation.Plan(true, (long long)g_RuntimeFrame,", detour)
+        self.assertIn("if (haveRow) c = Mark1ReadHudColumn(row0, column);", detour)
+        self.assertIn("return Mark1ReadToggle(columns[column - ForgePact::kMark1FirstColumn]);", detour)
+        row = self.body("hud_row")
+        self.assertIn("HeroSiege::Objects::GameObject::UI_Hud_Talent_obj", row)
+        self.assertIn('RValue("row0")', row)
+        column = self.body("hud_column")
+        for name in ('RValue("talentId")', 'RValue("auraSkill")', "ToggleTableRowForTalentId(c.talentId)"):
+            self.assertIn(name, column)
+        # Until the toggle table's first walk, a set talent is unreadable: a
+        # toggle never passes for a skill to press on every call.
+        self.assertIn("if (g_ToggleResolveWalks == 0) return c;", column)
+        self.assertLess(column.index("if (g_ToggleResolveWalks == 0) return c;"), column.rindex("c.read.readable = true;"))
+        self.assertLess(column.index('RValue("auraSkill")'), column.index("if (g_ToggleResolveWalks == 0) return c;"))
+        toggle = self.body("read_toggle")
+        self.assertIn("ToggleIndicatorReadRow(row, c.talentId, &detail, false);", toggle)
+        self.assertIn("ForgePact::ToggleIndicatorModel::Decide(detail, ForgePact::ToggleRowRequiresMark(row))", toggle)
+        self.assertIn("return ForgePact::Mark1ToggleState::Unreadable;", toggle)
+
+    def test_automation_failure_counts(self):
+        fields = self.body("stat_fields")
+        # Every ColumnCounts field the stat line prints is filled, the four
+        # failures by their own names, never folded into a skip.
+        struct = function_body(self.header(), "struct ColumnCounts {")
+        names = re.findall(r"uint64_t (\w+) = 0;", struct)
+        self.assertEqual(len(names), 10, names)
+        for name in names:
+            with self.subTest(field=name):
+                self.assertEqual(len(re.findall(r"\bc\." + name + r" = \(uint64_t\)k\.\w+;", fields)), 1)
+        for line in ("c.unreadable = (uint64_t)k.unreadable;", "c.originalUnreadable = (uint64_t)k.originalUnreadable;",
+                     "c.pressWriteFailed = (uint64_t)k.pressWriteFailed;", "c.restoreFailed = (uint64_t)k.restoreFailed;",
+                     "c.presses = (uint64_t)k.presses;", "c.skipEmpty = (uint64_t)k.empty;", "c.skipAura = (uint64_t)k.aura;",
+                     "c.skipToggleOn = (uint64_t)k.toggleOn;", "c.skipSettle = (uint64_t)k.toggleSettling;",
+                     "c.skipNoState = (uint64_t)k.toggleUnreadable;"):
+            with self.subTest(line=line):
+                self.assertIn(line, fields)
+        self.assertIn("automation.Counters(ForgePact::kMark1FirstColumn + i)", fields)
+        self.assertIn("for (int i = 0; i < M1sNs::kColumnCount; ++i)", fields)
+        self.assertIn("static_assert(M1sNs::kColumnCount == ForgePact::kMark1ColumnCount", self.code)
+        self.assertIn("f.gateCalls = g_M1sGateCalls;", fields)
+        self.assertIn("f.gateOther = g_M1sGateOther;", fields)
+        self.assertIn("f.threw = (uint64_t)automation.CallsThrew();", fields)
+        # gate-calls: the local player's entries while active, counted once,
+        # after the inactive return; gate-other: the switch on, any other self.
+        detour = self.body("detour")
+        self.assertEqual(self.code.count("++g_M1sGateCalls;"), 1)
+        self.assertLess(detour.index("if (!active) return"), detour.index("++g_M1sGateCalls;"))
+        self.assertEqual(self.code.count("++g_M1sGateOther;"), 1)
+        self.assertLess(detour.index("if (!g_Mark1.Enabled() || g_M1sBusy || !S)"), detour.index("++g_M1sGateOther;"))
+        self.assertLess(detour.index("++g_M1sGateOther;"), detour.index("g_Mark1.Active("))
+        # The counters' only writers are those two increments.
+        self.assertEqual(re.findall(r"\bg_M1sGate(?:Calls|Other)\s*(?:\+=|=(?!=))", self.code),
+                         ["g_M1sGateCalls =", "g_M1sGateOther ="])
+
+    def test_automation_border_line(self):
+        raw = function_body(self.plugin, SIGNATURES["hud"])
+        lines = raw.split("\n")
+        self.assertEqual(lines.count("    Mark1BorderDraw();"), 1, raw)
+        at = lines.index("    Mark1BorderDraw();")
+        self.assertEqual(lines[at - 1], "    ToggleIndicatorDraw();")
+        # Outside every research block: it survives the strip.
+        self.assertIn("    ToggleIndicatorDraw();\n    Mark1BorderDraw();\n",
+                      function_body(strip_research_blocks(self.plugin), SIGNATURES["hud"]))
+        # Not inside the toggle border's own draw, which returns while its switch is off.
+        self.assertNotIn("Mark1BorderDraw", function_body(self.plugin, SIGNATURES["toggle_draw"]))
+        # Declaration, the one call and the definition.
+        self.assertEqual(len(re.findall(r"\bMark1BorderDraw\(\)", strip_comments(self.plugin))), 3)
+        # It draws only while the bonus is active: its first statement.
+        border = self.body("border")
+        self.assertEqual(self.lines("border")[0], "if (!g_Mark1.ActiveCached()) return;")
+        self.assertIn("ForgePact::Mark1Automation::Instance().BorderMask(true,", border)
+        self.assertIn("ToggleIndicatorMarkerBox(bx, by, bw, bh, x, y, w, h);", border)
+        self.assertIn("ToggleIndicatorDrawMarker(x, y, w, h);", border)
+        for field in ('"navBboxX"', '"navBboxY"', '"navBboxWidth"', '"navBboxHeight"'):
+            self.assertIn(field, border)
+        # The colour and alpha are put back after the markers.
+        self.assertLess(border.index("ToggleIndicatorDrawMarker("), border.index('"draw_set_alpha", { prevAlpha }'))
+        self.assertLess(border.index("ToggleIndicatorDrawMarker("), border.index('"draw_set_colour", { prevColour }'))
+        # The core's mask: neither empty nor an aura, nothing while inactive.
+        header = self.automation_header()
+        self.assertIn("return r.readable && !IsEmpty(r) && !r.aura;", function_body(header, "static bool Bordered("))
+        self.assertIn("if (!bonusActive) return 0u;", function_body(header, "unsigned BorderMask("))
 
     def test_the_worn_read_resolves_fingerprints_like_the_miners_helmet(self):
         read = self.body("read_worn")
