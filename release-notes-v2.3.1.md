@@ -17,10 +17,6 @@ crash report now says what crashed.
   until you restart the game (the ore multiplier keeps working) and writes one
   `miningrolls: an extra roll failed` line to `out.txt`.
 
-  Checked in one game session on a test build: with Extra Rolls at 3 and
-  mining XP below the cap, a node dug with all three rolls paid out, the dig
-  gave mining XP, and the game did not crash.
-
 ## Changed
 
 - **A crash report now says what crashed (#223).** Until now a crash report
