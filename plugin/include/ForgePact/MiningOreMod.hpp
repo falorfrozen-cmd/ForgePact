@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 #include <hs_game_sdk/item_type.hpp>
+#include <hs_game_sdk/objects.hpp>
 #include <hs_game_sdk/scripts.hpp>
 #include <ForgePact/CombatTextHook.hpp>
 
@@ -18,11 +19,14 @@
 // N - 1 more times, so each roll pays the node's ore stacks and rolls the dig's
 // stat-gated bonus finds again. Before each extra run the node's `hp` goes back
 // to 1 and `miningQue` to true (the route Vein Resonance proved live); during
-// it mining XP, character and guild XP, quest progress and the floating text
-// are silenced, so that they are meant to count once per node (only character
-// and guild XP were measured so; docs/mining-ore-research.md, "Extra rolls").
-// A run that pays no ore ends the
-// loop, and the node is always left with `hp` 0.
+// it mining XP, character and guild XP and quest progress are silenced, so
+// that they are meant to count once per node (only character and guild XP were
+// measured so; docs/mining-ore-research.md, "Extra rolls"). The floating text
+// runs, because the dig uses the instance it returns, and each extra run's
+// texts are removed once the run is over (ForgePact #222). A run that pays no
+// ore ends the loop, a run that throws turns the rolls off for the session
+// without passing the throw to the game, and the node is always left with
+// `hp` 0.
 namespace ForgePact::MiningOre {
 inline constexpr int kMaxMultiplier = 10;
 inline constexpr int kMaxRolls = 10;
@@ -54,9 +58,17 @@ inline int rolls = 1;
 inline bool rollsInstallTried = false, rollsReady = false, rollsUnavailable = false;
 inline std::string rollsFailure;
 inline bool loggedRollPaid = false, loggedRollUnpaid = false, loggedHpReset = false, loggedRearm = false;
+inline bool loggedRollFailed = false;
 // Kept in both builds: the mod state reports them, so the panel and the live
-// checks read what the plugin did, not what it is set to.
+// checks read what the plugin did, not what it is set to. removedTexts: the
+// extra runs' Combat_Text_obj instances destroyed; textsLeft: what an extra
+// run's CombatText returned that was not one, or could not be checked, and
+// was left alone.
 inline uint64_t extraRuns = 0, extraRunsUnpaid = 0, silencedCalls = 0;
+inline uint64_t removedTexts = 0, textsLeft = 0;
+// The type of this thread's last C++ exception, as the crash trap recorded it;
+// ModuleMain.cpp sets it. Null, or a null answer, reads "unknown type".
+inline const char* (*exceptionType)() = nullptr;
 // Per step call: HookLoot recognised an ore stack (at any factor) inside it.
 inline thread_local bool oreRewardSeen = false;
 inline thread_local int oreStacksSeen = 0;
@@ -64,8 +76,10 @@ inline thread_local bool inExtraRun = false;
 
 // The dig's side effects that must happen once per node: each gets a
 // pass-through detour that calls the game outside an extra run and returns
-// without calling it inside one. The floating text is the shared CombatText
-// detour's job (CombatTextHook.hpp), silenced the same way.
+// without calling it inside one (nothing reads their result). The floating
+// text is not one of them: the dig uses what CombatText returns, so it runs in
+// every run and the shared detour (CombatTextHook.hpp) remembers the extra
+// runs' texts for RemoveTexts.
 struct SilencedScript {
     const char* name;
     const char* hookId;
@@ -80,8 +94,9 @@ inline std::array<SilencedScript, 4> silencedScripts = {{
     { SdkShortScriptName(HeroSiege::Scripts::gml_Script_update_quest), "fp_mining_rolls_quest", nullptr, false, 0, 0 },
 }};
 
-// Every silenced call, the four above and the shared CombatText detour's.
-inline uint64_t SilencedCalls() { return silencedCalls + CombatText::silencedCalls; }
+// Every side effect held back in extra runs: the four above's silenced calls
+// and the floating texts removed.
+inline uint64_t SilencedCalls() { return silencedCalls + removedTexts; }
 
 template<class T> class ScopedValue {
     T& slot;
@@ -184,9 +199,79 @@ inline void EnsureDepleted(CInstance* node) {
     } catch (...) {}
 }
 
+// A number the runtime hands back for an index or an asset: a real, an
+// integer or a reference.
+inline bool IndexRead(const RValue& value, double& out) {
+    if (value.m_Kind != VALUE_REAL && value.m_Kind != VALUE_INT32 && value.m_Kind != VALUE_INT64
+        && value.m_Kind != VALUE_REF) return false;
+    out = value.ToDouble();
+    return std::isfinite(out);
+}
+
+// Destroys the floating texts an extra run made, so the original run's is the
+// one left on screen. Each value is identified by what it is: a live instance
+// whose object_index is Combat_Text_obj, resolved by name, never by its
+// number. Anything else, and everything while the name does not resolve, is
+// left alone and counted in textsLeft.
+inline void RemoveTexts(const std::vector<RValue>& texts) {
+    if (texts.empty()) return;
+    double textObject = -1;
+    try {
+        const std::string name(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Combat_Text_obj));
+        if (!IndexRead(g_Yytk->CallBuiltin("asset_get_index", {RValue(name.c_str())}), textObject)) textObject = -1;
+    } catch (...) { textObject = -1; }
+    for (const RValue& text : texts) {
+        bool removed = false;
+        // Nothing returned (undefined) or a string is no instance to ask about.
+        if (textObject >= 0 && text.m_Kind != VALUE_UNDEFINED && text.m_Kind != VALUE_STRING) {
+            try {
+                double index = -1;
+                if (g_Yytk->CallBuiltin("instance_exists", {text}).ToBoolean()
+                    && IndexRead(g_Yytk->CallBuiltin("variable_instance_get", {text, RValue("object_index")}), index)
+                    && index == textObject) {
+                    g_Yytk->CallBuiltin("instance_destroy", {text});
+                    removed = true;
+                }
+            } catch (...) {}
+        }
+        if (removed) ++removedTexts; else ++textsLeft;
+    }
+}
+
+// The crash trap's type for this thread's last C++ exception, or empty.
+inline std::string ExceptionTypeText() noexcept {
+    try {
+        const char* type = exceptionType ? exceptionType() : nullptr;
+        if (type && *type) return std::string(type);
+    } catch (...) {}
+    return std::string();
+}
+
+// An extra run threw. The throw stops here, never back into the game: the
+// rolls go off for the rest of the session (so a later `miningrolls N`
+// answers `miningrolls: unavailable - ...`, as an install failure does) and
+// one line a session names the exception's type. The caller leaves the node
+// depleted.
+inline void RollsFailed(const std::string& type) noexcept {
+    rolls = 1;
+    rollsReady = false;
+    rollsUnavailable = true;
+    try {
+        const std::string named = type.empty() ? std::string("unknown type") : type;
+        rollsFailure = "an extra roll failed earlier this session (" + named + ")";
+        if (!loggedRollFailed) {
+            loggedRollFailed = true;
+            Out("miningrolls: an extra roll failed (" + named + ") - extra rolls are off for this session; "
+                "the node was left depleted and each dig pays out once");
+        }
+    } catch (...) {}
+}
+
 // Up to rolls - 1 more runs of the game's own completion on this node. Each is
 // the trampoline call with the original arguments (its own return slot, so the
-// caller keeps the original run's result), outside any handler that retries it.
+// caller keeps the original run's result), never retried. Its floating texts
+// are removed once it returns or throws, and a throw ends the rolls for the
+// session instead of reaching the game.
 inline void ExtraRolls(CInstance* S, CInstance* O, int argc, RValue** A) {
     const int planned = rolls - 1;
     int paid = 0;
@@ -201,11 +286,27 @@ inline void ExtraRolls(CInstance* S, CInstance* O, int argc, RValue** A) {
             const bool keptBefore = KeepSnapshot(before, k == 1);
 #endif
             ++extraRuns;
-            {
+            std::vector<RValue> texts;
+            texts.reserve(CombatText::kMaxRemembered);
+            bool threw = false;
+            std::string type;
+            try {
                 ScopedValue<bool> extra(inExtraRun, true);
-                CombatText::ScopedSilence silence;
+                CombatText::ScopedRemember remember(texts);
                 RValue discarded;
                 originalStep(S, O, discarded, argc, A);
+            } catch (...) {
+                threw = true;
+                // Read before the removal, whose own builtin calls may record another.
+                type = ExceptionTypeText();
+            }
+            RemoveTexts(texts);
+            if (threw) {
+#ifndef FORGEPACT_RELEASE
+                KeepSnapshot(NodeLine(S->ToRValue(), "after failed extra roll " + std::to_string(k)), true);
+#endif
+                RollsFailed(type);
+                break;
             }
 #ifndef FORGEPACT_RELEASE
             {
@@ -231,8 +332,8 @@ inline void ExtraRolls(CInstance* S, CInstance* O, int argc, RValue** A) {
             }
         }
     } catch (...) {
-        EnsureDepleted(S);
-        throw;
+        // Anything of ours between the runs that threw: the same contract.
+        RollsFailed(ExceptionTypeText());
     }
     EnsureDepleted(S);
 }
@@ -616,7 +717,10 @@ inline void RollsStat() {
         + " xpSilenced=" + std::to_string(xpSilenced);
     for (const auto& script : silencedScripts)
         line += std::string(" ") + script.name + "=" + std::to_string(script.passed) + "/" + std::to_string(script.silenced);
-    line += " CombatText=" + std::to_string(CombatText::passedCalls) + "/" + std::to_string(CombatText::silencedCalls);
+    // CombatText's calls outside / inside extra runs (both reach the game), the
+    // extra runs' texts destroyed, and their returns left alone.
+    line += " CombatText=" + std::to_string(CombatText::passedCalls) + "/" + std::to_string(CombatText::extraRunCalls);
+    line += " removedTexts=" + std::to_string(removedTexts) + " textsLeft=" + std::to_string(textsLeft);
     // Before the rolls reach it, an installed CombatText can only be the slider's.
     line += " combatTextFirst=" + (!combatTextFirst.empty() ? combatTextFirst
         : CombatText::installTried ? std::string("experience") : std::string("none"));

@@ -7,7 +7,15 @@
 
 // The plugin's one detour on CombatText (the game's floating text), shared by
 // the Experience slider (StatsManager.hpp rescales the "N XP" text) and Mining
-// Ore Extra Rolls (MiningOreMod.hpp silences it during an extra roll).
+// Ore Extra Rolls (MiningOreMod.hpp removes the texts of an extra roll).
+//
+// The text always runs. CombatText creates a Combat_Text_obj instance and
+// returns it, and the dig sets fields on that return at two of its call sites
+// (static reading, docs/mining-ore-research.md "Extra rolls"). A detour that
+// returned nothing there made the game raise its runtime error inside an
+// extra roll (ForgePact #222). So during an extra roll the text runs as
+// usual, and what it returns is remembered inside a ScopedRemember for
+// MiningOreMod.hpp to remove once the roll is over.
 //
 // One detour, because HookOneScript puts the inline detour in only while the
 // script-table entry is still the game's code: a second install of the same
@@ -28,24 +36,38 @@ inline double xpMultiplier = 1.0;
 // HeroSiege::RewardScope::Active, handed in by StatsManager.hpp (the SDK header
 // that defines it includes <windows.h>). Unset reads as "no scope active".
 inline bool (*rewardScopeActive)() = nullptr;
-// Silence for the calling thread only; a depth, so scopes nest.
-inline thread_local int silenceDepth = 0;
-inline uint64_t passedCalls = 0, silencedCalls = 0;
+// At most this many returns are remembered per scope; one dig makes one text
+// per run at most, so a scope that fills up is counted, not grown.
+inline constexpr size_t kMaxRemembered = 16;
+// Where the calling thread's returns go, or null outside a ScopedRemember.
+inline thread_local std::vector<RValue>* remembered = nullptr;
+// passedCalls: outside an extra roll. extraRunCalls: inside one (they run
+// too, and are handed to the remover). rememberOverflow: returns past the cap.
+inline uint64_t passedCalls = 0, extraRunCalls = 0, rememberOverflow = 0;
 
-class ScopedSilence {
+// For the calling thread only; the previous target comes back on exit, so
+// scopes nest.
+class ScopedRemember {
+    std::vector<RValue>* previous;
 public:
-    ScopedSilence() { ++silenceDepth; }
-    ~ScopedSilence() { --silenceDepth; }
-    ScopedSilence(const ScopedSilence&) = delete;
-    ScopedSilence& operator=(const ScopedSilence&) = delete;
+    explicit ScopedRemember(std::vector<RValue>& into) : previous(remembered) { remembered = &into; }
+    ~ScopedRemember() { remembered = previous; }
+    ScopedRemember(const ScopedRemember&) = delete;
+    ScopedRemember& operator=(const ScopedRemember&) = delete;
 };
+
+inline void Remember(std::vector<RValue>* into, const RValue& value) {
+    if (into->size() >= kMaxRemembered) { ++rememberOverflow; return; }
+    // Bookkeeping only: nothing from here may reach the game's caller.
+    try { into->push_back(value); } catch (...) { ++rememberOverflow; }
+}
 
 // Baloncuk metni duzeltmesi: EnemyGiveExperience/ExperienceUpdate zaten
 // bicimlenmis "N XP" metni uretiyor, XP carpanindan ONCE. Verilen XP'ye
 // dokunulmuyor; bu tamamen gorsel bir duzeltme.
 inline RValue& Hook(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) {
-    if (silenceDepth > 0) { ++silencedCalls; return R; }
-    ++passedCalls;
+    std::vector<RValue>* const keep = remembered;
+    if (keep) ++extraRunCalls; else ++passedCalls;
     RValue yeni;
     std::vector<RValue*> A2;
     double c = xpMultiplier;
@@ -69,7 +91,10 @@ inline RValue& Hook(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
         } catch (...) {}
     }
     RValue** kullan = A2.empty() ? A : A2.data();
-    return original ? original(S, O, R, argc, kullan) : R;
+    if (!original) return R;
+    RValue& result = original(S, O, R, argc, kullan);
+    if (keep) Remember(keep, result);
+    return result;
 }
 
 // True when the detour is in and native. The one HookOneScript call for

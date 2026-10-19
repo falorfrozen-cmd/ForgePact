@@ -136,6 +136,14 @@ static reading; what the sessions measured is under "Live procedure 1
 (2026-09-28)" and "Live procedure 2 (2026-10-02)", and where the reading and a
 measurement disagree, the measurement is said so there.
 
+On 2026-10-19 a player's game crashed twice with the rolls on (ForgePact #222;
+"The 2026-10-19 crash", below). The cause was the silenced floating text: the
+dig uses the instance `CombatText` returns, so an extra roll that held the text
+back handed the dig nothing to use. Since v2.3.1 the text runs in an extra roll
+and its instances are removed afterwards, and an extra roll that throws turns
+the rolls off for the session instead of passing the throw back to the game.
+The fix is covered by the harness; it has not yet been run live.
+
 ### What the game does at a dig (static reading)
 
 Read locally on 2026-09-28 and written down in our own words; the full labelled
@@ -166,6 +174,23 @@ and the facts every module needs are in the hub's
   per completion run, but saw no `MiningAdd`, `CombatText` or `update_quest`
   call from a dig through native detours: not observed live, and unexplained
   (see below).
+- **What the dig does with those calls' results** (static reading, 2026-10-19,
+  Ghidra project build `498d588550d8`). `CombatText` creates one
+  `Combat_Text_obj` instance (`Combat_Text_obj = 973` in the SDK's
+  `objects.hpp`), fills it from its arguments and returns it. The dig calls
+  `CombatText` from six places. Four drop the result. The other two each come
+  right after an `ExperienceUpdate` and `GuildExperienceAdd` pair, behind a
+  further condition that is not established, and at once set the returned
+  instance's `font`, `vspeed` and `hspeed`. Nothing reads what `MiningAdd`,
+  `ExperienceUpdate`, `GuildExperienceAdd` or `update_quest` return. So of the
+  five side-effect scripts, only `CombatText` cannot be skipped without
+  breaking the dig.
+- **The reading holds for the installed build.** On 2026-10-19 the installed
+  `Hero_Siege.exe` (sha256 `dab03f13...`) and the Ghidra project's import copy
+  (`498d5885...`) were compared byte by byte: both are 281,751,552 bytes and
+  Aurie-patched, and they do not differ in the first 281,468,928 bytes (the
+  size of the unpatched backup). The 4,049 bytes that differ all lie in
+  Aurie's appended section, so the game code is the same in both.
 
 ### The mechanism
 
@@ -176,18 +201,41 @@ ore stack during that original call, and only while the rolls are above 1.
 Before each extra run the plugin sets the node's `hp` back to 1 and
 `miningQue` to true (the route Vein Resonance proved live on 2026-09-23) and
 calls the step trampoline with the original arguments. During an extra run a
-thread-local flag makes five pass-through detours skip the game's call:
-`MiningAdd`, `ExperienceUpdate`, `GuildExperienceAdd`, `update_quest`, and the
-shared `CombatText` detour. So XP (mining, character, guild), quest progress
-and the floating XP text are meant to count once per node, while ore, bonus
-finds, sound and the hit effect happen once per roll. Of those five, only
-character and guild XP were measured once per node (Live procedure 1); no dig
-was observed calling `MiningAdd`, `update_quest` or `CombatText`, so mining XP,
-quest progress and the floating text may still come once per roll by a route
-these detours do not hold. An extra run that pays no ore ends the
+thread-local flag makes four pass-through detours skip the game's call:
+`MiningAdd`, `ExperienceUpdate`, `GuildExperienceAdd` and `update_quest`. So
+XP (mining, character, guild) and quest progress are meant to count once per
+node, while ore, bonus finds, sound and the hit effect happen once per roll. Of
+those four, only character and guild XP were measured once per node (Live
+procedure 1); no dig was observed calling `MiningAdd` or `update_quest`, so
+mining XP and quest progress may still come once per roll by a route these
+detours do not hold. An extra run that pays no ore ends the
 loop, and afterwards the node's `hp` is forced to 0, so a node is never left
 diggable twice. The multiplier (or the helmet's x4) scales every stack of every
 run; the helmet's pulse and Vein Resonance follow the original run only.
+
+The floating text is handled differently since v2.3.1 (ForgePact #222), because
+the dig uses what `CombatText` returns. During an extra run the shared
+`CombatText` detour calls the game as usual (the Experience slider's "N XP"
+rescale included), so the dig gets a real text instance, and it remembers each
+value the game returned, up to `kMaxRemembered` (16) a run. Once the run
+returns, or throws, `RemoveTexts` destroys each remembered value that is a live
+instance of `Combat_Text_obj` (its `object_index` compared with the index
+`asset_get_index` returns for the SDK's name, never a hard-coded 973) with
+`instance_destroy`. Anything else is left alone and counted. The original
+run's text is never touched, so one text is meant to rise from a node per dig.
+The counts are `removedTexts` and `textsLeft` in the research build's
+`miningrolls stat`, and the removed texts are part of the mod state's
+`silencedCalls` (side effects held back in extra runs).
+
+An extra run that throws (the game raising its runtime error is a C++
+exception, which the plugin's `/EHsc` handlers see) no longer passes the
+exception back to the game. The rolls stop, that run's texts are removed, the
+node is left with `hp` 0, and the rolls go off for the rest of the session:
+`rolls` 1, not ready, unavailable, so a later `miningrolls N` answers
+`miningrolls: unavailable - an extra roll failed earlier this session (<type>)`.
+One line a session, `miningrolls: an extra roll failed (<type>) - ...`, names
+the exception's type as the crash trap recorded it for the thread, or `unknown
+type`.
 
 `miningrolls` above 1 installs the step/loot pair, the four pass-through
 detours and the shared `CombatText` detour, once a session; all seven must come
@@ -226,10 +274,43 @@ only on a script's first install. A second detour from the mining code would
 have come up table-only in one install order (rolls refused for anyone with the
 Experience slider moved) and blinded the XP text fix in the other. So there is
 one detour, in `plugin/include/ForgePact/CombatTextHook.hpp`, installed once by
-whichever asks first; it rescales the XP text for the Experience slider and is
-silenced during an extra roll. The alternative, letting the floating XP text
-repeat per roll, was rejected: the README says it is meant to come once per
-node, and each roll would show a fresh "N XP" with no XP behind it.
+whichever asks first; it rescales the XP text for the Experience slider.
+
+Until v2.3.0 that detour was silenced during an extra roll: it returned
+without calling the game, so the floating text came once per node. That was
+the cause of the 2026-10-19 crash (below): at two of its sites the dig sets
+fields on the instance `CombatText` returns, and the silenced detour returned
+none. Since v2.3.1 the text runs in an extra roll and is removed once the roll
+is over, which keeps the goal: one text per node, because each roll's text
+would otherwise show a fresh "N XP" with no XP behind it, and the README says
+it comes once per node. Letting the text repeat per roll stays rejected.
+Whether a removed text is ever seen for a frame is not established: no dig
+with the rolls on has been watched live since the change.
+
+### The 2026-10-19 crash (ForgePact #222)
+
+A player's two crash folders of 2026-10-19 (the panel's incident reports,
+plugin and panel 2.3.0, game 7.0.13.0; kept outside any repository) both end
+the same way. The session's last `out.txt` line is `miningrolls: node left
+diggable, hp reset to 0`, with no `first extra roll paid`, `extra roll paid
+nothing` or `could not re-arm` line before it. One session ran
+`miningrolls: x10`; the other ran `miningore: x10` and `miningrolls: x2`, then
+logged its first scaled reward right before that line. The game then exited
+with `0xC0000005`, and the panel's Application-log probe found no faulting
+module.
+
+The only path that prints the hp-reset line without either once-per-session
+roll line was `ExtraRolls`' `catch (...)`, which reset `hp` and rethrew. Under
+`/EHsc` that handler sees C++ exceptions only, so the game's step threw a C++
+exception in the first extra run, and the rethrow passed it back into the
+game, which then ended. Put beside the static reading above, the exception
+fits the dig setting `font` on the nothing the silenced detour returned. The
+2026-10-02 session never reached those two sites, because its hero was at the
+5000 mining cap (`docs/RUNTIME_DATA_MODELS.md` § 12 records no `CombatText`
+call from a dig). That chain is inferred from the logs and the reading, and
+reproduced in `tests/mining_ore_harness.cpp`, not measured in the game. Why the
+game's end code was an access violation rather than an abort is **not
+established**; the v2.3.1 crash trap is how a next report would say.
 
 ### Live procedure 1 (2026-09-28)
 
@@ -296,7 +377,11 @@ What it established:
   reach `MiningAdd` and `CombatText` is not established: a branch of the step
   this character does not take is one untested explanation. The plugin still
   silences all five during an extra run; nothing in the mechanism depends on
-  the three being called.
+  the three being called. (Later correction, 2026-10-19: the mechanism did
+  depend on `CombatText`. Its call sites that keep the return sit behind a
+  condition this capped character never met, and a dig that met it crashed
+  with the text silenced; see "The 2026-10-19 crash". Since v2.3.1 the text
+  runs and only the other four are silenced.)
 - **The node's `range` is a pulse, not dig progress.** With the character at
   distance 0 and no dig completing, `minerhelm probe` read `range` cycling 0 ->
   about 45-48 -> 0 while `hp` stayed 1; `miningQue` read false at every poll

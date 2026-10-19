@@ -32,8 +32,9 @@ PFUNC_YYGMLScript originalStep=nullptr, originalLoot=nullptr;
 int (*rewardMultiplier)(CInstance*)=nullptr; void (*rewardDispatched)(CInstance*,double,double)=nullptr;
 std::string installFailure, rollsFailure;
 int rolls=1; bool rollsInstallTried=false, rollsReady=false, rollsUnavailable=false;
-bool loggedRollPaid=false, loggedRollUnpaid=false, loggedHpReset=false;
-uint64_t extraRuns=0, extraRunsUnpaid=0, silencedCalls=0;
+bool loggedRollPaid=false, loggedRollUnpaid=false, loggedHpReset=false, loggedRollFailed=false;
+uint64_t extraRuns=0, extraRunsUnpaid=0, silencedCalls=0, removedTexts=0, textsLeft=0;
+const char* (*exceptionType)()=nullptr;
 struct SilencedScript { const char* name; const char* hookId; PFUNC_YYGMLScript original; bool native; uint64_t passed, silenced; };
 std::array<SilencedScript,4> silencedScripts{};
 struct ExperienceCapture { bool counted; bool hasAmount; int64_t amount; };
@@ -83,6 +84,17 @@ RValue& HookLoot(CInstance* s,CInstance* o,RValue& r,int n,RValue** a){return or
         # tracker's XP count, and the extra rolls stay available when the
         # tracker installed it first.
         self.assertIn('PASS target/tracker_first_then_rolls_share_one_native_xp_detour', run.stdout)
+        # ForgePact #222: the dig sets fields on the instance CombatText
+        # returns, so an extra roll lets the text run and removes it after,
+        # and an extra roll that throws never passes the throw to the game.
+        for line in ('PASS baseline/rolls1_step_uses_combattext_return',
+                     'PASS target/extra_roll_combattext_return_used',
+                     'PASS target/extra_roll_texts_removed',
+                     'PASS target/extra_run_exception_stops_rolls_no_rethrow',
+                     'PASS target/extra_roll_other_object_left_alone',
+                     'PASS target/extra_roll_text_object_unknown_destroys_nothing'):
+            self.assertIn(line, run.stdout)
+            self.assertNotIn(line.replace('PASS ', 'FAIL ', 1), run.stdout)
 
 
 if __name__ == '__main__':
