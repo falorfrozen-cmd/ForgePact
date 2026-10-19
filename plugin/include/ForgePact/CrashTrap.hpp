@@ -16,7 +16,11 @@
 //     unhandled-exception filter sees only what nothing handled: it appends a
 //     `route=unhandled` line (a C++ exception's with its type), has the dump
 //     and the two log copies made, then calls the filter it replaced and
-//     returns that one's answer. Neither route handles or resumes anything:
+//     returns that one's answer. Whoever sets the top-level filter last owns
+//     it, so whether ours still does is measured (CheckUnhandled, from the
+//     status line and the monitor thread): a filter set over ours is named in
+//     trap.txt and the status line, and ours is re-armed on top of it, a
+//     bounded number of times. Neither route handles or resumes anything:
 //     the vectored handler always continues the search, so the game dies
 //     exactly as before and Windows Error Reporting still sees it.
 //   * The line is `exception 0x<code> at <module>+0x<offset> thread=<game|
@@ -92,6 +96,8 @@ inline constexpr int kMaxModules = 512;
 inline constexpr size_t kModuleNameChars = 64;
 inline constexpr size_t kTypeChars = 128;                   // a C++ type's decorated name, cut to this
 inline constexpr size_t kLineChars = 512;
+inline constexpr long kMaxFilterChain = 8;                  // the filter ours replaced at install, and each one re-armed over
+inline constexpr size_t kFilterNameChars = kModuleNameChars + 32;   // "<module>+0x<offset>" or "unlisted 0x<address>"
 
 // ---- state: plain data and atomics, zero at load, nothing to destroy -----------
 
@@ -122,6 +128,12 @@ struct State {
     std::atomic<DWORD> gameThread;
     PVOID vectored;
     LPTOP_LEVEL_EXCEPTION_FILTER previous;     // the filter ours replaced, called after ours
+    LPTOP_LEVEL_EXCEPTION_FILTER chain[kMaxFilterChain];   // [0] the one replaced at install, then each re-armed over
+    volatile long chainCount;
+    std::atomic<bool> checking;                // one CheckUnhandled at a time
+    std::atomic<bool> filterLeft;              // found replaced with the chain full: the other filter stays on top
+    volatile long filterRearmed;               // times ours was found replaced and put back on top
+    char replacedBy[kFilterNameChars];         // the filter found on top instead of ours, last time
     MiniDumpWriteDumpFn writeDump;
     HANDLE request;                            // the filter sets it...
     HANDLE done;                               // ...and the helper sets this when it finished
@@ -146,6 +158,11 @@ static_assert(std::is_trivially_destructible_v<State>, "nothing may run for the 
 // recorded again).
 inline thread_local char t_LastCppType[kTypeChars];
 inline thread_local bool t_Inside;
+
+// The exception the filter last ran for on this thread, and how many times it
+// was handed back to ours for it (see Unhandled).
+inline thread_local const EXCEPTION_RECORD* t_FilterRecord;
+inline thread_local long t_FilterDepth;
 
 // ---- fixed-buffer text, for the routes -------------------------------------------
 
@@ -336,15 +353,26 @@ inline void RequestDump(PEXCEPTION_POINTERS info) noexcept
 // The top-level filter: what nothing else handled. Records it once, has the
 // logs copied and the dump written, then gives the previous filter its turn
 // and returns that one's answer.
+//
+// Ours can be handed the same exception again: when CheckUnhandled re-armed
+// ours over a filter that had kept ours as the one it calls next. Each such
+// return goes one step down the chain, to the filter ours was on top of
+// before, and past the bottom the search goes on, so the chain never loops.
 inline LONG WINAPI Unhandled(PEXCEPTION_POINTERS info) noexcept
 {
-    if (info && info->ExceptionRecord && InterlockedExchange(&g_State.unhandledSeen, 1) == 0) {
+    const EXCEPTION_RECORD* const exception = info ? info->ExceptionRecord : nullptr;
+    const long depth = exception && t_FilterRecord == exception ? t_FilterDepth + 1 : 0;
+    t_FilterRecord = exception;
+    t_FilterDepth = depth;
+    if (depth == 0 && exception && InterlockedExchange(&g_State.unhandledSeen, 1) == 0) {
         t_Inside = true;
         WriteRecord(info->ExceptionRecord, true);
         RequestDump(info);
         t_Inside = false;
     }
-    const LPTOP_LEVEL_EXCEPTION_FILTER previous = g_State.previous;
+    const long at = g_State.chainCount - 1 - depth;
+    const LPTOP_LEVEL_EXCEPTION_FILTER previous = depth == 0 ? g_State.previous
+                                                : at >= 0 && at < kMaxFilterChain ? g_State.chain[at] : nullptr;
     if (previous) return previous(info);
     return EXCEPTION_CONTINUE_SEARCH;
 }
@@ -409,14 +437,97 @@ inline DWORD WINAPI Helper(LPVOID) noexcept
 
 // ---- outside the routes: install, the module list, the game thread ---------------------
 
+// "<module>+0x<offset>" for a filter's address, "unlisted 0x<address>" when
+// no listed module holds it, "none" for no filter at all.
+inline void DescribeFilter(LPTOP_LEVEL_EXCEPTION_FILTER filter, char* out, size_t cap) noexcept
+{
+    const int limit = static_cast<int>(cap);
+    int pos = 0;
+    const uintptr_t address = reinterpret_cast<uintptr_t>(filter);
+    const ModuleRow* module = filter ? FindModule(address) : nullptr;
+    if (!filter) {
+        pos = Put(out, pos, limit, "none");
+    } else if (module) {
+        pos = Put(out, pos, limit, module->name);
+        pos = Put(out, pos, limit, "+0x");
+        pos = PutHex(out, pos, limit, address - module->base, 1);
+    } else {
+        pos = Put(out, pos, limit, "unlisted 0x");
+        pos = PutHex(out, pos, limit, address, 1);
+    }
+    out[pos] = '\0';
+}
+
+// Whether ours is still the process's top-level filter, measured, not
+// remembered. That filter belongs to the process, and whoever sets it last
+// owns it: the exe's C runtime or the runner may set its own after Install,
+// and the MSVC runtime's own filter ends a C++ exception without calling any
+// other. Then the unhandled route never runs, no dump is written and no log
+// copied, and nothing else would say so.
+//
+// Setting ours hands back the filter in place. When that was another one (or
+// none), ours stays on top and calls that one after its own work, as it does
+// the one Install found; the replacement is counted, named and written to
+// trap.txt as a `filter ` line, so a crash folder says it too (the report's
+// parser reads `exception ` lines only). Once ours was re-armed
+// kMaxFilterChain - 1 times, the other filter is put back and left on top, and
+// the status line says that instead. One check at a time; the status line and
+// the monitor thread's module refresh call it.
+inline void CheckUnhandled() noexcept
+{
+    State& s = g_State;
+    if (!s.unhandledArmed.load() || s.checking.exchange(true)) return;
+    const LPTOP_LEVEL_EXCEPTION_FILTER found = SetUnhandledExceptionFilter(&Unhandled);
+    if (found == &Unhandled) {
+        s.filterLeft.store(false);
+        s.checking.store(false);
+        return;
+    }
+    char who[kFilterNameChars];
+    DescribeFilter(found, who, sizeof(who));
+    char line[kLineChars];
+    const int cap = static_cast<int>(sizeof(line));
+    int pos = Put(line, 0, cap, "filter replaced by ");
+    pos = Put(line, pos, cap, who);
+    const long count = s.chainCount;
+    if (count < kMaxFilterChain) {
+        s.chain[count] = found;
+        InterlockedExchange(&s.chainCount, count + 1);
+        s.previous = found;
+        const long times = InterlockedIncrement(&s.filterRearmed);
+        s.filterLeft.store(false);
+        CopyText(s.replacedBy, sizeof(s.replacedBy), who);
+        pos = Put(line, pos, cap, ", ours re-armed over it (");
+        pos = PutDec(line, pos, cap, static_cast<unsigned long long>(times));
+        pos = Put(line, pos, cap, ")\n");
+        AppendRecord(line, pos);
+    } else {
+        SetUnhandledExceptionFilter(found);
+        const bool changed = !s.filterLeft.exchange(true) || std::strcmp(s.replacedBy, who) != 0;
+        CopyText(s.replacedBy, sizeof(s.replacedBy), who);
+        if (changed) {
+            pos = Put(line, pos, cap, ", left on top: ours was re-armed ");
+            pos = PutDec(line, pos, cap, static_cast<unsigned long long>(s.filterRearmed));
+            pos = Put(line, pos, cap, " times already\n");
+            AppendRecord(line, pos);
+        }
+    }
+    s.checking.store(false);
+}
+
 // Re-lists the process's modules into the table the handler is not reading,
-// then switches it over. One writer: Install, then the monitor thread.
+// then switches it over, and then checks that ours is still the top-level
+// filter (a module listed just now can be named). One writer: Install, then
+// the monitor thread.
 inline void RefreshModules() noexcept
 {
     HMODULE modules[kMaxModules] = {};
     DWORD needed = 0;
     const HANDLE process = GetCurrentProcess();
-    if (!K32EnumProcessModules(process, modules, sizeof(modules), &needed)) return;
+    if (!K32EnumProcessModules(process, modules, sizeof(modules), &needed)) {
+        CheckUnhandled();
+        return;
+    }
     const int next = (g_State.active.load(std::memory_order_relaxed) & 1) ^ 1;
     ModuleTable& table = g_State.tables[next];
     int listed = 0;
@@ -435,6 +546,7 @@ inline void RefreshModules() noexcept
     }
     table.count = listed;
     g_State.active.store(next, std::memory_order_release);
+    CheckUnhandled();
 }
 
 // The frame thread, every frame: `thread=game` means this one.
@@ -463,9 +575,24 @@ inline bool Rotate(const std::filesystem::path& dir, const std::filesystem::path
     return !made && std::filesystem::is_directory(dir, made);
 }
 
+// The unhandled part says what CheckUnhandled just measured: ours on top, or
+// which filter is on top instead.
 inline std::string StatusLine()
 {
+    CheckUnhandled();
     const State& s = g_State;
+    std::string unhandled;
+    if (!s.unhandledArmed.load()) {
+        unhandled = "unhandled not armed";
+    } else if (s.filterLeft.load()) {
+        unhandled = std::string("unhandled replaced by ") + s.replacedBy + ", left on top (ours re-armed "
+                    + std::to_string(s.filterRearmed) + " times already)";
+    } else {
+        unhandled = "unhandled armed";
+        unhandled += s.filterRearmed ? " (top-level, re-armed " + std::to_string(s.filterRearmed) + "x, last over "
+                                           + s.replacedBy + ")"
+                                     : std::string(" (top-level)");
+    }
     std::string dump;
     if (s.dumpWritten) dump = "dump written";
     else if (s.dumpFailed) dump = "dump failed";
@@ -473,7 +600,7 @@ inline std::string StatusLine()
     else dump = std::string("dump off - ") + (s.dumpWhy[0] ? s.dumpWhy : "not installed");
     const int modules = s.tables[s.active.load() & 1].count;
     return std::string("incident: trap ") + (s.firstChanceArmed.load() ? "first-chance armed" : "first-chance not armed")
-           + " | " + (s.unhandledArmed.load() ? "unhandled armed" : "unhandled not armed") + " | " + dump + " | lines "
+           + " | " + unhandled + " | " + dump + " | lines "
            + std::to_string(s.firstChanceLines) + " of " + std::to_string(kMaxFirstChanceLines)
            + (s.firstChanceOver ? " (" + std::to_string(s.firstChanceOver) + " after the cap)" : std::string())
            + " | modules " + std::to_string(modules) + " | bp_ipc\\" + kDirName;
@@ -533,7 +660,9 @@ inline std::string Install(const std::string& ipcDir, const std::string& logDir)
     s.vectored = AddVectoredExceptionHandler(1, &FirstChance);
     s.firstChanceArmed.store(s.vectored != nullptr);
     s.previous = SetUnhandledExceptionFilter(&Unhandled);
-    s.unhandledArmed.store(true);
+    s.chain[0] = s.previous;
+    s.chainCount = 1;
+    s.unhandledArmed.store(true);   // armed now; whether it stays on top is CheckUnhandled's to measure
     std::string line = StatusLine();
     if (!rotated) line += " | the folder could not be made, nothing will be recorded";
     return line;
