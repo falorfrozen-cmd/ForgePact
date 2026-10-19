@@ -60441,6 +60441,8 @@ static void IncidentMonitorStart()
     ForgePact::Incident::g_ShutdownMarker.Arm(OutPath().c_str());
     IncidentInstallExitHook();
     Out(ForgePact::CrashTrap::Install(IPC_DIR, IncidentExeDir()));
+    // A failed Mining Ore extra roll names the C++ type the trap recorded (#222).
+    ForgePact::MiningOre::exceptionType = &ForgePact::CrashTrap::LastCppType;
     if (!ForgePact::Incident::Monitor::Instance().Start(&IncidentMonitorRun))
         Out("incident: the monitor thread could not be started - no crash, freeze or FPS-drop reports this session");
 }
