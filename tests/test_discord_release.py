@@ -62,7 +62,72 @@ class Splitting(unittest.TestCase):
         self.assertEqual([len(p) for p in hard], [1800, 1800, 400])
 
     def test_crlf_notes(self):
-        self.assertEqual(post.split_notes("a\r\nb"), ["a\nb"])
+        self.assertEqual(post.split_notes("- a\r\n- b"), ["- a\n- b"])
+
+
+WRAPPED = """# ForgePact 9.9.9
+
+A quick fix: one paragraph
+wrapped over two lines.
+
+## Fixed
+
+- **First fix.** This item is
+  wrapped, the way the notes
+  are written.
+  - **Nested:** a sub item
+    wrapped too.
+- **Second fix.** Short.
+
+```
+code stays
+as it is
+```
+"""
+
+
+class Unwrapping(unittest.TestCase):
+    def test_paragraphs_and_items_become_one_line_each(self):
+        self.assertEqual(post.unwrap(WRAPPED).split("\n"), [
+            "# ForgePact 9.9.9", "",
+            "A quick fix: one paragraph wrapped over two lines.", "",
+            "## Fixed", "",
+            "- **First fix.** This item is wrapped, the way the notes are written.",
+            "  - **Nested:** a sub item wrapped too.",
+            "- **Second fix.** Short.", "",
+            "```", "code stays", "as it is", "```", "",
+        ])
+
+    def test_unwrapped_notes_are_unchanged(self):
+        once = post.unwrap(WRAPPED)
+        self.assertEqual(post.unwrap(once), once)
+
+    def test_numbered_items_and_quotes_keep_their_lines(self):
+        text = "1. one\n2. two\n> quote\n> more"
+        self.assertEqual(post.unwrap(text), text)
+
+
+class SplittingBetweenItems(unittest.TestCase):
+    ITEMS = "# ForgePact 1\n\n## Fixed\n\n" + "\n".join(
+        f"- **Fix {i}.** " + "\n  ".join(["word " * 12] * 6) for i in range(12)
+    ) + "\n\n## Changed\n\n- **Last.** done"
+
+    def test_every_piece_starts_with_a_whole_item_or_heading(self):
+        pieces = post.split_notes(self.ITEMS)
+        self.assertGreater(len(pieces), 1)
+        for piece in pieces[1:]:
+            self.assertRegex(piece, r"^(- \*\*|#)")
+        for piece in pieces:
+            self.assertNotIn("\n  word", piece)
+
+    def test_a_heading_never_ends_a_piece(self):
+        for piece in post.split_notes(self.ITEMS)[:-1]:
+            self.assertFalse(piece.rstrip().split("\n")[-1].startswith("#"))
+
+    def test_a_long_paragraph_is_cut_at_a_sentence_end(self):
+        pieces = post.split_notes("Sentence number one is here. " * 100)
+        self.assertGreater(len(pieces), 1)
+        self.assertTrue(all(piece.endswith(".") for piece in pieces[:-1]))
 
     def test_no_everyone(self):
         msgs = post.build_messages("ForgePact 1", "https://x/r", NOTES_2_3_1_LIKE, everyone=False)

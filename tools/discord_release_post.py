@@ -7,8 +7,11 @@ Run by `.github/workflows/discord-release.yml`:
 
 The webhook address comes only from the DISCORD_WEBHOOK_URL environment
 variable (the repository secret), never from an argument, so it cannot end up
-in a log. Discord takes at most 2000 characters per message, so the notes are
-split on line boundaries into as many messages as they need; the first one
+in a log. The notes are written hard-wrapped, which GitHub reflows but Discord
+shows line by line, so each paragraph and list item is joined back into one
+line first (`unwrap`). Discord takes at most 2000 characters per message, so the
+notes are then split between paragraphs and list items, never inside one, into
+as many messages as they need; the first one
 starts with the @everyone ping and the last one ends with the release link.
 Only the first message may ping (`allowed_mentions`), and a "@everyone" or
 "@here" inside the notes themselves never pings.
@@ -16,6 +19,7 @@ Only the first message may ping (`allowed_mentions`), and a "@everyone" or
 
 import argparse
 import json
+import re
 import os
 import sys
 import time
@@ -27,15 +31,75 @@ LIMIT = 2000
 CHUNK = 1800
 
 
+LIST_ITEM = re.compile(r"^\s*([-*+]|\d+[.)])\s")
+
+
+def starts_block(line: str) -> bool:
+    """A line Markdown starts a new block with: a list item, heading, quote,
+    table row or code fence (the line before a blank one is handled apart)."""
+    s = line.lstrip()
+    return bool(LIST_ITEM.match(line)) or s.startswith(("#", ">", "|", "```"))
+
+
+def unwrap(notes: str) -> str:
+    """Join the notes' hard-wrapped lines back into one line per paragraph or
+    list item. GitHub reads a single line break inside a paragraph as a space;
+    Discord shows every line break, so wrapped notes come out ragged there.
+    Blank lines, headings, list items (with their indent), quotes, tables and
+    fenced code keep their own lines."""
+    out, in_code = [], False
+    for line in notes.replace("\r\n", "\n").split("\n"):
+        if line.lstrip().startswith("```"):
+            in_code = not in_code
+            out.append(line)
+            continue
+        if in_code or not line.strip() or starts_block(line) or not out:
+            out.append(line.rstrip() if not in_code else line)
+            continue
+        prev = out[-1]
+        if not prev.strip() or prev.lstrip().startswith(("#", "|", "```")):
+            out.append(line.strip())
+        else:
+            out[-1] = prev.rstrip() + " " + line.strip()
+    return "\n".join(out)
+
+
+def cut_point(line: str, size: int) -> int:
+    """Where to cut a line longer than `size`: after the last sentence end
+    that fits, else at the last space, else hard at `size`."""
+    for mark in (". ", "! ", "? ", "; ", ": "):
+        at = line.rfind(mark, 0, size)
+        if at > size // 3:
+            return at + 1
+    at = line.rfind(" ", 0, size)
+    return at if at > 0 else size
+
+
 def split_notes(notes: str, size: int = CHUNK) -> list:
-    """Split `notes` into pieces of at most `size` characters, at line ends
-    where possible; a single line longer than `size` is cut at a space, or
-    hard when it has none. Blank lines at the edges of a piece are dropped."""
+    """Split `notes` (unwrapped first) into pieces of at most `size`
+    characters. Pieces end between paragraphs or list items, never inside one,
+    and never right after a heading (the heading moves on with its section);
+    only a single paragraph longer than `size` is cut, at a sentence end."""
+    pieces = _split_lines(unwrap(notes), size)
+    # A piece that ends on a heading hands it to the next piece.
+    for i in range(len(pieces) - 1):
+        lines = pieces[i].split("\n")
+        if lines[-1].lstrip().startswith("#") and len(lines) > 1:
+            moved = lines[-1]
+            candidate = moved + "\n\n" + pieces[i + 1]
+            if len(candidate) <= size:
+                pieces[i] = "\n".join(lines[:-1]).strip("\n")
+                pieces[i + 1] = candidate
+    return [p for p in pieces if p.strip()]
+
+
+def _split_lines(notes: str, size: int) -> list:
+    """Pack whole lines into pieces of at most `size` characters; a line longer
+    than `size` is cut (cut_point). Blank lines at a piece's edges are dropped."""
     pieces, current = [], ""
     for line in notes.replace("\r\n", "\n").split("\n"):
         while len(line) > size:
-            cut = line.rfind(" ", 0, size)
-            cut = cut if cut > 0 else size
+            cut = cut_point(line, size)
             if current.strip():
                 pieces.append(current.strip("\n"))
             current = ""
