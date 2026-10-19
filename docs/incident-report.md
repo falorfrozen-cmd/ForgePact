@@ -911,5 +911,44 @@ control.
   no `crashtrap.prev` folder existed, and both log tails said the crashed
   session's log was not captured. Why the filter did not run is not
   established. This measured failure of the first design is why the dump and
-  the log copies are now staged at first chance (Decisions); the staging has
-  not been run in the game yet (Live procedure 2 of that workorder).
+  the log copies are now staged at first chance (Decisions); the crash trap's
+  Live 2 entry below is that staging run in the game.
+
+The crash trap (issue #223), Live 2, 2026-10-19 (capture: the workorder's
+`forgepact-222-223-extra-rolls-crash-trap-live-2.md`, kept with the hub's
+local workorder files). The research DLL of the staged design (SHA-256
+`d2b1d377...ace620a05`, equal to the lease's hash, built from ForgePact
+`38acede`'s code) ran with no debugger attached at any point of the session.
+All fourteen checks passed.
+
+- **Armed, and nothing staged by play.** `incident stat`'s trap line read
+  `first-chance armed | unhandled armed (top-level) | dump ready | lines 0
+  of 32 | staged 0 of 4 | guarded reads 0` before the probe, after two
+  mining digs. Observed live.
+- **The probe stages one set, and the game carries on.** The research build's
+  `incident trapprobe` answered `incident: trapprobe access violation raised
+  and handled here | staged 1 (was 0)`, `ping` still answered `pong (YYTK
+  4.0.1)`, and the trap line then read `dump written | lines 1 of 32 |
+  staged 1 of 4`. `bp_ipc\crashtrap\` held a `crash.dmp` whose first four
+  bytes are `MDMP`, the copies of `YYToolkit.log` and `aurie.log`, and the
+  record's line files (`dumpline.txt`, `trap.txt`). Observed live.
+- **A clean quit keeps nothing.** An ordinary close (exit `0x00000000`) left
+  the probe's staging in place until the next load, which logged
+  `incident: the previous session shut down cleanly`, wrote no crash report,
+  and deleted the staged copies: no `crashtrap.prev` folder, and
+  `bp_ipc\crashtrap\` held only a fresh `trap.txt`. Observed live.
+- **The crash control's report carries the dump and both tails.** The
+  research build's `crashwatch crash confirm` (crashwatch itself off) ended
+  the game with `0xC0000005`, and the relaunch wrote
+  `reports\20261019-141837_crash` with `crash.dmp` (361777 bytes,
+  `trap.dump` true), `yytoolkit-tail.txt` and `aurie-tail.txt`. The tails
+  are the crashed session's: `aurie-tail.txt` ends at that session's last
+  line, before the relaunch's first, and neither says the log was not
+  captured. `tools/crash_dump_stack.py` read the dump as code `0xc0000005`
+  raised in `BloodPactPlugin`, its first frame at the report's offset
+  `0x1BC53A`. Observed live.
+- **The route, again.** The report's `trap.route` read `first-chance`
+  (`route=first-chance` in the record), as in Live 1, this time with no
+  debugger attached at any point of the session; the top-level filter was
+  not observed to run. Why it did not is not established. The staged dump
+  makes the report complete either way. Observed live.
