@@ -12,6 +12,13 @@ process carries on; a code that is not fatal (a custom one, a breakpoint)
 writes nothing; the route answers EXCEPTION_CONTINUE_SEARCH to every code,
 and its lines stop at kMaxFirstChanceLines.
 
+In-process (the top-level filter, which another module can set over ours):
+the next check finds it, writes one `filter replaced by <module>+0x<offset>`
+line the fold does not take for a record, names it in the status line and puts
+ours back on top; that filter calling ours again for the same exception walks
+down the chain and ends the search instead of looping; once the chain is full
+the other filter is left on top, said once.
+
 Children (the unhandled route), with Windows' crash dialog off: one dies of an
 access violation, one of an unhandled C++ exception, each holding two fake
 logs open for writing. Each leaves a `route=unhandled` line (the C++ one with
@@ -39,6 +46,9 @@ EXPECTED = (
     "first-chance-av-line",
     "non-fatal-quiet",
     "continue-search-only",
+    "filter-replaced",
+    "filter-chain-walk",
+    "filter-left-on-top",
     "unhandled-av-child",
     "unhandled-cpp-child",
     "rotation",
@@ -135,6 +145,25 @@ class CrashTrapBehaviorTests(unittest.TestCase):
         # EXCEPTION_CONTINUE_SEARCH is 0, six codes asked.
         self.assertTrue(detail.startswith("answers 0 0 0 0 0 0 |"), detail)
         self.assertIn("| lines 32 of 32 |", detail)
+
+    # Baseline: ours on top, a check writes nothing. Target: a filter set over
+    # ours is named, ours goes back on top, and the fold still reads only the
+    # `exception ` lines.
+    def test_a_filter_set_over_ours_is_found_named_and_re_armed(self):
+        detail = self.scenario("filter-replaced")
+        self.assertTrue(detail.startswith("baseline quiet | ours back on top | line filter replaced by "
+                                          "crash_trap_harness.exe+0x"), detail)
+        self.assertIn(", ours re-armed over it (1) | fold reads exception lines only |", detail)
+        self.assertIn("unhandled armed (top-level, re-armed 1x, last over crash_trap_harness.exe+0x", detail)
+
+    def test_a_filter_that_calls_ours_back_does_not_loop(self):
+        self.assertEqual(self.scenario("filter-chain-walk"), "the other filter ran 1x | answer 0")
+
+    def test_with_the_chain_full_the_other_filter_stays_on_top_and_is_said_once(self):
+        detail = self.scenario("filter-left-on-top")
+        self.assertTrue(detail.startswith("other on top | lines 7 -> 8 | line filter replaced by "), detail)
+        self.assertIn(", left on top: ours was re-armed 7 times already |", detail)
+        self.assertIn("unhandled replaced by crash_trap_harness.exe+0x", detail)
 
     # Targets: a crash leaves the line, the dump and the two logs.
     def test_target_an_access_violation_crash_leaves_line_dump_and_logs(self):

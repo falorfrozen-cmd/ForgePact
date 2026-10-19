@@ -158,7 +158,16 @@ name (`.?AVruntime_error@std@@`). It has two routes:
   type), signals a helper thread made at install to copy the last 1 MB of
   each log and then write `crash.dmp`, waits for it at most
   `kDumpWaitMs` (15 s), and then calls the filter it replaced and returns
-  that one's answer.
+  that one's answer. The top-level filter belongs to the process and whoever
+  sets it last owns it, so whether ours is still on top is checked each time
+  the monitor thread refreshes the module list and each time `incident stat`
+  runs: a filter found on top instead is named in a `filter replaced by
+  <module>+0x<offset>` line in `trap.txt` and ours is put back on top of it,
+  calling it after its own work as it does the one it replaced at install.
+  After seven re-arms the other filter is left on top, said once in
+  `trap.txt` and in the status line. If such a filter hands the exception
+  back to ours, ours steps one filter down that chain each time, and past the
+  bottom the search goes on, so the two never call each other in a loop.
 
 At install, before anything is written, `bp_ipc\crashtrap\` becomes
 `bp_ipc\crashtrap.prev\` (an older one removed) and a fresh folder starts with
@@ -172,9 +181,11 @@ The `CRASH ...` line's module falls back to the record's `<module>+0x<offset>`
 when the panel's `exit.json` has none. After a clean session the previous
 folder is deleted, and after a crash once it is folded into a report.
 `incident stat` adds a line starting `incident: trap ` that says whether
-each route is armed, whether the dump is ready (or why not, for example
-`dump off - dbghelp.dll not loaded from system32, error <n>`), and how many
-first-chance lines this session wrote.
+each route is armed (the unhandled one as measured just then: `unhandled
+armed (top-level)`, with how often and over which filter ours was re-armed
+when it was, or `unhandled replaced by ... left on top`), whether the dump is
+ready (or why not, for example `dump off - dbghelp.dll not loaded from
+system32, error <n>`), and how many first-chance lines this session wrote.
 
 **Rethrow lines (issue #223).** Every ForgePact `catch (...)` that hands an
 exception back into the game with `throw;` first writes one `out.txt` line,
@@ -493,11 +504,18 @@ is the one exception `tests/test_crash_trap_contract.py` allows.
   unrecorded. Crashwatch's 20-minute research session (2026-10-07) logged
   no fatal first-chance line, but that is "not observed", not a guarantee.
 - **The unhandled route works only while its filter is the top one.** It is
-  installed with `SetUnhandledExceptionFilter` when the plugin loads; a module
-  that sets its own filter later replaces it, and nothing in the process says
-  so. Then the record has no `route=unhandled` line, and no dump or log copy
-  is made. `incident stat`'s `unhandled armed` says it was installed, not that
-  it is still the top filter.
+  installed with `SetUnhandledExceptionFilter` when the plugin loads, and a
+  module that sets its own filter later replaces it. The trap checks that
+  only when the monitor thread refreshes the module list and when `incident
+  stat` runs. So a filter set over ours after the last check, one that does
+  not call the filter it replaced (the MSVC runtime's ends a C++ exception
+  that way), still wins: the record then has no `route=unhandled` line, and
+  no dump or log copy is made. After a re-arm ours runs first and records the
+  crash before calling it. Once ours was re-armed seven times it is left
+  under the other filter for the session; `incident stat` then reads
+  `unhandled replaced by <module>+0x<offset>, left on top`, and `unhandled
+  armed (top-level, ...)` means ours was on top when it looked. Which module,
+  if any, sets a filter over ours in the game is not observed yet.
 - **The dump has stacks, not data.** `MiniDumpNormal` holds every thread's
   stack and the module list, which with the tag's PDB is enough to name the
   function that crashed; it holds no heap, so no game state. It is written

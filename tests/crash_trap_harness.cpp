@@ -10,6 +10,11 @@
 //     carries on; an exception code that is not fatal writes nothing; the
 //     vectored route answers EXCEPTION_CONTINUE_SEARCH to everything; its
 //     lines stop at kMaxFirstChanceLines.
+//   * the top-level filter: another filter set over ours is found by the
+//     next check, named in a `filter ` line and the status line, and ours is
+//     put back on top; that filter calling ours again for the same exception
+//     walks down the chain instead of looping; once the chain is full the
+//     other filter is left on top and the status line says so.
 //   * children, each with an ipc directory of its own and with Windows'
 //     crash dialog off (SEM_NOGPFAULTERRORBOX): one dies of an access
 //     violation, one of an unhandled C++ exception. The parent then finds a
@@ -198,6 +203,115 @@ void ContinueSearchOnly(const fs::path& record)
            + " | " + status);
 }
 
+// ---- the top-level filter, set over ours --------------------------------------
+
+// The record's `filter ` lines, in order.
+std::vector<std::string> FilterLines(const fs::path& record)
+{
+    std::vector<std::string> lines;
+    const std::string text = ReadAll(record);
+    size_t at = 0;
+    while (at < text.size()) {
+        size_t end = text.find('\n', at);
+        if (end == std::string::npos) end = text.size();
+        std::string line = text.substr(at, end - at);
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line.rfind("filter ", 0) == 0) lines.push_back(line);
+        at = end + 1;
+    }
+    return lines;
+}
+
+// Another module's filter, set over ours as a runtime might: it keeps the one
+// it replaced and calls it. The cap turns a loop into a failure, not a crash.
+LPTOP_LEVEL_EXCEPTION_FILTER g_OtherNext = nullptr;
+long g_OtherCalls = 0;
+
+LONG WINAPI OtherFilter(PEXCEPTION_POINTERS info)
+{
+    if (++g_OtherCalls > 4 || !g_OtherNext) return EXCEPTION_CONTINUE_SEARCH;
+    return g_OtherNext(info);
+}
+
+// What is on top now, without changing it.
+LPTOP_LEVEL_EXCEPTION_FILTER TopFilter()
+{
+    const LPTOP_LEVEL_EXCEPTION_FILTER top = SetUnhandledExceptionFilter(nullptr);
+    SetUnhandledExceptionFilter(top);
+    return top;
+}
+
+// Baseline: ours on top, nothing written. Target: a filter set over ours is
+// found by the next check, named in the record and the status line, and ours
+// is put back on top; a check with nothing changed writes nothing.
+void FilterReplaced(const fs::path& record)
+{
+    const size_t before = FilterLines(record).size();
+    const std::string quiet = trap::StatusLine();
+    const bool baseline = TopFilter() == &trap::Unhandled && FilterLines(record).size() == before
+                          && quiet.find("unhandled armed (top-level) |") != std::string::npos;
+    g_OtherNext = SetUnhandledExceptionFilter(&OtherFilter);
+    const std::string status = trap::StatusLine();
+    const bool back = TopFilter() == &trap::Unhandled;
+    const std::string again = trap::StatusLine();
+    const std::vector<std::string> lines = FilterLines(record);
+    const std::string owner = ExeName() + "+0x";
+    const std::string line = lines.empty() ? std::string("none") : lines.back();
+    inc::TrapRecord parsed;
+    const bool fold = inc::ParseTrapRecord(ReadAll(record), parsed) && parsed.route == "first-chance";
+    const bool ok = baseline && g_OtherNext == &trap::Unhandled && back && lines.size() == before + 1
+                    && line.rfind("filter replaced by " + owner, 0) == 0
+                    && line.find(", ours re-armed over it (1)") != std::string::npos
+                    && status.find("unhandled armed (top-level, re-armed 1x, last over " + owner) != std::string::npos
+                    && again == status && fold;
+    Report("filter-replaced", ok, std::string(baseline ? "baseline quiet" : "baseline not quiet") + " | "
+           + (back ? "ours back on top" : "ours not on top") + " | line " + line + " | "
+           + (fold ? "fold reads exception lines only" : "fold misread") + " | " + status);
+}
+
+// The other filter calls ours again for the same exception: ours goes one
+// step down its chain and the search ends, instead of the two calling each
+// other until the stack runs out. The record and the dump were the children's
+// to test, so this one is marked as already seen.
+void FilterChainWalk()
+{
+    InterlockedExchange(&trap::g_State.unhandledSeen, 1);
+    EXCEPTION_RECORD r{};
+    r.ExceptionCode = 0x20000223;
+    CONTEXT context{};
+    RtlCaptureContext(&context);
+    EXCEPTION_POINTERS info{ &r, &context };
+    g_OtherCalls = 0;
+    const LONG answer = trap::Unhandled(&info);
+    Report("filter-chain-walk", g_OtherCalls == 1 && answer == EXCEPTION_CONTINUE_SEARCH,
+           "the other filter ran " + std::to_string(g_OtherCalls) + "x | answer " + std::to_string(answer));
+}
+
+// Re-armed until the chain is full, the next filter set over ours stays on
+// top, the status line says so, and the same filter found again writes no
+// second line.
+void FilterLeftOnTop(const fs::path& record)
+{
+    for (long i = 1; i < trap::kMaxFilterChain - 1; ++i) {
+        SetUnhandledExceptionFilter(&OtherFilter);
+        trap::StatusLine();
+    }
+    const size_t before = FilterLines(record).size();
+    SetUnhandledExceptionFilter(&OtherFilter);
+    const std::string status = trap::StatusLine();
+    const bool left = TopFilter() == &OtherFilter;
+    trap::StatusLine();
+    const std::vector<std::string> lines = FilterLines(record);
+    const std::string line = lines.empty() ? std::string("none") : lines.back();
+    const std::string times = std::to_string(trap::kMaxFilterChain - 1);
+    const bool ok = left && lines.size() == before + 1
+                    && line.find(", left on top: ours was re-armed " + times + " times already") != std::string::npos
+                    && status.find("unhandled replaced by " + ExeName() + "+0x") != std::string::npos
+                    && status.find(", left on top (ours re-armed " + times + " times already)") != std::string::npos;
+    Report("filter-left-on-top", ok, std::string(left ? "other on top" : "other not on top") + " | lines "
+           + std::to_string(before) + " -> " + std::to_string(lines.size()) + " | line " + line + " | " + status);
+}
+
 // ---- children -----------------------------------------------------------------
 
 constexpr char kYytkText[] = "YYToolkit 4.0.1 banner\r\n[hs] the crashed session's last YYToolkit line\r\n";
@@ -383,6 +497,9 @@ int main(int argc, char** argv)
     FirstChanceLine(record);
     NonFatalQuiet(record);
     ContinueSearchOnly(record);
+    FilterReplaced(record);
+    FilterChainWalk();
+    FilterLeftOnTop(record);
     UnhandledChildren(work);
     std::printf("RESULT %s\n", g_Failures ? "FAIL" : "OK");
     return g_Failures ? 1 : 0;

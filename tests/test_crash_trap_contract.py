@@ -315,6 +315,23 @@ class CrashTrapContractTests(unittest.TestCase):
         # The dump moves in before report.json says whether it is there.
         self.assertLess(bundle.index('"crash.dmp"'), bundle.index('put("report.json"'))
 
+    # Whoever sets the top-level filter last owns it, so ours being on top is
+    # measured, by the status line and the monitor thread's module refresh,
+    # and the filter ours replaced is kept as the bottom of its chain.
+    def test_whether_ours_is_still_the_top_filter_is_measured(self):
+        install = strip_comments(function_body(self.trap, "inline std::string Install("))
+        self.assertIn("s.chain[0] = s.previous;", install)
+        for name in ("inline std::string StatusLine()", "inline void RefreshModules()"):
+            self.assertIn("CheckUnhandled();", strip_comments(function_body(self.trap, name)), name)
+        check = strip_comments(function_body(self.trap, "inline void CheckUnhandled()"))
+        # It only ever puts ours back, or leaves the one it found.
+        self.assertEqual(re.findall(r"SetUnhandledExceptionFilter\(([^)]*)\)", check), ["&Unhandled", "found"])
+        self.assertIn("count < kMaxFilterChain", check)
+        self.assertIn('"filter replaced by "', check)
+        # The filter walks down the chain and never past its bottom.
+        unhandled = strip_comments(function_body(self.trap, "inline LONG WINAPI Unhandled("))
+        self.assertIn("at >= 0 && at < kMaxFilterChain ? g_State.chain[at] : nullptr", unhandled)
+
     def test_incident_stat_prints_the_trap_line(self):
         command = strip_comments(function_body(self.plugin, "static void IncidentCommand(const std::string& rest)"))
         self.assertIn("Out(ForgePact::CrashTrap::StatusLine());", command)
