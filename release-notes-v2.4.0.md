@@ -1,0 +1,44 @@
+# ForgePact 2.4.0
+
+Release date: 2026-10-23
+
+A new item set of ForgePact's own, **Mark 1**: four Heroic pieces that, worn
+together with the new **Mark 1 set** switch on (off by default), cast the
+skills on your Q, E, R and Y slots for you and send your jump three times as
+far over scenery, at the price of walking at half speed.
+
+## New
+
+- **Mark 1 set (#166).** Mark 1 is an item set of ForgePact's own: the
+  **Mark 1 Helmet**, **Mark 1 Body Armor**, **Mark 1 Boots** and **Mark 1
+  Gloves**, four Heroic pieces, each with its own icon in the bag and on the
+  ground and a gold **Mark 1** line in its tooltip, and no stats of their
+  own. The set's bonus works only while you wear all four, each in its own
+  slot, and the new switch (Mods → Items → **Mark 1 set**, off by default) is
+  on.
+  - **Your skills cast themselves.** The skills on your Q, E, R and Y slots
+    are cast for you whenever the game would let you cast them: the game still
+    checks the cooldown, the mana and every other requirement, and aims each
+    one where it aims that key press. Each of those slots is outlined. A
+    toggle skill is switched on and left on, so you cannot switch it off while
+    the bonus is active; an aura slot and an empty slot are left alone.
+  - **Your jump goes three times as far.** The universal jump always goes
+    three times your normal reach toward your cursor, passes over rocks,
+    fences, carts and other scenery, and lands only where you could walk.
+    When that spot is blocked it lands on the farthest walkable spot that is
+    still past your normal reach, and when there is none you get your normal
+    jump. It never crosses a zone gate or a locked door. Your normal reach is
+    learned from your own jumps on open ground, shared with Jump through
+    scenery.
+  - **In exchange, you walk at half speed.** The set halves your walk through
+    your movement speed, so what else reads your movement speed, such as the
+    character sheet, can show the changed value while the bonus is on.
+    Casting a skill still slows your walk for about a second, as it does
+    without the set.
+  - **Its own art** shows once you have switched the set on in that game
+    session; until then a piece looks like the base item it is built on.
+  - **The pieces cannot be found in the game yet.** A later update lets them
+    drop.
+
+  The half walk was measured in a game session on a research build of the
+  plugin; the set as a whole has not been checked in play yet.

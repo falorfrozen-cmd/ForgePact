@@ -50,6 +50,7 @@ none of these diagnostic hooks or the recorder. See
 | **Loot Announcements** | Mods → Quality of Life, off by default (plugin command `lootann 1` / `lootann 0`, `lootann stat`). Offline play shows no chat line when a great item drops; online play announces it. With this on, a Heroic, Angelic or Unholy item the game drops on the ground is announced once in the in-game chat, as a red `SERVER: <your character> found <item name>` line (not the game's own online announcement). Satanic, Mythic and lower items, gold, gems, materials and relics are not announced, and neither are items you drop yourself from the bag. Checked in play on 2026-10-04: a placed Heroic and Angelic item announced, a Satanic one not, an item dropped from the bag not announced again, nothing with the switch off, and a drop from a kill announced ([details](#loot-announcements)) |
 | **Always Show Chaos Pillar Mods** | Mods → Quality of Life, off by default (plugin command `pillartips 1` / `pillartips 0`, `pillartips stat`). A Chaos Pillar shows its box of mods only while your mouse cursor is on it. With this on, every Chaos Pillar on screen shows its box without being hovered, like a strongbox in Path of Exile: the game's own box, text and colours. A pillar that leaves the screen hides it again, and a pillar you have activated stops showing its box. Mouse play only; gamepad is not supported. Checked in a game session with mouse play ([details](#always-show-chaos-pillar-mods)) |
 | **Flight Charms** | Mods → Items, three switches, all off by default (plugin command `flightcharm elf\|wings\|broom 1` / `0`, `flightcharm stat`). Three charms of ForgePact's own: **Pocket Elf** (Satanic, one cell), **Gabriel Wings** (Angelic, 2x2, 1-12% less physical and magic damage taken) and **Witch's Broomstick** (Unholy, 1x5, +10-100% movement speed), each with its own icon and a gold Flight line. While you wear one, you walk through scenery and are drawn in front of it, tree canopies included, and you walk through monsters too, though they still hit you (owner-confirmed in play, 2026-10-13); walls, zone gates, locked doors and the map's edge still stop you, though a few stone walls the game builds as scenery, such as the town church's, can be crossed (measured as scenery in a game session, not yet walked with a charm on). The game counts only one flight charm at a time. Each switch lets its charm drop from the game's own rolls (Pocket Elf among the ordinary uniques, the other two from the Angelic roll); a charm you own works either way. Offline only. Checked in three game sessions on a research build, drop rates included, plus the owner's play check for monsters ([details](#flight-charms-pocket-elf-gabriel-wings-witchs-broomstick)) |
+| **Mark 1 Set** | Mods → Items → **Mark 1 set**, off by default (plugin command `mark1set bonus 1` / `mark1set bonus 0`, `mark1set stat`). Four Heroic pieces of ForgePact's own, the Mark 1 Helmet, Body Armor, Boots and Gloves, each with its own art. With the switch on and all four worn, the skills on your Q, E, R and Y slots cast themselves whenever the game lets them, each slot outlined; your jump always goes three times as far toward your cursor, over scenery, and lands only where you can walk; in exchange you walk at half speed, and a cast still slows you as it does without the set. The pieces cannot be found in the game yet. Not yet checked in play ([details](#mark-1-set)) |
 | **Goburin's Head pity** | Mods → Quality of Life, off by default (plugin command `gambapity <1-200>` / `gambapity off`, `gambapity status`). A switch and a slider from 1 to 200. Each slot machine explosion without a head counts one, and the explosion that reaches your number drops exactly one Goburin's Head; then the count starts over. If the game drops the charm itself, the count starts over too. The count carries over between machines and between sessions, kept in `forgepact_gamba_pity.json`. Checked in play on 2026-10-06 with the number at 2: the first machine to explode dropped nothing and was counted, the second dropped one Goburin's Head, and the count started over. A head the game drops on its own has not been observed yet ([details](#goburins-head-pity)) |
 | **Extra Packs As You Approach** | Mods → Quality of Life, off by default; matters only with Monster Density above 1x. Monster Density's extra spawners are made within about 3,000 px of you, and ahead of you as you move, instead of across the whole zone at once, so the far ones cost nothing until you get there. Up close nothing changes: in Act_01_01 at 5x the spawners and monsters within 1,500 px of the player were the same, while the zone held 430 spawners instead of 1,570 and the game's own work per frame fell from 84% to 70% of a 60 fps frame ([details](#extra-packs-as-you-approach-lighter-frames-at-high-density)) |
 | **Timed skill countdown** | For a small set of timed skills measured and tested in-game, plus most other skills with both a duration and a real cooldown, covered by rule and untested: draws how much of the cast is left over its skill-bar slot, in one of four looks (arc / bar / number / fade), disappearing at zero. A few skills are left out where a measurement showed the timer on the skill's own object is not the skill's duration. Companion skills (turrets, totems, hydra) are not covered. A few skills whose duration is a buff on you, measured in-game, are covered too, and other buff-only skills are not. In a fight, hits can add a little time to some skills (roughly 0.2 s each in our test) and the countdown rises slightly to match. A skill switched on as a toggle never gets a countdown. Off by default; a cast already running when you turn it on shows as full until the next cast |
@@ -173,7 +174,7 @@ taken from the test sandbox, which reports the game open without the mod plugin
 **Mods › Quality of Life**: every mod not tied to a forged item, one card each.
 
 ![The Mods tab, Items](assets/panel/mods-items-1280.png)
-**Mods › Items**: the Miner's Helmet and the Custom Forge mechanics for items made in the Item Editor.
+**Mods › Items**: the Miner's Helmet, the Custom Forge mechanics for items made in the Item Editor, and ForgePact's own items: the flight charms' drop switches and the Mark 1 set.
 
 ![The Mods tab, Gameplay](assets/panel/mods-gameplay-1280.png)
 **Mods › Gameplay**: the [Bosses](#bosses-uber-and-uber-uber-bosses) setting, which changes how the bosses you meet are made, and [Dungeon chest opens early](#dungeon-chest-opens-early).
@@ -199,7 +200,8 @@ everything that is not tied to a specific forged item (the relic drop pool
 filter, orb pickup radius, map reveal, pet quest pickup, auto-prospect, the
 toggle marker/guard, the timed skill countdown and Goburin's Head pity), **Items**, the custom
 forge mechanics tied to items made in the Item Editor (Headhunter, Tyrant's
-Crown, Beacon) and the drop switches of ForgePact's own flight charms, and **Gameplay**, which holds the Bosses setting and Dungeon
+Crown, Beacon), the drop switches of ForgePact's own flight charms and the switch of
+its Mark 1 item set, and **Gameplay**, which holds the Bosses setting and Dungeon
 chest opens early. Quality of
 Life opens first; clicking another sub-tab (or
 using the arrow keys) switches which set of mods you see, and the panel remembers
@@ -1703,6 +1705,59 @@ hitting you and you still hitting them, is owner-confirmed in play,
 2026-10-13: the owner played with a Pocket Elf on the research build and
 reported it working as intended. That is the owner's report, not a measured
 test.
+
+## Mark 1 set
+
+Mods → Items → **Mark 1 set** (plugin command `mark1set bonus 1|0`,
+`mark1set stat` for the state). Off by default.
+
+Mark 1 is an item set of ForgePact's own: four Heroic pieces, **Mark 1
+Helmet**, **Mark 1 Body Armor**, **Mark 1 Boots** and **Mark 1 Gloves**. They
+carry no stats of their own; each shows a gold **Mark 1** line and the set's
+bonus in its tooltip. The bonus works only while the switch is on and you wear
+all four, each in its own slot.
+
+- **Your skills cast themselves.** The skills on your skill bar's Q, E, R and
+  Y slots are cast for you whenever the game would let you cast them: the game
+  still checks the cooldown, the mana and every other requirement, and aims
+  each one where it aims that key press. Each of those slots is outlined, as
+  Mark A Running Toggle Skill outlines a running toggle. A toggle skill is
+  switched on and left on: it is pressed only while it is off, so you cannot
+  switch it off while the bonus is active. An aura slot and an empty slot are
+  left alone. A skill that needs a second click or a held key is cast as one
+  press at a time.
+- **Your jump goes three times as far.** The universal jump always goes three
+  times your jump's normal reach, in the direction of your cursor however near
+  the cursor is, and passes over rocks, fences, carts and other scenery. It
+  lands only where you could walk: when that spot is blocked, it lands on the
+  farthest walkable spot along the way that is still past your normal reach,
+  and when there is none you get your normal jump. It never crosses a zone gate
+  or a locked door. Your normal reach is learned from your own jumps on open
+  ground, the same way Jump through scenery learns it, and shared with it;
+  until your first such jump a starting guess is used.
+- **In exchange, you walk at half speed.** The set halves your walk through
+  your movement speed, so while the bonus is on, what else reads your
+  movement speed, such as the character sheet, can show the changed value
+  too.
+- **A cast still slows you.** Casting a skill slows your walk for about a
+  second, as it does without the set, and the set does not remove that.
+- **Its own art.** Each piece has its own icon in the bag and on the ground
+  once you have switched the set on in that game session. Until then, or if
+  its art cannot load, a piece looks like the base item it is built on.
+  Switched on with pieces already loaded, they show their new art from the
+  next load.
+- **Getting the pieces.** They cannot be found in the game yet; a later
+  update lets them drop.
+
+`mark1set stat` prints the switch, whether you wear the full set, the casts it
+pressed and the skips on each of the four slots, the jumps it lengthened or
+left alone and the reach it used, how many of the pieces' icons loaded, and
+how many movement-speed answers it halved.
+
+The half walk and the cast slowdown were measured in a game session on a
+research build of the plugin (2026-10-19): the walk came to exactly half its
+step, and no way was found to lift the cast slowdown. The set as a whole has
+not been checked in play yet.
 
 ## Goburin's Head pity
 
