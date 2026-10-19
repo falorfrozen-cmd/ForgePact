@@ -28,6 +28,7 @@
 #include <cmath>
 #include <cstdint>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <string>
 #include <utility>
@@ -1226,6 +1227,121 @@ int main()
         const bool restored = ask(m, Builtin::PlaceMeeting, 300, true, Fence, true) == Answer::False;
         check("failclosed/unresolved_family_or_exclusion", noFamily && noExclusion && restored
             && m.Stats().granted == 1 && m.Stats().answered == 1, counts(m.Stats()));
+    }
+
+    // ---- learn_entry: the public Learn teaches what a clean jump teaches -----
+    // (ForgePact #166: the Mark 1 set's clean jumps feed this one learner.)
+    // Each jump is flown as a clean jump through the windows of one core and
+    // given to Learn on another that never opens a window; after each, both
+    // hold the same reach and cap, and the one expected.
+    {
+        World w;
+        Mod flown = makeCursor(w);
+        flown.SetEnabled(true);
+        World lw;
+        Mod taught = make(lw);
+        const double inf = std::numeric_limits<double>::infinity();
+        const double nan = std::numeric_limits<double>::quiet_NaN();
+        auto state = [](const Mod& m) {
+            return std::string(m.HasReach() ? "reach=" + std::to_string(m.Reach()) : std::string("reach=none"))
+                + (m.HasCap() ? " cap=" + std::to_string(m.Cap()) : std::string(" cap=none"));
+        };
+        bool same = true;
+        std::string detail;
+        int64_t f = 10;
+        // The flown jump lands at (1000, landY) from (1000, 1000); Learn is
+        // given the same take-off, the cursor and `length`.
+        auto both = [&](const std::string& what, double cx, double cy, double landY, double length,
+                        bool wantReach, double reach, bool wantCap, double cap) {
+            w.cx = cx;
+            w.cy = cy;
+            cleanJump(flown, w, f, 1000.0, 1000.0, 1000.0, landY);
+            f += 100;
+            taught.Learn(1000.0, 1000.0, true, cx, cy, length);
+            const bool ok = flown.HasReach() == taught.HasReach() && flown.Reach() == taught.Reach()
+                && flown.HasCap() == taught.HasCap() && flown.Cap() == taught.Cap()
+                && taught.HasReach() == wantReach && (!wantReach || near(taught.Reach(), reach))
+                && taught.HasCap() == wantCap && (!wantCap || near(taught.Cap(), cap));
+            if (!ok) {
+                same = false;
+                detail += what + ": flown " + state(flown) + " taught " + state(taught) + "; ";
+            }
+        };
+        both("reach", 1000.0, 1110.0, 1100.0, 100.0, true, 100.0, false, 0.0);
+        both("cap-set", 1000.0, 1300.0, 1090.0, 90.0, true, 90.0, true, 90.0);           // 210 px short of its cursor
+        both("cap-cleared", 1000.0, 1150.0, 1150.0, 150.0, true, 150.0, false, 0.0);    // longer than the cap
+        both("hop", 1000.0, 1300.0, 1020.0, 20.0, true, 150.0, false, 0.0);             // under 32 px: nothing
+        both("nan-length", 1000.0, 1300.0, nan, nan, true, 150.0, false, 0.0);
+        both("inf-length", 1000.0, 1300.0, inf, inf, true, 150.0, false, 0.0);
+        both("inf-cursor", 1000.0, inf, 1060.0, 60.0, true, 60.0, false, 0.0);         // no cap from it
+        both("nan-cursor", nan, 1300.0, 1050.0, 50.0, true, 50.0, false, 0.0);
+        both("thirty-two", 1000.0, 1032.0, 1032.0, 32.0, true, 32.0, false, 0.0);
+        check("learn_entry/same_as_a_clean_jump", same && flown.Stats().jumps == 9 && taught.Stats().jumps == 0,
+            detail + state(flown) + " | " + state(taught));
+    }
+    {
+        // The switch never on: Learn still teaches, jumps= stays 0 and the
+        // stat line shows what it taught.
+        World w;
+        Mod m = makeCursor(w);
+        m.Learn(1000.0, 1000.0, true, 1000.0, 1300.0, 120.0);
+        const std::string s = m.StatLine();
+        check("learn_entry/switch_never_on", !m.Enabled() && m.Stats().jumps == 0 && m.HasReach()
+            && near(m.Reach(), 120.0) && m.HasCap() && near(m.Cap(), 120.0)
+            && s.rfind("jumpscenery: off reach=120 jumps=0 ", 0) == 0 && has(s, " cap=120 ")
+            && m.InstallStateName() == "not-armed", s);
+    }
+    {
+        // Given during a clean jump: only the reach and the cap change; the
+        // jump keeps its decision and its window, and learns when it closes.
+        World w;
+        Mod m = makeCursor(w);
+        m.SetEnabled(true);
+        w.cx = 1000.0;
+        w.cy = 1090.0;   // the take-off cursor, 90 px south
+        takeoff(m, w, 100);
+        for (int k = 1; k <= 5; ++k) m.OnLeapEntry(100 + k, true);
+        const std::string before = counts(m.Stats());
+        const Decision decision = m.JumpDecision();
+        m.Learn(1000.0, 1000.0, true, 1000.0, 1400.0, 250.0);
+        const bool taughtMid = m.HasReach() && near(m.Reach(), 250.0) && m.HasCap() && near(m.Cap(), 250.0);
+        const bool kept = m.JumpActive() && m.JumpDecision() == decision && decision == Decision::Undecided
+            && m.WindowOpen(106) && counts(m.Stats()) == before;
+        for (int k = 6; k <= 10; ++k) m.OnLeapEntry(100 + k, true);
+        const bool stillOpen = m.JumpActive() && m.WindowOpen(111);
+        w.px = 1000.0;
+        w.py = 1080.0;
+        m.Tick(112);
+        // It learns its own 80 px: the reach; not longer than the cap, and
+        // 10 px short of its cursor, so the cap Learn set stays.
+        check("learn_entry/during_a_clean_jump", taughtMid && kept && stillOpen && !m.JumpActive()
+            && near(m.Reach(), 80.0) && m.HasCap() && near(m.Cap(), 250.0) && m.Stats().jumps == 1,
+            counts(m.Stats()) + " reach=" + std::to_string(m.Reach()) + " cap=" + std::to_string(m.Cap()));
+    }
+    {
+        // Given during a granted jump: it stays granted and keeps answering in
+        // its window; it is not clean, so its close teaches nothing.
+        World w;
+        Mod m = makeCursor(w);
+        m.SetEnabled(true);
+        w.cx = 1000.0;
+        w.cy = 1100.0;
+        takeoff(m, w, 100);
+        const bool granted = ask(m, Builtin::PlaceMeeting, 100, true, Fence, true) == Answer::False
+            && m.JumpDecision() == Decision::Granted;
+        m.OnLeapEntry(101, true);
+        const std::string before = counts(m.Stats());
+        m.Learn(1000.0, 1000.0, true, 1000.0, 1105.0, 140.0);
+        const bool kept = m.JumpActive() && m.JumpDecision() == Decision::Granted && m.WindowOpen(102)
+            && counts(m.Stats()) == before && m.HasReach() && near(m.Reach(), 140.0) && !m.HasCap();
+        const bool stillAnswers = ask(m, Builtin::CollisionCircle, 102, true, Fence, true) == Answer::Noone;
+        m.OnLeapEntry(102, true);
+        w.px = 1000.0;
+        w.py = 1100.0;
+        m.Tick(104);
+        check("learn_entry/during_a_granted_jump", granted && kept && stillAnswers && !m.JumpActive()
+            && near(m.Reach(), 140.0) && !m.HasCap() && m.Stats().answered == 2 && m.Stats().granted == 1,
+            counts(m.Stats()));
     }
 
     std::cout << (failures ? "RESULT FAIL" : "RESULT OK") << "\n";

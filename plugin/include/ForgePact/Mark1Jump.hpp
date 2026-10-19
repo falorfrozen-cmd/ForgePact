@@ -2,9 +2,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 
 #include "ForgePact/JumpScenery.hpp"
@@ -57,9 +59,19 @@ namespace ForgePact::Mark1Jump {
 //   - a granted jump answers each really-blocked family query of the player
 //     inside its window with jumpscenery's measured "no collision", except
 //     where a gate or a lock blocks it or is what it names.
-//   - the learner: when the jump's window closes, its natural (unscaled)
-//     displacement, length and take-off cursor are handed on (LearnFn), so
-//     the reach and the cap keep being learned while jumps are scaled.
+//   - the learner: when the jump's window closes, a clean jump hands on its
+//     natural (unscaled) displacement, length and take-off cursor (LearnFn),
+//     which the adapter passes to jumpscenery's public Learn, so the reach
+//     and the cap keep being learned while jumps are scaled. Clean is
+//     jumpscenery's rule (Replan 2): none of the jump's queries answered, and
+//     no really-blocked player family query in its take-off frame, whether it
+//     came before the entry that started the jump (remembered for its frame,
+//     as jumpscenery's before-open= is) or after it. So the adapter hands
+//     OnQuery every really-blocked player query while the bonus is active.
+//   - the object classes and the path-grid cell are Mark 1's own (the
+//     Classifier and GridCellAt below): jumpscenery's classifier is private
+//     and its state is filled only by its own install, and the research
+//     build's grid read is not in the player build.
 //
 // Known limit: when M (or, for a near cursor, N) overestimates this
 // character's natural jump, a granted jump ends short of its landing, on the
@@ -94,6 +106,11 @@ inline constexpr double kStartMaxPx = JumpSceneryMod::kStartReachPx;
 inline constexpr double kMinMaxPx = JumpSceneryMod::kMinReachPx;
 // A call that moved less than this did not move the player.
 inline constexpr double kMovedEpsilonPx = 1e-6;
+// The classifier forgets everything once it holds this many objects
+// (jumpscenery's bound).
+inline constexpr size_t kFamilyTableMax = JumpSceneryMod::kFamilyTableMax;
+// A path-grid cell's side: global.gridSize (RDM § 19.11).
+inline constexpr double kGridCellPx = 16.0;
 
 // Where M came from (`max=<M>(<source>)` on the stat line).
 enum class MaxSource : int { Cap, Reach, Start };
@@ -184,6 +201,110 @@ inline constexpr std::string_view ReadKindName(ReadKind k)
 // Unreadable (the adapter could not read the cell) is a failed read.
 enum class Cell : int { Free, Blocked, NoGrid, Unreadable };
 
+// The kind of a value the adapter read from the game, as far as the grid read
+// cares: a number, a reference, or anything else.
+enum class ValueKind : int { Number, Reference, Other };
+
+// The cell index a room coordinate falls in: floor(v / kGridCellPx), negative
+// coordinates included. A non-finite coordinate gives a non-finite index.
+inline double GridCellIndex(double v) { return std::floor(v / kGridCellPx); }
+
+// What global.pathGrid holds is a grid handle: a number or a reference, finite
+// and not below 0.
+inline bool IsGridHandle(ValueKind kind, double value)
+{
+    return (kind == ValueKind::Number || kind == ValueKind::Reference) && std::isfinite(value) && value >= 0.0;
+}
+
+// The path-grid cell under (x, y), for the adapter's grid read. `grid` is
+// global.pathGrid as read (its kind and its value); not a grid handle, and the
+// room has no grid (NoGrid, which counts free). `cell(grid, cellX, cellY,
+// kind, value)` makes the game's mp_grid_get_cell call with the cell indices
+// and returns false when the call failed. A failed or throwing call, an answer
+// that is not a finite number, or a point whose cell index is not finite reads
+// Unreadable; an answer below 0 reads Blocked, 0 or more Free.
+template <class CellFn>
+inline Cell GridCellAt(ValueKind gridKind, double grid, double x, double y, CellFn&& cell)
+{
+    if (!IsGridHandle(gridKind, grid)) return Cell::NoGrid;
+    const double cx = GridCellIndex(x), cy = GridCellIndex(y);
+    if (!std::isfinite(cx) || !std::isfinite(cy)) return Cell::Unreadable;
+    ValueKind kind = ValueKind::Other;
+    double value = 0.0;
+    bool ok = false;
+    try { ok = static_cast<bool>(cell(grid, cx, cy, kind, value)); } catch (...) { return Cell::Unreadable; }
+    if (!ok || kind != ValueKind::Number || !std::isfinite(value)) return Cell::Unreadable;
+    return value < 0.0 ? Cell::Blocked : Cell::Free;
+}
+
+// What an object index is to the jump: the Collision_Parent_obj family (the
+// scenery a granted jump passes), a gate or a lock (excluded), both, or neither.
+struct ObjectClass {
+    bool family = false;
+    bool excluded = false;
+};
+
+// Mark 1's own object table, with jumpscenery's rule: an object is family when
+// it is Collision_Parent_obj or descends from it, excluded when it is or
+// descends from Gate_Parent_obj or Lock_obj. A failed ancestry question reads
+// not family and excluded, so the query keeps the game's answer either way;
+// with any of the three unresolved (-1) every object reads neither. Each
+// object is asked about once, then remembered; the table forgets everything
+// once it holds kFamilyTableMax objects.
+class Classifier {
+public:
+    // Is `ancestor` an ancestor of `object`? (object_is_ancestor, by name: an
+    // object is not its own ancestor.)
+    using IsAncestorFn = std::function<bool(int object, int ancestor)>;
+
+    void SetIsAncestor(IsAncestorFn fn)
+    {
+        isAncestor_ = std::move(fn);
+        table_.clear();
+    }
+
+    // The three objects, as indices the adapter resolved by name.
+    void SetObjects(int family, int gate, int lock)
+    {
+        family_ = family;
+        gate_ = gate;
+        lock_ = lock;
+        table_.clear();
+    }
+
+    bool Configured() const { return family_ >= 0 && gate_ >= 0 && lock_ >= 0; }
+
+    ObjectClass Classify(int object)
+    {
+        if (object < 0 || !Configured()) return ObjectClass{};
+        const auto it = table_.find(object);
+        if (it != table_.end()) return ObjectClass{ (it->second & 1) != 0, (it->second & 2) != 0 };
+        ObjectClass c;
+        c.family = IsOrDescends(object, family_, false);
+        c.excluded = IsOrDescends(object, gate_, true) || IsOrDescends(object, lock_, true);
+        if (table_.size() >= kFamilyTableMax) table_.clear();
+        table_.emplace(object, static_cast<uint8_t>((c.family ? 1 : 0) | (c.excluded ? 2 : 0)));
+        return c;
+    }
+
+    // How many objects are remembered.
+    size_t Remembered() const { return table_.size(); }
+
+private:
+    bool IsOrDescends(int object, int ancestor, bool onFailure) const
+    {
+        if (object == ancestor) return true;
+        if (!isAncestor_) return false;
+        try { return isAncestor_(object, ancestor); } catch (...) { return onFailure; }
+    }
+
+    IsAncestorFn isAncestor_;
+    int family_ = -1;
+    int gate_ = -1;
+    int lock_ = -1;
+    std::unordered_map<int, uint8_t> table_;
+};
+
 // What the stat line prints. Kept across off/on.
 struct Counters {
     uint64_t jumps = 0;           // local jumps that started while the bonus was active
@@ -272,6 +393,7 @@ public:
         if (on == active_) return;
         active_ = on;
         jump_ = Jump{};
+        pendingBlocked_ = false;
     }
     bool Active() const { return active_; }
 
@@ -337,13 +459,17 @@ public:
     // One hooked collision builtin, after its original ran: the adapter says
     // whether the object argument is the family or a gate or lock (or a
     // descendant), and `excludedBlocks()` runs the same original against each
-    // gate and lock. Only a granted jump's window answers.
+    // gate and lock. Only a granted jump's window answers. The adapter hands
+    // in every really-blocked player query while the bonus is active, not
+    // only a granted window's: a family one in a jump's take-off frame (or in
+    // the frame a jump then starts in) keeps that jump from the learner.
     template <class ExcludedBlocksFn>
     Answer OnQuery(Builtin builtin, int64_t frame, bool playerSelf, bool family, bool excluded, bool reallyBlocked,
         ExcludedBlocksFn&& excludedBlocks)
     {
         const int i = static_cast<int>(builtin);
         if (!playerSelf || !reallyBlocked || i < 0 || i >= JumpSceneryMod::kBuiltinCount) return Answer::Real;
+        if (active_ && family) NoteBlocked(frame);
         if (!WindowOpen(frame) || !IsGranted(jump_.decision)) return Answer::Real;
         if (excluded) {
             ++counters_.excluded;
@@ -357,11 +483,12 @@ public:
             return Answer::Real;
         }
         ++counters_.answered;
+        ++jump_.answered;
         return JumpSceneryMod::kBuiltins[i].answer;
     }
 
     // The per-frame tick: housekeeping only. Once a jump's window has closed
-    // it hands the natural length to the learner.
+    // it hands a clean jump's natural length to the learner.
     void Tick(int64_t frame)
     {
         if (jump_.active && !WindowOpen(frame)) CloseJump();
@@ -411,6 +538,7 @@ public:
 private:
     struct Jump {
         bool active = false;
+        int64_t takeoffFrame = 0;
         int64_t lastEntry = 0;
         bool haveTakeoff = false;
         double takeoffX = 0.0, takeoffY = 0.0;
@@ -424,6 +552,8 @@ private:
         bool reachedLanding = false;
         double naturalDx = 0.0, naturalDy = 0.0;
         uint64_t calls = 0;
+        uint64_t answered = 0;         // this jump's queries answered "no collision"
+        bool takeoffBlocked = false;   // a really-blocked player family query in its take-off frame
     };
 
     struct Last {
@@ -498,11 +628,27 @@ private:
         return true;
     }
 
+    // A really-blocked player family query: in a jump's window, it marks the
+    // take-off when it came in the take-off frame; outside any window it is
+    // remembered for its frame, for a jump that then starts in that frame.
+    void NoteBlocked(int64_t frame)
+    {
+        if (WindowOpen(frame)) {
+            if (frame == jump_.takeoffFrame) jump_.takeoffBlocked = true;
+            return;
+        }
+        pendingBlocked_ = true;
+        pendingFrame_ = frame;
+    }
+
     void StartJump(int64_t frame)
     {
         jump_ = Jump{};
         jump_.active = true;
+        jump_.takeoffFrame = frame;
         jump_.lastEntry = frame;
+        jump_.takeoffBlocked = pendingBlocked_ && pendingFrame_ == frame;
+        pendingBlocked_ = false;
         ++counters_.jumps;
         jump_.haveTakeoff = ReadPosition(jump_.takeoffX, jump_.takeoffY);
         jump_.haveBefore = jump_.haveTakeoff;
@@ -604,9 +750,11 @@ private:
         else ++counters_.refusedLanding;
     }
 
+    // Only a clean jump is handed on: none of its queries answered and no
+    // really-blocked family query in its take-off frame (jumpscenery's rule).
     void CloseJump()
     {
-        if (learn_ && jump_.haveTakeoff && jump_.calls > 0) {
+        if (learn_ && jump_.haveTakeoff && jump_.calls > 0 && jump_.answered == 0 && !jump_.takeoffBlocked) {
             Learned l;
             l.takeoffX = jump_.takeoffX;
             l.takeoffY = jump_.takeoffY;
@@ -632,6 +780,8 @@ private:
     LearnFn learn_;
     bool active_ = false;
     Jump jump_;
+    bool pendingBlocked_ = false;      // a blocked family query outside any window...
+    int64_t pendingFrame_ = 0;         // ...in this frame
     Last last_;
     Counters counters_;
 };

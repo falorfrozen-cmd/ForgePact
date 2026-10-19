@@ -200,6 +200,49 @@ class Mark1JumpBehaviorTests(unittest.TestCase):
     def test_a_granted_window_answers_the_family_only(self):
         self.assertScenarios("answers/a_granted_window_answers_the_family_only")
 
+    # ---- learner_clean: jumpscenery's clean rule (Replan 2) ------------------
+    # A jump reaches the learner (and so jumpscenery's public Learn) only when
+    # none of its queries was answered and no really-blocked player family
+    # query came in its take-off frame, before or after the entry.
+
+    def test_learner_clean_a_granted_open_ground_jump_is_learned(self):
+        self.assertScenarios("learner_clean/a_granted_open_ground_jump_is_learned")
+
+    def test_learner_clean_an_answered_jump_is_not_learned(self):
+        self.assertScenarios("learner_clean/a_granted_jump_with_an_answered_query_is_not_learned")
+
+    def test_learner_clean_a_blocked_take_off_is_not_learned(self):
+        self.assertScenarios("learner_clean/a_vanilla_jump_blocked_in_its_take_off_frame_is_not_learned",
+                             "learner_clean/a_blocked_query_before_the_entry_in_its_take_off_frame_is_not_learned")
+
+    def test_learner_clean_a_later_blocked_query_still_learns_and_a_dropped_jump_does_not(self):
+        self.assertScenarios("learner_clean/a_blocked_query_in_a_later_frame_of_a_vanilla_jump_is_still_learned",
+                             "learner_clean/a_dropped_jump_is_still_not_learned")
+
+    # ---- classify: Mark 1's own object table ---------------------------------
+
+    def test_classify_the_family_gates_locks_and_everything_else(self):
+        self.assertScenarios("classify/the_family_and_its_descendants_are_family",
+                             "classify/gates_locks_and_their_descendants_are_excluded",
+                             "classify/anything_else_and_a_negative_index_are_neither")
+
+    def test_classify_fails_closed(self):
+        """A failed ancestry question is not family and excluded; an
+        unresolved object leaves every object neither."""
+        self.assertScenarios("classify/a_failed_ancestry_question_is_not_family_and_excluded",
+                             "classify/an_unresolved_object_leaves_every_object_neither")
+
+    def test_classify_asks_once_and_forgets_at_the_table_max(self):
+        self.assertScenarios("classify/each_object_is_asked_once_and_the_table_forgets_at_its_max")
+
+    # ---- grid_cell: the player build's own path-grid read --------------------
+
+    def test_grid_cell_index_and_answer_mapping(self):
+        self.assertScenarios("grid_cell/the_cell_index_is_floor_of_v_over_16_negatives_included",
+                             "grid_cell/not_a_grid_handle_reads_no_grid",
+                             "grid_cell/a_failed_or_throwing_call_or_a_non_number_reads_unreadable",
+                             "grid_cell/below_zero_is_blocked_zero_or_more_is_free")
+
 
 if __name__ == "__main__":
     unittest.main()

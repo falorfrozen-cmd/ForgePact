@@ -241,6 +241,65 @@ static Answer ask(Core& c, int64_t frame, bool player, bool family, bool exclude
     return c.OnQuery(b, frame, player, family, excluded, blocked, [gateThere]() { return gateThere; });
 }
 
+// fly() along (ux, uy) for the player, calling `between(frame, k)` after each
+// skillsLeap entry and before its call moves the player: the queries the
+// game's jump asks in that frame.
+template <class BetweenFn>
+static void flyAsking(Core& c, World& w, int64_t f, double ux, double uy, double natural, BetweenFn&& between,
+    int calls = 6)
+{
+    const double step = natural / calls;
+    for (int k = 0; k < calls; ++k) {
+        c.OnLeapEntry(f + k, true);
+        between(f + k, k);
+        w.px += step * ux;
+        w.py += step * uy;
+        const Move m = c.OnLeapExit(f + k, true);
+        if (m.write) {
+            w.px = m.x;
+            w.py = m.y;
+        }
+    }
+    c.Tick(f + calls + 1);
+}
+
+// ---- the object table the classifier asks (object_is_ancestor's answers) ----
+// Numbered as the game numbers them where the guide names them; an object is
+// not its own ancestor.
+namespace objs {
+constexpr int AvoidableParent = 1, CollisionParent = 957, CollisionProp = 959, Fence = 5001, WallParent = 5701,
+              InvisibleWall = 2269, GateParent = 1881, GateChild = 5003, LockObj = 2509, LockChild = 5004,
+              EnemyParent = 301, Skeleton = 5005;
+}
+static long g_AncestorCalls = 0;
+static bool objectIsAncestor(int object, int ancestor)
+{
+    using namespace objs;
+    static const std::pair<int, int> kParent[] = {
+        { CollisionParent, AvoidableParent }, { CollisionProp, CollisionParent }, { Fence, CollisionProp },
+        { WallParent, CollisionParent }, { InvisibleWall, WallParent }, { GateParent, WallParent },
+        { GateChild, GateParent }, { LockObj, CollisionParent }, { LockChild, LockObj }, { Skeleton, EnemyParent },
+    };
+    ++g_AncestorCalls;
+    for (int depth = 0; depth < 64; ++depth) {
+        int parent = -1;
+        for (const auto& p : kParent)
+            if (p.first == object) parent = p.second;
+        if (parent < 0) return false;
+        if (parent == ancestor) return true;
+        object = parent;
+    }
+    return false;
+}
+
+static Classifier makeClassifier()
+{
+    Classifier k;
+    k.SetIsAncestor(objectIsAncestor);
+    k.SetObjects(objs::CollisionParent, objs::GateParent, objs::LockObj);
+    return k;
+}
+
 int main()
 {
     // ---- the named constants ------------------------------------------------
@@ -988,6 +1047,259 @@ int main()
         check("answers/a_granted_window_answers_the_family_only", granted && family && free && other && notFamily
             && gateNamed && gateThere && closed && c.Stats().answered == 2 && c.Stats().excluded == 2,
             counts(c.Stats()));
+    }
+
+    // ---- learner_clean: only a clean jump reaches the learner -----------------
+    // jumpscenery's rule (Replan 2): its take-off read, none of its queries
+    // answered, and no really-blocked player family query in its take-off
+    // frame, before or after the skillsLeap entry that started it.
+    {
+        World w;
+        w.cy = 1100.0;
+        Core c = make(w);
+        c.SetActive(true);
+        // A free family query in the take-off frame is the walk finding open ground.
+        flyAsking(c, w, 10, 0.0, 1.0, 100.0, [&](int64_t f, int k) { if (k == 0) ask(c, f, true, true, false, false); });
+        const bool one = w.learned.size() == 1;
+        const Learned l = one ? w.learned[0] : Learned{};
+        check("learner_clean/a_granted_open_ground_jump_is_learned", one && l.decision == Decision::Granted
+            && near(l.naturalLength, 100.0, 1e-6) && l.haveCursor && near(l.cursorY, 1100.0) && near(l.takeoffY, 1000.0)
+            && c.Stats().answered == 0 && c.Stats().scaled > 0, counts(c.Stats()));
+    }
+    {
+        World w;
+        w.cy = 1100.0;
+        Core c = make(w);
+        c.SetActive(true);
+        Answer a = Answer::Real;
+        flyAsking(c, w, 10, 0.0, 1.0, 100.0, [&](int64_t f, int k) { if (k == 2) a = ask(c, f, true, true, false, true); });
+        check("learner_clean/a_granted_jump_with_an_answered_query_is_not_learned", a == Answer::False
+            && c.Stats().answered == 1 && c.Stats().granted == 1 && w.learned.empty() && !c.JumpActive(),
+            counts(c.Stats()));
+    }
+    // A vanilla jump: every candidate past M lies in the family, so it is
+    // refused-landing and the game's own jump runs, here 60 px south.
+    auto vanillaWorld = [](World& w) {
+        w.cy = 1300.0;
+        w.solids = { Box{ 0.0, 1150.0, 4000.0, 4000.0 } };
+    };
+    {
+        World w, v;
+        vanillaWorld(w);
+        vanillaWorld(v);
+        Core c = make(w), control = make(v);
+        c.SetActive(true);
+        control.SetActive(true);
+        Answer a = Answer::False;
+        flyAsking(c, w, 10, 0.0, 1.0, 60.0, [&](int64_t f, int k) { if (k == 0) a = ask(c, f, true, true, false, true); });
+        flyAsking(control, v, 10, 0.0, 1.0, 60.0, [](int64_t, int) {});
+        check("learner_clean/a_vanilla_jump_blocked_in_its_take_off_frame_is_not_learned",
+            c.LastDecision() == Decision::RefusedLanding && a == Answer::Real && w.learned.empty()
+                && v.learned.size() == 1 && near(v.learned[0].naturalLength, 60.0, 1e-6)
+                && v.learned[0].decision == Decision::RefusedLanding,
+            counts(c.Stats()));
+    }
+    {
+        // A blocked query in the take-off frame before the entry that started
+        // the jump keeps it from the learner, as jumpscenery's before-open=
+        // counts it. The controls are learned: one in an earlier frame,
+        // another self's, one whose object is not the family, and a free one.
+        auto learnedAfter = [&](int64_t frame, bool player, bool family, bool blocked) {
+            World w;
+            vanillaWorld(w);
+            Core c = make(w);
+            c.SetActive(true);
+            const Answer a = ask(c, frame, player, family, false, blocked);
+            flyAsking(c, w, 10, 0.0, 1.0, 60.0, [](int64_t, int) {});
+            return a == Answer::Real && c.LastDecision() == Decision::RefusedLanding ? w.learned.size() : 99u;
+        };
+        const size_t before = learnedAfter(10, true, true, true);
+        const size_t earlier = learnedAfter(9, true, true, true);
+        const size_t other = learnedAfter(10, false, true, true);
+        const size_t notFamily = learnedAfter(10, true, false, true);
+        const size_t free = learnedAfter(10, true, true, false);
+        check("learner_clean/a_blocked_query_before_the_entry_in_its_take_off_frame_is_not_learned",
+            before == 0 && earlier == 1 && other == 1 && notFamily == 1 && free == 1,
+            "before=" + std::to_string(before) + " earlier=" + std::to_string(earlier) + " other="
+                + std::to_string(other) + " not-family=" + std::to_string(notFamily) + " free=" + std::to_string(free));
+    }
+    {
+        World w;
+        vanillaWorld(w);
+        Core c = make(w);
+        c.SetActive(true);
+        Answer a = Answer::False;
+        flyAsking(c, w, 10, 0.0, 1.0, 60.0, [&](int64_t f, int k) { if (k == 2) a = ask(c, f, true, true, false, true); });
+        check("learner_clean/a_blocked_query_in_a_later_frame_of_a_vanilla_jump_is_still_learned",
+            a == Answer::Real && w.learned.size() == 1 && near(w.learned[0].naturalLength, 60.0, 1e-6)
+                && w.learned[0].decision == Decision::RefusedLanding,
+            counts(c.Stats()));
+    }
+    {
+        World w;
+        Core c = make(w);
+        c.SetActive(true);
+        c.OnLeapEntry(10, true);
+        w.py += 50.0;
+        c.OnLeapExit(10, true);
+        c.SetActive(false);   // switched off mid-jump: dropped, not learned
+        c.Tick(20);
+        check("learner_clean/a_dropped_jump_is_still_not_learned", w.learned.empty() && !c.JumpActive());
+    }
+
+    // ---- classify: Mark 1's own object table, jumpscenery's rule ---------------
+    {
+        Classifier k = makeClassifier();
+        bool ok = k.Configured();
+        for (int o : { objs::CollisionParent, objs::CollisionProp, objs::Fence, objs::WallParent, objs::InvisibleWall }) {
+            const ObjectClass oc = k.Classify(o);
+            ok = ok && oc.family && !oc.excluded;
+        }
+        check("classify/the_family_and_its_descendants_are_family", ok);
+    }
+    {
+        Classifier k = makeClassifier();
+        bool ok = true;
+        for (int o : { objs::GateParent, objs::GateChild, objs::LockObj, objs::LockChild }) ok = ok && k.Classify(o).excluded;
+        check("classify/gates_locks_and_their_descendants_are_excluded", ok);
+    }
+    {
+        Classifier k = makeClassifier();
+        bool ok = true;
+        for (int o : { objs::Skeleton, objs::EnemyParent, objs::AvoidableParent, 12345 }) {
+            const ObjectClass oc = k.Classify(o);
+            ok = ok && !oc.family && !oc.excluded;
+        }
+        const long calls = g_AncestorCalls;
+        for (int o : { -1, -4 }) {
+            const ObjectClass oc = k.Classify(o);
+            ok = ok && !oc.family && !oc.excluded;
+        }
+        check("classify/anything_else_and_a_negative_index_are_neither", ok && g_AncestorCalls == calls
+            && k.Remembered() == 4);
+    }
+    {
+        Classifier k;
+        k.SetIsAncestor([](int, int) -> bool { throw std::runtime_error("object_is_ancestor"); });
+        k.SetObjects(objs::CollisionParent, objs::GateParent, objs::LockObj);
+        const ObjectClass fence = k.Classify(objs::Fence);
+        const ObjectClass skeleton = k.Classify(objs::Skeleton);
+        check("classify/a_failed_ancestry_question_is_not_family_and_excluded", !fence.family && fence.excluded
+            && !skeleton.family && skeleton.excluded);
+    }
+    {
+        bool ok = true;
+        const int sets[3][3] = {
+            { -1, objs::GateParent, objs::LockObj },
+            { objs::CollisionParent, -1, objs::LockObj },
+            { objs::CollisionParent, objs::GateParent, -1 },
+        };
+        const long calls = g_AncestorCalls;
+        for (const auto& s : sets) {
+            Classifier k;
+            k.SetIsAncestor(objectIsAncestor);
+            k.SetObjects(s[0], s[1], s[2]);
+            ok = ok && !k.Configured();
+            for (int o : { objs::CollisionParent, objs::Fence, objs::GateParent, objs::LockObj }) {
+                const ObjectClass oc = k.Classify(o);
+                ok = ok && !oc.family && !oc.excluded;
+            }
+            ok = ok && k.Remembered() == 0;
+        }
+        check("classify/an_unresolved_object_leaves_every_object_neither", ok && g_AncestorCalls == calls);
+    }
+    {
+        Classifier k = makeClassifier();
+        const long first = g_AncestorCalls;
+        k.Classify(objs::Fence);
+        const long once = g_AncestorCalls - first;
+        k.Classify(objs::Fence);
+        const bool askedOnce = once > 0 && g_AncestorCalls - first == once;
+        Classifier t = makeClassifier();
+        const int max = static_cast<int>(ForgePact::JumpSceneryMod::kFamilyTableMax);
+        for (int o = 0; o < max; ++o) t.Classify(o);
+        const bool full = t.Remembered() == ForgePact::JumpSceneryMod::kFamilyTableMax;
+        const long beforeAgain = g_AncestorCalls;
+        t.Classify(0);
+        const bool remembered = g_AncestorCalls == beforeAgain;
+        t.Classify(max);   // one more: the table forgets everything first
+        const bool forgot = t.Remembered() == 1;
+        const long beforeZero = g_AncestorCalls;
+        t.Classify(0);
+        check("classify/each_object_is_asked_once_and_the_table_forgets_at_its_max", askedOnce && full && remembered
+            && forgot && g_AncestorCalls > beforeZero && t.Remembered() == 2 && kFamilyTableMax == ForgePact::JumpSceneryMod::kFamilyTableMax,
+            "remembered=" + std::to_string(t.Remembered()));
+    }
+
+    // ---- grid_cell: the path-grid cell's index and answer --------------------
+    {
+        const bool ok = kGridCellPx == 16.0 && GridCellIndex(0.0) == 0.0 && GridCellIndex(15.99) == 0.0
+            && GridCellIndex(16.0) == 1.0 && GridCellIndex(33.0) == 2.0 && GridCellIndex(-0.5) == -1.0
+            && GridCellIndex(-16.0) == -1.0 && GridCellIndex(-16.5) == -2.0
+            && std::isnan(GridCellIndex(std::numeric_limits<double>::quiet_NaN()));
+        check("grid_cell/the_cell_index_is_floor_of_v_over_16_negatives_included", ok);
+    }
+    {
+        long calls = 0;
+        double gotGrid = -9.0, gotX = 0.0, gotY = 0.0;
+        auto free = [&](double grid, double cx, double cy, ValueKind& kind, double& value) {
+            ++calls;
+            gotGrid = grid;
+            gotX = cx;
+            gotY = cy;
+            kind = ValueKind::Number;
+            value = 0.0;
+            return true;
+        };
+        const double nan = std::numeric_limits<double>::quiet_NaN();
+        const bool notHandles = GridCellAt(ValueKind::Other, 5.0, 40.0, 40.0, free) == Cell::NoGrid
+            && GridCellAt(ValueKind::Number, -1.0, 40.0, 40.0, free) == Cell::NoGrid
+            && GridCellAt(ValueKind::Reference, -1.0, 40.0, 40.0, free) == Cell::NoGrid
+            && GridCellAt(ValueKind::Number, nan, 40.0, 40.0, free) == Cell::NoGrid && calls == 0;
+        const bool reference = GridCellAt(ValueKind::Reference, 0.0, -1.0, 40.0, free) == Cell::Free && calls == 1
+            && gotGrid == 0.0 && gotX == -1.0 && gotY == 2.0;
+        const bool number = GridCellAt(ValueKind::Number, 3.0, 100.0, 15.0, free) == Cell::Free && calls == 2
+            && gotGrid == 3.0 && gotX == 6.0 && gotY == 0.0;
+        check("grid_cell/not_a_grid_handle_reads_no_grid", notHandles && reference && number,
+            "calls=" + std::to_string(calls));
+    }
+    {
+        const double nan = std::numeric_limits<double>::quiet_NaN();
+        long calls = 0;
+        auto answer = [&](bool ok, ValueKind kind, double value) {
+            return [&calls, ok, kind, value](double, double, double, ValueKind& k, double& v) {
+                ++calls;
+                k = kind;
+                v = value;
+                return ok;
+            };
+        };
+        const bool failed = GridCellAt(ValueKind::Number, 1.0, 40.0, 40.0, answer(false, ValueKind::Number, 0.0)) == Cell::Unreadable;
+        const bool threw = GridCellAt(ValueKind::Number, 1.0, 40.0, 40.0,
+            [](double, double, double, ValueKind&, double&) -> bool { throw std::runtime_error("mp_grid_get_cell"); })
+            == Cell::Unreadable;
+        const bool reference = GridCellAt(ValueKind::Number, 1.0, 40.0, 40.0, answer(true, ValueKind::Reference, 0.0)) == Cell::Unreadable;
+        const bool other = GridCellAt(ValueKind::Number, 1.0, 40.0, 40.0, answer(true, ValueKind::Other, 0.0)) == Cell::Unreadable;
+        const bool notFinite = GridCellAt(ValueKind::Number, 1.0, 40.0, 40.0, answer(true, ValueKind::Number, nan)) == Cell::Unreadable;
+        const long before = calls;
+        const bool badPoint = GridCellAt(ValueKind::Number, 1.0, nan, 40.0, answer(true, ValueKind::Number, 0.0)) == Cell::Unreadable
+            && calls == before;
+        check("grid_cell/a_failed_or_throwing_call_or_a_non_number_reads_unreadable",
+            failed && threw && reference && other && notFinite && badPoint);
+    }
+    {
+        auto answering = [](double value) {
+            return [value](double, double, double, ValueKind& k, double& v) {
+                k = ValueKind::Number;
+                v = value;
+                return true;
+            };
+        };
+        check("grid_cell/below_zero_is_blocked_zero_or_more_is_free",
+            GridCellAt(ValueKind::Number, 1.0, 40.0, 40.0, answering(-1.0)) == Cell::Blocked
+                && GridCellAt(ValueKind::Number, 1.0, 40.0, 40.0, answering(-0.5)) == Cell::Blocked
+                && GridCellAt(ValueKind::Number, 1.0, 40.0, 40.0, answering(0.0)) == Cell::Free
+                && GridCellAt(ValueKind::Number, 1.0, 40.0, 40.0, answering(1.0)) == Cell::Free);
     }
 
     std::cout << (failures ? "RESULT FAIL" : "RESULT OK") << "\n";
