@@ -616,6 +616,13 @@ static void Mark1JumpOnBuiltin(int row, RValue& Result, CInstance* S, CInstance*
 // The automated columns' border, Hook_DrawHudBuffs's one call after the toggle
 // border's; defined with the adapter.
 static void Mark1BorderDraw();
+// The set's half walk (Mark1Movement.hpp): the lever Mod live 1 picked, run by
+// the adapter in the plugin's one shared ReturnSpecificStat detour
+// (ReturnSpecificStatHook.hpp, through SkillSlidersMod.hpp below).
+#include <ForgePact/Mark1Movement.hpp>
+namespace M1mNs = ForgePact::Mark1Movement;
+static ForgePact::Mark1Movement::Speed g_M1mSpeed;
+static bool g_M1mWired = false;   // the shared ReturnSpecificStat detour is in, native, with Mark 1's part registered
 #ifndef FORGEPACT_RELEASE
 // "mark1set" when the set's own detour holds this script, else "": the
 // research probes' holder checks (SpHolder, TgProbeAttach) name it. Defined
@@ -41836,6 +41843,13 @@ static void ProjProbeAttach(int idx)
 static bool ProjProbeAttachStat()
 {
     if (g_PpStatMode == kPpUnhooked) {
+        // The Mark 1 set's half walk holds the one shared detour: refused,
+        // naming it, rather than coming up table-only beside it.
+        const std::string held = Mark1SetHolder(HeroSiege::Scripts::gml_Script_ReturnSpecificStat);
+        if (!held.empty()) {
+            g_PpStatModeText = "blocked: " + held + " holds it (a script takes one inline detour)";
+            return false;
+        }
         bool native = false;
         if (!HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_ReturnSpecificStat), "fp_pp_ReturnSpecificStat",
                            (PVOID)ProjProbeHookReturnSpecificStat, &g_PpOrigReturnSpecificStat, &native)) {
@@ -62931,6 +62945,13 @@ static void GambaPityCommand(const std::string& rest)
 //     M from jumpscenery's public reach and cap, and clean jumps taught back
 //     through jumpscenery's public Learn. Its hooks are part of the install
 //     below, all or nothing.
+//   - the half walk (Mark1Movement.hpp), on the plugin's one shared
+//     ReturnSpecificStat detour (ReturnSpecificStatHook.hpp, which skill
+//     sliders' Projectile Speed runs in too): while the bonus is active, the
+//     local player's id-64 (movement speed) calls answered with the value
+//     that halves the walk's step. Part of the install below, all or nothing,
+//     refused unless that detour is native. No cast-penalty lever ships
+//     (`penalty-route: none`), so the stat line reads `penalty=unavailable`.
 //   - the pieces' own art, by the flight charms' route (ForgePact #158): the
 //     owner's PNGs embedded in Mark1Icons.hpp, written under bp_ipc\mark1\
 //     only when no file of that name is there, loaded once a session; "11"
@@ -63659,6 +63680,48 @@ static void Mark1JumpTick()
     try { g_M1jCore.Tick((int64_t)g_RuntimeFrame); } catch (...) {}
 }
 
+// ---- the half walk (Mark1Movement.hpp) ----
+// Mark 1's part of the shared ReturnSpecificStat detour, run after the game's
+// answer and after skill sliders' part. With the switch off, inside the
+// adapter's own calls, or for any self but the local player: nothing, before
+// any game read. For the local player's own id-64 call the bonus is asked at
+// the point of use, through the same Active the CheckTalentUse detour asks (a
+// worn read at most once every 30 frames), and the core answers it. Every
+// local id-64 call is the lever's: Mod live 1's `stat-trace` found the call
+// outside every row Mark 1 wraps, so the character sheet and the damage
+// scripts that read id 64 see the halved value too.
+static void Mark1MovementOnStat(CInstance* S, int argc, RValue** A, RValue& r)
+{
+    if (!g_Mark1.Enabled() || g_M1sBusy || !S || S != g_M1sPlayer) return;
+    double id = 0.0;
+    const bool haveId = argc >= 2 && A && A[1] && N1Numeric(*A[1]);
+    if (haveId) { try { id = A[1]->ToDouble(); } catch (...) { return; } }
+    if (!M1mNs::Speed::Wants(true, haveId, id)) return;
+    bool active = false;
+    g_M1sBusy = true;
+    try { active = g_Mark1.Active((unsigned long long)g_RuntimeFrame, Mark1ReadWorn); } catch (...) { active = false; }
+    g_M1sBusy = false;
+    const bool number = N1Numeric(r);
+    double answer = 0.0;
+    if (number) { try { answer = r.ToDouble(); } catch (...) { return; } }
+    if (g_M1mSpeed.Answer(active, number, answer)) r = RValue(answer);
+}
+
+// The half walk's part of the install: the one shared ReturnSpecificStat
+// detour, whoever asked for it first (skill sliders' Projectile Speed or this
+// set), refused unless it went in natively, since the game's direct compiled
+// calls pass a table-only hook by. Mark 1's part is registered only then.
+static std::string Mark1MovementInstall()
+{
+    namespace Rss = ForgePact::ReturnSpecificStatHook;
+    if (!Rss::Install())
+        return !Rss::original ? "ReturnSpecificStat was not found by name (see the hook line above)"
+                              : "ReturnSpecificStat went in TABLE-ONLY (no inline detour): compiled GML's direct calls would pass it by";
+    Rss::mark1 = Mark1MovementOnStat;
+    g_M1mWired = true;
+    return "";
+}
+
 #ifndef FORGEPACT_RELEASE
 // The set's research probe's hold on a script ("" when none): defined with
 // that probe, below.
@@ -63682,8 +63745,31 @@ static std::string Mark1JumpResearchHolder()
     return "";
 }
 
+// A research instrument that holds ReturnSpecificStat now, by name ("" when
+// none): skillprobe and every holder it knows (JpHolder), and the set's own
+// research probe. The set's own hold, which JpHolder would name, is not a
+// refusal. projprobe keeps its names inside its own region: a ReturnSpecificStat
+// it detoured first leaves the shared install table-only, which
+// Mark1MovementInstall refuses, and projprobe refuses the script while the set
+// holds it, naming `mark1set` (ProjProbeAttachStat).
+static std::string Mark1MovementResearchHolder()
+{
+    const std::string_view name = HeroSiege::Scripts::gml_Script_ReturnSpecificStat;
+    const std::string script = std::string(SdkShortScriptName(HeroSiege::Scripts::gml_Script_ReturnSpecificStat));
+    volatile long* calls = nullptr;
+    const std::string holder = JpHolder(name, calls);
+    if (!holder.empty() && holder != "mark1set") return holder + " holds " + script;
+    const std::string own = M1pScriptHolder(name);
+    if (!own.empty()) return own + " holds " + script;
+    return "";
+}
+
 static std::string Mark1SetHolder(std::string_view runtimeName)
 {
+    // The half walk's part of the shared ReturnSpecificStat detour.
+    if (g_M1mWired && (runtimeName == HeroSiege::Scripts::gml_Script_ReturnSpecificStat
+        || runtimeName == std::string_view(SdkShortScriptName(HeroSiege::Scripts::gml_Script_ReturnSpecificStat))))
+        return "mark1set";
     if (!g_M1sOrigCheckTalentUse) return "";
     if (runtimeName != HeroSiege::Scripts::gml_Script_CheckTalentUse
         && runtimeName != std::string_view(SdkShortScriptName(HeroSiege::Scripts::gml_Script_CheckTalentUse))) return "";
@@ -63720,6 +63806,10 @@ static std::string Mark1SetInstall()
     if (!jumpHolder.empty())
         return jumpHolder + " (a script or builtin takes one detour, and the set's jump shares them); the bonus stays off."
                " Relaunch without it to use mark1set.";
+    const std::string statHolder = Mark1MovementResearchHolder();
+    if (!statHolder.empty())
+        return statHolder + " (a script takes one inline detour, and the set's half walk shares the plugin's one);"
+               " the bonus stays off. Relaunch without it to use mark1set.";
 #endif
     if (!g_M1sOrigCheckTalentUse
         && !HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_CheckTalentUse), "fp_mark1set_ctu",
@@ -63729,6 +63819,8 @@ static std::string Mark1SetInstall()
         return "CheckTalentUse went in TABLE-ONLY (no inline detour): compiled GML's direct calls would pass it by";
     const std::string jump = Mark1JumpInstall();
     if (!jump.empty()) return jump;
+    const std::string walk = Mark1MovementInstall();
+    if (!walk.empty()) return walk;
     Mark1GroundIconInstall();
     return "";
 }
@@ -63788,8 +63880,8 @@ static void Mark1SetTick()
 // calls whose original threw), the jump's (every JumpCounts field from the
 // jump core's counter of the same name, and M with its source as the next
 // jump would read it) and the art's (`art=` through FillStat, the ground count
-// and the shared detour's route). The movement levers fill theirs when they
-// land.
+// and the shared detour's route), and the movement levers' (`speed=` the half
+// walk's answered calls, `penalty=unavailable`).
 static M1sNs::StatFields Mark1SetStatFields()
 {
     M1sNs::StatFields f;
@@ -63845,6 +63937,11 @@ static M1sNs::StatFields Mark1SetStatFields()
     f.iconsEmbedded = (int)ForgePact::Mark1Icons::kIconCount;
     f.ground = g_M1sGround;
     f.groundRoute = Mark1GroundRoute();
+    // The movement levers: the half walk's answered calls, and no penalty
+    // lever (`unavailable`), as the routes Mod live 1 picked.
+    f.speed.available = M1mNs::kSpeedLever;
+    f.speed.count = g_M1mSpeed.Stats().halved;
+    f.penalty.available = M1mNs::kPenaltyLever;
     return f;
 }
 

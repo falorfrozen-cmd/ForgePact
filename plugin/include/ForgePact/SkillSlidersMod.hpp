@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Common.hpp"
+#include "ReturnSpecificStatHook.hpp"
 
 namespace ForgePact {
 
@@ -23,7 +24,10 @@ namespace ForgePact {
 //
 // Off is vanilla. A value of 0 installs nothing; the first non-zero value
 // installs the lever's hooks, and setting 0 later leaves them pure
-// pass-throughs (no self check, no count, no write). The game's code calls
+// pass-throughs (no self check, no count, no write). ReturnSpecificStat is
+// the one script this class does not hook itself: it goes through the
+// plugin's one shared detour (ReturnSpecificStatHook.hpp), which the Mark 1
+// set's half walk also runs in, and this class registers its part there. The game's code calls
 // these scripts directly, so only the native detour can add anything: a lever
 // arms only when every script it needs got one, and otherwise stays at 0 and
 // says so, as `statadd` does.
@@ -88,7 +92,16 @@ public:
             if (hook.orig) continue;
             const ScriptInfo& script = Scripts()[info.scripts[i]];
             bool native = false;
-            HookOneScript(script.name, script.hookId, script.detour, &hook.orig, &native);
+            if (info.scripts[i] == kSpecificStat) {
+                // The one shared detour, installed by whichever mod asks
+                // first and remembered after; this class's part registered.
+                ReturnSpecificStatHook::skillSliders = OnReturnSpecificStat;
+                ReturnSpecificStatHook::Install();
+                hook.orig = ReturnSpecificStatHook::original;
+                native = ReturnSpecificStatHook::native;
+            } else {
+                HookOneScript(script.name, script.hookId, script.detour, &hook.orig, &native);
+            }
             hook.route = !hook.orig ? kRouteFailed : (native ? kRouteNative : kRouteTableOnly);
         }
         const int blocked = FirstNotNative(lever);
@@ -147,7 +160,9 @@ private:
             { SdkShortScriptName(HeroSiege::Scripts::gml_Script_ReturnExtraProjectilesRanged), "fp_ss_ranged", (void*)HookRanged },
             { SdkShortScriptName(HeroSiege::Scripts::gml_Script_StatAOESkillSize), "fp_ss_aoe", (void*)HookAoe },
             { SdkShortScriptName(HeroSiege::Scripts::gml_Script_LoadAllModifiers), "fp_ss_mods", (void*)HookLoadAllModifiers },
-            { SdkShortScriptName(HeroSiege::Scripts::gml_Script_ReturnSpecificStat), "fp_ss_stat", (void*)HookReturnSpecificStat },
+            // The shared detour's (ReturnSpecificStatHook.hpp): no hook id or
+            // detour of this class's own.
+            { SdkShortScriptName(HeroSiege::Scripts::gml_Script_ReturnSpecificStat), nullptr, nullptr },
         };
         return scripts;
     }
@@ -204,20 +219,19 @@ private:
         SpeedScope scope(inScope);
         return orig(S, O, R, argc, A);
     }
-    // Adds to stat 75 only inside the player's LoadAllModifiers; anywhere
-    // else this is one thread-local read and the call.
-    static RValue& HookReturnSpecificStat(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) {
+    // This class's part of the shared ReturnSpecificStat detour, run after
+    // the game's answer: adds to stat 75 only inside the player's
+    // LoadAllModifiers; anywhere else this is one thread-local read.
+    static void OnReturnSpecificStat(CInstance* S, int argc, RValue** A, RValue& r) {
+        (void)S;
+        if (!t_SpeedScope) return;
         SkillSlidersMod& mod = Instance();
-        const PFUNC_YYGMLScript orig = mod.m_Hooks[kSpecificStat].orig;
-        RValue& r = orig ? orig(S, O, R, argc, A) : R;
-        if (!t_SpeedScope) return r;
         LeverState& state = mod.m_Levers[kSpeed];
         const double value = state.value;
-        if (value == 0.0) return r;
+        if (value == 0.0) return;
         double id = -1.0;
-        if (!StatIdArg(argc, A, id) || id != kProjectileSpeedStatId) return r;
+        if (!StatIdArg(argc, A, id) || id != kProjectileSpeedStatId) return;
         try { mod.Boost(r, value, state, kSpecificStat); } catch (...) {}
-        return r;
     }
 
     // The amount and AoE hooks: the original first, then, for a self in

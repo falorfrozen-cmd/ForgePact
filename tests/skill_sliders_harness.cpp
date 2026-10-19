@@ -251,9 +251,14 @@ static bool HookOneScript(const char* shortName, const char* id, void* dest, PFU
 
 // PRODUCTION_HELPERS
 
+// The real shared ReturnSpecificStat detour (ReturnSpecificStatHook.hpp),
+// which the sliders' Projectile Speed installs and runs in.
+// PRODUCTION_RSS_HOOK
+
 // PRODUCTION_SKILLSLIDERS
 
 using ForgePact::SkillSlidersMod;
+namespace RssHook = ForgePact::ReturnSpecificStatHook;
 
 // ---- the instances --------------------------------------------------------
 static double ObjectIndex(HeroSiege::Objects::GameObject object) { return (double)static_cast<int>(object); }
@@ -342,6 +347,11 @@ static void Scenario(const std::string& label, const std::function<std::string()
     instance.~SkillSlidersMod();
     new (&instance) SkillSlidersMod();   // NOLINT: re-run the default member initializers
     g_Mod = &instance;
+    // The shared detour remembers its install for the session; each scenario
+    // is a fresh session.
+    RssHook::original = nullptr;
+    RssHook::installTried = RssHook::installed = RssHook::native = false;
+    RssHook::skillSliders = RssHook::mark1 = nullptr;
     std::string fields;
     try { fields = body(); } catch (const std::exception& e) { fields = std::string("threw=") + e.what(); }
     Print(label, fields);

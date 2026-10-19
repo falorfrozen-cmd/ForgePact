@@ -66,6 +66,15 @@ text, comments stripped, and pins the adapter around it:
   never an answer; grid_read: global.pathGrid and mp_grid_get_cell by name,
   outside every research block; jump_counts: every JumpCounts field from the
   core's counter of the same name, M from the getters.
+- the half walk (Mark1Movement.hpp, applied here; `speed-route: stat-model`):
+  Mark 1's part of the plugin's one shared ReturnSpecificStat detour
+  (ReturnSpecificStatHook.hpp, which skill sliders runs in too), never a second
+  HookOneScript of the script; part of Mark 1's all-or-nothing install,
+  refused unless the detour is native, and refused while a research probe
+  holds the script; the probes name `mark1set` for it. The lever runs only for
+  the local player's id-64 calls, asks the bonus at the point of use, and the
+  stat line's `speed=` is its count; no cast-penalty lever ships
+  (`penalty-route: none`, `penalty=unavailable`).
 """
 import re
 import sys
@@ -145,6 +154,11 @@ SIGNATURES = {
     "jump_builtin": "static void Mark1JumpOnBuiltin(int row, RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args)",
     "jump_install": "static std::string Mark1JumpInstall()",
     "jump_tick": "static void Mark1JumpTick()",
+    # the half walk (Mark1Movement.hpp), in the adapter
+    "walk": "static void Mark1MovementOnStat(CInstance* S, int argc, RValue** A, RValue& r)",
+    "walk_install": "static std::string Mark1MovementInstall()",
+    "walk_research_holder": "static std::string Mark1MovementResearchHolder()",
+    "pp_attach_stat": "static bool ProjProbeAttachStat()",
     # the shared detours and installs, in jumpscenery's adapter
     "leap": "static RValue& JsHookLeap(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)",
     "leap_install": "static std::string SkillsLeapInstall()",
@@ -159,9 +173,12 @@ SHIPPED = ("decode", "of", "entry", "final", "icon_index", "icon_path", "icons_l
            "ground_route", "art_install_if_ready", "read_worn", "detour", "install", "install_if_ready", "tick", "stat_fields", "command",
            "refresh", "hud_row", "hud_column", "read_toggle", "input_state", "input_get", "input_set", "border",
            "jump_position", "jump_cursor", "jump_family", "jump_gate", "jump_kind", "jump_grid", "jump_max", "jump_learn",
-           "jump_entry", "jump_exit", "jump_builtin", "jump_install", "jump_tick", "leap", "leap_install", "resolve_objects")
+           "jump_entry", "jump_exit", "jump_builtin", "jump_install", "jump_tick", "leap", "leap_install", "resolve_objects",
+           "walk", "walk_install")
 JUMP_HEADER = ROOT / "plugin" / "include" / "ForgePact" / "Mark1Jump.hpp"
 AUTOMATION_HEADER = ROOT / "plugin" / "include" / "ForgePact" / "Mark1Automation.hpp"
+MOVEMENT_HEADER = ROOT / "plugin" / "include" / "ForgePact" / "Mark1Movement.hpp"
+SHARED_STAT_HEADER = ROOT / "plugin" / "include" / "ForgePact" / "ReturnSpecificStatHook.hpp"
 
 
 class Mark1SetContract(unittest.TestCase):
@@ -188,7 +205,7 @@ class Mark1SetContract(unittest.TestCase):
             with self.subTest(function=name):
                 self.assertIn(SIGNATURES[name], player)
         for header in ("#include <ForgePact/Mark1Set.hpp>", "#include <ForgePact/Mark1Icons.hpp>",
-                       "#include <ForgePact/Mark1Automation.hpp>"):
+                       "#include <ForgePact/Mark1Automation.hpp>", "#include <ForgePact/Mark1Movement.hpp>"):
             self.assertIn(header, self.shipped)
         self.assertIn("static ForgePact::Mark1Set::Bonus g_Mark1;", self.shipped)
         # The research probe's own words stay out of the player build even in
@@ -1100,6 +1117,129 @@ class Mark1SetContract(unittest.TestCase):
         self.assertIn("Check(jump_.takeoffX, jump_.takeoffY, ux, uy, dist, w, h, &failed, &counters_);", header)
         self.assertIn(
             '" grid-reads=" + JoinCounts({ j.gridFree, j.gridBlocked, j.gridNoGrid })', self.header())
+
+    # ---- the half walk (Mark1Movement.hpp) ---------------------------------------------------
+
+    def movement_header(self):
+        return strip_comments(MOVEMENT_HEADER.read_text(encoding="utf-8").replace("\r\n", "\n"))
+
+    def test_walk_rides_the_one_shared_return_specific_stat_detour(self):
+        # A second HookOneScript of ReturnSpecificStat would come up table-only
+        # and blind, so the player build has exactly one: the shared header's.
+        hook_call = re.compile(r"\bHookOneScript(?:Table)?\s*\(")
+
+        def stat_hook_calls(source):
+            calls = []
+            for match in hook_call.finditer(source):
+                depth, end = 0, len(source) - 1
+                for index in range(match.end() - 1, len(source)):
+                    if source[index] == "(":
+                        depth += 1
+                    elif source[index] == ")":
+                        depth -= 1
+                        if depth == 0:
+                            end = index
+                            break
+                call = source[match.start():end + 1]
+                if "ReturnSpecificStat" in call:
+                    calls.append(call)
+            return calls
+
+        # The scanner's own control: it finds skill sliders' old spelling, and
+        # ignores another script.
+        self.assertEqual(len(stat_hook_calls(
+            'HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_ReturnSpecificStat), "fp_ss_stat", '
+            '(void*)HookReturnSpecificStat, &hook.orig, &native);')), 1)
+        self.assertEqual(stat_hook_calls("HookOneScript(script.name, script.hookId, script.detour, &o, &n);"), [])
+        found = {"ModuleMain.cpp": len(stat_hook_calls(self.shipped))}
+        for header in sorted((ROOT / "plugin" / "include" / "ForgePact").glob("*.hpp")):
+            text = strip_comments(strip_research_blocks(header.read_text(encoding="utf-8").replace("\r\n", "\n")))
+            n = len(stat_hook_calls(text))
+            if n:
+                found[header.name] = n
+        self.assertEqual(found, {"ModuleMain.cpp": 0, "ReturnSpecificStatHook.hpp": 1})
+        install = self.body("walk_install")
+        self.assertIn("if (!Rss::Install())", install)
+        self.assertIn("TABLE-ONLY", install)
+        # Mark 1's part is registered only once the detour is native.
+        self.assertLess(install.index("if (!Rss::Install())"), install.index("Rss::mark1 = Mark1MovementOnStat;"))
+        self.assertLess(install.index("Rss::mark1 = Mark1MovementOnStat;"), install.index("g_M1mWired = true;"))
+        shared = strip_comments(SHARED_STAT_HEADER.read_text(encoding="utf-8").replace("\r\n", "\n"))
+        hook = function_body(shared, "inline RValue& Hook(")
+        self.assertLess(hook.index("original(S, O, R, argc, A)"), hook.index("if (mark1) mark1(S, argc, A, r);"))
+
+    def test_walk_install_is_part_of_mark1s_all_or_nothing_install(self):
+        install = self.body("install")
+        self.assertIn("const std::string walk = Mark1MovementInstall();", install)
+        self.assertIn("if (!walk.empty()) return walk;", install)
+        self.assertLess(install.index("Mark1JumpInstall()"), install.index("Mark1MovementInstall()"))
+        self.assertLess(install.index("Mark1MovementInstall()"), install.index("Mark1GroundIconInstall();"))
+        self.assertEqual(len(re.findall(r"\bMark1MovementInstall\(\)", self.shipped)), 2)   # definition and Mark1SetInstall
+
+    def test_walk_the_lever_runs_for_the_local_player_at_the_point_of_use(self):
+        lines = self.lines("walk")
+        # Switch off, the adapter's own calls, no self or any other self:
+        # nothing, before any game read.
+        self.assertEqual(lines[0], "if (!g_Mark1.Enabled() || g_M1sBusy || !S || S != g_M1sPlayer) return;")
+        walk = self.body("walk")
+        # The scope (id 64, a1) is asked before the bonus; the bonus at the
+        # point of use, through the same read the gate's detour uses, guarded.
+        self.assertLess(walk.index("M1mNs::Speed::Wants(true, haveId, id)"), walk.index("g_Mark1.Active("))
+        self.assertIn("g_Mark1.Active((unsigned long long)g_RuntimeFrame, Mark1ReadWorn)", walk)
+        self.assertLess(walk.index("g_M1sBusy = true;"), walk.index("g_Mark1.Active("))
+        self.assertLess(walk.index("g_Mark1.Active("), walk.rindex("g_M1sBusy = false;"))
+        self.assertIn("A[1]", walk)
+        # The answer is written only when the core changed it.
+        self.assertIn("if (g_M1mSpeed.Answer(active, number, answer)) r = RValue(answer);", walk)
+        self.assertEqual(walk.count("r = RValue("), 1)
+        # The local player is the tick's (HhResolveLocalPlayer); no kind check
+        # on the self decides anything.
+        self.assertNotIn("VALUE_OBJECT", walk)
+        self.assertNotIn("VALUE_REF", walk)
+        header = self.movement_header()
+        self.assertIn("return localPlayer && haveStatId && statId == kMovementSpeedStatId;", header)
+        self.assertIn("inline constexpr double kMovementSpeedStatId = 64.0;", header)
+
+    def test_walk_refused_while_a_research_probe_holds_return_specific_stat(self):
+        raw = function_body(self.plugin, SIGNATURES["install"])
+        research = raw[raw.index("#ifndef FORGEPACT_RELEASE"):raw.index("#endif")]
+        self.assertIn("Mark1MovementResearchHolder()", research)
+        self.assertLess(raw.index("Mark1MovementResearchHolder()"), raw.index("HookOneScript("))
+        holder = self.body("walk_research_holder")
+        for check in ("JpHolder(", "M1pScriptHolder(name)", "HeroSiege::Scripts::gml_Script_ReturnSpecificStat"):
+            self.assertIn(check, holder)
+        # projprobe's names stay in its region (test_skill_sliders_probe_contract):
+        # its hold shows as the shared install's TABLE-ONLY refusal instead.
+        self.assertNotIn("g_Pp", holder)
+        # Its own hold is not a refusal.
+        self.assertIn('holder != "mark1set"', holder)
+        self.assertNotIn("Mark1MovementResearchHolder", self.shipped)
+
+    def test_walk_the_research_probes_name_mark1set_for_return_specific_stat(self):
+        holder = self.body("holder")
+        self.assertIn("g_M1mWired", holder)
+        self.assertIn("HeroSiege::Scripts::gml_Script_ReturnSpecificStat", holder)
+        # projprobe asks before it installs, and refuses naming the holder.
+        attach = self.body("pp_attach_stat")
+        self.assertIn("Mark1SetHolder(HeroSiege::Scripts::gml_Script_ReturnSpecificStat)", attach)
+        self.assertLess(attach.index("Mark1SetHolder("), attach.index("HookOneScript("))
+
+    def test_walk_stat_fields_speed_counts_and_penalty_unavailable(self):
+        fields = self.body("stat_fields")
+        self.assertIn("f.speed.available = M1mNs::kSpeedLever;", fields)
+        self.assertIn("f.speed.count = g_M1mSpeed.Stats().halved;", fields)
+        self.assertIn("f.penalty.available = M1mNs::kPenaltyLever;", fields)
+        self.assertNotIn("f.penalty.count", fields)
+        header = self.movement_header()
+        self.assertIn("inline constexpr bool kSpeedLever = true;", header)
+        self.assertIn("inline constexpr bool kPenaltyLever = false;", header)
+        self.assertIn('inline constexpr std::string_view kPenaltyRoute = "none";', header)
+
+    def test_walk_no_cast_penalty_lever_ships(self):
+        # penalty-route: none. Mark 1 hooks no TalentUse and holds no effect
+        # element: the adapter names neither.
+        for token in ("gml_Script_TalentUse)", "playerEffect", "Mark1Penalty"):
+            self.assertNotIn(token, self.code)
 
 
 if __name__ == "__main__":

@@ -21,6 +21,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SDK_INCLUDE = ROOT.parent / "hs-game-sdk/cpp/include"
 HEADER = ROOT / "plugin/include/ForgePact/SkillSlidersMod.hpp"
+# The shared ReturnSpecificStat detour the Projectile Speed lever runs in.
+SHARED_HEADER = ROOT / "plugin/include/ForgePact/ReturnSpecificStatHook.hpp"
 
 
 def implementation(source, signature):
@@ -50,6 +52,7 @@ def skill_sliders(header):
         line for line in header.split("\n")
         if not line.strip().startswith("#pragma once")
         and '#include "Common.hpp"' not in line
+        and '#include "ReturnSpecificStatHook.hpp"' not in line
     )
     private_ctor = "private:\n    SkillSlidersMod() = default;"
     if text.count(private_ctor) != 1:
@@ -83,7 +86,11 @@ class SkillSlidersBehaviorTests(unittest.TestCase):
         out = ROOT / "build/skill-sliders-behavior"
         out.mkdir(parents=True, exist_ok=True)
         code = (ROOT / "tests/skill_sliders_harness.cpp").read_text(encoding="utf-8")
+        shared = "\n".join(
+            line for line in SHARED_HEADER.read_text(encoding="utf-8").replace("\r\n", "\n").split("\n")
+            if not line.strip().startswith("#pragma once"))
         code = (code.replace("// PRODUCTION_HELPERS", helpers)
+                    .replace("// PRODUCTION_RSS_HOOK", shared)
                     .replace("// PRODUCTION_SKILLSLIDERS", skill_sliders(header)))
         cpp = out / "skillsliders.cpp"
         cpp.write_text(code, encoding="utf-8")
