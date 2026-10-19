@@ -120,12 +120,23 @@ const PRIMEEVIL_SCENARIO = (typed) => [
   { control: '#applyall', action: 'click' },
 ];
 
+// The tabs this walk visits after the shared TABS (lib/browser.mjs), which
+// finish.e2e.mjs, motion.e2e.mjs and design-match.mjs iterate too and so stay
+// as they are: the Tracker tab (#185), whose one walked control is its
+// `#mod_tracker` switch.
+const OWN_TABS = ['tracker'];
+
 // Runs in the page: every control under `root`, in document order.
 function enumerateIn(rootSelector) {
   const out = [];
   const roots = [...document.querySelectorAll(rootSelector)];
   for (const root of roots) {
     for (const el of root.querySelectorAll('input[type=checkbox], input[type=range], select, button[id]')) {
+      // The one exclusion: the Tracker tab's sections. Their controls write
+      // /api/tracker/* (the tracker's own settings, sounds, shopping list,
+      // runs and overlay) and send no plugin command, so no oracle step could
+      // compare them; `npm run e2e:tracker` pins them instead.
+      if (el.closest('#trackerSections')) continue;
       if (el.matches('input[type=checkbox]')) {
         if (el.dataset.satPolarity) out.push({ kind: 'checkbox', selector: `input[data-sat-polarity="${el.dataset.satPolarity}"][data-sat-id="${el.dataset.satId}"]` });
         else if (el.id) out.push({ kind: 'checkbox', selector: '#' + el.id });
@@ -164,6 +175,11 @@ async function planSteps(page) {
     } else {
       groups.push({ tab, controls: await page.evaluate(enumerateIn, `.tab-card[data-tab="${tab}"]`) });
     }
+  }
+  // A recorded page has none of these tabs, and walks exactly as it did.
+  for (const tab of OWN_TABS) {
+    const controls = await page.evaluate(enumerateIn, `.tab-card[data-tab="${tab}"]`);
+    if (controls.length) groups.push({ tab, controls });
   }
   const walk = (controls) => {
     for (const c of controls) {

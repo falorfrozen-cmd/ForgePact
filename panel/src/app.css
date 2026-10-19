@@ -388,6 +388,51 @@ select.style-select:disabled{opacity:.45;cursor:not-allowed}
 .theme-picker-swatches>span{flex:1;background-color:var(--swatch,transparent)}
 .theme-picker-native{position:absolute;left:0;top:0;width:1px;height:1px;margin:0;padding:0;border:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;pointer-events:none}
 
+/* ---- Tracker (#185): the tab's frame, ported from design/tracker/tracker.css (panel/DESIGN.md § Tracker). The tab's
+   container draws no surface; the switch card and each section are cards of their own. #trackerSections only groups
+   the sub-tabs and the open section for the oracle and Ember's search, so it lays out as if it were not there.
+   The sections' own styles live with their components, except the controls every section shares (below the frame):
+   one definition each, so the sections cannot drift apart. ---- */
+.tab-card.trk-tab.active{grid-column:1/-1;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:var(--space-7) var(--space-9);align-items:start;min-width:0}
+.trk-sections{display:contents}
+.trk-tab>.card,.trk-tab .trk-subtabs,.trk-tab .trk-panel{grid-column:1/-1}
+.trk-subtabs{flex-wrap:wrap}
+.trk-panel{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:var(--space-7) var(--space-9);align-items:start;min-width:0}
+.trk-panel>.trk-section{display:contents}
+.trk-panel .card{grid-column:1/-1}.trk-panel .card.trk-half{grid-column:auto}
+.trk-stack{display:flex;flex-direction:column;gap:var(--space-7);min-width:0}
+.trk-state{display:flex;margin:0;align-items:center;gap:var(--space-4);color:var(--color-text-muted);font-size:var(--font-size-xs)}
+.trk-dot{flex:none;width:6px;height:6px;border-radius:var(--radius-pill);background-color:var(--color-text-faint)}
+.trk-dot.on{background-color:var(--color-ok)}.trk-dot.warn{background-color:var(--color-warn)}
+.trk-head{display:flex;align-items:center;justify-content:space-between;gap:var(--space-7);min-width:0}.trk-head h2{min-width:0}
+.trk-head-side{display:flex;align-items:center;gap:var(--space-4);flex:none}
+.trk-count{color:var(--color-text-muted);font-family:var(--font-mono-family),Consolas,monospace;font-size:var(--font-size-xs)}
+.trk-sub{margin:calc(var(--space-6) * -1) 0 0;color:var(--color-text-muted);font-size:var(--font-size-sm)}
+.trk-subhead{margin:0;font-family:inherit;color:var(--color-text-muted);font-size:var(--font-size-xs);font-weight:var(--font-weight-medium)}
+/* The shared controls: the quiet button (DESIGN.md § Buttons, Quiet; disabled through the global button rule), an
+   icon-only one, the action row, the in-place confirmation, an error line, an empty state, a text field (the
+   allowlisted .trk-field edge), a field with its button, a list of names, and a live region that stays in the
+   accessibility tree while it has nothing to say, so the words it gets later are announced. */
+.trk-actions{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-4)}
+.trk-quiet{display:inline-flex;flex:none;align-items:center;gap:var(--space-3);min-height:28px;padding:0 var(--space-4);border:0;border-radius:var(--radius-sm);background:none;color:var(--color-text-muted);font:inherit;font-size:var(--font-size-sm);white-space:nowrap;cursor:pointer}
+.trk-quiet:disabled{cursor:default}
+.trk-quiet svg{width:16px;height:16px;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;fill:none}
+.trk-icon-button{width:28px;padding:0;justify-content:center}
+.trk-confirm{display:flex;flex-direction:column;gap:var(--space-4)}
+.trk-confirm .hint{margin:0}
+.trk-confirm-title{margin:0;color:var(--color-text-primary);font-size:var(--font-size-sm);font-weight:var(--font-weight-semibold)}
+.trk-error{display:flex;align-items:center;gap:var(--space-4);color:var(--color-text-primary)}
+.trk-error svg{flex:none;width:16px;height:16px;color:var(--color-danger);stroke:currentColor;stroke-width:1.4;fill:none;stroke-linecap:round;stroke-linejoin:round}
+.trk-empty{margin:0;padding:var(--space-7) 0;color:var(--color-text-faint);font-size:var(--font-size-sm)}
+.trk-field{height:32px;min-width:0;padding:0 var(--space-6);border:1px solid var(--color-border-strong);border-radius:var(--radius-md);background-color:var(--color-bg-sunken);color:var(--color-text-primary);font:inherit;font-size:var(--font-size-sm)}
+.trk-field::placeholder{color:var(--color-text-muted)}
+.trk-entry-line{display:flex;gap:var(--space-4)}.trk-entry-line .trk-field{flex:1}
+.trk-names{display:flex;flex-direction:column;margin:0;padding:0;list-style:none}
+.trk-names li{display:flex;align-items:center;justify-content:space-between;gap:var(--space-6);min-height:32px;padding:0 0 0 var(--space-4);border-radius:var(--radius-sm);font-size:var(--font-size-sm)}
+.trk-live:empty{position:absolute;width:1px;height:1px;margin:-1px;overflow:hidden;clip-path:inset(50%)}
+.r-satanic{color:var(--color-rarity-satanic)}.r-set{color:var(--color-rarity-set)}.r-heroic{color:var(--color-rarity-heroic)}.r-angelic{color:var(--color-rarity-angelic)}.r-unholy{color:var(--color-rarity-unholy)}
+@media(max-width:1100px){.tab-card.trk-tab.active,.trk-panel{grid-template-columns:minmax(0,1fr)}.trk-panel .card.trk-half{grid-column:1/-1}}
+
 /* ---- Toasts: #toast, and the undo toast above it in a band the page makes room for ---- */
 #toast{position:fixed;right:var(--space-9);bottom:calc(var(--space-10) + 1px + var(--space-6));z-index:40;max-width:min(560px,calc(100vw - 2 * var(--space-9)));min-height:var(--toast-h);display:flex;align-items:center;padding:0 var(--space-7);border-radius:var(--radius-md);background-color:var(--color-bg-hover);color:var(--color-text-primary);font-size:var(--font-size-sm);box-shadow:0 8px 24px color-mix(in srgb,var(--color-bg-sunken) 80%,transparent);opacity:0;pointer-events:none;
   transform:translateY(var(--space-4));transition:opacity var(--motion-duration-fast) var(--motion-easing-standard),transform var(--motion-duration-fast) var(--motion-easing-standard)}
@@ -415,6 +460,8 @@ select.style-select:disabled{opacity:.45;cursor:not-allowed}
 .plugin-warning-button:hover{background-color:var(--color-bg-hover)}
 .enabled-mods-toggle:hover{color:var(--color-accent-hover)}
 .help-details summary:hover{color:var(--color-text-primary)}
+.trk-quiet:hover:not(:disabled){background-color:var(--color-bg-hover);color:var(--color-text-primary)}
+.trk-names li:hover{background-color:var(--color-bg-hover)}
 #enabledMods[data-form="tray"] .enabled-mod:hover{background-color:var(--color-bg-hover)}
 /* A hover eases its colours in on the element under the pointer and snaps back when it leaves, so a
    palette swap, a poll or a state change never runs a colour transition on anything else. The press's

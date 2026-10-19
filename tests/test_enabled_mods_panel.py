@@ -34,6 +34,10 @@ from test_panel_performance import run_node  # noqa: E402
 
 FIXED_COPY = ("Enabled mods", "Nothing is on", "Turn off", "Theme", "Ledger", "Graphite", "Sigil")
 LIST_FILES = ("enabled-mods.js", "lib/enabled-mods-list.js")
+# Settings the backend has before the page has a control for them. None now:
+# HS Offline Tracker's `mod_tracker` (#185) got its row, heading the Tracker
+# tab, and its place in the fixture with that tab.
+BACKEND_ONLY_KEYS = ()
 
 
 def _opening_tag(text, marker):
@@ -226,8 +230,13 @@ class EnabledModsPanelTests(unittest.TestCase):
     def test_defaults_fixture_is_forgepacts_defaults(self):
         import forgepact  # noqa: E402  (only here: the other tests need no hs_game_sdk)
         fixture = json.loads((ROOT / "panel" / "tests" / "fixtures" / "defaults-cfg.json").read_text(encoding="utf-8"))
-        expected = {k: v for k, v in forgepact.DEFAULTS.items() if k != "game_exe"}
+        expected = {k: v for k, v in forgepact.DEFAULTS.items() if k != "game_exe" and k not in BACKEND_ONLY_KEYS}
         self.assertEqual(fixture, json.loads(json.dumps(expected)))
+        # A backend-only key is off by default, so the page's lists never see
+        # it on, and is not in the fixture yet.
+        for key in BACKEND_ONLY_KEYS:
+            self.assertIs(forgepact.DEFAULTS[key], False, key)
+            self.assertNotIn(key, fixture)
 
     def test_switch_ids_match_the_backend(self):
         import forgepact  # noqa: E402

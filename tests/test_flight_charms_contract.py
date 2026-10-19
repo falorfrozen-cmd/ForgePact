@@ -228,6 +228,8 @@ class FlightCharmsForgeContract(unittest.TestCase):
         self.assertLess(hook.index("g_Orig_LootGroundInit(S, O, R, argc, A)"), hook.index("FlightCharmOnGroundInit(argc, A);"))
         self.assertLess(hook.index(".OnInit("), hook.index("FlightCharmOnGroundInit(argc, A);"))
         self.assertLess(hook.index("LootAnnounceOnInit(S, argc, A);"), hook.index("FlightCharmOnGroundInit(argc, A);"))
+        # ForgePact #185's tracker comes after it, the fourth.
+        self.assertLess(hook.index("FlightCharmOnGroundInit(argc, A);"), hook.index("TrackerOnInit(S, argc, A);"))
         # No detour of its own: LootGroundInit is hooked once, by hidden loot.
         calls = re.findall(r"HookOneScript\w*\([^;]*LootGroundInit\b", strip_comments(self.plugin))
         self.assertEqual(len(calls), 1, calls)

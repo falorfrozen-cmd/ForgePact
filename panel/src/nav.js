@@ -4,6 +4,8 @@
 // file and runs them through node against a stub DOM, so keep each one
 // self-contained. The state is module-local; other modules read it through
 // the live exports and change it only through the two setters below.
+// The Tracker tab's sub-tabs (#185) share the .subtabbtn look but are its
+// own (tabs/Tracker.svelte), so the Mods functions leave .trk-subtab alone.
 import { filterControlRows } from './panel.js';
 
 export const PAGE_INFO={
@@ -13,7 +15,8 @@ export const PAGE_INFO={
   modifiers:['Character modifiers','Tune your character and combat bonuses.'],
   world:['World settings','Shape your zones. Keep every choice in sight.'],
   loot:['Loot settings','Adjust drop rates and see exactly what each multiplier changes.'],
-  mods:['Mods','Choose the features you want for your offline adventure.']
+  mods:['Mods','Choose the features you want for your offline adventure.'],
+  tracker:['Tracker','What this session earns and drops, your past runs, and the alerts you hear.']
 };
 export let activeTab='modifiers',controlFilter='all',modsSubtab='qolCard';
 export function setControlFilter(value){controlFilter=value}
@@ -40,7 +43,7 @@ export function openTab(name,remember=true){
   document.dispatchEvent?.(new Event('forgepact:navigate'));
 }
 export function openModsSubtab(id,remember=true){
-  const buttons=[...document.querySelectorAll('.subtabbtn')];
+  const buttons=[...document.querySelectorAll('.subtabbtn')].filter(b=>!b.classList.contains('trk-subtab'));
   const target=buttons.some(b=>b.getAttribute('aria-controls')===id)?id:buttons[0].getAttribute('aria-controls');
   modsSubtab=target;
   buttons.forEach(b=>{
@@ -52,8 +55,9 @@ export function openModsSubtab(id,remember=true){
   if(activeTab==='mods')document.getElementById('wrap')?.scrollTo?.({top:0,behavior:'instant'});
 }
 export function bindModsSubtabs(){
-  document.querySelectorAll('.subtabbtn').forEach(button=>button.onclick=()=>openModsSubtab(button.getAttribute('aria-controls')));
-  document.querySelectorAll('.subtabbtn').forEach((button,index,buttons)=>button.onkeydown=e=>{
+  const mods=[...document.querySelectorAll('.subtabbtn')].filter(b=>!b.classList.contains('trk-subtab'));
+  mods.forEach(button=>button.onclick=()=>openModsSubtab(button.getAttribute('aria-controls')));
+  mods.forEach((button,index,buttons)=>button.onkeydown=e=>{
     const direction=e.key==='ArrowRight'?1:e.key==='ArrowLeft'?-1:0;
     if(!direction&&!['Home','End'].includes(e.key))return;
     e.preventDefault();const next=e.key==='Home'?0:e.key==='End'?buttons.length-1:(index+direction+buttons.length)%buttons.length;

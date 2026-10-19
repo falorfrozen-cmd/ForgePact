@@ -228,10 +228,11 @@ def _section_icons(icons_source):
 class ModsCategoryBaselineTests(unittest.TestCase):
     """Pins what must survive the split. Names no card id except itemsCard."""
 
-    def test_sidebar_is_the_five_tabs_in_order(self):
+    def test_sidebar_is_the_six_tabs_in_order(self):
+        # The Tracker tab (#185) follows Mods.
         self.assertEqual(
             _sidebar_tabs(HTML),
-            ["setup", "modifiers", "world", "loot", "mods"],
+            ["setup", "modifiers", "world", "loot", "mods", "tracker"],
         )
 
     def test_every_assignment_table_control_appears_once_in_a_mods_card(self):

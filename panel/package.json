@@ -25,7 +25,8 @@
     "screens": "node tests/screens.mjs",
     "icons": "node scripts/export-icons.mjs",
     "e2e:ember": "node tests/ember.e2e.mjs",
-    "e2e:ember-scroll": "node tests/ember-scroll.e2e.mjs"
+    "e2e:ember-scroll": "node tests/ember-scroll.e2e.mjs",
+    "e2e:tracker": "node tests/tracker.e2e.mjs"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.3.0",
