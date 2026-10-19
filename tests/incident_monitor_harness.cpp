@@ -1267,6 +1267,257 @@ void ReportJson(const std::filesystem::path& work)
     Report("report-json", fields, paths);
 }
 
+// #223: the crash trap's record (tests/fixtures/incident/trap.txt, in the
+// format CrashTrap.hpp writes) folds into report.json's `trap` and the crash's
+// tags. The fixture holds two first-chance lines around the unhandled one:
+// the unhandled line is the one folded. A record with no unhandled line folds
+// its last line; one with no exception line folds nothing. The crash line's
+// module falls back to the record's when exit.json has none.
+void TrapFold(const std::filesystem::path& fixtures, const std::filesystem::path& work)
+{
+    const std::string text = ReadAll(fixtures / "trap.txt");
+    inc::TrapRecord r;
+    const bool read = inc::ParseTrapRecord(text, r);
+    const bool picked = read && r.route == "unhandled" && r.exceptionCode == "0xC0000005" && r.module == "Hero_Siege.exe"
+                        && r.offset == "0x64D0F3" && r.thread == "game" && r.threadId == 1188
+                        && r.inHook == "fp_mining_node_step" && r.inMod == "miner" && r.gameOriginal && r.cppType.empty();
+    inc::TrapRecord last;
+    const bool lastRead = inc::ParseTrapRecord(
+        "session 2026-10-19T07:05:12Z pid=1\n"
+        "exception 0xC0000005 at a.dll+0x10 thread=other tid=7 in-hook=none in-mod=none game-original=no cpp=none route=first-chance\n"
+        "exception 0xE06D7363 at KERNELBASE.dll+0x2A0 thread=game tid=8 in-hook=fp_x in-mod=drops game-original=no cpp=.?AVbad_alloc@std@@ route=first-chance\r\n",
+        last);
+    const bool fallback = lastRead && last.module == "KERNELBASE.dll" && last.threadId == 8 && last.cppType == ".?AVbad_alloc@std@@";
+    inc::TrapRecord none;
+    const bool empty = !inc::ParseTrapRecord("session 2026-10-19T07:05:12Z pid=1\nnot a record line\n", none)
+                       && !inc::ParseTrapRecord("", none);
+    const std::string line = inc::CrashLine("0xC0000005", "", inc::TrapWhere(r));
+    const std::string panelWins = inc::CrashLine("0xC0000005", "KERNELBASE.dll", inc::TrapWhere(r));
+    const std::string neither = inc::CrashLine("", "", "");
+    const bool crashLine = line == "CRASH previous session ended without a clean shutdown | exit 0xC0000005 | module Hero_Siege.exe+0x64D0F3"
+                           && panelWins.size() > 14 && panelWins.compare(panelWins.size() - 14, 14, "KERNELBASE.dll") == 0
+                           && neither.find("| exit unknown | module unknown") != std::string::npos;
+    std::error_code ec;
+    std::filesystem::create_directories(work, ec);
+    inc::ReportFacts crash;
+    crash.kind = inc::Kind::crash;
+    crash.utc = "2026-10-19T07:20:00Z";
+    crash.pluginVersion = "2.3.1";
+    crash.episode.kind = inc::Kind::crash;
+    crash.previousBanner = std::string(inc::kSessionBanner) + " v2.3.1";
+    crash.exitJson = "{\"exit_code\": \"0xC0000005\", \"faulting_module\": null}";
+    crash.haveTrap = read;
+    crash.trap = r;
+    crash.dump = true;
+    const auto path = work / "crash-trap.json";
+    {
+        std::ofstream f(path, std::ios::binary | std::ios::trunc);
+        f << inc::ReportJson(crash);
+    }
+    Report("trap-fold", picked && fallback && empty && crashLine,
+           path.string() + ";" + line + ";" + (fallback ? "last line folded" : "last line missed")
+           + (empty ? ", no record folds nothing" : ", an empty record folded"));
+}
+
+// #223: what the next-load check does with bp_ipc\crashtrap.prev\: a clean
+// previous session's is deleted, a crash's once it is folded into a bundle;
+// one that was neither stays for the next rotation.
+void TrapPrevSettled(const std::filesystem::path& work)
+{
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    auto make = [&](const char* name) {
+        const fs::path dir = work / name;
+        fs::remove_all(dir, ec);
+        fs::create_directories(dir, ec);
+        std::ofstream(dir / "trap.txt") << "session\n";
+        return dir;
+    };
+    const std::string banner = std::string(inc::kSessionBanner) + " v2.3.1\r\n";
+    const std::string running = std::string(inc::kMonitorRunningLine) + "\r\n";
+    std::string session;
+    const bool cleanJudged = inc::PreviousSession(banner + running + inc::kCleanShutdownLine + "\r\n" + banner, "", session)
+                             && inc::SessionEndedCleanly(session);
+    const fs::path clean = make("prev-clean");
+    const bool cleanGone = inc::SettleTrapPrev(clean.string(), cleanJudged, false) && !fs::exists(clean);
+    const bool crashJudged = inc::PreviousSession(banner + running + "last line\r\n" + banner, "", session)
+                             && !inc::SessionEndedCleanly(session);
+    const fs::path folded = make("prev-folded");
+    const bool foldedGone = inc::SettleTrapPrev(folded.string(), !crashJudged, true) && !fs::exists(folded);
+    const fs::path kept = make("prev-kept");
+    const bool keptStays = !inc::SettleTrapPrev(kept.string(), !crashJudged, false) && fs::exists(kept / "trap.txt");
+    Report("trap-prev-settled", cleanJudged && cleanGone && crashJudged && foldedGone && keptStays,
+           std::string("clean ") + (cleanGone ? "deleted" : "kept") + ", folded " + (foldedGone ? "deleted" : "kept")
+           + ", crash not folded " + (keptStays ? "kept" : "deleted"));
+}
+
+// #223, Amendment 3: the crash trap stages a dump at first chance, beside the
+// record line it was taken for and the two log copies. The next load keeps
+// the staging only for a crash, and the dump only when it was taken for the
+// exception the fold picked; every other path deletes it.
+namespace staging {
+
+constexpr char kCrash[] = "exception 0xC0000005 at BloodPactPlugin.dll+0x1BC12A thread=game tid=1188 in-hook=none "
+                          "in-mod=ipc game-original=no cpp=none route=first-chance";
+constexpr char kCrashUnhandled[] = "exception 0xC0000005 at BloodPactPlugin.dll+0x1BC12A thread=game tid=1188 in-hook=none "
+                                   "in-mod=ipc game-original=no cpp=none route=unhandled";
+constexpr char kEarlier[] = "exception 0xC0000005 at Hero_Siege.exe+0x2A0 thread=other tid=2048 in-hook=none "
+                            "in-mod=none game-original=no cpp=none route=first-chance";
+constexpr char kYytk[] = "YYToolkit 4.0.1 banner\r\nthe crashed session's last YYToolkit line\r\n";
+constexpr char kAurie[] = "[ArProcessAttach] Init done\r\nthe crashed session's last aurie line\r\n";
+const std::string kDumpBytes = std::string("MDMP") + std::string(60, '\x01');
+
+// A previous session's crashtrap.prev\: its record, and the staging when
+// `dumpLine` is given ("" for a dump with no line beside it).
+std::filesystem::path Make(const std::filesystem::path& dir, const std::string& record, const char* dumpLine)
+{
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir, ec);
+    auto put = [&](const char* name, const std::string& text) {
+        std::ofstream f(dir / name, std::ios::binary | std::ios::trunc);
+        f << text;
+    };
+    put("trap.txt", "session 2026-10-19T09:00:00Z pid=4242\n" + record);
+    if (dumpLine) {
+        put(inc::kTrapDumpFile, kDumpBytes);
+        if (*dumpLine) put(inc::kTrapDumpLineFile, std::string(dumpLine) + "\n");
+    }
+    put(inc::kTrapLogFiles[0], kYytk);
+    put(inc::kTrapLogFiles[1], kAurie);
+    return dir;
+}
+
+// The staging files still in a folder, by name.
+std::string Present(const std::filesystem::path& dir)
+{
+    std::string names;
+    const char* files[] = { inc::kTrapDumpFile, inc::kTrapDumpLineFile, inc::kTrapLogFiles[0], inc::kTrapLogFiles[1] };
+    for (const char* name : files)
+        if (std::filesystem::exists(dir / name)) names += std::string(names.empty() ? "" : ",") + name;
+    return names.empty() ? std::string("none") : names;
+}
+
+// What the crash bundle makes of a settled staging: the dump moved in, the
+// two tails from the copies, report.json. Returns the report's path.
+std::filesystem::path Bundle(const std::filesystem::path& prev, const std::filesystem::path& bundle,
+                             const inc::TrapRecord& record, bool& dumpIn, bool& tails)
+{
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    fs::remove_all(bundle, ec);
+    fs::create_directories(bundle, ec);
+    bool failed = false;
+    dumpIn = inc::TakeStagedDump(prev.string(), bundle.string(), failed) && !failed;
+    const std::string y = inc::TailLines(ReadAll(prev / inc::kTrapLogFiles[0]), inc::kTailLines);
+    const std::string a = inc::TailLines(ReadAll(prev / inc::kTrapLogFiles[1]), inc::kTailLines);
+    tails = y.find("the crashed session's last YYToolkit line") != std::string::npos
+            && a.find("the crashed session's last aurie line") != std::string::npos;
+    inc::ReportFacts crash;
+    crash.kind = inc::Kind::crash;
+    crash.utc = "2026-10-19T09:10:00Z";
+    crash.pluginVersion = "2.3.1";
+    crash.episode.kind = inc::Kind::crash;
+    crash.previousBanner = std::string(inc::kSessionBanner) + " v2.3.1";
+    crash.haveTrap = true;
+    crash.trap = record;
+    crash.dump = dumpIn;
+    const fs::path report = bundle / "report.json";
+    std::ofstream f(report, std::ios::binary | std::ios::trunc);
+    f << inc::ReportJson(crash);
+    return report;
+}
+
+} // namespace staging
+
+// Case c: a previous session that shut down cleanly folds nothing, and its
+// staging (a probe's, or a handled fault another module raised) is deleted
+// with the folder.
+void CleanExitDeletesStaging(const std::filesystem::path& work)
+{
+    namespace fs = std::filesystem;
+    const std::string banner = std::string(inc::kSessionBanner) + " v2.3.1\r\n";
+    const std::string running = std::string(inc::kMonitorRunningLine) + "\r\n";
+    std::string session;
+    const bool clean = inc::PreviousSession(banner + running + inc::kCleanShutdownLine + "\r\n" + banner, "", session)
+                       && inc::SessionEndedCleanly(session);
+    const fs::path dir = staging::Make(work / "staging-clean", std::string(staging::kCrash) + "\n", staging::kCrash);
+    const std::string before = staging::Present(dir);
+    const bool gone = clean && inc::SettleTrapPrev(dir.string(), true, false) && !fs::exists(dir);
+    Report("clean-exit-deletes-staging", clean && gone,
+           std::string(clean ? "clean" : "not judged clean") + " | before " + before + " | after "
+           + (fs::exists(dir) ? staging::Present(dir) : std::string("folder gone")));
+}
+
+// Case d: a crash whose staged dump was taken for the record the fold picks
+// keeps it: the bundle carries crash.dmp and both tails, and trap.dump is
+// true. The same holds when the unhandled route ran after the staging and
+// took no second dump: the fold picks its line, the same exception.
+void CrashKeepsStaging(const std::filesystem::path& work)
+{
+    namespace fs = std::filesystem;
+    const fs::path dir = staging::Make(work / "staging-keep", std::string(staging::kCrash) + "\n", staging::kCrash);
+    inc::TrapRecord record;
+    const bool read = inc::ParseTrapRecord(ReadAll(dir / "trap.txt"), record);
+    const inc::StagedDump verdict = inc::SettleStagedDump(dir.string(), read, record);
+    bool dumpIn = false, tails = false;
+    const fs::path report = staging::Bundle(dir, work / "bundle-keep", record, dumpIn, tails);
+    const bool dumpBytes = ReadAll(work / "bundle-keep" / "crash.dmp") == staging::kDumpBytes;
+    const bool settled = inc::SettleTrapPrev(dir.string(), false, true) && !fs::exists(dir);
+
+    const fs::path both = staging::Make(work / "staging-keep-unhandled",
+                                        std::string(staging::kCrash) + "\n" + staging::kCrashUnhandled + "\n", staging::kCrash);
+    inc::TrapRecord crash;
+    const bool bothRead = inc::ParseTrapRecord(ReadAll(both / "trap.txt"), crash);
+    const inc::StagedDump unhandled = inc::SettleStagedDump(both.string(), bothRead, crash);
+    const bool ok = read && verdict == inc::StagedDump::kept && dumpIn && dumpBytes && tails && settled && bothRead
+                    && crash.route == "unhandled" && unhandled == inc::StagedDump::kept
+                    && fs::exists(both / inc::kTrapDumpFile);
+    Report("crash-keeps-staging", ok,
+           report.string() + ";" + inc::StagedDumpName(verdict) + " | bundle " + (dumpIn && dumpBytes ? "has crash.dmp" : "no crash.dmp")
+           + ", tails " + (tails ? "from the copies" : "missing") + " | prev " + (settled ? "deleted once folded" : "kept")
+           + " | unhandled line over a staged first-chance one: " + inc::StagedDumpName(unhandled));
+}
+
+// The staged dump was taken for an earlier exception than the one the fold
+// picks: it is deleted, trap.dump is false, and out.txt gets one line saying
+// so. A dump with no record line beside it cannot be matched and goes the same
+// way; no dump at all is no verdict. A crash that writes no bundle (the crash
+// bundle limit, a bundle that could not be written) deletes the staging and
+// keeps the record for the next rotation.
+void CrashStagedDumpMismatch(const std::filesystem::path& work)
+{
+    namespace fs = std::filesystem;
+    const fs::path dir = staging::Make(work / "staging-mismatch",
+                                       std::string(staging::kEarlier) + "\n" + staging::kCrash + "\n", staging::kEarlier);
+    inc::TrapRecord record;
+    const bool read = inc::ParseTrapRecord(ReadAll(dir / "trap.txt"), record);
+    const inc::StagedDump verdict = inc::SettleStagedDump(dir.string(), read, record);
+    const std::string left = staging::Present(dir);
+    bool dumpIn = false, tails = false;
+    const fs::path report = staging::Bundle(dir, work / "bundle-mismatch", record, dumpIn, tails);
+    const std::string line = inc::StagedDumpMismatchLine();
+
+    const fs::path bare = staging::Make(work / "staging-bare", std::string(staging::kCrash) + "\n", "");
+    const inc::StagedDump unmatched = inc::SettleStagedDump(bare.string(), true, record);
+    const fs::path none = staging::Make(work / "staging-none", std::string(staging::kCrash) + "\n", nullptr);
+    const inc::StagedDump nothing = inc::SettleStagedDump(none.string(), true, record);
+
+    const fs::path refused = staging::Make(work / "staging-refused", std::string(staging::kCrash) + "\n", staging::kCrash);
+    const bool kept = !inc::SettleTrapPrev(refused.string(), false, false);
+    const bool ok = read && record.offset == "0x1BC12A" && verdict == inc::StagedDump::mismatch && !dumpIn && tails
+                    && left == std::string(inc::kTrapLogFiles[0]) + "," + inc::kTrapLogFiles[1]
+                    && unmatched == inc::StagedDump::mismatch && !fs::exists(bare / inc::kTrapDumpFile)
+                    && nothing == inc::StagedDump::none && kept && staging::Present(refused) == "none"
+                    && fs::exists(refused / "trap.txt");
+    Report("crash-staged-dump-mismatch", ok,
+           report.string() + ";" + line + ";" + inc::StagedDumpName(verdict) + " | left " + left + " | bundle "
+           + (dumpIn ? "has crash.dmp" : "no crash.dmp") + " | no line beside it: " + inc::StagedDumpName(unmatched)
+           + " | no dump: " + inc::StagedDumpName(nothing) + " | no bundle written: staging "
+           + staging::Present(refused) + ", record " + (fs::exists(refused / "trap.txt") ? "kept" : "gone"));
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -1311,6 +1562,11 @@ int main(int argc, char** argv)
     BundleRetention();
     ExitJsonFixture(argv[3]);
     ReportJson(work / "json");
+    TrapFold(argv[3], work / "json");
+    TrapPrevSettled(work / "trap");
+    CleanExitDeletesStaging(work / "trap");
+    CrashKeepsStaging(work / "trap");
+    CrashStagedDumpMismatch(work / "trap");
     std::printf("RESULT %s\n", g_Failures ? "FAIL" : "OK");
     return g_Failures ? 1 : 0;
 }

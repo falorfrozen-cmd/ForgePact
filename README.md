@@ -33,7 +33,7 @@ none of these diagnostic hooks or the recorder. See
 | **Special Content** | Rift Portals, Battlefields, Cursed Orbs, Summon Portals, Chaos Pillars, Chaos Tower — up to 100× per zone |
 | **Drop Rates** | Gold, Dungeon Keys, Angelic Keys, Chaos + Crystal Keys, Bifröst Key, Relics and Prime Evil Parts (Key of Terror, bosses only) — up to 100×. Gold multiplies the amount per drop: each gold drop is still one coin, worth that many times as much; the other drops multiply as before |
 | **Mining Ore Multiplier** | Loot → Mining Ore Multiplier, 1–10×. Scales the stack quantity of ore awarded by mining; x1 is normal. A worn Miner's Helmet replaces it with 4× instead of stacking |
-| **Mining Ore Extra Rolls** | Loot → Mining Ore Extra Rolls, 1–10, off at 1 (the default). Every mining node you finish pays out that many times: that many sets of the node's ore, and that many chances at the dig's rare bonus finds, which still only come if your character has the find stats for them. Character and guild XP still count once per node (measured); mining XP, quest progress and the floating XP text are meant to as well, but that is not confirmed, so until a dig shows otherwise they may come once per roll. Works together with the Mining Ore Multiplier (each set is multiplied); a worn Miner's Helmet is built to give each set its 4×, but that combination has not been measured in play. Checked in play on 2026-10-02 through the panel: 3 rolls dropped three stacks of a Copper Vein's ore, 1 roll one stack ([details](docs/mining-ore-research.md)) |
+| **Mining Ore Extra Rolls** | Loot → Mining Ore Extra Rolls, 1–10, off at 1 (the default). Every mining node you finish pays out that many times: that many sets of the node's ore, and that many chances at the dig's rare bonus finds, which still only come if your character has the find stats for them. Character, guild and mining XP count once per node (measured; mining XP checked in play on 2026-10-19: the extra rolls repeat the ore, not the mining XP); quest progress is meant to as well, but that is not confirmed, so until a dig shows otherwise it may come once per roll. The floating XP texts of the extra rolls are removed as each roll ends, so one XP text shows per node, carrying the dig's real mining XP (seen in play on 2026-10-19). If an extra roll ever fails, ForgePact stops rolling, leaves the node dug out, turns extra rolls off until you restart the game and writes one `miningrolls: an extra roll failed` line to `out.txt`, instead of passing the failure back to the game (the 2.3.0 crash, #222); the 2.3.1 fix was checked in a game session on 2026-10-19, digging with 3 rolls, with no crash. Works together with the Mining Ore Multiplier (each set is multiplied); a worn Miner's Helmet is built to give each set its 4×, but that combination has not been measured in play. Checked in play on 2026-10-02 through the panel: 3 rolls dropped three stacks of a Copper Vein's ore, 1 roll one stack ([details](docs/mining-ore-research.md)) |
 | **Miner's Helmet** | A signature helmet forged in the Item Editor. While worn: 4× ore from every mining node, and Vein Resonance - finishing a dig also digs the two nearest veins within 192 units that you could mine yourself (4× each, no chaining). Mods → Items shows whether it is worn ([details](#miners-helmet)) |
 | **Angelic / Unholy Drops (Experimental)** | ForgePact's own die per kill; on a hit it builds one of the game's real Angelic / Unholy uniques (never a signature item, see [Signature drops](#signature-drops)). x2 = 1 in 7,500 kills, each step adds a die, typable |
 | **Combat Modifiers** | Total Damage, Attack Speed, Faster Cast Rate, Skill Haste, All Skills, Defense, Life/Mana Replenish, physical and spell Critical Chance/Damage ([Skill Haste and All Skills](#skill-haste-and-all-skills)), and for your own skills Projectile Speed, Projectile Amount and Area of Effect, each off by default ([Skill sliders](#skill-sliders-projectile-speed-projectile-amount-and-area-of-effect)) |
@@ -66,7 +66,7 @@ none of these diagnostic hooks or the recorder. See
 | **Tracker** | The **Tracker tab**, HS Offline Tracker's offline features built into ForgePact (#185). One switch, **Session tracker**, off by default (plugin command `tracker 1` / `tracker 0`, `tracker stat`). While it is on, ForgePact's own plugin counts this session's gold, experience and kills, records Set, Satanic, Angelic, Heroic and Unholy items that drop on the ground, follows your Satanic zone, and files a run when the game closes. The tab shows the totals and rates, the zone, a journal of the drops, run history with run cards, alert settings, a shopping list and an item codex; a sound plays once per recorded drop, and a small always-on-top overlay window shows the counters beside a windowed or borderless game. Your HS Offline Tracker runs, settings, shopping list and sounds are copied once, read-only. It only reads the game. Offline only ([details](#tracker-hs-offline-tracker-built-in)) |
 | **Auto-apply** | Saved settings are re-sent every time the game starts |
 | **Frame profiler** | Plugin command `frameprof start [seconds]`: measures what the game spends its frames on - frame times, the heaviest events, scripts and built-ins, what ran during each slow frame, CPU per thread - and writes a report to `bp_ipc\perf`; `tools/frameprof_report.py` turns it into a page. Changes nothing in the game; costs nothing until started ([details](#frame-profiler-where-the-games-frame-time-goes)) |
-| **Incident reports** | Always on, nothing to switch on. When the game crashes, freezes or drops frames badly, ForgePact saves a report folder under `bp_ipc\reports\` without a notification of any kind (no pop-up, no message box, and no switch for one): which ForgePact hook or mod was running or busy, how much frame time each mod took (only ForgePact's own code, never the game work its hook wraps), plus your settings and system. Nothing is uploaded. Setup tab → **Incident reports** lists every report ([details](#incident-reports-crash-freeze-and-fps-drop-reports)) |
+| **Incident reports** | Always on, nothing to switch on. When the game crashes, freezes or drops frames badly, ForgePact saves a report folder under `bp_ipc\reports\` without a notification of any kind (no pop-up, no message box, and no switch for one): which ForgePact hook or mod was running or busy, for a crash what crashed and where (with a small crash dump), how much frame time each mod took (only ForgePact's own code, never the game work its hook wraps), plus your settings and system. Nothing is uploaded. Setup tab → **Incident reports** lists every report ([details](#incident-reports-crash-freeze-and-fps-drop-reports)) |
 
 ForgePact does not write permanent stat changes into your save or modify the game exe
 for individual settings. Features are resolved by script/object name and applied in
@@ -102,12 +102,14 @@ rolls make the game run its own dig completion again for the node you just finis
 so each extra roll pays the node's ore stacks again and rolls the dig's stat-gated
 bonus finds again. Nothing is forced: a bonus find still needs your character's own
 find stats, and an extra roll that pays nothing ends the loop for that node.
-Character and guild XP happen once per node (measured); mining XP, quest progress and
-the floating XP text are meant to as well, but a test dig never showed the game paying
-them through the calls the plugin holds back, so that is not confirmed: until a dig
-shows otherwise they may come once per roll, ten times at 10 rolls. (The 2026-10-02
-check could not read mining XP, because its character's mining level was at the
-cap.) The two sliders are independent and multiply: at 3 rolls with the multiplier at 5, a
+Character and guild XP happen once per node (measured), and so does mining XP:
+checked in play on 2026-10-19, a dig at 1 roll gained 7 mining XP and a dig at 3
+rolls 6, each shown as one XP text, so the extra rolls repeat the ore, not the mining
+XP. Quest progress is meant to come once per node as well, but a test dig never showed
+the game paying it through the calls the plugin holds back, so that is not confirmed:
+until a dig shows otherwise it may come once per roll, ten times at 10 rolls. (The
+2026-10-02 check could not read mining XP, because its character's mining XP was at
+the cap.) The two sliders are independent and multiply: at 3 rolls with the multiplier at 5, a
 node pays three sets of stacks, each 5×; a worn Miner's Helmet is built to give each set its 4×
 in place of the multiplier, but that combination has not been measured in play. At 1 it installs nothing, and the multiplier on its own
 keeps working exactly as before. If the plugin cannot attach what the extra rolls
@@ -117,6 +119,22 @@ set through the panel: at 3 rolls (multiplier at 1) a Copper Vein dropped
 three stacks of ore, 14 ore in all, and back at 1 the next Copper Vein dropped one
 stack of 3; how much each stack holds still varies from dig to dig. See
 [research and test scope](docs/mining-ore-research.md).
+
+In 2.3.0, with extra rolls above 1, a dig that gives mining XP could crash the
+game (#222): ForgePact held back the floating XP text in the extra rolls, but the
+game goes on to use that text, and the error that followed was passed back to the
+game. Since 2.3.1 the extra rolls make their floating XP text as the game expects
+and ForgePact removes those extra texts as each roll ends, so the node shows one, as
+without the mod, and that one text is the dig's real mining XP. If an extra roll fails anyway, ForgePact stops the
+error there instead of passing it back to the game: it stops rolling, leaves the
+node dug out (it keeps what the rolls before paid), turns extra rolls off until you
+restart the game, and writes one line to `out.txt` that starts `miningrolls: an
+extra roll failed` and names the error's type. Setting the slider again that
+session then answers `miningrolls: unavailable - ...`; the multiplier keeps
+working. The fix was checked in a game session on 2026-10-19: digs at 3 rolls on a
+character still gaining mining XP finished without a crash, the extra rolls' texts
+were removed and one XP text showed per node. No extra roll failed in that session,
+so the failure path is tested outside the game only ([details](docs/mining-ore-research.md)).
 
 Dungeon Keys, Angelic Keys and Relics are also gated a second time: outside their home
 zone the game rolls their drop type at zero chance, so the item can never come up no
@@ -1366,7 +1384,15 @@ What counts as an incident:
   `out.txt` at the moment the game asks Windows to exit, and again, as a
   fallback, when the plugin is unloaded; a crash or a killed process leaves
   no such line, and the next time the plugin loads it writes the crash report.
-  A crash report cannot say which hook or mod was running: it says `unknown`.
+  Since 2.3.1 the crash report also says what crashed: as the game dies,
+  ForgePact writes down the error code Windows raised, the file it happened in
+  (the game, ForgePact's plugin or another DLL) and where in that file,
+  whether it was the game's main thread, and which ForgePact hook and mod were
+  running at that moment (or `none`). The next load folds that into the report
+  (`report.json`'s `trap` entry and its in-hook and in-mod fields), and the
+  `CRASH ...` line names the file even without the panel. A game that was
+  killed, or that ended itself at once without raising an error, leaves no
+  such record: its report says `unknown` for the hook and mod, as before.
   While the panel is open it also reads the game's exit code when the game
   closes, and what Windows recorded about the crash in its Application log
   (the faulting module and offset), and that goes into the same report. If
@@ -1384,8 +1410,26 @@ table for the last minute and for the episode), the last 500 lines of
 `out.txt` and of `out.prev.txt`, your `forgepact.json` settings and the
 mods' state, `mods.txt` (every file in `mods\aurie\` and `AurieCore.dll` with
 its size, version and SHA-256) and `system.txt` (Windows build, CPU, graphics
-card and driver, memory). Your user folder in every path is replaced with
-`%USERPROFILE%`. The ten newest folders are kept. A line also lands in
+card and driver, memory). Every report also holds `yytoolkit-tail.txt` and
+`aurie-tail.txt`, the last 500 lines of the game's `bin\YYToolkit.log` and
+`bin\aurie.log`; for a crash they are copies taken at the crash, because
+both logs start over at every launch (when no copy could be taken, the file
+says so in one line). A crash report adds `trap.txt`, ForgePact's record of
+what crashed, and `crash.dmp`, a small crash dump (Windows' `MiniDumpNormal`
+type): the stack of every thread of
+the game and the list of loaded files, which is what a developer needs to see
+the function that crashed, and none of the game's other memory. The dump and
+the two log copies are taken the moment ForgePact first sees a crash-type
+error (an access violation, say), before anything else gets to handle it, and
+are staged in `bp_ipc\crashtrap\`, at most once a minute and four times a
+session. The next start keeps them in the report only if the game then really
+crashed from that error, and deletes them otherwise, so an error the game
+survived leaves nothing behind. Errors inside ForgePact's own guarded memory
+reads never take one. `incident stat` says whether the dump is ready and how
+many were taken this session. Your user folder in every
+text file is replaced with `%USERPROFILE%`; `crash.dmp` is binary and is left
+as it is, so the paths of the loaded files in it are the real ones. The ten
+newest folders are kept, dumps included. A line also lands in
 `out.txt`, for example `PERF hitch 412 ms frame | baseline 16.7 | room ... |
 top mapreveal 0.3/frame`, `FREEZE 4 s without a frame | in-hook none | in-mod
 none`, `CRASH

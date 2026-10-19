@@ -1,0 +1,52 @@
+# ForgePact 2.3.1
+
+A quick fix on 2.3.0: Mining Ore Extra Rolls no longer crashes the game, and a
+crash report now says what crashed.
+
+## Fixed
+
+- **Mining Ore Extra Rolls crashed the game (#222).** In 2.3.0, with Loot →
+  Mining Ore Extra Rolls above 1, finishing a mining node on a dig that gives
+  mining XP could crash the game. ForgePact held back the floating XP text
+  during the extra rolls, but the game goes on to use that text, and the error
+  that followed was passed back to the game. Now the extra rolls make their
+  floating XP text as the game expects, and ForgePact removes those extra texts
+  as each roll ends, so a node shows one XP text, as without the mod, and it
+  carries the dig's real mining XP. Checked in a game session: digs with 3 extra
+  rolls on a character still gaining mining XP no longer crash the game.
+  If an extra roll ever fails anyway, ForgePact no longer passes the error back
+  to the game: it stops rolling, leaves the node dug out, turns extra rolls off
+  until you restart the game (the ore multiplier keeps working) and writes one
+  `miningrolls: an extra roll failed` line to `out.txt`.
+
+## Changed
+
+- **A crash report now says what crashed (#223).** Until now a crash report
+  could only say that the game had not closed cleanly: the hook and mod read
+  `unknown`, and when Windows kept no record of the crash, nothing named what
+  crashed either. ForgePact now writes down, the moment the error happens, the
+  error code, the file it happened in (the game, ForgePact's plugin or another
+  DLL) and where in that file, whether it was the game's main thread, and
+  which ForgePact hook and mod were running. At the same moment it saves the
+  end of the game's
+  `YYToolkit.log` and `aurie.log` and a small crash dump, `crash.dmp`, that
+  holds the stack of every thread and the list of loaded files but none of the
+  game's other memory. Because they are taken at the error itself, a crash
+  report gets them even when the game dies without Windows' own last-chance
+  crash handling ever running. The next start folds all of it into the crash report; when the game
+  survived the error and closed normally, the saved copies are deleted
+  instead. Every report, crash, freeze
+  or FPS drop, now carries the end of those two logs too. As before, a report
+  is saved without any notification and nothing is uploaded. A game that was
+  killed, or that ended itself without raising an error, still leaves a report
+  without that record.
+
+## How to update
+
+Download and extract the complete release, then reopen ForgePact and press
+**Install Mod Plugin** once. Only the plugin changed (the extra rolls and the
+crash reports); the panel works as in 2.3.0. Your existing settings are
+retained. Start the game after installing; a game that was already open keeps
+the old plugin until it is restarted.
+
+Use ForgePact only with an offline / EAC-disabled copy of Hero Siege.
