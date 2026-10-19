@@ -56,12 +56,14 @@ jobs:
             jq -r '.release.tag_name' "$GITHUB_EVENT_PATH" > tag.txt
             jq -r '.release.name // ""' "$GITHUB_EVENT_PATH" > name.txt
             jq -r '.release.html_url' "$GITHUB_EVENT_PATH" > url.txt
+            jq -r '.release.published_at // ""' "$GITHUB_EVENT_PATH" > date.txt
             jq -r '.release.body // ""' "$GITHUB_EVENT_PATH" > notes.md
           else
             gh api "repos/$REPO/releases/tags/$INPUT_TAG" > release.json
             jq -r '.tag_name' release.json > tag.txt
             jq -r '.name // ""' release.json > name.txt
             jq -r '.html_url' release.json > url.txt
+            jq -r '.published_at // ""' release.json > date.txt
             jq -r '.body // ""' release.json > notes.md
           fi
           echo "release $(cat tag.txt): $(wc -c < notes.md) characters of notes"
@@ -74,7 +76,7 @@ jobs:
           EVERYONE: ${{ inputs.everyone }}
         run: |
           set -euo pipefail
-          args=(--tag "$(cat tag.txt)" --name "$(cat name.txt)" --url "$(cat url.txt)" --notes-file notes.md)
+          args=(--tag "$(cat tag.txt)" --name "$(cat name.txt)" --url "$(cat url.txt)" --published-at "$(cat date.txt)" --notes-file notes.md)
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             [ "$DRY_RUN" = "true" ] && args+=(--dry-run)
             [ "$EVERYONE" = "true" ] || args+=(--no-everyone)

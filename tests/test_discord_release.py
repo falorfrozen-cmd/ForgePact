@@ -34,9 +34,11 @@ class Splitting(unittest.TestCase):
     def test_short_notes_are_one_message_with_ping_and_link(self):
         msgs = post.build_messages("ForgePact 9.9.9", "https://x/r", "# ForgePact 9.9.9\n\nHi.")
         self.assertEqual(len(msgs), 1)
-        self.assertTrue(msgs[0]["content"].startswith("@everyone **ForgePact 9.9.9 is out!**"))
-        self.assertIn("# ForgePact 9.9.9\n\nHi.", msgs[0]["content"])
-        self.assertTrue(msgs[0]["content"].endswith("Download: <https://x/r>"))
+        self.assertTrue(msgs[0]["content"].startswith(
+            "@everyone\n# \U0001F4E2 ForgePact 9.9.9 — Official Patch Notes\n-# Official release\n\nHi."))
+        # The notes' own "# ForgePact 9.9.9" title gives way to the header.
+        self.assertNotIn("\n# ForgePact 9.9.9\n", msgs[0]["content"])
+        self.assertTrue(msgs[0]["content"].endswith("**Download ForgePact 9.9.9:** <https://x/r>"))
         self.assertEqual(msgs[0]["allowed_mentions"], {"parse": ["everyone"]})
 
     def test_long_notes_split_under_the_limit_and_only_the_first_pings(self):
@@ -48,7 +50,10 @@ class Splitting(unittest.TestCase):
                          [["everyone"]] + [[]] * (len(msgs) - 1))
         self.assertIn("@everyone", msgs[0]["content"])
         self.assertNotIn("@everyone", "".join(m["content"] for m in msgs[1:]))
-        self.assertTrue(msgs[-1]["content"].endswith("Download: <https://x/r>"))
+        self.assertTrue(msgs[-1]["content"].endswith("**Download ForgePact 2.3.1:** <https://x/r>"))
+        for i, m in enumerate(msgs[1:], 2):
+            self.assertTrue(m["content"].startswith(
+                f"-# ForgePact 2.3.1 patch notes · part {i} of {len(msgs)}\n\n"))
 
     def test_no_text_is_lost(self):
         pieces = post.split_notes(NOTES_2_3_1_LIKE)
@@ -129,6 +134,37 @@ class SplittingBetweenItems(unittest.TestCase):
         self.assertGreater(len(pieces), 1)
         self.assertTrue(all(piece.endswith(".") for piece in pieces[:-1]))
 
+    def test_a_heading_before_a_long_paragraph_opens_its_first_piece(self):
+        # Review of #226: the heading was flushed alone, or left at a piece's end.
+        long = "Sentence here is long. " * 120
+        for notes in ("intro\n\n## Fixed\n\n" + long, "## Fixed\n\n" + long):
+            pieces = post.split_notes(notes)
+            for piece in pieces:
+                self.assertLessEqual(len(piece), post.CHUNK)
+                self.assertFalse(piece.rstrip().split("\n")[-1].startswith("#"), pieces)
+            self.assertIn("## Fixed\n\nSentence here is long.", pieces[-2] if len(pieces) > 2 else pieces[0])
+
+    def test_stacked_headings_all_move_on(self):
+        # Review of #226: "## A" then "### B" right at a piece boundary.
+        pieces = post.split_notes("- " + "x " * 890 + "\n\n## A\n\n### B\n\n- item")
+        self.assertEqual(pieces[-1], "## A\n\n### B\n\n- item")
+        self.assertNotIn("## A", pieces[0])
+
+
+class OfficialFormat(unittest.TestCase):
+    def test_release_date(self):
+        self.assertEqual(post.release_date("2026-10-19T17:00:59Z"), "October 19, 2026")
+        self.assertEqual(post.release_date(""), "")
+
+    def test_the_date_line(self):
+        msgs = post.build_messages("ForgePact 1", "https://x/r", "notes", date="October 19, 2026")
+        self.assertIn("\n-# Released October 19, 2026\n", msgs[0]["content"])
+
+    def test_only_a_leading_title_is_dropped(self):
+        self.assertEqual(post.drop_title("\n# ForgePact 1\n\nText\n# Other", "ForgePact 1"),
+                         "\n\nText\n# Other")
+        self.assertEqual(post.drop_title("## Fixed\n- a", "x"), "## Fixed\n- a")
+
     def test_no_everyone(self):
         msgs = post.build_messages("ForgePact 1", "https://x/r", NOTES_2_3_1_LIKE, everyone=False)
         self.assertFalse(any("@everyone" in m["content"] for m in msgs))
@@ -155,7 +191,7 @@ class Running(unittest.TestCase):
                               self.notes_file("Notes"), "--dry-run"])
         self.assertEqual(code, 0)
         sent.assert_not_called()
-        self.assertIn("@everyone **ForgePact 1.0.0 is out!**", out.getvalue())
+        self.assertIn("@everyone\n# \U0001F4E2 ForgePact 1.0.0 — Official Patch Notes", out.getvalue())
         self.assertNotIn("discord.test", out.getvalue())
 
     def test_posts_every_message_in_order(self):
