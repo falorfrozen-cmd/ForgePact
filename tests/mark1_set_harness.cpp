@@ -442,7 +442,7 @@ int main()
             " gate-calls=0 gate-other=0 threw=0"
             " | jump granted=0 backed-off=0 refused-landing=0 refused-gate=0 refused-cursor=0 max=175(start)"
             " refused-unreadable=0 jumps=0 scaled=0 clamped=0 answered=0 excluded=0 rejected=0/0/0/0 unread=0/0/0/0/0/0"
-            " | icons=0/0 art=off ground=0 ground-route=none | speed=unavailable penalty=unavailable";
+            " | icons=0/0 art=off ground=0 ground-route=not-installed | speed=unavailable penalty=unavailable";
         check("stat/fresh_line_exact", fresh == expected, fresh);
 
         bool ok = true;
@@ -632,15 +632,29 @@ int main()
         check("art_rule/armed_stat_reads_art_armed", field(StatLine(sa), "art") == "armed", StatLine(sa));
 
         // Armed, a write needs the bag icon and its ground copy both loaded, and
-        // a shared detour not known to be other than both routes.
-        ok = ArtWritesIcon(true, true, true, "none") && ArtWritesIcon(true, true, true, "both")
+        // a shared detour not yet installed or installed on both routes. A
+        // refused install (`none`) refuses the write.
+        ok = ArtWritesIcon(true, true, true, "not-installed") && !ArtWritesIcon(true, true, true, "none")
+            && ArtWritesIcon(true, true, true, "both")
             && !ArtWritesIcon(true, true, true, "table-only") && !ArtWritesIcon(true, true, true, "")
             && !ArtWritesIcon(true, true, true, "other")
             && !ArtWritesIcon(true, false, true, "both") && !ArtWritesIcon(true, true, false, "both")
             && !ArtWritesIcon(true, false, false, "both") && !ArtWritesIcon(false, true, true, "both");
         check("art_rule/a_write_needs_both_copies_and_no_known_other_route", ok);
-        check("art_rule/route_names", GroundRouteAllowsArt("none") && GroundRouteAllowsArt("both")
+        check("art_rule/route_names", GroundRouteAllowsArt("not-installed") && !GroundRouteAllowsArt("none")
+              && GroundRouteAllowsArt("both")
               && !GroundRouteAllowsArt("table-only") && !GroundRouteAllowsArt("BOTH"));
+
+        // RouteName() reads `none` both before the install attempt and after a
+        // refused one; GroundRouteName separates the two, and only the refused
+        // install fails closed. A fresh stat line names the not-yet-installed state.
+        StatFields sd;
+        ok = GroundRouteName(false, "none") == "not-installed" && GroundRouteName(true, "none") == "none"
+            && GroundRouteName(true, "both") == "both"
+            && ArtWritesIcon(true, true, true, GroundRouteName(false, "none"))
+            && !ArtWritesIcon(true, true, true, GroundRouteName(true, "none"))
+            && field(StatLine(sd), "ground-route") == "not-installed";
+        check("art_rule/refused_install_fails_closed", ok, StatLine(sd));
 
         // The ground install: armed, an icon embedded, not tried, setup done and
         // a character resolved; never at character select. The switch is not a
