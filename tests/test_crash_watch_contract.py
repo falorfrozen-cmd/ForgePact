@@ -204,8 +204,10 @@ class TestCrashWatchContract(unittest.TestCase):
             self.trap.replace("return EXCEPTION_CONTINUE_SEARCH;\n}", "return EXCEPTION_EXECUTE_HANDLER;\n}")))
         self.assertFalse(returns_only_continue_search(
             self.trap + "\nreturn EXCEPTION_CONTINUE_EXECUTION;"))
-        # First-registered, installed at `on`, removed at `off`.
-        self.assertEqual(self.code.count("AddVectoredExceptionHandler("), 1)
+        # First-registered, installed at `on`, removed at `off`: once in the
+        # instrument's own block. (The player build's crash trap, #223,
+        # registers one of its own in CrashTrap.hpp; this counts crashwatch's.)
+        self.assertEqual(self.region.count("AddVectoredExceptionHandler("), 1)
         on = self.command[self.command.index('verb == "on"'):self.command.index('verb == "off"')]
         off = self.command[self.command.index('verb == "off"'):self.command.index('verb == "crash"')]
         self.assertIn("AddVectoredExceptionHandler(1, CrashWatchTrap)", on)

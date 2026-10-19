@@ -1267,6 +1267,90 @@ void ReportJson(const std::filesystem::path& work)
     Report("report-json", fields, paths);
 }
 
+// #223: the crash trap's record (tests/fixtures/incident/trap.txt, in the
+// format CrashTrap.hpp writes) folds into report.json's `trap` and the crash's
+// tags. The fixture holds two first-chance lines around the unhandled one:
+// the unhandled line is the one folded. A record with no unhandled line folds
+// its last line; one with no exception line folds nothing. The crash line's
+// module falls back to the record's when exit.json has none.
+void TrapFold(const std::filesystem::path& fixtures, const std::filesystem::path& work)
+{
+    const std::string text = ReadAll(fixtures / "trap.txt");
+    inc::TrapRecord r;
+    const bool read = inc::ParseTrapRecord(text, r);
+    const bool picked = read && r.route == "unhandled" && r.exceptionCode == "0xC0000005" && r.module == "Hero_Siege.exe"
+                        && r.offset == "0x64D0F3" && r.thread == "game" && r.threadId == 1188
+                        && r.inHook == "fp_mining_node_step" && r.inMod == "miner" && r.gameOriginal && r.cppType.empty();
+    inc::TrapRecord last;
+    const bool lastRead = inc::ParseTrapRecord(
+        "session 2026-10-19T07:05:12Z pid=1\n"
+        "exception 0xC0000005 at a.dll+0x10 thread=other tid=7 in-hook=none in-mod=none game-original=no cpp=none route=first-chance\n"
+        "exception 0xE06D7363 at KERNELBASE.dll+0x2A0 thread=game tid=8 in-hook=fp_x in-mod=drops game-original=no cpp=.?AVbad_alloc@std@@ route=first-chance\r\n",
+        last);
+    const bool fallback = lastRead && last.module == "KERNELBASE.dll" && last.threadId == 8 && last.cppType == ".?AVbad_alloc@std@@";
+    inc::TrapRecord none;
+    const bool empty = !inc::ParseTrapRecord("session 2026-10-19T07:05:12Z pid=1\nnot a record line\n", none)
+                       && !inc::ParseTrapRecord("", none);
+    const std::string line = inc::CrashLine("0xC0000005", "", inc::TrapWhere(r));
+    const std::string panelWins = inc::CrashLine("0xC0000005", "KERNELBASE.dll", inc::TrapWhere(r));
+    const std::string neither = inc::CrashLine("", "", "");
+    const bool crashLine = line == "CRASH previous session ended without a clean shutdown | exit 0xC0000005 | module Hero_Siege.exe+0x64D0F3"
+                           && panelWins.size() > 14 && panelWins.compare(panelWins.size() - 14, 14, "KERNELBASE.dll") == 0
+                           && neither.find("| exit unknown | module unknown") != std::string::npos;
+    std::error_code ec;
+    std::filesystem::create_directories(work, ec);
+    inc::ReportFacts crash;
+    crash.kind = inc::Kind::crash;
+    crash.utc = "2026-10-19T07:20:00Z";
+    crash.pluginVersion = "2.3.1";
+    crash.episode.kind = inc::Kind::crash;
+    crash.previousBanner = std::string(inc::kSessionBanner) + " v2.3.1";
+    crash.exitJson = "{\"exit_code\": \"0xC0000005\", \"faulting_module\": null}";
+    crash.haveTrap = read;
+    crash.trap = r;
+    crash.dump = true;
+    const auto path = work / "crash-trap.json";
+    {
+        std::ofstream f(path, std::ios::binary | std::ios::trunc);
+        f << inc::ReportJson(crash);
+    }
+    Report("trap-fold", picked && fallback && empty && crashLine,
+           path.string() + ";" + line + ";" + (fallback ? "last line folded" : "last line missed")
+           + (empty ? ", no record folds nothing" : ", an empty record folded"));
+}
+
+// #223: what the next-load check does with bp_ipc\crashtrap.prev\: a clean
+// previous session's is deleted, a crash's once it is folded into a bundle;
+// one that was neither stays for the next rotation.
+void TrapPrevSettled(const std::filesystem::path& work)
+{
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    auto make = [&](const char* name) {
+        const fs::path dir = work / name;
+        fs::remove_all(dir, ec);
+        fs::create_directories(dir, ec);
+        std::ofstream(dir / "trap.txt") << "session\n";
+        return dir;
+    };
+    const std::string banner = std::string(inc::kSessionBanner) + " v2.3.1\r\n";
+    const std::string running = std::string(inc::kMonitorRunningLine) + "\r\n";
+    std::string session;
+    const bool cleanJudged = inc::PreviousSession(banner + running + inc::kCleanShutdownLine + "\r\n" + banner, "", session)
+                             && inc::SessionEndedCleanly(session);
+    const fs::path clean = make("prev-clean");
+    const bool cleanGone = inc::SettleTrapPrev(clean.string(), cleanJudged, false) && !fs::exists(clean);
+    const bool crashJudged = inc::PreviousSession(banner + running + "last line\r\n" + banner, "", session)
+                             && !inc::SessionEndedCleanly(session);
+    const fs::path folded = make("prev-folded");
+    const bool foldedGone = inc::SettleTrapPrev(folded.string(), !crashJudged, true) && !fs::exists(folded);
+    const fs::path kept = make("prev-kept");
+    const bool keptStays = !inc::SettleTrapPrev(kept.string(), !crashJudged, false) && fs::exists(kept / "trap.txt");
+    Report("trap-prev-settled", cleanJudged && cleanGone && crashJudged && foldedGone && keptStays,
+           std::string("clean ") + (cleanGone ? "deleted" : "kept") + ", folded " + (foldedGone ? "deleted" : "kept")
+           + ", crash not folded " + (keptStays ? "kept" : "deleted"));
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -1311,6 +1395,8 @@ int main(int argc, char** argv)
     BundleRetention();
     ExitJsonFixture(argv[3]);
     ReportJson(work / "json");
+    TrapFold(argv[3], work / "json");
+    TrapPrevSettled(work / "trap");
     std::printf("RESULT %s\n", g_Failures ? "FAIL" : "OK");
     return g_Failures ? 1 : 0;
 }

@@ -29,6 +29,8 @@
 // here on, DropManager.hpp's included; its adapter is beside the frame
 // profiler's, before RunCommand.
 #include <ForgePact/IncidentMonitor.hpp>
+// The crash trap (issue #223): installed with the monitor, read by RethrowLine.
+#include <ForgePact/CrashTrap.hpp>
 #include <windows.h>
 #include <algorithm>
 #include <fstream>
@@ -247,6 +249,23 @@ static void OutRaw(const std::string& s)
     std::lock_guard<std::mutex> lock(g_OutFileLock);
     std::ofstream f(OutPath(), std::ios::app);
     f << s << "\n";
+}
+
+// Issue #223: a `catch (...)` that hands an exception back into the game with
+// `throw;` says so first, in one out.txt line naming the mod and the C++ type
+// the crash trap last saw thrown on this thread. Each site passes its own
+// counter, so a site that rethrows every frame writes kRethrowLinesPerSite
+// lines a session and no more. test_crash_trap_contract.py finds every such
+// catch block and fails one without this call.
+static constexpr long kRethrowLinesPerSite = 5;
+
+static void RethrowLine(const char* mod, volatile long& written) noexcept
+{
+    if (InterlockedIncrement(&written) > kRethrowLinesPerSite) return;
+    try {
+        Out(std::string("rethrow: ") + mod + " type=" + ForgePact::CrashTrap::LastCppType()
+            + " - an exception from the game's own call, passed back to the game");
+    } catch (...) {}
 }
 
 // out.txt is append-only and nothing ever trimmed it - one player's copy
@@ -22777,6 +22796,8 @@ static void FlightGuardClose()
     g_FlightGuard.Close(place, shrinkAndPlace, report);
 }
 
+static volatile long g_FlightParseRethrowLines = 0;   // RethrowLine's count for the hook below
+
 static RValue& Hook_FlightParseItemToGrid(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
     if (!g_FlightGuardOn) return g_Orig_FlightParseItemToGrid(S, O, R, argc, A);
@@ -22787,6 +22808,7 @@ static RValue& Hook_FlightParseItemToGrid(CInstance* S, CInstance* O, RValue& R,
         return r;
     } catch (...) {
         FlightGuardClose();
+        RethrowLine("flightcharm", g_FlightParseRethrowLines);
         throw;
     }
 }
@@ -59931,6 +59953,7 @@ static void IncidentFrameTick()
     namespace inc = ForgePact::Incident;
     const int64_t now = inc::Qpc();
     inc::g_Accounting.OnFrame(now);
+    ForgePact::CrashTrap::NoteGameThread(GetCurrentThreadId());   // the trap's `thread=game` (#223)
     if (!g_Setup) return;   // start-up's long frames are the game loading
     static int64_t nextContext = 0;
     if (now < nextContext) return;
@@ -59960,6 +59983,7 @@ static void IncidentCommand(const std::string& rest)
     if (!sub.empty() && sub != "stat" && sub != "status") { Out("usage: incident stat|setup"); return; }
     for (const auto& line : ForgePact::Incident::StatLines(ForgePact::Incident::Monitor::Instance().Snapshot()))
         Out(line);
+    Out(ForgePact::CrashTrap::StatusLine());   // `incident: trap ...`: each route armed, the dump ready or why not (#223)
 }
 
 // ---- incident monitor thread: Win32 and files only ----
@@ -60144,16 +60168,43 @@ static std::string IncidentWriteBundle(ForgePact::Incident::ReportFacts facts, u
     if (ec) return {};
     const std::string profile = IncidentEnv("USERPROFILE");
     failedFiles = 0;
+    auto failed = [&] {
+        ++failedFiles;
+        ++inc::Monitor::Instance().writeErrors;
+    };
     auto put = [&](const char* file, const std::string& text) {
         std::ofstream f(pending / file, std::ios::binary | std::ios::trunc);
         f << inc::ScrubProfile(text, profile);
         f.flush();
-        if (!f) {
-            ++failedFiles;
-            ++inc::Monitor::Instance().writeErrors;
-        }
+        if (!f) failed();
     };
+    // #223: a crash's evidence is what the crash trap left in the previous
+    // session's folder. Its dump moves into the bundle (binary, not scrubbed),
+    // so the ten folders kept bound the dumps too.
+    namespace trap = ForgePact::CrashTrap;
+    const bool crash = facts.kind == inc::Kind::crash;
+    const stdfs::path trapPrev = stdfs::path(IPC_DIR) / trap::kPrevDirName;
+    if (crash && stdfs::exists(trapPrev / trap::kDumpFile, ec)) {
+        stdfs::rename(trapPrev / trap::kDumpFile, pending / "crash.dmp", ec);
+        if (ec) failed();
+        else facts.dump = true;
+    }
     put("report.json", inc::ReportJson(facts));
+    // The loader's two logs, every kind: a PERF or freeze report's from the
+    // live files beside the game, a crash's from the copies the trap made as
+    // the game died, since the live ones already hold this session.
+    const std::pair<const char*, const char*> logs[] = { { "yytoolkit-tail.txt", trap::kYytkLogFile },
+                                                         { "aurie-tail.txt", trap::kAurieLogFile } };
+    for (const auto& [file, logName] : logs) {
+        bool haveLog = false;
+        const std::string text = IncidentReadFile((crash ? trapPrev.string() : IncidentExeDir()) + "\\" + logName, &haveLog);
+        put(file, haveLog ? inc::TailLines(text, inc::kTailLines) : inc::LogMissingText(logName, crash));
+    }
+    if (crash) {
+        bool haveRecord = false;
+        const std::string record = IncidentReadFile((trapPrev / trap::kRecordFile).string(), &haveRecord);
+        if (haveRecord) put("trap.txt", record);
+    }
     put("out-tail.txt", inc::TailLines(IncidentReadFile(OutPath()), inc::kTailLines));
     put("out-prev-tail.txt", inc::TailLines(IncidentReadFile(IPC_DIR + "\\out.prev.txt"), inc::kTailLines));
     bool found = false;
@@ -60225,6 +60276,9 @@ static void IncidentCrashCheck()
     std::string exitCode, module;
     inc::JsonStringField(exitJson, "exit_code", exitCode);
     inc::JsonStringField(exitJson, "faulting_module", module);
+    // #223: what the crash trap recorded in the previous session, rotated to
+    // crashtrap.prev at this load.
+    const std::string trapPrev = IPC_DIR + "\\" + ForgePact::CrashTrap::kPrevDirName;
     if (inc::SessionEndedCleanly(session)) {
         // A crash during exit can come after our marker (an exit-time abort in
         // another DLL); the panel saw the exit code, so say so, once.
@@ -60232,22 +60286,29 @@ static void IncidentCrashCheck()
                               + (exitCode.empty() ? std::string("unknown") : exitCode) + " after it"
                         : std::string("incident: the previous session shut down cleanly"));
         if (haveExit) DeleteFileA(exitPath.c_str());
+        inc::SettleTrapPrev(trapPrev, true, false);
         return;
     }
-    OutRaw(inc::CrashLine(exitCode, module));
+    inc::TrapRecord record;
+    const bool haveRecord = inc::ParseTrapRecord(
+        IncidentReadFile(trapPrev + "\\" + ForgePact::CrashTrap::kRecordFile), record);
+    OutRaw(inc::CrashLine(exitCode, module, haveRecord ? inc::TrapWhere(record) : std::string()));
     auto& monitor = inc::Monitor::Instance();
     if (!monitor.bundles.Allow(inc::Kind::crash, 0.0)) return;
     inc::ReportFacts facts;
     facts.kind = inc::Kind::crash;
-    // Found at the next load, so where the frame thread was is unknowable:
-    // ReportJson writes "unknown" for a crash's inHook and inMod.
+    // Found at the next load: where the frame thread was comes from the crash
+    // trap's record, and ReportJson writes "unknown" for both tags without one.
     facts.episode.kind = inc::Kind::crash;
     facts.exitJson = exitJson;
     facts.previousBanner = inc::FirstLine(session);
+    facts.haveTrap = haveRecord;
+    facts.trap = record;
     unsigned failed = 0;
     const std::string dir = IncidentWriteBundle(std::move(facts), failed);
     if (haveExit) DeleteFileA(exitPath.c_str());
     if (dir.empty()) { OutRaw("incident: the report could not be written under bp_ipc\\reports"); return; }
+    inc::SettleTrapPrev(trapPrev, false, true);
     monitor.bundles.Wrote(inc::Kind::crash, 0.0);
     monitor.lastReport = dir;
     OutRaw(inc::ReportWrittenLine(dir, failed));
@@ -60289,6 +60350,7 @@ static void IncidentMonitorRun() noexcept
                + inc::Fixed(inc::kSustainedMs / 1000.0, 0) + " s, freeze " + inc::Fixed(inc::kFreezeMs / 1000.0, 0)
                + " s | reports in bp_ipc\\reports");
         const double startMs = inc::QpcToMs(inc::Qpc());
+        double nextModulesMs = startMs + ForgePact::CrashTrap::kModuleRefreshMs;
         bool crashChecked = false;
         HWND window = nullptr;
         std::vector<inc::FrameSample> fresh;
@@ -60329,6 +60391,12 @@ static void IncidentMonitorRun() noexcept
                     crashChecked = true;
                     IncidentCrashCheck();
                 }
+                // The crash trap names a module from a list it never makes
+                // itself: a module loaded since the last pass joins it here.
+                if (nowMs >= nextModulesMs) {
+                    nextModulesMs = nowMs + ForgePact::CrashTrap::kModuleRefreshMs;
+                    ForgePact::CrashTrap::RefreshModules();
+                }
                 inc::StatFacts stat;
                 stat.frames = monitor.detector.Frames();
                 stat.lost = monitor.lost;
@@ -60364,11 +60432,15 @@ static void IncidentMonitorRun() noexcept
 
 // ModuleInitialize, after the frame callback registered: arms the
 // clean-shutdown marker, puts its ExitProcess writer in (above the frame
-// profiler, IncidentInstallExitHook) and starts the monitor thread.
+// profiler, IncidentInstallExitHook), installs the crash trap (#223: its
+// install rotates bp_ipc\crashtrap\ to crashtrap.prev\ before anything is
+// written, so the monitor thread's crash check reads the previous session's)
+// and starts the monitor thread.
 static void IncidentMonitorStart()
 {
     ForgePact::Incident::g_ShutdownMarker.Arm(OutPath().c_str());
     IncidentInstallExitHook();
+    Out(ForgePact::CrashTrap::Install(IPC_DIR, IncidentExeDir()));
     if (!ForgePact::Incident::Monitor::Instance().Start(&IncidentMonitorRun))
         Out("incident: the monitor thread could not be started - no crash, freeze or FPS-drop reports this session");
 }

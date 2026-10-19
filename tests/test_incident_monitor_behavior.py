@@ -43,7 +43,12 @@ destructor, must write it) or TerminateProcess (it must not, as after a
 crash). The probe is built with /MD /LD, as the plugin is.
 
 tests/fixtures/incident/ holds the exit.json and panel.json the panel writes;
-the harness reads them through the plugin's own parsers.
+the harness reads them through the plugin's own parsers. It also holds a
+trap.txt in the crash trap's format (issue #223): the fold scenarios parse it,
+pick its unhandled line over the first-chance lines around it, and write a
+crash report whose `trap` object and tags come from that line; with no record
+`trap` is null and the tags stay "unknown". The previous session's trap folder
+is deleted after a clean session or a fold, and kept otherwise.
 
 Each scenario prints `<name> | <pass|fail> | <detail>`. Skips, with a message,
 only where there is no MSVC. Writes only under build/incident-monitor-behavior.
@@ -94,6 +99,8 @@ EXPECTED = (
     "bundle-retention",
     "exit-json-fixture",
     "report-json",
+    "trap-fold",
+    "trap-prev-settled",
 )
 
 
@@ -348,6 +355,36 @@ class IncidentMonitorBehaviorTests(unittest.TestCase):
         self.assertEqual(crash["exit"]["exit_code"], "0xC0000005")
         self.assertTrue(crash["exit"]["event_probe"]["queried"])
         self.assertTrue(crash["previousSession"].startswith("==== BloodPact plugin loaded ===="))
+        # No crash-trap record: no `trap` object, and the tags stay unknown.
+        self.assertIn("trap", crash)
+        self.assertIsNone(crash["trap"])
+        self.assertIsNone(perf["trap"])
+        self.assertIsNone(freeze["trap"])
+
+    # #223. Target: the crash trap's record folds into report.json. The
+    # unhandled line wins over the first-chance lines around it, the crash's
+    # tags come from it, and the crash line names its module when the panel
+    # had none. Baseline beside it: no record leaves `trap` null and the tags
+    # "unknown" (test_the_report_files_are_json).
+    def test_target_the_trap_record_folds_into_the_crash_report(self):
+        detail = self.scenario("trap-fold")
+        path, line, rest = detail.split(";", 2)
+        self.assertEqual(line, "CRASH previous session ended without a clean shutdown | exit 0xC0000005"
+                               " | module Hero_Siege.exe+0x64D0F3")
+        self.assertEqual(rest, "last line folded, no record folds nothing")
+        report = json.loads(Path(path).read_text(encoding="utf-8"))
+        self.assertEqual(report["schema"], "forgepact-incident/1")
+        self.assertEqual(report["trap"], {
+            "exceptionCode": "0xC0000005", "module": "Hero_Siege.exe", "offset": "0x64D0F3", "thread": "game",
+            "threadId": 1188, "inHook": "fp_mining_node_step", "inMod": "miner", "gameOriginal": True,
+            "cppType": None, "route": "unhandled", "dump": True})
+        self.assertEqual(report["frames"]["inHook"], "fp_mining_node_step")
+        self.assertEqual(report["frames"]["inMod"], "miner (game original)")
+        self.assertIsNone(report["exit"]["faulting_module"])
+
+    def test_a_clean_session_deletes_the_previous_trap_folder(self):
+        self.assertEqual(self.scenario("trap-prev-settled"),
+                         "clean deleted, folded deleted, crash not folded kept")
 
 
 if __name__ == "__main__":
