@@ -1402,6 +1402,9 @@ inline std::string FreezeEndedLine(double ms, bool load, bool inMenu = false)
 // and folds one line into the crash report: the last `route=unhandled` line,
 // the crash itself, else the last line of any route.
 
+// report.json's key for that folded line (null when there is none).
+inline constexpr const char* kReportTrapKey = "trap";
+
 struct TrapRecord {
     std::string exceptionCode;     // "0xC0000005"
     std::string module;            // a file name, or "unlisted"
@@ -1609,7 +1612,7 @@ inline std::string ReportJson(const ReportFacts& f)
     j += "  \"modsEpisode\": " + CostJson(e.cost) + ",\n";
     j += "  \"session\": {\"episodes\": " + std::to_string(f.episodes) + ", \"suppressed\": " + std::to_string(f.suppressed) + "},\n";
     j += "  \"exit\": " + exitObject + ",\n";
-    j += "  \"trap\": " + trapObject + ",\n";
+    j += std::string("  \"") + kReportTrapKey + "\": " + trapObject + ",\n";
     j += "  \"previousSession\": " + text(f.previousBanner) + "\n";
     j += "}\n";
     return j;

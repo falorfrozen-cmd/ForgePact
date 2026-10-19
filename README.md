@@ -1412,7 +1412,8 @@ card and driver, memory). Every report also holds `yytoolkit-tail.txt` and
 `bin\aurie.log`; for a crash they are copies taken as the game died, because
 both logs start over at every launch (when no copy could be taken, the file
 says so in one line). A crash report adds `trap.txt`, ForgePact's record of
-what crashed, and `crash.dmp`, a small crash dump: the stack of every thread of
+what crashed, and `crash.dmp`, a small crash dump (Windows' `MiniDumpNormal`
+type): the stack of every thread of
 the game and the list of loaded files, which is what a developer needs to see
 the function that crashed, and none of the game's other memory. It is written
 only when the crash reached Windows' last-chance handler and only once a
