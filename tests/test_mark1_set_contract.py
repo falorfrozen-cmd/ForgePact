@@ -52,7 +52,20 @@ text, comments stripped, and pins the adapter around it:
   base items' own art, bag and ground, and nothing loaded, written or
   installed for it. The armed flag's one writer is the core's SetEnabled; the
   dressing, the ground install and the tick each ask the core's rule before
-  anything else, and no dressing inside CreateItemNew's pass installs a hook.
+  anything else, and no dressing inside CreateItemNew's pass installs a hook;
+- the jump (Mark1Jump.hpp, applied here): one skillsLeap detour and one
+  install of the five collision builtins in the whole plugin, shared with
+  jumpscenery (and the flight charms for the builtins); Mark 1's take-off
+  decision runs before the original and its scaling after it, and while the
+  bonus takes a jump jumpscenery's entry is skipped, unless jumpscenery's own
+  window is already open; jump_objects: the three objects resolved by name by
+  whichever install runs first, classified by Mark 1's own classifier;
+  learner_feed: M is ChooseMax over jumpscenery's public getters and a clean
+  jump reaches jumpscenery's public Learn; the landing reads are Mark 1's own,
+  through its own player, and a failed one is a throw or Cell::Unreadable,
+  never an answer; grid_read: global.pathGrid and mp_grid_get_cell by name,
+  outside every research block; jump_counts: every JumpCounts field from the
+  core's counter of the same name, M from the getters.
 """
 import re
 import sys
@@ -115,11 +128,39 @@ SIGNATURES = {
     "tg_attach": "static void TgProbeAttach(TgProbeTarget& t)",
     "spawn": "static void M1pSpawn(const M1pNs::Command& c)",
     "m1p_holder": "static std::string M1pScriptHolder(std::string_view runtimeName)",
+    "m1p_builtin_holder": "static std::string M1pBuiltinHolder(std::string_view name)",
+    "m1p_builtin_held": "static bool M1pBuiltinHeldBy(std::string_view name, std::string& holder)",
+    "jump_research_holder": "static std::string Mark1JumpResearchHolder()",
+    # the jump (Mark1Jump.hpp), in the adapter
+    "jump_position": "static bool Mark1JumpPosition(double& x, double& y)",
+    "jump_cursor": "static bool Mark1JumpCursor(double& x, double& y)",
+    "jump_family": "static bool Mark1JumpFamilyAt(double x, double y)",
+    "jump_gate": "static bool Mark1JumpGateOnLine(double x0, double y0, double x1, double y1)",
+    "jump_kind": "static M1jNs::ValueKind Mark1JumpKindOf(const RValue& v)",
+    "jump_grid": "static M1jNs::Cell Mark1JumpGridAt(double x, double y)",
+    "jump_max": "static M1jNs::Max Mark1JumpMax()",
+    "jump_learn": "static void Mark1JumpLearn(const M1jNs::Learned& l)",
+    "jump_entry": "static bool Mark1JumpOnLeapEntry(CInstance* S, int64_t frame)",
+    "jump_exit": "static void Mark1JumpOnLeapExit(CInstance* S, int64_t frame)",
+    "jump_builtin": "static void Mark1JumpOnBuiltin(int row, RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args)",
+    "jump_install": "static std::string Mark1JumpInstall()",
+    "jump_tick": "static void Mark1JumpTick()",
+    # the shared detours and installs, in jumpscenery's adapter
+    "leap": "static RValue& JsHookLeap(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)",
+    "leap_install": "static std::string SkillsLeapInstall()",
+    "resolve_objects": "static std::string JsResolveObjects()",
+    "shared_detour": "static void CollisionBuiltinDetour(int row, RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args)",
+    "js_install": "static std::string JumpSceneryInstall()",
+    "js_held": "static std::string JumpSceneryHeldHooks()",
+    "flight_install": "static std::string FlightInstall()",
 }
 
 SHIPPED = ("decode", "of", "entry", "final", "icon_index", "icon_path", "icons_load", "ground", "ground_install",
            "ground_route", "art_install_if_ready", "read_worn", "detour", "install", "install_if_ready", "tick", "stat_fields", "command",
-           "refresh", "hud_row", "hud_column", "read_toggle", "input_state", "input_get", "input_set", "border")
+           "refresh", "hud_row", "hud_column", "read_toggle", "input_state", "input_get", "input_set", "border",
+           "jump_position", "jump_cursor", "jump_family", "jump_gate", "jump_kind", "jump_grid", "jump_max", "jump_learn",
+           "jump_entry", "jump_exit", "jump_builtin", "jump_install", "jump_tick", "leap", "leap_install", "resolve_objects")
+JUMP_HEADER = ROOT / "plugin" / "include" / "ForgePact" / "Mark1Jump.hpp"
 AUTOMATION_HEADER = ROOT / "plugin" / "include" / "ForgePact" / "Mark1Automation.hpp"
 
 
@@ -394,9 +435,12 @@ class Mark1SetContract(unittest.TestCase):
         # The one array_set and the one write path in the adapter.
         self.assertEqual(self.code.count('"array_set"'), 1)
         self.assertNotIn("variable_global_set", self.code)
-        # The adapter's one variable_instance_set is the ground consumer's sprite.
-        self.assertEqual(self.code.count('"variable_instance_set"'), 1)
+        # The adapter's two variable_instance_set calls: the ground consumer's
+        # sprite, and the jump's scaled position, written only after a
+        # skillsLeap call's original returned (jump-adapter).
+        self.assertEqual(self.code.count('"variable_instance_set"'), 2)
         self.assertIn('"variable_instance_set"', self.body("ground"))
+        self.assertIn('"variable_instance_set"', self.body("jump_exit"))
         self.assertEqual(len(re.findall(r"\bMark1InputSet\(", self.code)), 2)   # definition and the detour's write
         self.assertEqual(len(re.findall(r"\bMark1InputGet\(", self.code)), 2)
         # The original value is read before the press and an unreadable one
@@ -792,6 +836,256 @@ class Mark1SetContract(unittest.TestCase):
         self.assertIn("f.groundRoute = Mark1GroundRoute();", fields)
         self.assertIn("ForgePact::HiddenLootMod::Instance().RouteName()", self.body("ground_route"))
         self.assertLess(fields.index("g_Mark1.FillStat(f);"), fields.index("f.ground = g_M1sGround;"))
+
+    # ---- the jump (Mark1Jump.hpp): the shared detours ------------------------------------
+
+    def jump_header(self):
+        return strip_comments(JUMP_HEADER.read_text(encoding="utf-8").replace("\r\n", "\n"))
+
+    def test_jump_one_skills_leap_detour_and_one_builtin_install_in_the_whole_plugin(self):
+        whole = strip_comments(self.plugin)
+        # One HookOneScript of skillsLeap for the player build's mods, in the
+        # shared install, which jumpscenery and Mark 1 both call.
+        self.assertEqual(whole.count('"fp_jumpscenery_leap"'), 1)
+        leap_install = self.body("leap_install")
+        self.assertIn("HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_skillsLeap), \"fp_jumpscenery_leap\","
+                      " (PVOID)JsHookLeap, &g_JsOrigLeap, &native)", leap_install)
+        self.assertIn("if (!g_JsOrigLeap) {", leap_install)   # whoever is first installs; the other finds it
+        self.assertIn("if (!g_JsLeapNative)", leap_install)
+        self.assertEqual(len(re.findall(r"\bSkillsLeapInstall\(\)", self.shipped)), 3)   # definition, jumpscenery, Mark 1
+        self.assertIn("SkillsLeapInstall()", self.body("js_install"))
+        self.assertIn("SkillsLeapInstall()", self.body("jump_install"))
+        # One install of the five builtins: jumpscenery, the flight charms and Mark 1 call it.
+        self.assertEqual(len(re.findall(r"HookBuiltin\([^;]*kJsBuiltinDetours", whole)), 1)
+        self.assertEqual(len(re.findall(r"\bCollisionBuiltinsInstall\(\)", self.shipped)), 4)
+        for which in ("js_install", "flight_install", "jump_install"):
+            with self.subTest(install=which):
+                self.assertIn("CollisionBuiltinsInstall()", self.body(which))
+        # Mark 1's adapter hooks neither itself.
+        self.assertNotIn("HookBuiltin(", self.code)
+        self.assertNotIn("skillsLeap\"", self.code)
+
+    def test_jump_the_leap_detour_decides_before_the_original_and_scales_after_it(self):
+        leap = self.body("leap")
+        lines = self.lines("leap")
+        # Both switches off, or the adapters' own calls: the original alone.
+        self.assertEqual(lines[0], "if ((!g_JumpScenery.Enabled() && !g_Mark1.Enabled()) || g_JsBusy) "
+                                   "return g_JsOrigLeap(S, O, R, argc, A);")
+        entry = leap.index("mark1 = Mark1JumpOnLeapEntry(S, frame);")
+        first_orig = leap.index("g_JsOrigLeap(S, O, R, argc, A)", leap.index(lines[0]) + len(lines[0]))
+        self.assertLess(entry, first_orig)
+        self.assertLess(leap.index("RValue& r = g_JsOrigLeap(S, O, R, argc, A);"), leap.index("Mark1JumpOnLeapExit(S, frame);"))
+        # With Mark 1 not taking the entry, jumpscenery's path is the one it
+        # was: its entry before the original, for the local player as before.
+        self.assertIn("if (!mark1 && g_JumpScenery.Enabled()) {", leap)
+        self.assertIn("g_JumpScenery.OnLeapEntry(frame, S && S == g_JsPlayer);", leap)
+        self.assertLess(entry, leap.index("g_JumpScenery.OnLeapEntry("))
+        self.assertIn("if (!mark1) return g_JsOrigLeap(S, O, R, argc, A);", leap)
+        self.assertLess(leap.index("g_JumpScenery.OnLeapEntry("), leap.index("if (!mark1) return g_JsOrigLeap(S, O, R, argc, A);"))
+        # The adapters' reads inside it reach no collision detour.
+        self.assertLess(leap.index("g_JsBusy = true;"), entry)
+
+    def test_jump_the_builtin_detours_third_consumer_is_mark1(self):
+        detour = self.body("shared_detour")
+        self.assertEqual(len(re.findall(r"\borig\(", detour)), 1)
+        self.assertLess(detour.index("FlightOnBuiltin(row, Result, S, O, argc, Args);"),
+                        detour.index("Mark1JumpOnBuiltin(row, Result, S, O, argc, Args);"))
+        self.assertLess(detour.index("if (g_JsBusy || g_FlightBusy) return;"), detour.index("Mark1JumpOnBuiltin("))
+        part = self.body("jump_builtin")
+        lines = self.lines("jump_builtin")
+        self.assertEqual(lines[0], "if (!g_M1jWired || !g_Mark1.Enabled() || !g_M1jCore.Active()) return;")
+        self.assertEqual(lines[1], "if (!S || S != g_M1sPlayer) return;")
+        # Every really-blocked query of the local player reaches the core with
+        # its object's classes, in a window or not; a free answer stands.
+        self.assertIn("if (!JsBlocked(b.answer, Result, false)) return;", part)
+        self.assertNotIn("WindowOpen", part)
+        self.assertIn("JsObjectIndexOf(Args[b.objectArg])", part)
+        self.assertIn("g_M1jClasses.Classify(object)", part)
+        self.assertIn("g_M1jCore.OnQuery(", part)
+        self.assertIn("JsExcludedBlocks(orig, b, S, O, argc, Args)", part)
+        self.assertIn("if (answer != JsNs::Answer::Real) Result = JsAnswerValue(answer);", part)
+
+    # ---- the jump: learner_feed -------------------------------------------------------------
+
+    def test_jump_learner_feed_m_reads_jumpscenerys_getters_through_choose_max(self):
+        max_ = self.body("jump_max")
+        self.assertIn("M1jNs::ChooseMax(g_JumpScenery.HasCap(), g_JumpScenery.Cap(), g_JumpScenery.HasReach(), "
+                      "g_JumpScenery.Reach())", max_)
+        # Whatever jumpscenery's switch says.
+        self.assertNotIn("Enabled()", max_)
+        self.assertIn("g_M1jCore.SetMax(&Mark1JumpMax);", self.body("jump_install"))
+
+    def test_jump_learner_feed_a_clean_jump_reaches_jumpsceneries_public_learn(self):
+        learn = self.body("jump_learn")
+        self.assertIn("g_JumpScenery.Learn(l.takeoffX, l.takeoffY, l.haveCursor, l.cursorX, l.cursorY, l.naturalLength);", learn)
+        self.assertNotIn("Enabled()", learn)
+        self.assertIn("g_M1jCore.SetLearner(&Mark1JumpLearn);", self.body("jump_install"))
+        # The core closes a jump's window from the tick, so learning goes on
+        # while jumps are scaled.
+        self.assertIn("g_M1jCore.Tick(", self.body("jump_tick"))
+        tick = self.body("tick")
+        self.assertIn("Mark1JumpTick();", tick)
+        self.assertLess(tick.index("Mark1RefreshPlayer();"), tick.index("Mark1JumpTick();"))
+        # Learn is jumpscenery's public rule, in its header.
+        header = strip_comments((ROOT / "plugin" / "include" / "ForgePact" / "JumpScenery.hpp").read_text(encoding="utf-8"))
+        self.assertIn("void Learn(double takeoffX, double takeoffY, bool haveCursor, double cursorX, double cursorY, double length)",
+                      header)
+
+    def test_jump_learner_feed_jumpscenerys_entry_is_skipped_while_mark1_takes_the_jump(self):
+        entry = self.body("jump_entry")
+        # jumpscenery's open window keeps its jump: Mark 1 takes the next one.
+        self.assertIn("if (g_JumpScenery.WindowOpen(frame)) return false;", entry)
+        self.assertLess(entry.index("g_JumpScenery.WindowOpen(frame)"), entry.index("g_M1jCore.OnLeapEntry("))
+        # The bonus read at the point of use, for Mark 1's own player.
+        self.assertIn("if (!S || S != g_M1sPlayer) return false;", entry)
+        self.assertIn("g_Mark1.Active(", entry)
+        self.assertIn("Mark1ReadWorn", entry)
+        self.assertIn("g_M1jCore.SetActive(active);", entry)
+        self.assertLess(entry.index("g_M1jCore.SetActive(active);"), entry.index("g_M1jCore.OnLeapEntry("))
+        self.assertIn("return g_M1jCore.OnLeapEntry(frame, true);", entry)
+        # Switch off: a jump in progress is dropped, never handed to jumpscenery's window.
+        self.assertIn("if (!g_Mark1.Enabled()) { g_M1jCore.SetActive(false); return false; }", entry)
+
+    # ---- the jump: the landing reads ------------------------------------------------------
+
+    def test_jump_landing_reads_are_mark1s_own_and_a_failed_read_is_never_an_answer(self):
+        jump = "\n".join(self.body(w) for w in ("jump_position", "jump_cursor", "jump_family", "jump_gate", "jump_grid",
+                                                "jump_entry", "jump_exit", "jump_builtin", "jump_install"))
+        # Not jumpscenery's player-bound reads: JsFamilyAt turns a failed read
+        # into "blocked", and both read g_JsPlayer, which only its tick refreshes.
+        for forbidden in ("JsFamilyAt(", "JsPlayerPosition(", "g_JsPlayer"):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, jump)
+        position = self.body("jump_position")
+        self.assertIn("g_M1sPlayer->ToRValue()", position)
+        self.assertIn('RValue("x")', position)
+        self.assertIn("JsCursor(x, y, route)", self.body("jump_cursor"))
+        family = self.body("jump_family")
+        self.assertIn("g_JsOrig[(int)JsNs::Builtin::PlaceMeeting]", family)
+        self.assertIn("orig(r, g_M1sPlayer, g_M1sPlayer, 3, args);", family)
+        self.assertIn("RValue((double)g_JsFamilyIdx)", family)
+        self.assertIn("throw Mark1JumpUnread{};", family)
+        self.assertLess(family.index("throw Mark1JumpUnread{};"), family.index("orig(r,"))
+        gate = self.body("jump_gate")
+        self.assertIn("g_JsOrig[(int)JsNs::Builtin::CollisionLine]", gate)
+        self.assertIn("for (int e : g_JsExcludedIdx)", gate)
+        self.assertIn("orig(r, g_M1sPlayer, g_M1sPlayer, 7, args);", gate)
+        self.assertIn("throw Mark1JumpUnread{};", gate)
+        install = self.body("jump_install")
+        for wiring in ("g_M1jCore.SetPlayerPosition(&Mark1JumpPosition);", "g_M1jCore.SetCursor(&Mark1JumpCursor);",
+                       "g_M1jCore.SetRoomSize(&JsRoomSize);", "g_M1jCore.SetPlaceMeeting(&Mark1JumpFamilyAt);",
+                       "g_M1jCore.SetGrid(&Mark1JumpGridAt);", "g_M1jCore.SetGateOnLine(&Mark1JumpGateOnLine);"):
+            with self.subTest(wiring=wiring):
+                self.assertIn(wiring, install)
+        # The scaled position is written only after the original returned, to
+        # Mark 1's own player.
+        exit_ = self.body("jump_exit")
+        self.assertIn("g_M1jCore.OnLeapExit(frame, S && S == g_M1sPlayer)", exit_)
+        self.assertLess(exit_.index("if (!m.write || !g_M1sPlayer) return;"), exit_.index('"variable_instance_set"'))
+
+    # ---- the jump: grid_read -----------------------------------------------------------------
+
+    def test_jump_grid_read_by_name_outside_every_research_block(self):
+        self.assertIn(SIGNATURES["jump_grid"], strip_research_blocks(self.plugin))
+        grid = self.body("jump_grid")
+        self.assertIn('g_Yytk->CallBuiltin("variable_global_get", { RValue("pathGrid") })', grid)
+        self.assertIn('g_Yytk->CallBuiltin("mp_grid_get_cell", { grid, RValue(cx), RValue(cy) })', grid)
+        self.assertIn("M1jNs::GridCellAt(", grid)
+        self.assertIn("catch (...) { return M1jNs::Cell::Unreadable; }", grid)
+        # Nothing of the research build's grid read.
+        for research in ("M1pGridAt", "GridCellOf", "M1pNs", "Mark1Probe"):
+            with self.subTest(research=research):
+                self.assertNotIn(research, grid)
+        kind = self.body("jump_kind")
+        for k in ("M1jNs::ValueKind::Number", "M1jNs::ValueKind::Reference", "M1jNs::ValueKind::Other"):
+            self.assertIn(k, kind)
+        # The mapping is the header's: not a grid handle is NoGrid, below 0 Blocked.
+        header = self.jump_header()
+        self.assertIn("if (!IsGridHandle(gridKind, grid)) return Cell::NoGrid;", header)
+        self.assertIn("return value < 0.0 ? Cell::Blocked : Cell::Free;", header)
+        self.assertIn("#include <ForgePact/Mark1Jump.hpp>", self.shipped)
+
+    # ---- the jump: jump_objects --------------------------------------------------------------
+
+    def test_jump_objects_resolved_by_name_by_whichever_install_runs_first(self):
+        resolve = self.body("resolve_objects")
+        self.assertIn('"asset_get_index"', resolve)
+        self.assertIn("HeroSiege::Objects::GetObjectName(kJsFamily)", resolve)
+        self.assertIn("for (const HeroSiege::Objects::GameObject obj : kJsExcluded)", resolve)
+        self.assertIn("g_JsFamilyIdx = family;", resolve)
+        self.assertIn("g_JsExcludedIdx = excluded;", resolve)
+        # Both installs call it; Mark 1's before any hook, refusing with the names.
+        self.assertIn("JsResolveObjects()", self.body("js_install"))
+        install = self.body("jump_install")
+        self.assertIn("const std::string missing = JsResolveObjects();", install)
+        self.assertIn('if (!missing.empty()) return missing + " did not resolve by name', install)
+        self.assertLess(install.index("JsResolveObjects()"), install.index("SkillsLeapInstall()"))
+        self.assertEqual(len(re.findall(r"\bJsResolveObjects\(\)", self.shipped)), 3)
+
+    def test_jump_objects_classified_by_mark1s_own_classifier(self):
+        install = self.body("jump_install")
+        self.assertIn('"object_is_ancestor"', install)
+        self.assertIn("g_M1jClasses.SetIsAncestor(", install)
+        self.assertIn("g_M1jClasses.SetObjects(g_JsFamilyIdx, g_JsExcludedIdx[0], g_JsExcludedIdx[1]);", install)
+        self.assertIn("static ForgePact::Mark1Jump::Classifier g_M1jClasses;", self.shipped)
+        # The gate and lock re-run and the gate line use the resolved list.
+        self.assertIn("for (int e : g_JsExcludedIdx)", self.body("jump_gate"))
+        # The header's classifier, not jumpscenery's private one.
+        self.assertIn("class Classifier {", self.jump_header())
+
+    # ---- the jump: the install and the holders ---------------------------------------------------
+
+    def test_jump_install_is_part_of_mark1s_all_or_nothing_install(self):
+        install = self.body("install")
+        self.assertIn("const std::string jump = Mark1JumpInstall();", install)
+        self.assertIn("if (!jump.empty()) return jump;", install)
+        self.assertLess(install.index("if (!g_M1sCtuNative)"), install.index("Mark1JumpInstall()"))
+        self.assertLess(install.index("Mark1JumpInstall()"), install.index("Mark1GroundIconInstall();"))
+        self.assertEqual(len(re.findall(r"\bMark1JumpInstall\(\)", self.shipped)), 2)   # definition and Mark1SetInstall
+        jump = self.body("jump_install")
+        self.assertIn("g_M1jHooksTried = true;", jump)
+        self.assertLess(jump.index("g_M1jHooksTried = true;"), jump.index("SkillsLeapInstall()"))
+        self.assertIn("g_M1jWired = true;", jump)
+        self.assertLess(jump.index("CollisionBuiltinsInstall()"), jump.index("g_M1jWired = true;"))
+
+    def test_jump_refused_while_a_research_probe_or_citrace_holds_one(self):
+        raw = function_body(self.plugin, SIGNATURES["install"])
+        research = raw[raw.index("#ifndef FORGEPACT_RELEASE"):raw.index("#endif")]
+        self.assertIn("Mark1JumpResearchHolder()", research)
+        self.assertLess(raw.index("Mark1JumpResearchHolder()"), raw.index("HookOneScript("))
+        holder = self.body("jump_research_holder")
+        self.assertIn("JumpSceneryResearchHolders(false)", holder)   # citrace and jumpprobe
+        self.assertIn("M1pScriptHolder(HeroSiege::Scripts::gml_Script_skillsLeap)", holder)
+        self.assertIn("M1pBuiltinHolder(b.name)", holder)
+        own = self.body("m1p_builtin_holder")
+        self.assertIn("t.orig", own)
+        self.assertIn('"mark1probe hook"', own)
+        self.assertNotIn("Mark1JumpResearchHolder", self.shipped)
+
+    def test_jump_the_research_probes_name_mark1set_for_what_it_holds(self):
+        held = self.body("js_held")
+        self.assertIn("g_M1jHooksTried", held)
+        self.assertIn("mark1set", held)
+        self.assertIn("mark1set", self.body("m1p_builtin_held"))
+
+    # ---- the jump: jump_counts -----------------------------------------------------------------
+
+    def test_jump_counts_every_field_from_the_cores_counter_of_the_same_name(self):
+        fields = self.body("stat_fields")
+        struct = function_body(self.header(), "struct JumpCounts {")
+        names = re.findall(r"uint64_t\s+(\w+) = 0;", struct)
+        self.assertEqual(len(names), 21, names)
+        counters = function_body(self.jump_header(), "struct Counters {")
+        for name in names:
+            with self.subTest(field=name):
+                self.assertIn("uint64_t " + name + " = 0;", counters)
+                self.assertEqual(len(re.findall(r"\bjc\." + name + r" = j\." + name + r";", fields)), 1)
+        self.assertIn("const M1jNs::Counters& j = g_M1jCore.Stats();", fields)
+        self.assertIn("M1sNs::JumpCounts& jc = f.jump;", fields)
+        # M with its source, as the jump will read it.
+        self.assertIn("const M1jNs::Max m = Mark1JumpMax();", fields)
+        self.assertIn("jc.max = m.value;", fields)
+        self.assertIn("jc.maxSource = std::string(M1jNs::MaxSourceName(m.source));", fields)
 
 
 if __name__ == "__main__":

@@ -593,6 +593,26 @@ static const char* FlightPlayerCheck();   // the trace line's ` player=`; define
 namespace M1sNs = ForgePact::Mark1Set;
 static ForgePact::Mark1Set::Bonus g_Mark1;
 static bool g_M1sBusy = false;   // game thread only: the adapter's own game calls inside its detour
+// The set's jump (Mark1Jump.hpp): its decision core and object classes, and
+// the adapter's three parts that jumpscenery's shared skillsLeap and
+// collision-builtin detours call; defined with the adapter. The header writes
+// std::min, and <windows.h> (included here without NOMINMAX) defines min as a
+// macro, so the macro is set aside for the include.
+#pragma push_macro("min")
+#pragma push_macro("max")
+#undef min
+#undef max
+#include <ForgePact/Mark1Jump.hpp>
+#pragma pop_macro("max")
+#pragma pop_macro("min")
+namespace M1jNs = ForgePact::Mark1Jump;
+static ForgePact::Mark1Jump::Core g_M1jCore;
+static ForgePact::Mark1Jump::Classifier g_M1jClasses;
+static bool g_M1jHooksTried = false;   // Mark 1's install reached the shared hooks (the probes' holder name)
+static bool g_M1jWired = false;        // every hook the jump needs is in and the core is configured
+static bool Mark1JumpOnLeapEntry(CInstance* S, int64_t frame);
+static void Mark1JumpOnLeapExit(CInstance* S, int64_t frame);
+static void Mark1JumpOnBuiltin(int row, RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args);
 // The automated columns' border, Hook_DrawHudBuffs's one call after the toggle
 // border's; defined with the adapter.
 static void Mark1BorderDraw();
@@ -53802,6 +53822,18 @@ static void HiddenLootCommand(const std::string& rest)
 // CollisionBuiltinDetour, which runs the original once and then hands the
 // result to JsOnBuiltin and to FlightOnBuiltin. jumpscenery's own behaviour is
 // unchanged; neither mod refuses because of the other.
+//
+// The Mark 1 set's jump (ForgePact #166, whose adapter sits with the set's,
+// near the end of the file) shares skillsLeap's detour and the five builtins
+// too: one skillsLeap install (SkillsLeapInstall) and one resolution of the
+// three objects (JsResolveObjects), whichever of jumpscenery and Mark 1 runs
+// first, and Mark1JumpOnBuiltin as the builtin detour's third consumer. While
+// the set's bonus takes a jump, JsHookLeap runs Mark 1's take-off decision
+// before the original and its scaling after it, and does not call
+// jumpscenery's entry, so jumpscenery's window never opens over a Mark 1 jump
+// (its CloseJump would learn the scaled landing); an entry inside a window
+// jumpscenery already has open stays jumpscenery's. With Mark 1 not taking
+// the entry, jumpscenery's path is the one it was.
 namespace JsNs = ForgePact::JumpSceneryMod;
 
 static constexpr HeroSiege::Objects::GameObject kJsFamily = HeroSiege::Objects::GameObject::Collision_Parent_obj;
@@ -54056,8 +54088,9 @@ static void FlightOnBuiltin(int row, RValue& Result, CInstance* S, CInstance* O,
 
 // The one detour body of the five builtins: the original once, then
 // jumpscenery (when its switch is on), then flight (when it is on or
-// residual). A call the adapters make themselves inside a detour reaches
-// neither. Neither mod refuses because of the other.
+// residual), then the Mark 1 set's jump (while its bonus is active). A call
+// the adapters make themselves inside a detour reaches none of them. No mod
+// refuses because of another.
 static void CollisionBuiltinDetour(int row, RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args)
 {
     const TRoutine orig = g_JsOrig[row];
@@ -54066,17 +54099,34 @@ static void CollisionBuiltinDetour(int row, RValue& Result, CInstance* S, CInsta
     if (g_JsBusy || g_FlightBusy) return;
     JsOnBuiltin(row, Result, S, O, argc, Args);
     FlightOnBuiltin(row, Result, S, O, argc, Args);
+    Mark1JumpOnBuiltin(row, Result, S, O, argc, Args);
 }
 
+// skillsLeap's one detour, jumpscenery's and the Mark 1 set's. Both switches
+// off: the original alone. Otherwise Mark 1 decides first whether this entry
+// is its jump's (Mark1JumpOnLeapEntry: the bonus active, its own player, and
+// no jumpscenery window open); if it is, jumpscenery's entry is not called
+// and Mark 1 scales the call's displacement after the original returns. If it
+// is not, jumpscenery's entry runs as it always did.
 static RValue& JsHookLeap(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
-    if (!g_JumpScenery.Enabled() || g_JsBusy) return g_JsOrigLeap(S, O, R, argc, A);
+    if ((!g_JumpScenery.Enabled() && !g_Mark1.Enabled()) || g_JsBusy) return g_JsOrigLeap(S, O, R, argc, A);
+    const int64_t frame = (int64_t)g_RuntimeFrame;
+    bool mark1 = false;
     // Before the original: a take-off walk nested in this first call is then
     // inside the window it opens.
     g_JsBusy = true;
-    try { g_JumpScenery.OnLeapEntry((int64_t)g_RuntimeFrame, S && S == g_JsPlayer); } catch (...) {}
+    try { mark1 = Mark1JumpOnLeapEntry(S, frame); } catch (...) { mark1 = false; }
+    if (!mark1 && g_JumpScenery.Enabled()) {
+        try { g_JumpScenery.OnLeapEntry(frame, S && S == g_JsPlayer); } catch (...) {}
+    }
     g_JsBusy = false;
-    return g_JsOrigLeap(S, O, R, argc, A);
+    if (!mark1) return g_JsOrigLeap(S, O, R, argc, A);
+    RValue& r = g_JsOrigLeap(S, O, R, argc, A);
+    g_JsBusy = true;
+    try { Mark1JumpOnLeapExit(S, frame); } catch (...) {}
+    g_JsBusy = false;
+    return r;
 }
 
 #ifndef FORGEPACT_RELEASE
@@ -54110,9 +54160,11 @@ static std::string JumpSceneryResearchHolders(bool forFlight)
 // flight adapter below.
 static std::string FlightHeldScripts();
 
-// What jumpscenery and the flight charms hold, by name: the five shared
-// builtins (whichever of the two installed them), skillsLeap, and flight's
-// InstancePlaceTallest and UpdateDepth. citrace and jumpprobe refuse on any.
+// What jumpscenery, the flight charms and the Mark 1 set hold, by name: the
+// five shared builtins (whichever installed them), skillsLeap, and flight's
+// InstancePlaceTallest and UpdateDepth. citrace, jumpprobe and the set's own
+// research probe refuse on any; once the set's install reached the shared
+// hooks, the line names mark1set too.
 static std::string JumpSceneryHeldHooks()
 {
     std::string held;
@@ -54122,6 +54174,7 @@ static std::string JumpSceneryHeldHooks()
         held += (held.empty() ? "" : ", ") + std::string(SdkShortScriptName(HeroSiege::Scripts::gml_Script_skillsLeap));
     const std::string flight = FlightHeldScripts();
     if (!flight.empty()) held += (held.empty() ? "" : ", ") + flight + " (with the flight charms, which share these builtins)";
+    if (!held.empty() && g_M1jHooksTried) held += " (with mark1set, which shares skillsLeap and these builtins)";
     return held;
 }
 #endif
@@ -54155,6 +54208,48 @@ static std::string CollisionBuiltinsInstall()
     return failed;
 }
 
+// The family and the two excluded objects, each by name through the SDK and
+// asset_get_index, once for both mods that need them (jumpscenery and the
+// Mark 1 set's jump): "" when all three are resolved, otherwise the names that
+// did not resolve, and nothing is stored. kJsExcluded's order (the gate
+// parent, then the lock) is g_JsExcludedIdx's.
+static std::string JsResolveObjects()
+{
+    if (g_JsFamilyIdx >= 0 && g_JsExcludedIdx.size() == std::size(kJsExcluded)) return "";
+    int family = -1;
+    std::vector<int> excluded;
+    std::string missing;
+    try {
+        family = (int)g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(HeroSiege::Objects::GetObjectName(kJsFamily))) }).ToDouble();
+        if (family < 0) missing = std::string(HeroSiege::Objects::GetObjectName(kJsFamily));
+        for (const HeroSiege::Objects::GameObject obj : kJsExcluded) {
+            const int idx = (int)g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(HeroSiege::Objects::GetObjectName(obj))) }).ToDouble();
+            if (idx < 0) missing += (missing.empty() ? "" : ", ") + std::string(HeroSiege::Objects::GetObjectName(obj));
+            excluded.push_back(idx);
+        }
+    } catch (...) { missing = "the objects"; }
+    if (!missing.empty()) return missing;
+    g_JsFamilyIdx = family;
+    g_JsExcludedIdx = excluded;
+    return "";
+}
+
+// skillsLeap's one install, shared by jumpscenery and the Mark 1 set's jump:
+// whoever is first installs, the other finds it in. "" when its inline detour
+// is in; table-only, the game's own direct calls would pass the hook by and
+// the mod would report on while doing nothing, so that is a refusal too.
+static std::string SkillsLeapInstall()
+{
+    if (!g_JsOrigLeap) {
+        bool native = false;
+        HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_skillsLeap), "fp_jumpscenery_leap", (PVOID)JsHookLeap, &g_JsOrigLeap, &native);
+        g_JsLeapNative = native;
+    }
+    if (!g_JsOrigLeap) return "skillsLeap was not found by name, so nothing could open a jump's window";
+    if (!g_JsLeapNative) return "skillsLeap is hooked table-only, so the game's own calls would pass the mod by";
+    return "";
+}
+
 // The one install path, through JsInstallIfReady (from `jumpscenery 1` with a
 // character loaded, or the tick once one is): "" when every hook is in and
 // the core is configured, otherwise why the mod stays off. Hooks that went
@@ -54167,40 +54262,20 @@ static std::string JumpSceneryInstall()
         return holders + " (a builtin detours once); the mod stays off. Relaunch without it to use jumpscenery.";
 #endif
     if (!g_JsConfigured) {
-        int family = -1;
-        std::vector<int> excluded;
-        std::string missing;
-        try {
-            family = (int)g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(HeroSiege::Objects::GetObjectName(kJsFamily))) }).ToDouble();
-            if (family < 0) missing = std::string(HeroSiege::Objects::GetObjectName(kJsFamily));
-            for (const HeroSiege::Objects::GameObject obj : kJsExcluded) {
-                const int idx = (int)g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(HeroSiege::Objects::GetObjectName(obj))) }).ToDouble();
-                if (idx < 0) missing += (missing.empty() ? "" : ", ") + std::string(HeroSiege::Objects::GetObjectName(obj));
-                excluded.push_back(idx);
-            }
-        } catch (...) { missing = "the objects"; }
+        const std::string missing = JsResolveObjects();
         if (!missing.empty()) return missing + " did not resolve by name; the mod stays off";
-        g_JsFamilyIdx = family;
-        g_JsExcludedIdx = excluded;
         g_JumpScenery.SetIsAncestor([](int object, int ancestor) {
             return g_Yytk->CallBuiltin("object_is_ancestor", { RValue((double)object), RValue((double)ancestor) }).ToBoolean();
         });
-        g_JumpScenery.SetFamily(family, excluded);
+        g_JumpScenery.SetFamily(g_JsFamilyIdx, g_JsExcludedIdx);
         g_JumpScenery.SetPlaceMeeting(&JsFamilyAt);
         g_JumpScenery.SetRoomSize(&JsRoomSize);
         g_JumpScenery.SetPlayerPosition(&JsPlayerPosition);
         g_JumpScenery.SetCursor(&JsCursor);
         g_JsConfigured = true;
     }
-    if (!g_JsOrigLeap) {
-        bool native = false;
-        HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_skillsLeap), "fp_jumpscenery_leap", (PVOID)JsHookLeap, &g_JsOrigLeap, &native);
-        g_JsLeapNative = native;
-    }
-    if (!g_JsOrigLeap) return "skillsLeap was not found by name, so nothing could open a jump's window; the mod stays off";
-    // Table-only, the game's own direct calls would pass the hook by and the
-    // mod would report on while doing nothing.
-    if (!g_JsLeapNative) return "skillsLeap is hooked table-only, so the game's own calls would pass the mod by; the mod stays off";
+    const std::string leap = SkillsLeapInstall();
+    if (!leap.empty()) return leap + "; the mod stays off";
     const std::string failed = CollisionBuiltinsInstall();
     if (!failed.empty()) return failed + " not hooked; the mod stays off";
     return "";
@@ -62850,6 +62925,12 @@ static void GambaPityCommand(const std::string& rest)
 //     slot's `inputState` and put back after the original; and the border on
 //     every automated column that is neither empty nor an aura, from one line
 //     in Hook_DrawHudBuffs after the toggle border's.
+//   - the jump (Mark1Jump.hpp), on jumpscenery's shared skillsLeap and
+//     collision-builtin detours: decided at the take-off and scaled after
+//     each call's original, with its own landing reads through its own player,
+//     M from jumpscenery's public reach and cap, and clean jumps taught back
+//     through jumpscenery's public Learn. Its hooks are part of the install
+//     below, all or nothing.
 //   - the pieces' own art, by the flight charms' route (ForgePact #158): the
 //     owner's PNGs embedded in Mark1Icons.hpp, written under bp_ipc\mark1\
 //     only when no file of that name is there, loaded once a session; "11"
@@ -63356,10 +63437,250 @@ static RValue& Mark1HookCheckTalentUse(CInstance* S, CInstance* O, RValue& R, in
         [&]() -> RValue& { return g_M1sOrigCheckTalentUse(S, O, R, argc, A); });
 }
 
+// ---- the jump (Mark1Jump.hpp) ----
+// The core decides each jump at its take-off and scales each skillsLeap
+// call's displacement; these are its reads and writes, all by name and all
+// through Mark 1's own player (g_M1sPlayer, the tick's), never jumpscenery's
+// g_JsPlayer, which only jumpscenery's tick refreshes. It rides jumpscenery's
+// shared detours (JsHookLeap and CollisionBuiltinDetour), installed through
+// their shared installs, and the objects JsResolveObjects resolved. A landing
+// read that is unbound or fails throws (Mark1JumpUnread), or reads
+// Cell::Unreadable for the grid, so the core counts it as a failed read and
+// never as the game's answer (jumpscenery's JsFamilyAt would count it as
+// "blocked"). M is ChooseMax over jumpscenery's public reach and cap, and a
+// clean jump teaches them through its public Learn, whatever its switch says.
+struct Mark1JumpUnread {};
+
+// The local player's x / y, as the take-off and each call's before and after.
+static bool Mark1JumpPosition(double& x, double& y)
+{
+    if (!g_M1sPlayer) return false;
+    try {
+        const RValue p = g_M1sPlayer->ToRValue();
+        const RValue vx = g_Yytk->CallBuiltin("variable_instance_get", { p, RValue("x") });
+        const RValue vy = g_Yytk->CallBuiltin("variable_instance_get", { p, RValue("y") });
+        if (!JsNumber(vx) || !JsNumber(vy)) return false;
+        x = vx.ToDouble();
+        y = vy.ToDouble();
+        return std::isfinite(x) && std::isfinite(y);
+    } catch (...) { return false; }
+}
+
+// The mouse in room coordinates, by jumpscenery's reader (mouse_x / mouse_y,
+// then device_mouse_x / device_mouse_y), which reads no instance.
+static bool Mark1JumpCursor(double& x, double& y)
+{
+    std::string route;
+    return JsCursor(x, y, route);
+}
+
+// The saved original place_meeting(x, y, Collision_Parent_obj) with Mark 1's
+// player as self: true when the family is there. An unbound original, no
+// player, an unresolved family or an answer that is neither a bool nor a
+// number throws.
+static bool Mark1JumpFamilyAt(double x, double y)
+{
+    const TRoutine orig = g_JsOrig[(int)JsNs::Builtin::PlaceMeeting];
+    if (!orig || !g_M1sPlayer || g_JsFamilyIdx < 0) throw Mark1JumpUnread{};
+    RValue args[3] = { RValue(x), RValue(y), RValue((double)g_JsFamilyIdx) };
+    RValue r;
+    orig(r, g_M1sPlayer, g_M1sPlayer, 3, args);
+    if (r.m_Kind != VALUE_BOOL && !JsNumber(r)) throw Mark1JumpUnread{};
+    return r.ToBoolean();
+}
+
+// The saved original collision_line from (x0, y0) to (x1, y1) against each
+// excluded object (the gate parent and the lock, as JsResolveObjects resolved
+// them), bounding boxes, with Mark 1's player as self: true when either is on
+// the segment. An unbound original, no player, unresolved objects or an answer
+// that is not an instance, a reference or a number throws.
+static bool Mark1JumpGateOnLine(double x0, double y0, double x1, double y1)
+{
+    const TRoutine orig = g_JsOrig[(int)JsNs::Builtin::CollisionLine];
+    if (!orig || !g_M1sPlayer || g_JsExcludedIdx.size() != std::size(kJsExcluded)) throw Mark1JumpUnread{};
+    for (int e : g_JsExcludedIdx) {
+        if (e < 0) throw Mark1JumpUnread{};
+        RValue args[7] = { RValue(x0), RValue(y0), RValue(x1), RValue(y1), RValue((double)e), RValue(false), RValue(true) };
+        RValue r;
+        orig(r, g_M1sPlayer, g_M1sPlayer, 7, args);
+        if (r.m_Kind != VALUE_OBJECT && r.m_Kind != VALUE_REF && !JsNumber(r)) throw Mark1JumpUnread{};
+        if (JsBlocked(JsNs::Answer::Noone, r, true)) return true;
+    }
+    return false;
+}
+
+// A value's kind as the grid read cares: a number, a reference, or other.
+static M1jNs::ValueKind Mark1JumpKindOf(const RValue& v)
+{
+    if (JsNumber(v)) return M1jNs::ValueKind::Number;
+    if (v.m_Kind == VALUE_REF) return M1jNs::ValueKind::Reference;
+    return M1jNs::ValueKind::Other;
+}
+
+// The path-grid cell under (x, y), in the player build: global.pathGrid by
+// name, then mp_grid_get_cell by name at Mark1Jump.hpp's cell indices, its
+// answer mapped by Mark1Jump.hpp's GridCellAt (not a grid handle: NoGrid,
+// which counts free; below 0: Blocked). A throw anywhere reads Unreadable.
+static M1jNs::Cell Mark1JumpGridAt(double x, double y)
+{
+    try {
+        const RValue grid = g_Yytk->CallBuiltin("variable_global_get", { RValue("pathGrid") });
+        const M1jNs::ValueKind gridKind = Mark1JumpKindOf(grid);
+        const double handle = gridKind == M1jNs::ValueKind::Other ? -1.0 : grid.ToDouble();
+        return M1jNs::GridCellAt(gridKind, handle, x, y, [&](double, double cx, double cy, M1jNs::ValueKind& kind, double& value) {
+            const RValue r = g_Yytk->CallBuiltin("mp_grid_get_cell", { grid, RValue(cx), RValue(cy) });
+            kind = Mark1JumpKindOf(r);
+            value = kind == M1jNs::ValueKind::Other ? 0.0 : r.ToDouble();
+            return true;
+        });
+    } catch (...) { return M1jNs::Cell::Unreadable; }
+}
+
+// M: jumpscenery's learned cap, else its reach, else 175 px, whatever its
+// switch says (Replan 2).
+static M1jNs::Max Mark1JumpMax()
+{
+    return M1jNs::ChooseMax(g_JumpScenery.HasCap(), g_JumpScenery.Cap(), g_JumpScenery.HasReach(), g_JumpScenery.Reach());
+}
+
+// The learner: a clean Mark 1 jump (the core's rule) teaches jumpscenery's
+// reach and cap with its natural, unscaled length and its take-off cursor.
+static void Mark1JumpLearn(const M1jNs::Learned& l)
+{
+    g_JumpScenery.Learn(l.takeoffX, l.takeoffY, l.haveCursor, l.cursorX, l.cursorY, l.naturalLength);
+}
+
+// skillsLeap's entry, before the original, from the shared detour (which has
+// g_JsBusy set). True when this entry is Mark 1's jump's: the jump wired, the
+// switch on, Mark 1's player as self, no window jumpscenery already has open
+// (that jump stays jumpscenery's; Mark 1 takes the next), and the bonus active
+// at the point of use (the set read at most once every 30 frames). Switch
+// off: a jump in progress is dropped, unlearned.
+static bool Mark1JumpOnLeapEntry(CInstance* S, int64_t frame)
+{
+    if (!g_M1jWired) return false;
+    if (!g_Mark1.Enabled()) { g_M1jCore.SetActive(false); return false; }
+    if (!S || S != g_M1sPlayer) return false;
+    if (g_JumpScenery.WindowOpen(frame)) return false;
+    bool active = false;
+    const bool busy = g_M1sBusy;
+    g_M1sBusy = true;
+    try { active = g_Mark1.Active((unsigned long long)frame, Mark1ReadWorn); } catch (...) { active = false; }
+    g_M1sBusy = busy;
+    g_M1jCore.SetActive(active);
+    if (!active) return false;
+    return g_M1jCore.OnLeapEntry(frame, true);
+}
+
+static bool g_M1jWriteFailed = false;   // one line the first time a scaled position could not be written
+
+// After that call's original returned: the core's scaled (or clamped)
+// position, written into Mark 1's player when it asks for a write.
+static void Mark1JumpOnLeapExit(CInstance* S, int64_t frame)
+{
+    const M1jNs::Move m = g_M1jCore.OnLeapExit(frame, S && S == g_M1sPlayer);
+    if (!m.write || !g_M1sPlayer) return;
+    try {
+        const RValue p = g_M1sPlayer->ToRValue();
+        const std::pair<const char*, double> axes[2] = { { "x", m.x }, { "y", m.y } };
+        for (const auto& a : axes) g_Yytk->CallBuiltin("variable_instance_set", { p, RValue(a.first), RValue(a.second) });
+    } catch (...) {
+        if (!g_M1jWriteFailed) {
+            g_M1jWriteFailed = true;
+            Out("mark1set: the jump's scaled position could not be written; scaled= counts calls whose write was attempted");
+        }
+    }
+}
+
+// The collision builtins' third consumer, after the original and jumpscenery
+// and flight ran. While the bonus is active, every really-blocked query of
+// Mark 1's player reaches the core with its object's classes (Mark 1's own
+// classifier, fed the shared JsObjectIndexOf), in a window or not, so the
+// core's take-off record sees what jumpscenery's would; only a granted jump's
+// window answers "no collision", and a gate or a lock keeps the real answer.
+static void Mark1JumpOnBuiltin(int row, RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args)
+{
+    if (!g_M1jWired || !g_Mark1.Enabled() || !g_M1jCore.Active()) return;
+    if (!S || S != g_M1sPlayer) return;
+    if (row < 0 || row >= JsNs::kBuiltinCount) return;
+    const TRoutine orig = g_JsOrig[row];
+    if (!orig) return;
+    const JsNs::BuiltinRow& b = JsNs::kBuiltins[row];
+    if (!JsBlocked(b.answer, Result, false)) return;
+    JsNs::Answer answer = JsNs::Answer::Real;
+    g_JsBusy = true;
+    try {
+        const int object = (Args && b.objectArg < argc) ? JsObjectIndexOf(Args[b.objectArg]) : -1;
+        const M1jNs::ObjectClass c = g_M1jClasses.Classify(object);
+        answer = g_M1jCore.OnQuery(static_cast<JsNs::Builtin>(row), (int64_t)g_RuntimeFrame, true, c.family, c.excluded, true,
+            [&]() { return JsExcludedBlocks(orig, b, S, O, argc, Args); });
+    } catch (...) { answer = JsNs::Answer::Real; }
+    g_JsBusy = false;
+    if (answer != JsNs::Answer::Real) Result = JsAnswerValue(answer);
+}
+
+// The jump's part of Mark 1's all-or-nothing install: the three objects by
+// name (an object that does not resolve refuses, naming it), skillsLeap's
+// shared detour, the five builtins' shared install, then the core's reads, M,
+// the learner and the classifier. "" when all of it is in.
+static std::string Mark1JumpInstall()
+{
+    const std::string missing = JsResolveObjects();
+    if (!missing.empty()) return missing + " did not resolve by name, so the jump could not tell scenery from a gate; the bonus stays off";
+    g_M1jHooksTried = true;
+    const std::string leap = SkillsLeapInstall();
+    if (!leap.empty()) return leap + "; the bonus stays off";
+    const std::string failed = CollisionBuiltinsInstall();
+    if (!failed.empty()) return failed + " not hooked, so the jump could not pass scenery; the bonus stays off";
+    if (!g_M1jWired) {
+        g_M1jClasses.SetIsAncestor([](int object, int ancestor) {
+            return g_Yytk->CallBuiltin("object_is_ancestor", { RValue((double)object), RValue((double)ancestor) }).ToBoolean();
+        });
+        static_assert(std::size(kJsExcluded) == 2, "the gate parent, then the lock");
+        g_M1jClasses.SetObjects(g_JsFamilyIdx, g_JsExcludedIdx[0], g_JsExcludedIdx[1]);
+        g_M1jCore.SetPlayerPosition(&Mark1JumpPosition);
+        g_M1jCore.SetCursor(&Mark1JumpCursor);
+        g_M1jCore.SetMax(&Mark1JumpMax);
+        g_M1jCore.SetRoomSize(&JsRoomSize);
+        g_M1jCore.SetPlaceMeeting(&Mark1JumpFamilyAt);
+        g_M1jCore.SetGrid(&Mark1JumpGridAt);
+        g_M1jCore.SetGateOnLine(&Mark1JumpGateOnLine);
+        g_M1jCore.SetLearner(&Mark1JumpLearn);
+        g_M1jWired = true;
+    }
+    return "";
+}
+
+// The per-frame tick's part, once installed: a jump whose window has closed
+// is handed to the learner when clean. Housekeeping only; no game call.
+static void Mark1JumpTick()
+{
+    if (!g_M1jWired) return;
+    try { g_M1jCore.Tick((int64_t)g_RuntimeFrame); } catch (...) {}
+}
+
 #ifndef FORGEPACT_RELEASE
 // The set's research probe's hold on a script ("" when none): defined with
 // that probe, below.
 static std::string M1pScriptHolder(std::string_view runtimeName);
+// Its hold on a builtin, the same way.
+static std::string M1pBuiltinHolder(std::string_view name);
+
+// A research instrument that holds skillsLeap or one of the five collision
+// builtins now, by name ("" when none): citrace and jumpprobe (jumpscenery's
+// own check), and the set's own research probe.
+static std::string Mark1JumpResearchHolder()
+{
+    const std::string js = JumpSceneryResearchHolders(false);
+    if (!js.empty()) return js;
+    const std::string leap = M1pScriptHolder(HeroSiege::Scripts::gml_Script_skillsLeap);
+    if (!leap.empty()) return leap + " holds " + std::string(SdkShortScriptName(HeroSiege::Scripts::gml_Script_skillsLeap));
+    for (const JsNs::BuiltinRow& b : JsNs::kBuiltins) {
+        const std::string held = M1pBuiltinHolder(b.name);
+        if (!held.empty()) return held + " holds " + std::string(b.name);
+    }
+    return "";
+}
 
 static std::string Mark1SetHolder(std::string_view runtimeName)
 {
@@ -63395,6 +63716,10 @@ static std::string Mark1SetInstall()
     if (!holder.empty())
         return holder + " holds CheckTalentUse (a script takes one inline detour; a second install would be table-only"
                " and blind); the bonus stays off. Relaunch without it to use mark1set.";
+    const std::string jumpHolder = Mark1JumpResearchHolder();
+    if (!jumpHolder.empty())
+        return jumpHolder + " (a script or builtin takes one detour, and the set's jump shares them); the bonus stays off."
+               " Relaunch without it to use mark1set.";
 #endif
     if (!g_M1sOrigCheckTalentUse
         && !HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_CheckTalentUse), "fp_mark1set_ctu",
@@ -63402,6 +63727,8 @@ static std::string Mark1SetInstall()
         return "CheckTalentUse was not found by name (see the hook line above)";
     if (!g_M1sCtuNative)
         return "CheckTalentUse went in TABLE-ONLY (no inline detour): compiled GML's direct calls would pass it by";
+    const std::string jump = Mark1JumpInstall();
+    if (!jump.empty()) return jump;
     Mark1GroundIconInstall();
     return "";
 }
@@ -63453,13 +63780,16 @@ static void Mark1SetTick()
         return;
     }
     Mark1RefreshPlayer();
+    Mark1JumpTick();
 }
 
 // The stat line's fields this adapter knows: the set's part, the automation's
 // (each column's ten counters from Mark1Automation, the gate's entries and the
-// calls whose original threw) and the art's (`art=` through FillStat, the
-// ground count and the shared detour's route). The jump and the movement
-// levers fill theirs when they land.
+// calls whose original threw), the jump's (every JumpCounts field from the
+// jump core's counter of the same name, and M with its source as the next
+// jump would read it) and the art's (`art=` through FillStat, the ground count
+// and the shared detour's route). The movement levers fill theirs when they
+// land.
 static M1sNs::StatFields Mark1SetStatFields()
 {
     M1sNs::StatFields f;
@@ -63482,6 +63812,32 @@ static M1sNs::StatFields Mark1SetStatFields()
     f.gateCalls = g_M1sGateCalls;
     f.gateOther = g_M1sGateOther;
     f.threw = (uint64_t)automation.CallsThrew();
+    const M1jNs::Counters& j = g_M1jCore.Stats();
+    M1sNs::JumpCounts& jc = f.jump;
+    jc.granted = j.granted;
+    jc.backedOff = j.backedOff;
+    jc.refusedLanding = j.refusedLanding;
+    jc.refusedGate = j.refusedGate;
+    jc.refusedCursor = j.refusedCursor;
+    jc.refusedUnreadable = j.refusedUnreadable;
+    jc.jumps = j.jumps;
+    jc.scaled = j.scaled;
+    jc.clamped = j.clamped;
+    jc.answered = j.answered;
+    jc.excluded = j.excluded;
+    jc.rejectedRoom = j.rejectedRoom;
+    jc.rejectedFamily = j.rejectedFamily;
+    jc.rejectedGrid = j.rejectedGrid;
+    jc.rejectedGate = j.rejectedGate;
+    jc.unreadTakeoff = j.unreadTakeoff;
+    jc.unreadCursor = j.unreadCursor;
+    jc.unreadRoom = j.unreadRoom;
+    jc.unreadFamily = j.unreadFamily;
+    jc.unreadGrid = j.unreadGrid;
+    jc.unreadGate = j.unreadGate;
+    const M1jNs::Max m = Mark1JumpMax();
+    jc.max = m.value;
+    jc.maxSource = std::string(M1jNs::MaxSourceName(m.source));
     f.iconsLoaded = Mark1IconsLoaded();
     f.iconsEmbedded = (int)ForgePact::Mark1Icons::kIconCount;
     f.ground = g_M1sGround;
@@ -64103,15 +64459,28 @@ static bool M1pHeldBy(const M1pRow& t, std::string& holder)
     return true;
 }
 
+// This probe's own hold on a builtin, for the Mark 1 set's install (declared
+// with the set's adapter): "mark1probe hook" once `hook` put that row in.
+static std::string M1pBuiltinHolder(std::string_view name)
+{
+    for (const M1pBuiltinRow& t : g_M1pBuiltinRows)
+        if (t.orig && std::string_view(M1pNs::RowName(t.row)) == name) return "mark1probe hook";
+    return "";
+}
+
 // Whether another ForgePact hook detours this builtin now, and its name: the
-// collision builtins jumpscenery and the flight charms share, and
-// jumpprobe's builtin rows. A builtin detours once, so a held one is left to
-// its holder rather than installed on top.
+// collision builtins jumpscenery, the flight charms and the Mark 1 set share,
+// and jumpprobe's builtin rows. A builtin detours once, so a held one is left
+// to its holder rather than installed on top.
 static bool M1pBuiltinHeldBy(std::string_view name, std::string& holder)
 {
     holder.clear();
     for (int i = 0; i < JsNs::kBuiltinCount; ++i)
-        if (g_JsOrig[i] && JsNs::kBuiltins[i].name == name) { holder = "jumpscenery / the flight charms (their shared collision builtins)"; return true; }
+        if (g_JsOrig[i] && JsNs::kBuiltins[i].name == name) {
+            holder = g_M1jHooksTried ? "jumpscenery / the flight charms / mark1set (their shared collision builtins)"
+                                     : "jumpscenery / the flight charms (their shared collision builtins)";
+            return true;
+        }
     for (int i = 0; i < JpNs::kBuiltinCount; ++i)
         if (g_JpBuiltinRows[i].installed && JpNs::kBuiltins[i].name == name) { holder = "jumpprobe hook"; return true; }
     return false;
