@@ -127,9 +127,12 @@ scaled every run, and the XP the dig reached counted once. Bonus finds were
 **not observed live** (the character's bonus-find stats all read 0), and the
 Miner's Helmet case was not run. Live procedure 2 (2026-10-02, below)
 confirmed the shipped build through the panel: rolls 3 dropped three stacks and
-rolls 1 one. What is still not measured: mining XP and the floating text per
-roll (not observed: the character's mining level was at the cap), bonus finds
-under rolls, and the Miner's Helmet with rolls. The panel row is Mining Ore Extra Rolls
+rolls 1 one. Mining XP and the floating text per roll were measured on
+2026-10-19 (the #222 sessions, "Live 1 and Live 2 of #222", below), with the
+hero's mining XP set below the cap: extra rolls pay no mining XP, and one XP
+text shows per dig, carrying the dig's real total. Still not measured: bonus
+finds under rolls and the Miner's Helmet with rolls; quest progress under rolls
+is not observed (no dig was seen calling `update_quest`). The panel row is Mining Ore Extra Rolls
 (`drops.mining_ore_rolls`, 1-10, default 1, off by default) and the plugin
 command is `miningrolls N`. The section "What the game does at a dig" is the
 static reading; what the sessions measured is under "Live procedure 1
@@ -142,7 +145,9 @@ dig uses the instance `CombatText` returns, so an extra roll that held the text
 back handed the dig nothing to use. Since v2.3.1 the text runs in an extra roll
 and its instances are removed afterwards, and an extra roll that throws turns
 the rolls off for the session instead of passing the throw back to the game.
-The fix is covered by the harness; it has not yet been run live.
+The fix is covered by the harness and was run live on 2026-10-19 on the
+research build: digs with the rolls at 3 reached the text sites, the extra
+rolls paid, and the game did not crash ("Live 1 and Live 2 of #222", below).
 
 ### What the game does at a dig (static reading)
 
@@ -173,7 +178,9 @@ and the facts every module needs are in the hub's
   Live procedure 1 measured `ExperienceUpdate` and `GuildExperienceAdd` once
   per completion run, but saw no `MiningAdd`, `CombatText` or `update_quest`
   call from a dig through native detours: not observed live, and unexplained
-  (see below).
+  (see below). The 2026-10-19 sessions, with the hero's mining XP below the
+  cap, measured `MiningAdd` and `CombatText` from a dig; `update_quest` still
+  read 0/0 ("Live 1 and Live 2 of #222", below).
 - **What the dig does with those calls' results** (static reading, 2026-10-19,
   Ghidra project build `498d588550d8`). `CombatText` creates one
   `Combat_Text_obj` instance (`Combat_Text_obj = 973` in the SDK's
@@ -204,11 +211,12 @@ calls the step trampoline with the original arguments. During an extra run a
 thread-local flag makes four pass-through detours skip the game's call:
 `MiningAdd`, `ExperienceUpdate`, `GuildExperienceAdd` and `update_quest`. So
 XP (mining, character, guild) and quest progress are meant to count once per
-node, while ore, bonus finds, sound and the hit effect happen once per roll. Of
-those four, only character and guild XP were measured once per node (Live
-procedure 1); no dig was observed calling `MiningAdd` or `update_quest`, so
-mining XP and quest progress may still come once per roll by a route these
-detours do not hold. An extra run that pays no ore ends the
+node, while ore, bonus finds, sound and the hit effect happen once per roll.
+Character and guild XP were measured once per node in Live procedure 1, and
+mining XP on 2026-10-19 (Live 2 of #222, below): a dig at rolls 3 gained about
+what a dig at rolls 1 did, with `MiningAdd` passed once and held back once in
+each extra run. Quest progress stays not observed: no dig was seen calling
+`update_quest` (its counter read 0/0 in both sessions). An extra run that pays no ore ends the
 loop, and afterwards the node's `hp` is forced to 0, so a node is never left
 diggable twice. The multiplier (or the helmet's x4) scales every stack of every
 run; the helmet's pulse and Vein Resonance follow the original run only.
@@ -283,9 +291,13 @@ fields on the instance `CombatText` returns, and the silenced detour returned
 none. Since v2.3.1 the text runs in an extra roll and is removed once the roll
 is over, which keeps the goal: one text per node, because each roll's text
 would otherwise show a fresh "N XP" with no XP behind it, and the README says
-it comes once per node. Letting the text repeat per roll stays rejected.
-Whether a removed text is ever seen for a frame is not established: no dig
-with the rolls on has been watched live since the change.
+it comes once per node. Letting the text repeat per roll stays rejected, and
+the owner kept it so on 2026-10-19 after Live 2 of #222 (below) showed that
+the one text carries the dig's real XP total: extra rolls pay no mining XP, so
+three texts would have shown two with nothing behind them. Digs with the rolls
+on were watched live on 2026-10-19, and the owner saw one XP text per dig each
+time. What is still not established is only whether a removed text is drawn
+for a single frame before it goes, which the eye cannot rule out.
 
 ### The 2026-10-19 crash (ForgePact #222)
 
@@ -311,6 +323,59 @@ call from a dig). That chain is inferred from the logs and the reading, and
 reproduced in `tests/mining_ore_harness.cpp`, not measured in the game. Why the
 game's end code was an access violation rather than an abort is **not
 established**; the v2.3.1 crash trap is how a next report would say.
+
+### Live 1 and Live 2 of #222 (2026-10-19)
+
+Two sessions of the workorder `forgepact-222-223-extra-rolls-crash-trap`, both
+on 2026-10-19 with slot 14 "Sorak", on research DLLs of the fixed build
+(Live 1: sha256 `c5526fe2...`, ForgePact `a4db66c`, x64dbg attached for the
+dig; Live 2: sha256 `d2b1d377...`, the code of ForgePact `38acede`, no
+debugger). Their captures, `forgepact-222-223-extra-rolls-crash-trap-live-1.md`
+and `forgepact-222-223-extra-rolls-crash-trap-live-2.md`, stay on the
+researcher's machine. Each session set the hero's mining XP below the 5000 cap
+in the account's save (the `[mining]` section of `shop.ini`), read it back
+through `call GetMiningLevel`, and restored the saves afterwards. That call
+returns the raw XP value, not a level: each dig's change in it equalled the
+"+n" on screen (the hub's
+[`docs/RUNTIME_DATA_MODELS.md` § 12](../../docs/RUNTIME_DATA_MODELS.md#12-mining)).
+Everything below is **measured** unless it says otherwise.
+
+- **The fix holds in play (Live 1).** At mining XP 225, a dig with
+  `miningrolls 3` ran both extra rolls: `miningrolls stat` went from
+  `CombatText=0/0` to `CombatText=1/2` (the game's `CombatText` called once in
+  the dig and in each of the two extra rolls), `removedTexts` 0 -> 2,
+  `xpSilenced` 6, `out.txt` logged `first extra roll paid 1 ore stacks`, no
+  `an extra roll failed` line appeared, and the game did not crash. The
+  debugger's logging breakpoints saw three `CombatText` hits back to back, one
+  per run, inside `MiningNodeStepMain`'s window and between two hits of a
+  control breakpoint that proved the instrument. The owner read one text,
+  "mining +13"; this session did not read the XP back by call. A first attempt
+  at mining XP 4000 also ran `CombatText` in both extra rolls and removed two
+  texts, but called no `MiningAdd` (`xpSilenced` 0), and the owner saw one
+  text reading "mining +0".
+- **Extra rolls pay no mining XP (Live 2).** A dig at `miningrolls 1` took the
+  XP from 225 to 232 (+7), with one text, "mining +7". A dig at `miningrolls 3`
+  took it from 232 to 238 (+6), with one text, "mining +6". After the second
+  dig the counters read `MiningAdd=2/2` (passed once per dig, held back once in
+  each extra roll), `xpSilenced` 6, `extraRuns` 2 and `removedTexts` 2, and
+  `update_quest` 0/0. So the one text the player sees is the dig's real total,
+  and only the ore repeats. The text count in both sessions is the owner's
+  reading, relayed; whether a removed text is drawn for a single frame is not
+  established.
+- **The research tool's `miningrolls dig` stalled three times** (Live 1's
+  first attempt, both Live 2 digs): it answered `dig node <id> did not
+  complete; released` with the node left at `hp=1`. Live 1's then finished on
+  its own; the owner finished Live 2's two by pressing F. Live 1's second
+  attempt completed through the tool. Why it stalls is not observed. It is a
+  gap in the research command, not in the player build.
+
+These sessions ran the fixed build, so they did not reproduce the 2026-10-19
+crash. The chain in "The 2026-10-19 crash" above (the dig setting `font` on the
+nothing a silenced `CombatText` returned, instead of a `Combat_Text_obj`
+instance) stays **inferred**, from the player's logs, the static reading and
+the harness. What they do show is that a dig below the cap reaches the
+`CombatText` sites with the rolls on, which the 2026-10-02 session at the cap
+never did.
 
 ### Live procedure 1 (2026-09-28)
 
