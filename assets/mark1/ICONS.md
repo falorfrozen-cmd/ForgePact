@@ -3,15 +3,16 @@
 The four Mark 1 pieces (ForgePact #166) draw the owner's own art in the bag and
 on the ground, by the same route as the Flight charms
 ([../flight-charms/ICONS.md](../flight-charms/ICONS.md)). The owner supplies the
-eight PNGs. Until a piece's PNGs are here, it shows its base item's own bag and
-ground art. No placeholder art is generated or shipped.
+eight PNGs, and all eight are in this folder and embedded in the plugin. A
+piece whose PNGs are missing, or whose load failed, shows its base item's own
+bag and ground art. No placeholder art is generated or shipped.
 
 | Piece | Inventory icon | Dropped icon |
 | --- | --- | --- |
-| Mark 1 Helmet | `mark1_helmet.png`, 64 x 64 (2 x 2 cells) | `mark1_helmet_ground.png`, about 24 x 24 |
-| Mark 1 Body Armor | `mark1_body_armor.png`, 64 x 96 (2 x 3 cells) | `mark1_body_armor_ground.png`, about 24 x 32 |
-| Mark 1 Boots | `mark1_boots.png`, 64 x 64 (2 x 2 cells) | `mark1_boots_ground.png`, about 24 x 24 |
-| Mark 1 Gloves | `mark1_gloves.png`, 64 x 64 (2 x 2 cells) | `mark1_gloves_ground.png`, about 24 x 24 |
+| Mark 1 Helmet | `mark1_helmet.png`, 64 x 64 (2 x 2 cells) | `mark1_helmet_ground.png`, 32 x 32 |
+| Mark 1 Body Armor | `mark1_body_armor.png`, 64 x 96 (2 x 3 cells) | `mark1_body_armor_ground.png`, 32 x 48 |
+| Mark 1 Boots | `mark1_boots.png`, 64 x 64 (2 x 2 cells) | `mark1_boots_ground.png`, 32 x 32 |
+| Mark 1 Gloves | `mark1_gloves.png`, 64 x 64 (2 x 2 cells) | `mark1_gloves_ground.png`, 32 x 32 |
 
 ## Art rules
 
