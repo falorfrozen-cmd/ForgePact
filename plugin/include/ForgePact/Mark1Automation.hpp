@@ -54,10 +54,10 @@ inline constexpr double kMark1PressValue = 4.0;
 
 // How many frames after its own press a toggle column is left alone, so the
 // toggled-on instance has time to appear before the read is trusted again.
-// Provisional: Live 1's `toggle-settle:` measurement plus 10 frames replaces
-// it (workorder item `live1-constants`); 30 stays when that reads
-// `not-observed`.
-inline constexpr long long kMark1ToggleSettleFrames = 30;
+// Mod live 1's `toggle-settle:` measured a forced press switching Soul Spurn
+// on 19 frames later (docs/mark1-set-research.md, which the behavior test pins
+// this against); the window is that plus 10 frames of margin.
+inline constexpr long long kMark1ToggleSettleFrames = 29;
 
 inline constexpr bool Mark1IsAutomatedColumn(int column)
 {

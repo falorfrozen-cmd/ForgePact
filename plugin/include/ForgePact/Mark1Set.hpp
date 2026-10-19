@@ -59,10 +59,12 @@ struct PieceRow {
 };
 
 // Classes: Helmet 0, Body 1, Boots 2, Gloves 4 (hs-game-sdk's item_type.hpp;
-// the behavior test pins them against it). The helmet's base is the one the
-// signature helmets use; the other three are provisional until Live 1's
-// base-check measures them. `b` is not part of recognition, so changing a base
-// later does not orphan a piece already made.
+// the behavior test pins them against it). Bases as Mod live 1 measured them
+// (`base-control` and `base-check`; `piece-bases:` in docs/mark1-set-research.md,
+// which the behavior test pins this table against): the helmet builds at base
+// 7, the one the signature helmets use, and body armor, boots and gloves each
+// at base 0. `b` is not part of recognition, so changing a base later does not
+// orphan a piece already made.
 inline constexpr PieceRow kPieces[kPieceCount] = {
     { Piece::Helmet, "helmet", "Mark 1 Helmet",     0, 0, 777500, 7 },
     { Piece::Body,   "body",   "Mark 1 Body Armor", 1, 1, 777501, 0 },

@@ -132,7 +132,17 @@ class Mark1SetBehaviorTests(unittest.TestCase):
 
     def test_seed_codec_classes_slots_seeds_and_bases(self):
         self.assertScenarios("seed_codec/classes_and_worn_slots", "seed_codec/one_seed_per_piece",
-                             "seed_codec/provisional_bases", "seed_codec/keys_round_trip")
+                             "seed_codec/measured_bases", "seed_codec/keys_round_trip")
+
+    def test_seed_codec_bases_are_the_research_docs_piece_bases(self):
+        # Mod live 1's `base-check` (docs/mark1-set-research.md, `piece-bases:`
+        # as `<class>:<b>` four times) is what each piece is built on.
+        doc = (ROOT / "docs/mark1-set-research.md").read_text(encoding="utf-8")
+        found = re.findall(r"^piece-bases: (\d+:\d+(?:,\d+:\d+){3})\s*$", doc, re.M)
+        self.assertEqual(len(found), 1, found)
+        measured = {int(c): int(b) for c, b in (pair.split(":") for pair in found[0].split(","))}
+        table = {row["type"]: row["b"] for row in self.table().values()}
+        self.assertEqual(table, measured, f"piece-bases: {found[0]}")
 
     def test_seed_codec_classes_match_the_sdk_item_types(self):
         sdk = (HUB / "hs-game-sdk/cpp/include/hs_game_sdk/item_type.hpp").read_text(encoding="utf-8")

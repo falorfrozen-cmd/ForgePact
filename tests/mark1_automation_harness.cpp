@@ -274,7 +274,7 @@ int main() {
         gateCall(c, true, 5, sr);
         check("toggle/settle_survives_frame_reset", sr[3] == kMark1PressValue && sr[6] == kMark1PressValue);
 
-        check("toggle/settle_constant_is_30", kMark1ToggleSettleFrames == 30);
+        check("toggle/settle_constant_is_29", kMark1ToggleSettleFrames == 29);
     }
     {
         resetBar(); resetSlot();

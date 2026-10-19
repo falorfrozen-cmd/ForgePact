@@ -176,7 +176,7 @@ int main()
         check("seed_codec/seeds_collide_with_no_band_in_use", ok);
 
         ok = kPieces[0].baseB == 7 && kPieces[1].baseB == 0 && kPieces[2].baseB == 0 && kPieces[3].baseB == 0;
-        check("seed_codec/provisional_bases", ok);
+        check("seed_codec/measured_bases", ok);
 
         ok = true;
         for (const PieceRow& r : kPieces) {

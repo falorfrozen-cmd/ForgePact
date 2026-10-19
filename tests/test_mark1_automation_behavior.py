@@ -13,6 +13,7 @@ path, a throw included. The adapter in ModuleMain.cpp (reading the bar, the
 toggle state and `inputState` by name) is pinned by its own contract tests.
 """
 import os
+import re
 import shutil
 import subprocess
 import unittest
@@ -129,10 +130,19 @@ class Mark1AutomationBehaviorTests(unittest.TestCase):
         self.assertScenario("toggle/held_on_600_frames_never_off")
 
     def test_toggle_guard_settle_window_is_a_named_constant(self):
-        # Provisional 30 frames until `live1-constants` sets it from Live 1's
-        # `toggle-settle:` (measured + 10).
-        self.assertIn("inline constexpr long long kMark1ToggleSettleFrames = 30;", self.header)
-        self.assertScenario("toggle/settle_constant_is_30")
+        # Mod live 1's `toggle-settle:` (docs/mark1-set-research.md) plus 10
+        # frames of margin.
+        self.assertIn("inline constexpr long long kMark1ToggleSettleFrames = 29;", self.header)
+        self.assertScenario("toggle/settle_constant_is_29")
+
+    def test_toggle_guard_settle_window_is_the_research_docs_toggle_settle_plus_10(self):
+        doc = (ROOT / "docs/mark1-set-research.md").read_text(encoding="utf-8")
+        found = re.findall(r"^toggle-settle: (\d+|not-observed)\s*$", doc, re.M)
+        self.assertEqual(len(found), 1, found)
+        expected = 30 if found[0] == "not-observed" else int(found[0]) + 10
+        window = re.search(r"inline constexpr long long kMark1ToggleSettleFrames = (\d+);", self.header)
+        self.assertIsNotNone(window)
+        self.assertEqual(int(window.group(1)), expected, f"toggle-settle: {found[0]}")
 
     # ---- the press itself -------------------------------------------------
     def test_press_value_is_4(self):
