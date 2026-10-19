@@ -2,18 +2,20 @@
 // (Mark1Set.hpp, ForgePact #166 phase 2).
 //
 // The Python runner injects the REAL ForgePact::Mark1Set header below. No game
-// is touched: the four worn slots are a WornSlots array the scenarios fill,
-// handed to the core through a read callback that counts its calls, so a
+// is touched: the worn gear slots 0-9 are a WornSlots array the scenarios
+// fill, handed to the core through a read callback that counts its calls, so a
 // baseline can assert that nothing was read.
 //
-// Baseline (labels baseline/*): a vanilla item, a piece in the wrong slot,
-// three pieces, an unreadable slot, a failed read and the switch off all
-// leave the bonus inactive; with the switch off nothing is read at all.
-// Seed codec (seed_codec/*): the table's classes, slots, seeds and bases, the
+// Baseline (labels baseline/*): a vanilla item, one piece worn twice in place
+// of another, three pieces, an unreadable slot, a failed read and the switch
+// off all leave the bonus inactive; with the switch off nothing is read at all.
+// Seed codec (seed_codec/*): the table's classes, seeds and bases, the
 // seeds distinct and inside ForgePact's built-in band without touching a band
 // in use, and recognition (`b` and `c` ignored, `j` must be 0, a whole
-// number). Targets: four matching pieces with the switch on make the bonus
-// active (active/*); the install state's transitions (install/*); the
+// number). Targets: the four pieces worn, each in whichever gear slot holds
+// it (Mod live 2's `equip-detect`: the gloves were not at slot 3), with the
+// switch on make the bonus active, and the line names each piece's slot
+// (active/*); the install state's transitions (install/*); the
 // refresh period (refresh/*); the dressing (dressing/*); the stat line
 // (stat/*) and the command's forms (parse/*). failure_counts/*: every field
 // the line prints is there once, in order, and each failure count reaches it
@@ -76,9 +78,12 @@ static WornSlot emptySlot()
     return s;
 }
 
+// The four pieces in gear slots 0-3, in table order, and the other gear slots
+// empty.
 static WornSlots fullSet()
 {
     WornSlots w;
+    for (auto& s : w) s = emptySlot();
     for (int i = 0; i < kPieceCount; ++i) w[static_cast<size_t>(i)] = pieceIn(kPieces[i].piece);
     return w;
 }
@@ -141,17 +146,17 @@ int main()
 {
     // ---- the table, printed for the Python side to pin against the SDK -------
     for (const PieceRow& r : kPieces)
-        std::cout << "TABLE " << r.key << " type=" << r.itemType << " slot=" << r.slot << " seed=" << r.seed
+        std::cout << "TABLE " << r.key << " type=" << r.itemType << " seed=" << r.seed
                   << " b=" << r.baseB << std::endl;
 
     // ---- seed_codec --------------------------------------------------------------
     {
-        bool ok = kPieceCount == 4
-            && kPieces[0].piece == Piece::Helmet && kPieces[0].itemType == 0 && kPieces[0].slot == 0
-            && kPieces[1].piece == Piece::Body && kPieces[1].itemType == 1 && kPieces[1].slot == 1
-            && kPieces[2].piece == Piece::Boots && kPieces[2].itemType == 2 && kPieces[2].slot == 2
-            && kPieces[3].piece == Piece::Gloves && kPieces[3].itemType == 4 && kPieces[3].slot == 3;
-        check("seed_codec/classes_and_worn_slots", ok);
+        bool ok = kPieceCount == 4 && kGearSlotCount == 10
+            && kPieces[0].piece == Piece::Helmet && kPieces[0].itemType == 0
+            && kPieces[1].piece == Piece::Body && kPieces[1].itemType == 1
+            && kPieces[2].piece == Piece::Boots && kPieces[2].itemType == 2
+            && kPieces[3].piece == Piece::Gloves && kPieces[3].itemType == 4;
+        check("seed_codec/classes_in_piece_order_and_ten_gear_slots", ok);
 
         ok = kPieces[0].seed == 777500 && kPieces[1].seed == 777501 && kPieces[2].seed == 777502 && kPieces[3].seed == 777503;
         check("seed_codec/one_seed_per_piece", ok);
@@ -230,8 +235,52 @@ int main()
         SetRead r = Evaluate(fullSet());
         check("active/four_matching_pieces_are_full", r.full && r.matched == 4 && r.unreadable == 0 && SetText(r) == "full",
               SetText(r));
+        check("active/worn_names_each_pieces_slot", WornText(r) == "0/1/2/3", WornText(r));
 
+        // Mod live 2's `equip-detect`: the gloves worn in a gear slot other
+        // than 3 (slot 3 empty) still count, and the line says where.
         WornSlots w = fullSet();
+        w[3] = emptySlot();
+        w[5] = pieceIn(Piece::Gloves);
+        r = Evaluate(w);
+        check("active/gloves_in_another_gear_slot_are_full", r.full && r.matched == 4 && SetText(r) == "full"
+                  && r.foundSlot[3] == 5 && WornText(r) == "0/1/2/5", SetText(r) + " worn=" + WornText(r));
+
+        // Any order across slots 0-9 is the same set.
+        w = fullSet();
+        for (auto& s : w) s = emptySlot();
+        w[9] = pieceIn(Piece::Helmet);
+        w[4] = pieceIn(Piece::Body);
+        w[0] = pieceIn(Piece::Boots);
+        w[7] = pieceIn(Piece::Gloves);
+        r = Evaluate(w);
+        check("active/pieces_in_any_gear_slots_are_full", r.full && WornText(r) == "9/4/0/7", WornText(r));
+
+        // A piece worn twice counts once, at the first slot that holds it.
+        w = fullSet();
+        w[6] = pieceIn(Piece::Boots);
+        r = Evaluate(w);
+        check("active/a_piece_twice_counts_once_at_its_first_slot", r.full && r.matched == 4 && WornText(r) == "0/1/2/3",
+              WornText(r));
+
+        // An unreadable slot cannot hide a piece already found: the other
+        // gear (weapons, rings) never blocks a full set, and it is counted.
+        w = fullSet();
+        w[8].read = SlotRead::Unreadable;
+        r = Evaluate(w);
+        check("active/an_unreadable_other_slot_beside_four_pieces_is_full_and_counted", r.full && r.unreadable == 1,
+              SetText(r));
+
+        // Other gear whose definition has no `a` or `j` (the adapter hands
+        // NaN): read, not a piece, and not unreadable.
+        w = fullSet();
+        w[8] = item(4, std::nan(""), 0, 0, 0);
+        w[3] = item(4, 777503, 0, 0, std::nan(""));
+        r = Evaluate(w);
+        check("baseline/gear_without_a_or_j_is_read_and_not_a_piece", !r.full && r.matched == 3 && r.unreadable == 0
+                  && WornText(r) == "0/1/2/-", SetText(r) + " worn=" + WornText(r));
+
+        w = fullSet();
         w[2] = item(2, 123456, 0, 0, 0);
         r = Evaluate(w);
         check("baseline/a_vanilla_item_is_not_full", !r.full && r.matched == 3 && SetText(r) == "partial(3)", SetText(r));
@@ -242,29 +291,31 @@ int main()
         check("baseline/three_pieces_are_not_full", !r.full && r.matched == 3 && r.unreadable == 0 && SetText(r) == "partial(3)",
               SetText(r));
 
-        // The gloves worn where the boots go, and the boots where the gloves go.
+        // A second helmet worn where the body armor was: the helmet counts
+        // once and the body armor is missing.
         w = fullSet();
-        w[2] = pieceIn(Piece::Gloves);
-        w[3] = pieceIn(Piece::Boots);
+        w[1] = pieceIn(Piece::Helmet);
         r = Evaluate(w);
-        check("baseline/a_piece_in_the_wrong_slot_does_not_count", !r.full && r.matched == 2 && SetText(r) == "partial(2)",
-              SetText(r));
+        check("baseline/a_piece_twice_in_place_of_another_does_not_count", !r.full && r.matched == 3 && SetText(r) == "partial(3)"
+                  && WornText(r) == "0/-/2/3", SetText(r) + " worn=" + WornText(r));
 
-        // Four helmets: one counts, in its own slot.
+        // Helmets in every gear slot: one counts.
         WornSlots helmets;
         for (auto& s : helmets) s = pieceIn(Piece::Helmet);
         r = Evaluate(helmets);
-        check("baseline/the_same_piece_four_times_is_one", !r.full && r.matched == 1 && SetText(r) == "partial(1)", SetText(r));
+        check("baseline/the_same_piece_in_every_slot_is_one", !r.full && r.matched == 1 && SetText(r) == "partial(1)", SetText(r));
 
         w = fullSet();
         w[1].read = SlotRead::Unreadable;
         r = Evaluate(w);
-        check("baseline/an_unreadable_slot_is_not_full", !r.full && r.matched == 3 && r.unreadable == 1, SetText(r));
+        check("baseline/an_unreadable_slot_is_not_full", !r.full && r.matched == 3 && r.unreadable == 1 && WornText(r) == "0/-/2/3",
+              SetText(r));
 
         WornSlots none;
         for (auto& s : none) s = emptySlot();
         r = Evaluate(none);
-        check("baseline/no_piece_reads_none", !r.full && r.matched == 0 && SetText(r) == "none", SetText(r));
+        check("baseline/no_piece_reads_none", !r.full && r.matched == 0 && SetText(r) == "none" && WornText(r) == "-/-/-/-",
+              SetText(r));
     }
 
     // ---- the bonus at the point of use ---------------------------------------------
@@ -293,11 +344,17 @@ int main()
         wv.slots[1] = item(1, 42, 0, 0, 0);
         check("baseline/a_vanilla_item_switch_on_inactive", !vanilla.Active(0, wv.fn()));
 
-        Bonus wrong = installedOn();
+        Bonus twice = installedOn();
         FakeWorn ww;
-        ww.slots[0] = pieceIn(Piece::Body);
-        ww.slots[1] = pieceIn(Piece::Helmet);
-        check("baseline/a_piece_in_the_wrong_slot_switch_on_inactive", !wrong.Active(0, ww.fn()));
+        ww.slots[3] = pieceIn(Piece::Boots);
+        check("baseline/a_piece_twice_in_place_of_another_switch_on_inactive", !twice.Active(0, ww.fn()));
+
+        // The target: the gloves away from slot 3 still make it active.
+        Bonus moved = installedOn();
+        FakeWorn wm;
+        wm.slots[3] = emptySlot();
+        wm.slots[7] = pieceIn(Piece::Gloves);
+        check("active/gloves_in_another_gear_slot_switch_on_is_active", moved.Active(0, wm.fn()) && moved.ActiveCached());
 
         Bonus unread = installedOn();
         FakeWorn wu;
@@ -435,7 +492,7 @@ int main()
         const std::string fresh = StatLine(StatFields{});
         check("stat/fresh_line_begins_bonus_off", startsWith(fresh, "mark1set: bonus=off"), fresh);
         const std::string expected =
-            "mark1set: bonus=off active=no install=not-armed set=none unreadable=0 reads=0"
+            "mark1set: bonus=off active=no install=not-armed set=none unreadable=0 reads=0 worn=-/-/-/-"
             " | automation presses=0/0/0/0 skip-empty=0/0/0/0 skip-aura=0/0/0/0 skip-toggle-on=0/0/0/0"
             " skip-settle=0/0/0/0 skip-no-state=0/0/0/0"
             " col-unreadable=0/0/0/0 orig-unreadable=0/0/0/0 write-failed=0/0/0/0 restore-failed=0/0/0/0"
@@ -496,6 +553,18 @@ int main()
         check("stat/full_set", startsWith(StatLine(sf), "mark1set: bonus=on active=yes install=installed set=full unreadable=0 reads=1 "),
               StatLine(sf));
 
+        // The line names the slot each piece was found in, `-` for one not found.
+        Bonus gl = installedOn();
+        FakeWorn wg;
+        wg.slots[3] = emptySlot();
+        wg.slots[5] = pieceIn(Piece::Gloves);
+        gl.ReadNow(0, wg.fn());
+        StatFields sg;
+        gl.FillStat(sg);
+        check("stat/worn_names_the_slot_each_piece_was_found_in",
+              has(StatLine(sg), " set=full unreadable=0 reads=1 worn=0/1/2/5 | automation ") && field(partial, "worn") == "0/-/2/3",
+              StatLine(sg));
+
         Bonus bad = installedOn();
         FakeWorn wb;
         wb.ok = false;
@@ -522,7 +591,7 @@ int main()
         // Every name the line prints, each exactly once (a field printed twice,
         // or one whose name is another's, would let a check read the wrong one).
         const std::vector<std::string> names = {
-            "bonus", "active", "install", "set", "unreadable", "reads",
+            "bonus", "active", "install", "set", "unreadable", "reads", "worn",
             "presses", "skip-empty", "skip-aura", "skip-toggle-on", "skip-settle", "skip-no-state",
             "col-unreadable", "orig-unreadable", "write-failed", "restore-failed", "gate-calls", "gate-other", "threw",
             "granted", "backed-off", "refused-landing", "refused-gate", "refused-cursor", "max",
@@ -606,7 +675,8 @@ int main()
                   && field(grid, "rejected") == "0/0/0/0", grid);
 
         // Each group's new fields come after that group's existing ones.
-        ok = col.find(" skip-no-state=") < col.find(" col-unreadable=") && col.find(" threw=") < col.find(" | jump ")
+        ok = col.find(" reads=") < col.find(" worn=") && col.find(" worn=") < col.find(" | automation ")
+            && col.find(" skip-no-state=") < col.find(" col-unreadable=") && col.find(" threw=") < col.find(" | jump ")
             && col.find(" max=") < col.find(" refused-unreadable=") && col.find(" unread=") < col.find(" grid-reads=") && col.find(" grid-reads=") < col.find(" | icons=")
             && col.find(" icons=") < col.find(" art=") && col.find(" ground-route=") < col.find(" | speed=");
         check("failure_counts/new_fields_after_each_groups_own", ok, col);

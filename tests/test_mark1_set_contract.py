@@ -589,6 +589,30 @@ class Mark1SetContract(unittest.TestCase):
         for write in ("variable_instance_set", "variable_struct_set", "array_set", "variable_global_set"):
             self.assertNotIn(write, read)
 
+    def test_the_worn_read_scans_every_gear_slot_not_one_slot_per_piece(self):
+        # Mod live 2's `equip-detect`: the worn gloves were not at slot 3, so
+        # the read hands the core gear slots 0..9 and the core counts each
+        # piece wherever it is.
+        read = self.body("read_worn")
+        self.assertIn("for (int i = 0; i < M1sNs::kGearSlotCount; ++i)", read)
+        self.assertIn("ForgePact::MinerHelmet::Index(worn, i, fingerprint)", read)
+        self.assertNotIn(".slot", read)
+        self.assertNotIn("kPieceCount", read)
+        # player.hpp's names for the read's literals.
+        self.assertIn("HeroSiege::Player::kMaxLocalPlayerIndex", read)
+        self.assertIn("HeroSiege::Player::kItemInstanceTypeField", read)
+        self.assertIn("HeroSiege::Player::kItemInstanceDefinitionField", read)
+        self.assertNotIn("index > 4", read)
+        self.assertNotIn('"itemType"', read)
+        self.assertNotIn('"itemDefinitionStruct"', read)
+        # Gear without a numeric `a` or `j` is read, not unreadable.
+        self.assertIn('if (!FlightNumber(definition, "a", a)) a = std::nan("");', read)
+        self.assertIn('if (!FlightNumber(definition, "j", j)) j = std::nan("");', read)
+        header = self.header()
+        self.assertIn("inline constexpr int kGearSlotCount = 10;", header)
+        self.assertIn("using WornSlots = std::array<WornSlot, kGearSlotCount>;", header)
+        self.assertIn('s += " worn=" + WornText(f.set);', header)
+
     # ---- the research probe's spawn ----------------------------------------------------
 
     def test_spawn_is_research_only_inside_the_probe_block(self):

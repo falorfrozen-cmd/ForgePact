@@ -63181,7 +63181,7 @@ static bool Mark1ReadWorn(M1sNs::WornSlots& slots)
         if (!HhResolveLocalPlayer(player)) return false;
         double index = -1;
         if (!ForgePact::MiningOre::WholeNumber(g_Yytk->CallBuiltin("variable_global_get", { RValue("mplr") }), index)
-            || index < 0 || index > 4) return false;
+            || index < 0 || index > HeroSiege::Player::kMaxLocalPlayerIndex) return false;
         const RValue all = g_Yytk->CallBuiltin("variable_global_get", { RValue("equippedItems") });
         RValue ownerSlots, worn;
         if (!ForgePact::MinerHelmet::Index(all, (int)index, ownerSlots) || !ForgePact::MinerHelmet::Index(ownerSlots, 0, worn))
@@ -63192,11 +63192,15 @@ static bool Mark1ReadWorn(M1sNs::WornSlots& slots)
         RValue owner;
         if (!AurieSuccess(g_Yytk->CallGameScriptEx(owner, HeroSiege::Scripts::gml_Script_GetOnlinePlayerItemOwner.data(),
                                                     global, global, { RValue(index) }))) return false;
-        for (int i = 0; i < M1sNs::kPieceCount; ++i) {
+        // Every gear slot 0..9, not one slot per piece: which slot holds which
+        // class is measured only for the helmet (0) and the off hand (9), and
+        // Mod live 2 found the worn gloves away from slot 3. The core counts
+        // each piece once, wherever it is, and the stat line names the slot.
+        for (int i = 0; i < M1sNs::kGearSlotCount; ++i) {
             M1sNs::WornSlot& s = slots[static_cast<size_t>(i)];
             s.read = M1sNs::SlotRead::Unreadable;
             RValue fingerprint;
-            if (!ForgePact::MinerHelmet::Index(worn, M1sNs::kPieces[i].slot, fingerprint)) continue;
+            if (!ForgePact::MinerHelmet::Index(worn, i, fingerprint)) continue;
             if (fingerprint.m_Kind == VALUE_UNDEFINED) { s.read = M1sNs::SlotRead::Empty; continue; }
             if (fingerprint.m_Kind != VALUE_STRING) continue;
             if (fingerprint.ToString().empty()) { s.read = M1sNs::SlotRead::Empty; continue; }
@@ -63205,8 +63209,13 @@ static bool Mark1ReadWorn(M1sNs::WornSlots& slots)
                                                         global, global, { fingerprint, owner }))) continue;
             RValue definition;
             double t = 0, a = 0, b = 0, c = 0, j = 0;
-            if (!FlightField(item, "itemDefinitionStruct", definition) || !FlightNumber(item, "itemType", t)
-                || !FlightNumber(definition, "a", a) || !FlightNumber(definition, "j", j)) continue;
+            if (!FlightField(item, HeroSiege::Player::kItemInstanceDefinitionField.data(), definition)
+                || !FlightNumber(item, HeroSiege::Player::kItemInstanceTypeField.data(), t)) continue;
+            // The other gear (weapons, rings, amulet) is read now too: an item
+            // whose definition has no numeric `a` or `j` cannot be a piece
+            // (as Mark1PieceDecode), so it is worn gear, not an unreadable slot.
+            if (!FlightNumber(definition, "a", a)) a = std::nan("");
+            if (!FlightNumber(definition, "j", j)) j = std::nan("");
             FlightNumber(definition, "b", b);   // not part of recognition
             FlightNumber(definition, "c", c);
             s.read = M1sNs::SlotRead::Item;

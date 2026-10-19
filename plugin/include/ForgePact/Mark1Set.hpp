@@ -14,7 +14,7 @@ namespace ForgePact::Mark1Set {
 // ---- Mark 1: the set's decision core (ForgePact #166, phase 2) ----------------
 //
 // Four built-in Heroic pieces: helmet, body armor, boots and gloves. While all
-// four are worn, each in its own slot, and the "Mark 1 set" switch is on, the
+// four are worn, wherever among the gear slots, and the "Mark 1 set" switch is on, the
 // set bonus is active: Mark1Automation.hpp casts the bar's Q, E, R and Y,
 // Mark1Jump.hpp scales the jump and Mark1Movement.hpp halves the walk.
 //
@@ -25,7 +25,7 @@ namespace ForgePact::Mark1Set {
 //   - the dressing's constants (name, rarity, mechanic, affix rows). The
 //     adapter writes them through a recognition-only CustomForgeEntry, as the
 //     flight charms' are.
-//   - the full-set read's verdict, from the four worn slots the adapter reads,
+//   - the full-set read's verdict, from the worn gear slots the adapter reads,
 //     refreshed at most once every kRefreshFrames at the point of use (inside
 //     the CheckTalentUse detour) and on `mark1set stat`.
 //   - the install state: armed by `mark1set bonus 1`, installed once a
@@ -38,10 +38,12 @@ namespace ForgePact::Mark1Set {
 // It is game-independent by contract - numbers and strings, never an instance
 // or an RValue - so tests/mark1_set_harness.cpp compiles it whole. The adapter
 // in ModuleMain.cpp resolves every script and global by name and hands the
-// worn slots in through ReadWornFn, as MinerHelmetMod.hpp's ReadWorn reads the
+// gear slots in through ReadWornFn, as MinerHelmetMod.hpp's ReadWorn reads the
 // helmet. The worn gear is global.equippedItems[global.mplr][0][slot], as
 // fingerprint strings (the hub's docs/RUNTIME_DATA_MODELS.md, "Equipment Slots
-// Layout").
+// Layout"). Which gear slot holds which class is not measured past the helmet
+// at 0 and the off hand at 9 (Mod live 2's `equip-detect` found the worn
+// gloves were not at 3), so a piece counts in whichever gear slot holds it.
 
 // ---- the four pieces ----------------------------------------------------------
 
@@ -53,7 +55,6 @@ struct PieceRow {
     std::string_view key;       // `mark1probe spawn`'s word
     std::string_view name;      // the display name dressing writes
     int              itemType;  // the class, HeroSiege::Items::ItemType
-    int              slot;      // the worn slot, equippedItems[mplr][0][slot]
     long long        seed;      // the definition's `a`; one per piece, no rolls
     int              baseB;     // the base item's `b` a new piece is built on
 };
@@ -66,10 +67,10 @@ struct PieceRow {
 // at base 0. `b` is not part of recognition, so changing a base later does not
 // orphan a piece already made.
 inline constexpr PieceRow kPieces[kPieceCount] = {
-    { Piece::Helmet, "helmet", "Mark 1 Helmet",     0, 0, 777500, 7 },
-    { Piece::Body,   "body",   "Mark 1 Body Armor", 1, 1, 777501, 0 },
-    { Piece::Boots,  "boots",  "Mark 1 Boots",      2, 2, 777502, 0 },
-    { Piece::Gloves, "gloves", "Mark 1 Gloves",     4, 3, 777503, 0 },
+    { Piece::Helmet, "helmet", "Mark 1 Helmet",     0, 777500, 7 },
+    { Piece::Body,   "body",   "Mark 1 Body Armor", 1, 777501, 0 },
+    { Piece::Boots,  "boots",  "Mark 1 Boots",      2, 777502, 0 },
+    { Piece::Gloves, "gloves", "Mark 1 Gloves",     4, 777503, 0 },
 };
 
 // ForgePact's built-in seed band. 777500..777503 sits clear of the ranges in
@@ -82,13 +83,13 @@ inline constexpr bool SeedsDistinctInBand()
 {
     for (int i = 0; i < kPieceCount; ++i) {
         if (kPieces[i].seed < kBuiltInSeedLo || kPieces[i].seed > kBuiltInSeedHi) return false;
-        if (kPieces[i].slot != i || static_cast<int>(kPieces[i].piece) != i) return false;
+        if (static_cast<int>(kPieces[i].piece) != i) return false;
         for (int k = i + 1; k < kPieceCount; ++k)
             if (kPieces[i].seed == kPieces[k].seed) return false;
     }
     return true;
 }
-static_assert(SeedsDistinctInBand(), "the four seeds are distinct and inside 777000..777999, the table in slot order");
+static_assert(SeedsDistinctInBand(), "the four seeds are distinct and inside 777000..777999, the table in piece order");
 
 // ---- the dressing --------------------------------------------------------------
 
@@ -157,30 +158,41 @@ struct WornSlot {
     double   j = 0;
 };
 
-// Worn slots 0..3 (helmet, body, boots, gloves), indexed by slot.
-using WornSlots = std::array<WornSlot, kPieceCount>;
+// The worn gear: equippedItems[mplr][0] slots 0..9 (10-14 are the relics and
+// 15 up the charms, RDM "Equipment Slots Layout"), indexed by slot.
+inline constexpr int kGearSlotCount = 10;
+using WornSlots = std::array<WornSlot, kGearSlotCount>;
+
+inline constexpr int kNotFound = -1;
 
 struct SetRead {
-    int  matched = 0;     // slots holding their own piece
-    int  unreadable = 0;  // slots that could not be read
+    int  matched = 0;     // pieces found among the gear slots, each once
+    int  unreadable = 0;  // gear slots that could not be read
     bool full = false;
+    // The gear slot each piece was first found in, by Piece; kNotFound if none.
+    std::array<int, kPieceCount> foundSlot{ kNotFound, kNotFound, kNotFound, kNotFound };
 };
 
-// Full = each slot holds its own piece. A piece in another piece's slot does
-// not count, and an unreadable slot is not full.
+// Full = each of the four pieces is worn in some gear slot. A piece worn twice
+// counts once, at its first slot. An unreadable slot is counted; it can leave
+// a piece unfound, never make one found, so it blocks nothing already found.
 inline SetRead Evaluate(const WornSlots& slots)
 {
     SetRead r;
-    for (int i = 0; i < kPieceCount; ++i) {
+    for (int i = 0; i < kGearSlotCount; ++i) {
         const WornSlot& s = slots[static_cast<size_t>(i)];
         if (s.read == SlotRead::Unreadable) {
             ++r.unreadable;
             continue;
         }
         Piece p = Piece::Helmet;
-        if (s.read == SlotRead::Item && IsPiece(s.itemType, s.a, s.b, s.c, s.j, p) && RowOf(p).slot == i) ++r.matched;
+        if (s.read != SlotRead::Item || !IsPiece(s.itemType, s.a, s.b, s.c, s.j, p)) continue;
+        int& found = r.foundSlot[static_cast<size_t>(p)];
+        if (found != kNotFound) continue;
+        found = i;
+        ++r.matched;
     }
-    r.full = r.matched == kPieceCount && r.unreadable == 0;
+    r.full = r.matched == kPieceCount;
     return r;
 }
 
@@ -190,6 +202,19 @@ inline std::string SetText(const SetRead& r)
     if (r.full) return "full";
     if (r.matched == 0) return "none";
     return "partial(" + std::to_string(r.matched) + ")";
+}
+
+// The ` worn=` field: the gear slot each piece was found in, helmet/body/
+// boots/gloves joined by `/`, `-` for one not found.
+inline std::string WornText(const SetRead& r)
+{
+    std::string s;
+    for (int i = 0; i < kPieceCount; ++i) {
+        if (i) s += "/";
+        const int slot = r.foundSlot[static_cast<size_t>(i)];
+        s += slot == kNotFound ? std::string("-") : std::to_string(slot);
+    }
+    return s;
 }
 
 // ---- the `mark1set stat` line -------------------------------------------------------
@@ -321,6 +346,7 @@ inline std::string StatLine(const StatFields& f)
     s += " set=" + SetText(f.set);
     s += " unreadable=" + std::to_string(f.unreadable);
     s += " reads=" + std::to_string(f.reads);
+    s += " worn=" + WornText(f.set);
     s += " | automation presses=" + ColumnsText(f.columns, &ColumnCounts::presses);
     s += " skip-empty=" + ColumnsText(f.columns, &ColumnCounts::skipEmpty);
     s += " skip-aura=" + ColumnsText(f.columns, &ColumnCounts::skipAura);
@@ -424,8 +450,8 @@ inline bool ArtWantsGroundInstall(bool armed, int iconsEmbedded, bool tried, boo
 
 class Bonus {
 public:
-    // The four worn slots, read through GetOnlinePlayerItemOwner and
-    // GetItemFromFingerprint. False when the read failed as a whole (no local
+    // The gear slots 0..kGearSlotCount-1, read through
+    // GetOnlinePlayerItemOwner and GetItemFromFingerprint. False when the read failed as a whole (no local
     // player, no readable equippedItems): counted, and not full.
     using ReadWornFn = std::function<bool(WornSlots& slots)>;
 
@@ -514,7 +540,7 @@ public:
         WornSlots slots{};
         SetRead r;
         if (!read || !read(slots)) {
-            r.unreadable = kPieceCount;
+            r.unreadable = kGearSlotCount;
         } else {
             r = Evaluate(slots);
         }

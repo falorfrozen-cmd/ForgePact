@@ -1,18 +1,22 @@
 """Run the Mark 1 set's real core against controlled worn reads.
 
 Mark 1 (ForgePact #166 phase 2) is a set of four built-in Heroic pieces:
-helmet, body armor, boots and gloves. While all four are worn, each in its own
-slot, and the "Mark 1 set" switch is on, the set bonus is active. These
+helmet, body armor, boots and gloves. While all four are worn, each in
+whichever of gear slots 0-9 holds it, and the "Mark 1 set" switch is on, the
+set bonus is active. These
 scenarios pin the decisions ModuleMain.cpp's adapter takes from
 plugin/include/ForgePact/Mark1Set.hpp, compiled whole.
 
-Baseline (`baseline` in the name): a vanilla item, a piece in the wrong slot,
-three pieces, an unreadable slot, a failed read and the switch off all leave
-the bonus inactive, and with the switch off nothing is read. `seed_codec`: the
-table's classes (pinned against hs-game-sdk's ItemType), worn slots, seeds and
-bases; the seeds distinct, inside ForgePact's built-in band and clear of every
-band in use; recognition ignores `b` and `c` and needs `j` 0. Targets: four
-matching pieces with the switch on make the bonus active; the install state's
+Baseline (`baseline` in the name): a vanilla item, one piece worn twice in
+place of another, three pieces, an unreadable slot, a failed read and the
+switch off all leave the bonus inactive, and with the switch off nothing is
+read. `seed_codec`: the table's classes (pinned against hs-game-sdk's
+ItemType), seeds and bases; the seeds distinct, inside ForgePact's built-in
+band and clear of every band in use; recognition ignores `b` and `c` and needs
+`j` 0. Targets: the four pieces with the switch on make the bonus active
+wherever among gear slots 0-9 each is worn (Mod live 2's `equip-detect`: the
+gloves were not at slot 3), and the line's `worn=` names each one's slot; the
+install state's
 transitions; the 30-frame refresh period; the dressing; the stat line, fresh
 (`mark1set: bonus=off` first) and filled, and the command's forms.
 `failure_counts`: the automation's four per-column failures, the gate's
@@ -108,10 +112,11 @@ class Mark1SetBehaviorTests(unittest.TestCase):
     def test_baseline_a_vanilla_item_leaves_the_bonus_inactive(self):
         self.assertScenarios("baseline/a_vanilla_item_is_not_full", "baseline/a_vanilla_item_switch_on_inactive")
 
-    def test_baseline_a_piece_in_the_wrong_slot_leaves_the_bonus_inactive(self):
-        self.assertScenarios("baseline/a_piece_in_the_wrong_slot_does_not_count",
-                             "baseline/the_same_piece_four_times_is_one",
-                             "baseline/a_piece_in_the_wrong_slot_switch_on_inactive")
+    def test_baseline_a_piece_worn_twice_in_place_of_another_leaves_the_bonus_inactive(self):
+        self.assertScenarios("baseline/a_piece_twice_in_place_of_another_does_not_count",
+                             "baseline/the_same_piece_in_every_slot_is_one",
+                             "baseline/gear_without_a_or_j_is_read_and_not_a_piece",
+                             "baseline/a_piece_twice_in_place_of_another_switch_on_inactive")
 
     def test_baseline_three_pieces_leave_the_bonus_inactive(self):
         self.assertScenarios("baseline/three_pieces_are_not_full", "baseline/three_pieces_switch_on_inactive",
@@ -131,7 +136,7 @@ class Mark1SetBehaviorTests(unittest.TestCase):
     # ---- seed_codec: the table and recognition ---------------------------------
 
     def test_seed_codec_classes_slots_seeds_and_bases(self):
-        self.assertScenarios("seed_codec/classes_and_worn_slots", "seed_codec/one_seed_per_piece",
+        self.assertScenarios("seed_codec/classes_in_piece_order_and_ten_gear_slots", "seed_codec/one_seed_per_piece",
                              "seed_codec/measured_bases", "seed_codec/keys_round_trip")
 
     def test_seed_codec_bases_are_the_research_docs_piece_bases(self):
@@ -151,8 +156,9 @@ class Mark1SetBehaviorTests(unittest.TestCase):
         self.assertEqual(sorted(rows), ["body", "boots", "gloves", "helmet"])
         for key, name in (("helmet", "Helmet"), ("body", "Body"), ("boots", "Boots"), ("gloves", "Gloves")):
             self.assertEqual(rows[key]["type"], types[name], key)
-        # Worn slots per the hub's docs/RUNTIME_DATA_MODELS.md, "Equipment Slots Layout".
-        self.assertEqual([rows[k]["slot"] for k in ("helmet", "body", "boots", "gloves")], [0, 1, 2, 3])
+        # No worn slot per piece: RDM's "Equipment Slots Layout" rows 1-8 are
+        # unmeasured, and Mod live 2 found the gloves elsewhere than slot 3.
+        self.assertTrue(all("slot" not in row for row in rows.values()), rows)
 
     def test_seed_codec_seeds_are_distinct_in_the_band_and_clear_of_bands_in_use(self):
         self.assertScenarios("seed_codec/seeds_distinct_inside_the_built_in_band",
@@ -181,6 +187,16 @@ class Mark1SetBehaviorTests(unittest.TestCase):
 
     def test_four_matching_pieces_with_the_switch_on_make_the_bonus_active(self):
         self.assertScenarios("active/four_matching_pieces_are_full", "active/four_pieces_switch_on_is_active")
+
+    def test_the_four_pieces_count_wherever_among_gear_slots_0_to_9_each_is_worn(self):
+        # Mod live 2's `equip-detect`: the worn Mark 1 Gloves were not at slot 3.
+        self.assertScenarios("active/gloves_in_another_gear_slot_are_full",
+                             "active/gloves_in_another_gear_slot_switch_on_is_active",
+                             "active/pieces_in_any_gear_slots_are_full",
+                             "active/a_piece_twice_counts_once_at_its_first_slot",
+                             "active/an_unreadable_other_slot_beside_four_pieces_is_full_and_counted",
+                             "active/worn_names_each_pieces_slot",
+                             "stat/worn_names_the_slot_each_piece_was_found_in")
 
     def test_dressing(self):
         self.assertScenarios("dressing/display_names", "dressing/heroic_rarity_and_mechanic",
