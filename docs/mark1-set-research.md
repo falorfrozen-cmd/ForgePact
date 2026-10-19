@@ -63,6 +63,14 @@ anything that suspends the game's own loop.
   a walkable landing point is one inside the room where the player would meet
   nothing of `Collision_Parent_obj`. The cast's movement penalty was measured
   but no member holding it was found (§ Not established).
+- **Phase 2 (the mod):** its research session, Mod live procedure 1, ran on
+  2026-10-19 (§ Phase 2: the mod). The walk's step is affine in the speed
+  stat, so an answer of (151 - 200) / 2 halves Sorak's walk
+  (`speed-route: stat-model`); the cast's slowdown follows
+  `playerEffect[199]` only through its ramp, and nothing found removes it
+  (`penalty-route: none`). The facts are folded into the same four sections
+  of `docs/RUNTIME_DATA_MODELS.md` and into `mod_live_1` of the curated
+  measurements.
 
 ## Static search
 
@@ -1113,3 +1121,258 @@ walkable landing point is told from one past the edge (inside the room, and
 - **Pockets the floor does not reach.** Points between the water and the
   fallen rocks south of the waypoint read free on every field; whether the
   player could walk to them was not checked, and the test does not say.
+
+## Phase 2: the mod
+
+Phase 2 builds the set itself (`mark1set`, off by default) on what phase 1
+found. Two of its levers were left open by phase 1 (§ Not established): what
+halves the walk exactly, and what could take the cast's slowdown away. So
+phase 2 opened with one more research session, on `mark1probe` extended for
+the walk: eleven builtin rows beside the nine script rows, `statlog`,
+`statpin`, `hold`, the `effect`, element-wise `pst` and `builtin` watch
+scopes, `pos`'s modal step and mean frame time, and `base` (the toolkit's
+ForgePact guide documents each form). Each lever is then picked from what
+that session measured (§ Phase 2 decision). The set's switch was never
+turned on in it.
+
+### Mod live procedure 1
+
+The walk's speed curve, the cast penalty, the gate's mana, the toggle's
+settle time, the piece bases, a generated zone's edge and the debugger's
+walk callers. The capture is the workorder's mod live capture 1.
+
+**Setup:**
+
+- **Build:** the research build from `plugin_build\build.bat dev` at
+  ForgePact `109c908`, DLL SHA-256
+  `a2f64cf3889a4333e03c4fb0667045799b5fcb05f91e535c9fc171ff154ea493`. The
+  owner was asked before it was installed.
+- **Character:** save slot 14, "Sorak" (White Mage), in `Town_01_rm`, later
+  the Outskirts of Inoya (`Act_01_01`), reached through the town waypoint's
+  map. No flight charm worn, `jumpscenery` off, the saves backed up first and
+  restored at the end.
+- **Control:** `ping` answers `pong (YYTK 4.0.1)`; bare `mark1probe` answers
+  `mark1probe: research build` and a rows line with `hooked=0 held=0`.
+- **Cases:** walking right (D) on open ground from one fixed spot, recorded,
+  and walking down (S) for the vertical factor; Healing Zone (E, bar column
+  4) as the ordinary cast; Soul Spurn (R, column 5) as the toggle. No other
+  skills.
+- **Walk ratios:** a walk's ratio is its modal step over the walk control's
+  mean modal step (the vertical walks over their own two S controls). Modal
+  steps are compared only at matched frame time: a walk whose mean frame time
+  differs from its control's by more than 10% is repeated, then taken against
+  a fresh control pair, and a third mismatch is recorded as not comparable.
+  A single step of half or one and a half times the mode is the frame clock,
+  not a lever or the penalty (§ Live 2 results).
+- **Debugger:** only after every walk measurement, because a per-frame
+  logpoint lengthens the frame and moves the modal step (§ Live 2 results).
+  The build is first checked against the decompile index's build hash. A
+  control logpoint on `CheckTalentUse`'s entry comes first; then logpoints on
+  `PlayerMoveSkill`, `PlayerMoveSkillFunc` and `CA_playerMove`, each one's
+  bytes compared with the research project's before it is armed, and later
+  `CA_playerTalentActive` in place of a candidate with no hit. A hit's return
+  location stays in the capture; the callers are named here, never located.
+
+**Checks**, in the order they run:
+
+- `dll-hash`, `control`, `marker` (validity): the installed DLL is the build
+  above, and the game and the probe answer as under Control.
+- `hook-native` (validity): `mark1probe hook` detours every script row and
+  every builtin row the runtime knows, none failed or held.
+- `walk-control` (the control for every walk check): two D walks whose modal
+  steps lie within 3% and whose frame times lie within 10% of each other.
+- `stat-trace`: `statlog 64` over a D walk: about one dispatcher call for id
+  64 a frame, its original answer a number, and the rows each call sits in.
+- `speed-sweep`: id 64's answer multiplied by 1.5, 0.75, 0.5, 0.25, 0 and
+  -0.5 in turn, a walk under each; the ratio of each, and the lever's counts
+  showing it changed the dispatcher's answer.
+- `speed-half`: the multiplier interpolated between the two whose ratios
+  bracket 0.5, and a walk under it: a ratio in 0.47 to 0.53 passes.
+- `speed-builtin`: which rows `pos` credits with moving an unlevered walk,
+  with `place_meeting`'s calls during it as the builtin rows' control; only
+  if a builtin moved the walk, that builtin's displacement halved.
+- `speed-factor`: `hSpeedFactor` held at half during `PlayerMovement` on a D
+  walk, and `vSpeedFactor` the same on an S walk against two S controls.
+- `penalty-control` (the control for the penalty checks): a D walk with E
+  pressed after one second shows a run of at least 10 frames below 0.8 of
+  the mode.
+- `penalty-stat`: `statlog 64` through that walk's cast: whether the answer
+  falls at the cast and recovers with the step.
+- `penalty-watch`: three such walks under `watch effect`, `watch pst` and
+  `watch builtin`, each for 90 frames from the next `TalentUse`: every
+  element that changes within 2 frames of the cast and back within 40.
+- `penalty-lever`: `statpin 64` if the answer fell; otherwise the watched
+  element whose settle is closest to the penalty's end, held at its resting
+  value during `PlayerMovement`. It passes when, through the frames the
+  penalty covered, the modal step stays at least 0.95 of the mode with no run
+  of 3 or more frames below 0.8 of it, and the cast still happens.
+- `cast-mana`: `watch pst` on a key cast of E, then on a forced cast (the
+  probe writing the press value into the slot's `inputState[4]` during one
+  `CheckTalentUse` call): the element that fell on the key cast falls by the
+  same amount on the forced one (`charged`), does not (`not-charged`), or no
+  element fell (`not-observed`).
+- `toggle-settle`: `count` on Soul Spurn's on-state object,
+  `White_Mage_Soul_Spurn_AOE_obj`, beside one forced press of `inputState[5]`:
+  the frames from the press to the object's appearance; a second pair should
+  switch it off.
+- `base-control` (the control for `base-check`): `base 0 7` builds a
+  helmet with a name.
+- `base-check`: `base` for body armour, boots and gloves at base 0, and for a
+  class that does not build, bases 1, 2 and 3 in turn: the lowest base that
+  builds, per class.
+- `zone-control` (the control for `zone-edge`): in the Outskirts, `walkable
+  here` 32 px either side of the player and at it, on open floor, every field
+  free.
+- `zone-edge`: `walkable scan` in steps of 96 px for 60 points, up, down,
+  left and right of the arrival point; a 16 px scan across the first point
+  where a field turns blocked toward open void; a screenshot.
+- `dbg-control` (validity): the control logpoint logs about once a frame, and
+  the attach is proven by the game's own frame counter.
+- `dbg-walk-movers`: each candidate's hits over a D walk and over the
+  `penalty-control` walk with its cast.
+- `dbg-cast-active`: `CA_playerTalentActive`'s hits over one E cast made
+  standing.
+
+A research part whose control failed is recorded `not-run (control)` for its
+checks, never `not-observed`.
+
+### Mod live 1 results
+
+The walk, the cast penalty, the toggle, the bases, the zone's edge and the
+debugger (Mod live procedure 1, 2026-10-19, 16:04 to 16:23 UTC).
+`tools/live_checks.py` reads 23 checks from
+`forgepact-166-mark1-set-mod-live-1.md`: 19 pass, 3 fail (`penalty-watch`,
+`penalty-lever`, `toggle-settle`), 1 not-observed (`cast-mana`), none
+not-run. The validity checks passed, and so did every part's own control
+(`walk-control`, `penalty-control`, `base-control`, `zone-control`), so no
+part is `not-run (control)` and each fail or not-observed below is a result
+within what the instrument reads.
+
+The session ran at 6.94 ms a frame (about 144 frames a second), against
+phase 1's 13.4 ms, and the walk's modal step was 2.989 px, half of phase 1's
+5.979 px. So a 240-frame window lasted 1.67 s, too short for a separate input
+call to start inside it, and the operator changed four things, each recorded
+in the capture. The lever walks held D down across the command, so the lever
+and the `pos` window both sat inside the walk. The cast walks ran `pos` for
+2400 frames with the input in the following call. The `penalty-lever` hold
+ran 1200 frames instead of 150. And the `penalty-stat` cast was forced by the
+probe (the press value into `inputState[4]` for one gate call, in the same
+command as the `statlog`) instead of keyed, because a `statlog` prints every
+frame and the command only returns once it stops. The forced cast gave the
+same slowdown as the keyed one. Soul Spurn was left on after
+`toggle-settle`; the saves were restored.
+
+| Check | Verdict | What it showed |
+|---|---|---|
+| `dll-hash` | pass | The installed DLL was the research build above. |
+| `control` | pass | `ping` answered `pong (YYTK 4.0.1)`. |
+| `marker` | pass | `mark1probe: research build`, `rows=20 hooked=0 held=0`. |
+| `hook-native` | pass | `hook`: 20 detoured, none failed, held or not found. |
+| `walk-control` | pass | Two D walks from the town waypoint, modal step 2.989 px both, 6.94 and 6.95 ms a frame. |
+| `stat-trace` | pass | 60 dispatcher calls for id 64 in 60 frames, every answer 151, every call outside all 20 rows, and no call of the getter outside the dispatcher. |
+| `speed-sweep` | pass | Ratios 1.215, 0.893, 0.785, 0.678, 0.570 and 0.355 for multipliers 1.5, 0.75, 0.5, 0.25, 0 and -0.5; the lever changed all 240 dispatcher answers in each window. |
+| `speed-half` | pass | The interpolated multiplier, -0.162 (an answer of about -24.5), gave a modal step of 1.495 px: a ratio of 0.500. |
+| `speed-builtin` | pass | `pos` credited no row with the walk's movement; `place_meeting` was called 8270 times by the player during it, and no `mp_*`, `move_*` or `motion_*` row was called at all. No builtin to halve, so its second half did not run. |
+| `speed-factor` | pass | Holding `hSpeedFactor` (D walk) and `vSpeedFactor` (S walk) at half during `PlayerMovement` left both ratios at 1.000, with the hold applied on all 240 frames. |
+| `penalty-control` | pass | After the E cast the step fell to 1.943 px (0.650 of the mode) for 57 frames, then climbed back over 16 frames; 64 consecutive frames were below 0.8 of the mode. |
+| `penalty-stat` | pass | Id 64's answer did not fall: 151 on all 120 frames through the slowdown and its recovery. |
+| `penalty-watch` | fail | `playerEffect[199]` fell from 1 to 0.65 on the cast frame and rose back to 1 over the 16 ramp frames, 57 to 73 frames after the cast, in step with the walk; nothing came back within 40 frames. `pSt` changed in no element; of the builtin variables only `image_index` moved. |
+| `penalty-lever` | fail | Holding `playerEffect[199]` at 1 during `PlayerMovement` took the 16-frame ramp away, but the 57 frames at 0.650 of the mode stayed; the cast was made (Healing Zone's count rose by one). |
+| `cast-mana` | not-observed | No element of `pSt` changed on the key cast nor on the forced one, though both cast (Healing Zone's count rose by one each). A forced press made too soon after the key cast cast nothing. |
+| `toggle-settle` | fail | One forced press switched Soul Spurn on 19 frames later. The second pair did not end off: the toggle went off 20 frames after the press and on again 57 frames after it, and was still on minutes later. |
+| `base-control` | pass | Helmet base 7 built, "Arcane Resisting Great Helm". |
+| `base-check` | pass | Body armour, boots and gloves all built at base 0: "Steel Armor of Vitality", "Boots of Sorcerer", "Heavy Gloves of Energy". |
+| `zone-control` | pass | At the Outskirts' arrival point and 32 px either side, every field read free and the line clear. |
+| `zone-edge` | pass | Upward from the arrival point the floor ended at an `Invisible_Wall_obj`: `family` met it one 16 px step before the grid read blocked and the wall line crossed it; past the wall `family` read free again while the grid stayed blocked to the room's edge. |
+| `dbg-control` | pass | The control logged about once a frame, and the attach was proven by the game's frame counter stopping at the control hold and running after. |
+| `dbg-walk-movers` | pass | `PlayerMoveSkill`, `PlayerMoveSkillFunc` and `CA_playerMove` logged no hit over either walk, while the control logged 920 and 1056 lines in the same windows; each candidate's bytes matched the research project's. |
+| `dbg-cast-active` | pass | `CA_playerTalentActive` logged no hit over one standing E cast, while the control logged 1187 lines. |
+
+**The walk's speed is affine in the speed stat.** The six swept ratios and
+the half fall on one straight line in the multiplier to within 0.02% at every
+point: the modal step is proportional to id 64's answer plus about 200
+(fitted 200.0), with Sorak's 151 standing at 1.755 of the step an answer of 0
+gives. No cap was reached up to an answer of 226.5, negative answers slowed
+the walk further, and phase 1's 0.785 at half the answer is the same point
+again at a different frame rate. So halving the walk means answering
+(151 - 200) / 2, about -24.5, which is what `speed-half` measured as 0.500.
+`stat-trace` found the id-64 call outside every row the probe wraps,
+`PlayerMovement` included, as phase 1's reading placed it in the player's
+Step event; where inside the Step event it is read was not read.
+
+**The walk is moved outside all twenty rows.** No script row and no builtin
+row moved it, `mp_linear_step` and the other movement builtins were not
+called at all during `speed-builtin`'s walk, and the debugger saw `PlayerMoveSkill`,
+`PlayerMoveSkillFunc` and `CA_playerMove` never run on a walk. The
+`speed-factor` result is weaker than its pass suggests: the values the
+probe read and halved were 163556 for `hSpeedFactor` and 163557 for
+`vSpeedFactor`, consecutive whole numbers that do not look like speed
+factors, so whether the walk scales with those members is **not
+established**. The step does track the frame clock: at half phase 1's frame
+time the modal step was exactly half phase 1's.
+
+**The slowdown is two parts, and only the ramp follows `playerEffect[199]`.**
+The cast drops the walk to 0.650 of its step for 57 frames, then a ramp of
+16 frames brings it back. `playerEffect[199]` falls to 0.65 on the cast frame
+and climbs to 1 frame for frame with that ramp, so it is the cast's speed
+factor. Holding it at 1 during `PlayerMovement` removed the ramp and nothing
+else, so during the flat part the walk takes its 0.65 from somewhere the hold
+does not reach (written back after `PlayerMovement`, or read elsewhere).
+`playerEffect[204]` turned from true to false 56 frames after the cast, the
+frame before the ramp began, which makes it a candidate for what holds the
+flat part; it was not held, and what it means is **not established**. The
+cast also turned `playerEffect[205]` from true to false and changed
+`playerEffect[196]` and `playerEffect[250]` 18 frames after it, and
+`playerEffect[54]`, `[56]` and `[192]` count down by one a frame. In frames
+the slowdown is longer than phase 1's 21 at about half this frame rate;
+whether it is timed in frames or in time is **not established**.
+
+**No caller to name.** None of the four candidate logpoints hit, so the
+capture holds no return location, and there is no caller to look up. With the
+control logging through the same windows, these are negatives with a working
+instrument: the walk and a standing cast do not reach those four scripts in
+this build (not observed).
+
+### Phase 2 decision
+
+Recorded on 2026-10-19 from Mod live 1 and the owner's answers after it.
+Each key takes exactly one value, on a line of its own, and the check that
+decides it is on the line below.
+
+speed-route: stat-model
+Decided by `speed-sweep` and `speed-half` (both pass, control `walk-control` passed): one affine shape fits every swept point within 0.02%, and the interpolated answer gave 0.500; `speed-builtin` found no builtin that moves the walk and `speed-factor` no effect from the factor members. `stat-trace` placed the id-64 call outside every row Mark 1 wraps, so the halved answer goes to every local id-64 call, and the character sheet and the damage scripts that read id 64 see it too.
+
+speed-shape: affine
+Decided by `speed-sweep` (pass): the modal step is proportional to id 64's answer plus about 200, every point within 0.02%, with no cap reached up to an answer of 226.5.
+
+penalty-route: none
+Decided by `penalty-stat` (pass: the answer never fell), `penalty-watch` and `penalty-lever` (both fail: `playerEffect[199]` held at rest removed only the ramp, leaving 57 frames at 0.650), so neither the stat route nor an element route qualifies. The owner chose to ship with the slowdown unchanged and to measure in Mod live 2 whether it stacks on the half speed or replaces it.
+
+cast-mana: not-observed
+Decided by `cast-mana` (not-observed): no `pSt` element changed on a key cast or a forced one, and none changed in any `pst` watch of the session, so the watch has no positive control within `pSt` and where mana is held stays open.
+
+toggle-settle: 19
+Decided by `toggle-settle` (fail on its second pair; the value taken by the owner): one forced press switched Soul Spurn on 19 frames later. Measured finding: the second forced press switched it off 20 frames after the press and on again 57 frames after it, with no further press from the probe; what switched it back on was not read.
+
+piece-bases: 0:7,1:0,2:0,4:0
+Decided by `base-control` and `base-check` (both pass): the helmet builds at base 7 and body armour, boots and gloves each at base 0.
+
+zone-edge: both
+Decided by `zone-edge` (pass, control `zone-control` passed): at the Outskirts' upper edge `family` met an `Invisible_Wall_obj` one step before the path grid turned blocked, and past the wall only the grid still read blocked, to the room's edge, as in town; the tile layers read did not mark it. One edge of one zone was measured.
+
+The values each key may take:
+
+- `speed-route`, the lever that halves the walk: `stat-model`, `builtin`,
+  `factor` or `none`.
+- `speed-shape`, the step against the id-64 answer: `affine`, `capped`,
+  `affine-capped`, `other` or `not-run`.
+- `penalty-route`, the lever that removes the cast's slowdown: `stat-dip`,
+  `entry` or `none`.
+- `cast-mana`, whether a forced cast still costs mana: `charged`,
+  `not-charged` or `not-observed`.
+- `toggle-settle`, frames from a forced press to the toggle's on-state: a
+  whole number, or `not-observed`.
+- `piece-bases`, the base each piece's class builds at: `<class>:<b>` four
+  times, comma-separated.
+- `zone-edge`, which fields mark a generated zone's edge: `grid`, `family`,
+  `both`, `neither` or `not-observed`.
