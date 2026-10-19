@@ -442,7 +442,7 @@ int main()
             " gate-calls=0 gate-other=0 threw=0"
             " | jump granted=0 backed-off=0 refused-landing=0 refused-gate=0 refused-cursor=0 max=175(start)"
             " refused-unreadable=0 jumps=0 scaled=0 clamped=0 answered=0 excluded=0 rejected=0/0/0/0 unread=0/0/0/0/0/0"
-            " | icons=0/0 art=off ground=0 ground-route=not-installed | speed=unavailable penalty=unavailable";
+            " grid-reads=0/0/0 | icons=0/0 art=off ground=0 ground-route=not-installed | speed=unavailable penalty=unavailable";
         check("stat/fresh_line_exact", fresh == expected, fresh);
 
         bool ok = true;
@@ -526,7 +526,7 @@ int main()
             "presses", "skip-empty", "skip-aura", "skip-toggle-on", "skip-settle", "skip-no-state",
             "col-unreadable", "orig-unreadable", "write-failed", "restore-failed", "gate-calls", "gate-other", "threw",
             "granted", "backed-off", "refused-landing", "refused-gate", "refused-cursor", "max",
-            "refused-unreadable", "jumps", "scaled", "clamped", "answered", "excluded", "rejected", "unread",
+            "refused-unreadable", "jumps", "scaled", "clamped", "answered", "excluded", "rejected", "unread", "grid-reads",
             "icons", "art", "ground", "ground-route", "speed", "penalty" };
         const std::string fresh = StatLine(StatFields{});
         bool ok = fieldNames(fresh) == names;
@@ -559,6 +559,9 @@ int main()
         f.jump.unreadFamily = 94;
         f.jump.unreadGrid = 95;
         f.jump.unreadGate = 96;
+        f.jump.gridFree = 97;
+        f.jump.gridBlocked = 98;
+        f.jump.gridNoGrid = 99;
         f.artArmed = true;
         f.ground = 101;
         f.groundRoute = "table-only";
@@ -570,7 +573,8 @@ int main()
 
         ok = field(line, "refused-unreadable") == "71" && field(line, "jumps") == "72" && field(line, "scaled") == "73"
             && field(line, "clamped") == "74" && field(line, "answered") == "75" && field(line, "excluded") == "76"
-            && field(line, "rejected") == "81/82/83/84" && field(line, "unread") == "91/92/93/94/95/96";
+            && field(line, "rejected") == "81/82/83/84" && field(line, "unread") == "91/92/93/94/95/96"
+            && field(line, "grid-reads") == "97/98/99";
         check("failure_counts/jump_fields_under_their_own_names", ok, line);
 
         ok = field(line, "art") == "armed" && field(line, "ground") == "101" && field(line, "ground-route") == "table-only";
@@ -590,9 +594,20 @@ int main()
         check("failure_counts/column_unreadable_never_in_skip_no_state",
               field(col, "col-unreadable") == "0/0/9/0" && field(col, "skip-no-state") == "0/0/0/0", col);
 
+        // Grid reads by answer: free/blocked/nogrid, so a grid read that never
+        // attaches (every cell NoGrid) is told apart from free cells.
+        StatFields g;
+        g.jump.gridFree = 5;
+        g.jump.gridBlocked = 2;
+        g.jump.gridNoGrid = 7;
+        const std::string grid = StatLine(g);
+        check("failure_counts/grid_reads_by_answer_free_blocked_nogrid",
+              field(grid, "grid-reads") == "5/2/7" && field(grid, "unread") == "0/0/0/0/0/0"
+                  && field(grid, "rejected") == "0/0/0/0", grid);
+
         // Each group's new fields come after that group's existing ones.
         ok = col.find(" skip-no-state=") < col.find(" col-unreadable=") && col.find(" threw=") < col.find(" | jump ")
-            && col.find(" max=") < col.find(" refused-unreadable=") && col.find(" unread=") < col.find(" | icons=")
+            && col.find(" max=") < col.find(" refused-unreadable=") && col.find(" unread=") < col.find(" grid-reads=") && col.find(" grid-reads=") < col.find(" | icons=")
             && col.find(" icons=") < col.find(" art=") && col.find(" ground-route=") < col.find(" | speed=");
         check("failure_counts/new_fields_after_each_groups_own", ok, col);
     }

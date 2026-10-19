@@ -212,7 +212,9 @@ static std::string counts(const Counters& c)
         + std::to_string(c.rejectedGrid) + "/" + std::to_string(c.rejectedGate)
         + " unread=" + std::to_string(c.unreadTakeoff) + "/" + std::to_string(c.unreadCursor) + "/"
         + std::to_string(c.unreadRoom) + "/" + std::to_string(c.unreadFamily) + "/" + std::to_string(c.unreadGrid) + "/"
-        + std::to_string(c.unreadGate);
+        + std::to_string(c.unreadGate)
+        + " grid-reads=" + std::to_string(c.gridFree) + "/" + std::to_string(c.gridBlocked) + "/"
+        + std::to_string(c.gridNoGrid);
 }
 
 // No failed read of any kind was counted.
@@ -897,6 +899,7 @@ int main()
                 && f.rejectedRoom == 0 && f.rejectedGate == 0 && noUnread(f) && f.refusedLanding == 1
             && cg.LastDecision() == Decision::RefusedLanding && g.rejectedGrid == 22 && g.rejectedFamily == 0
                 && noUnread(g) && g.refusedLanding == 1
+                && g.gridBlocked == 22 && g.gridNoGrid == 0 && f.gridFree + f.gridBlocked + f.gridNoGrid == 0
             && ct.LastDecision() == Decision::RefusedGate && t.rejectedGate == 22 && t.rejectedFamily == 0
                 && noUnread(t) && t.refusedGate == 1
             && cr.LastDecision() == Decision::RefusedLanding && r.rejectedRoom == 22 && r.rejectedFamily == 0
@@ -906,14 +909,26 @@ int main()
             counts(f) + " | " + counts(g) + " | " + counts(t) + " | " + counts(r) + " | " + counts(b));
     }
     {
-        // A room with no grid still counts free: granted, nothing unread.
+        // A room with no grid still counts free: granted, nothing unread, and
+        // each of its three cells counted as nogrid, never as free, so a grid
+        // read that does not attach is visible. Beside it, the same jump with
+        // a grid counts the three cells free.
         World w;
         w.hasGrid = false;
         Core c = make(w);
         c.SetActive(true);
         jumpToCursor(c, w, 10, 175.0);
+        World v;
+        Core cv = make(v);
+        cv.SetActive(true);
+        jumpToCursor(cv, v, 10, 175.0);
+        const Counters& k = c.Stats();
+        const Counters& kv = cv.Stats();
         check("refused_unreadable/a_room_with_no_grid_is_still_free", c.LastDecision() == Decision::Granted
-            && noUnread(c.Stats()) && c.Stats().rejectedGrid == 0 && near(w.py, 1525.0, 1e-6), counts(c.Stats()));
+            && noUnread(k) && k.rejectedGrid == 0 && near(w.py, 1525.0, 1e-6)
+            && k.gridNoGrid == 3 && k.gridFree == 0 && k.gridBlocked == 0
+            && cv.LastDecision() == Decision::Granted && kv.gridFree == 3 && kv.gridNoGrid == 0 && kv.gridBlocked == 0,
+            counts(k) + " | " + counts(kv));
     }
 
     // ---- the clamp at the landing distance ---------------------------------

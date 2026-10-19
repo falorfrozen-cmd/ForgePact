@@ -1074,7 +1074,7 @@ class Mark1SetContract(unittest.TestCase):
         fields = self.body("stat_fields")
         struct = function_body(self.header(), "struct JumpCounts {")
         names = re.findall(r"uint64_t\s+(\w+) = 0;", struct)
-        self.assertEqual(len(names), 21, names)
+        self.assertEqual(len(names), 24, names)
         counters = function_body(self.jump_header(), "struct Counters {")
         for name in names:
             with self.subTest(field=name):
@@ -1086,6 +1086,20 @@ class Mark1SetContract(unittest.TestCase):
         self.assertIn("const M1jNs::Max m = Mark1JumpMax();", fields)
         self.assertIn("jc.max = m.value;", fields)
         self.assertIn("jc.maxSource = std::string(M1jNs::MaxSourceName(m.source));", fields)
+
+    def test_jump_grid_reads_counted_by_answer_so_a_nogrid_read_is_never_silent(self):
+        # A grid read that never attaches returns NoGrid, which counts free; the
+        # stat line counts each grid cell a decision read by its answer, so it
+        # shows as nogrid rather than as a free cell (instrument-blindness).
+        for name in ("gridFree", "gridBlocked", "gridNoGrid"):
+            with self.subTest(field=name):
+                self.assertIn("jc." + name + " = j." + name + ";", self.body("stat_fields"))
+        header = self.jump_header()
+        self.assertIn("if (tally) CountCell(*tally, c);", header)
+        self.assertIn("else if (c == Cell::NoGrid) ++k.gridNoGrid;", header)
+        self.assertIn("Check(jump_.takeoffX, jump_.takeoffY, ux, uy, dist, w, h, &failed, &counters_);", header)
+        self.assertIn(
+            '" grid-reads=" + JoinCounts({ j.gridFree, j.gridBlocked, j.gridNoGrid })', self.header())
 
 
 if __name__ == "__main__":

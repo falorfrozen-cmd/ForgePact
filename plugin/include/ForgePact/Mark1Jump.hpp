@@ -50,7 +50,10 @@ namespace ForgePact::Mark1Jump {
 //     family, grid or gate read failed is skipped and the back-off goes on;
 //     with no candidate accepted and any skipped on a failed read, the jump is
 //     refused-unreadable=. Candidates refused by a successful read are counted
-//     by reason (room, family, grid, gate).
+//     by reason (room, family, grid, gate). Each grid cell a decision read is
+//     counted by its answer (free, blocked or no grid), so a grid read that
+//     never attaches (every cell NoGrid in a room that has a grid) shows in
+//     the stat line instead of passing as a free cell.
 //   - the scale: L is the landing's distance, N = min(cursor distance, M) the
 //     natural length (a vanilla jump ends at a cursor inside M), f = L / N.
 //     After each local skillsLeap call that moved the player, the call's
@@ -333,6 +336,12 @@ struct Counters {
     uint64_t unreadFamily = 0;
     uint64_t unreadGrid = 0;
     uint64_t unreadGate = 0;
+    // Grid cells a decision read successfully, by what the read returned: a
+    // free cell, a blocked one, or no grid (global.pathGrid not a grid
+    // handle, which counts free). Per point read; a failed read is unreadGrid.
+    uint64_t gridFree = 0;
+    uint64_t gridBlocked = 0;
+    uint64_t gridNoGrid = 0;
 };
 
 // The position OnLeapExit asks the adapter to write, when write is true.
@@ -497,9 +506,10 @@ public:
     // The landing test for the candidate `dist` px from (tx, ty) along the
     // unit (ux, uy), with the room already read. Stops at the first refusal
     // or failed read; on Landing::Unread, `failed` (when given) names the
-    // read that failed.
+    // read that failed. `tally` (when given) counts each grid cell read by
+    // its answer (gridFree, gridBlocked, gridNoGrid).
     Landing Check(double tx, double ty, double ux, double uy, double dist, double roomW, double roomH,
-        ReadKind* failed = nullptr) const
+        ReadKind* failed = nullptr, Counters* tally = nullptr) const
     {
         const double lx = tx + dist * ux, ly = ty + dist * uy;
         const double px[3] = { lx - kBandPx * ux, lx, lx + kBandPx * ux };
@@ -516,6 +526,7 @@ public:
         for (int k = 0; k < 3; ++k) {
             Cell c = Cell::Blocked;
             if (!ReadGrid(px[k], py[k], c)) return Unread(failed, ReadKind::Grid);
+            if (tally) CountCell(*tally, c);
             if (c == Cell::Blocked) return Landing::Grid;
         }
         bool gate = true;
@@ -613,6 +624,14 @@ private:
         return true;
     }
 
+    // A successful grid read, counted by its answer.
+    static void CountCell(Counters& k, Cell c)
+    {
+        if (c == Cell::Free) ++k.gridFree;
+        else if (c == Cell::Blocked) ++k.gridBlocked;
+        else if (c == Cell::NoGrid) ++k.gridNoGrid;
+    }
+
     // A room with no grid counts free.
     bool ReadGrid(double x, double y, Cell& c) const
     {
@@ -687,7 +706,7 @@ private:
             if (!(dist > m)) break;
             ++last_.candidates;
             ReadKind failed = ReadKind::Family;
-            const Landing l = Check(jump_.takeoffX, jump_.takeoffY, ux, uy, dist, w, h, &failed);
+            const Landing l = Check(jump_.takeoffX, jump_.takeoffY, ux, uy, dist, w, h, &failed, &counters_);
             if (l == Landing::Ok) {
                 Grant(k == 0 ? Decision::Granted : Decision::BackedOff, dist, dist / std::min(d, m));
                 return;

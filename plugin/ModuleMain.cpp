@@ -63835,6 +63835,9 @@ static M1sNs::StatFields Mark1SetStatFields()
     jc.unreadFamily = j.unreadFamily;
     jc.unreadGrid = j.unreadGrid;
     jc.unreadGate = j.unreadGate;
+    jc.gridFree = j.gridFree;
+    jc.gridBlocked = j.gridBlocked;
+    jc.gridNoGrid = j.gridNoGrid;
     const M1jNs::Max m = Mark1JumpMax();
     jc.max = m.value;
     jc.maxSource = std::string(M1jNs::MaxSourceName(m.source));

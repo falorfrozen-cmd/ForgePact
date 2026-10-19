@@ -237,6 +237,9 @@ struct JumpCounts {
     uint64_t    unreadFamily = 0;
     uint64_t    unreadGrid = 0;
     uint64_t    unreadGate = 0;
+    uint64_t    gridFree = 0;      // grid cells read free
+    uint64_t    gridBlocked = 0;   // grid cells read blocked
+    uint64_t    gridNoGrid = 0;    // grid reads that found no grid handle (they count free)
 };
 
 // A movement lever's count, or `unavailable` when its route is `none`.
@@ -346,6 +349,9 @@ inline std::string StatLine(const StatFields& f)
     s += " rejected=" + JoinCounts({ j.rejectedRoom, j.rejectedFamily, j.rejectedGrid, j.rejectedGate });
     // Failed reads: takeoff/cursor/room/family/grid/gate.
     s += " unread=" + JoinCounts({ j.unreadTakeoff, j.unreadCursor, j.unreadRoom, j.unreadFamily, j.unreadGrid, j.unreadGate });
+    // Grid cells read successfully, by answer: free/blocked/nogrid. A grid
+    // read that never attaches shows as nogrid, never as free.
+    s += " grid-reads=" + JoinCounts({ j.gridFree, j.gridBlocked, j.gridNoGrid });
     s += " | icons=" + std::to_string(f.iconsLoaded) + "/" + std::to_string(f.iconsEmbedded);
     s += " art=" + std::string(f.artArmed ? "armed" : "off");
     s += " ground=" + std::to_string(f.ground);
