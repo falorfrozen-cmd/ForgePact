@@ -28,7 +28,14 @@ text, comments stripped, and pins the adapter around it:
 - `mark1probe spawn` sits inside the research block;
 - art_fallback: the pieces' own art takes the flight charms' route, and with no
   icon embedded, or one that failed to load, nothing is written, loaded or
-  overridden, so each piece keeps its base item's own bag and ground sprites.
+  overridden, so each piece keeps its base item's own bag and ground sprites;
+- the art rule (Mark1Set.hpp's, applied here): the art is armed by the
+  session's first switch-on; until then nothing is loaded or written; a
+  dressing writes "11" only where ArtWritesIcon allows it (bag icon and ground
+  copy both loaded, the shared detour's route `not-installed` or `both`); the
+  ground consumer goes in once, armed, from the tick whatever the switch now
+  says, never at character select; the stat line's art, ground and
+  ground-route fields come from the adapter's own state.
 """
 import re
 import sys
@@ -59,6 +66,8 @@ SIGNATURES = {
     "icons_load": "static void Mark1IconsLoad()",
     "ground": "static void Mark1OnGroundInit(int argc, RValue** A)",
     "ground_install": "static void Mark1GroundIconInstall()",
+    "ground_route": "static std::string Mark1GroundRoute()",
+    "art_install_if_ready": "static void Mark1ArtInstallIfReady()",
     "read_worn": "static bool Mark1ReadWorn(M1sNs::WornSlots& slots)",
     "detour": "static RValue& Mark1HookCheckTalentUse(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)",
     "install": "static std::string Mark1SetInstall()",
@@ -81,7 +90,7 @@ SIGNATURES = {
 }
 
 SHIPPED = ("decode", "of", "entry", "final", "icon_index", "icon_path", "icons_load", "ground", "ground_install",
-           "read_worn", "detour", "install", "install_if_ready", "tick", "stat_fields", "command")
+           "ground_route", "art_install_if_ready", "read_worn", "detour", "install", "install_if_ready", "tick", "stat_fields", "command")
 
 
 class Mark1SetContract(unittest.TestCase):
@@ -142,6 +151,11 @@ class Mark1SetContract(unittest.TestCase):
         self.assertIn("g_Mark1.FillStat(f);", fields)
         self.assertIn("f.iconsEmbedded = (int)ForgePact::Mark1Icons::kIconCount;", fields)
         self.assertIn("f.iconsLoaded = ", fields)
+        # The art group: `art=` from FillStat (Bonus::ArtArmed), the ground
+        # count and the shared detour's route from the adapter's own state.
+        self.assertIn("f.ground = g_M1sGround;", fields)
+        self.assertIn("f.groundRoute = Mark1GroundRoute();", fields)
+        self.assertLess(fields.index("g_Mark1.FillStat(f);"), fields.index("f.groundRoute = "))
         # The command itself never installs: the one install site is Mark1SetInstall.
         for install in ("HookOneScript", "HookBuiltin", "MmCreateHook"):
             self.assertNotIn(install, command)
@@ -219,7 +233,16 @@ class Mark1SetContract(unittest.TestCase):
     # ---- arming, install, holders -------------------------------------------------------
 
     def test_the_tick_returns_at_once_while_not_armed(self):
-        self.assertEqual(self.lines("tick")[0], "if (!g_Mark1.Enabled()) return;")
+        # Off and no art install pending: back at once, before any game call.
+        # The pending check is the core's, on the adapter's own state only.
+        lines = self.lines("tick")
+        self.assertEqual(lines[0], "const bool artPending = M1sNs::ArtGroundInstallPending(g_Mark1.ArtArmed(), "
+                                   "(int)ForgePact::Mark1Icons::kIconCount, g_M1sGroundTried);")
+        self.assertEqual(lines[1], "if (!g_Mark1.Enabled() && !artPending) return;")
+        # The art's one ground install runs whatever the switch now says, on
+        # the polled frames; the set's own part still needs the switch.
+        self.assertEqual(lines[2], "if (artPending && M1sNs::Bonus::LooksForPlayer(g_M1sArtFrames++)) Mark1ArtInstallIfReady();")
+        self.assertEqual(lines[3], "if (!g_Mark1.Enabled()) return;")
         frame = strip_comments(function_body(self.plugin, SIGNATURES["frame"]))
         self.assertIn("if (g_Setup) Mark1SetTick();", frame)
         self.assertEqual(frame.count("Mark1SetTick()"), 1)
@@ -342,8 +365,13 @@ class Mark1SetContract(unittest.TestCase):
         self.assertIn("if (g_TruthDepth != 0) return;", final)
         self.assertIn("Mark1IconsLoad();", final)
         self.assertIn('RValue("11"), g_M1sIconSprite[k]', final)
-        self.assertIn("if (g_M1sIconOk[k])", final)
-        self.assertLess(final.index("if (g_M1sIconOk[k])"), final.index('RValue("11")'))
+        # The core's rule decides the write: armed, this piece's bag icon and
+        # its ground copy both loaded, and the shared detour's route allowing it.
+        rule = "if (M1sNs::ArtWritesIcon(g_Mark1.ArtArmed(), g_M1sIconOk[k], groundLoaded, Mark1GroundRoute()))"
+        self.assertIn(rule, final)
+        self.assertLess(final.index(rule), final.index('RValue("11")'))
+        self.assertIn("const size_t g = Mark1IconIndex(piece, true);", final)
+        self.assertIn("const bool groundLoaded = g < ForgePact::Mark1Icons::kIconCount && g_M1sIconOk[g];", final)
         self.assertIn("if (k >= ForgePact::Mark1Icons::kIconCount) return;", final)
         self.assertLess(final.index("if (k >= ForgePact::Mark1Icons::kIconCount) return;"), final.index('RValue("11")'))
         # "11" is written nowhere else in the adapter.
@@ -408,6 +436,48 @@ class Mark1SetContract(unittest.TestCase):
         self.assertLess(final.index("if (ForgePact::Mark1Icons::kIconCount == 0) return;"), final.index("Mark1IconsLoad();"))
         index = self.body("icon_index")
         self.assertIn("return ForgePact::Mark1Icons::kIconCount;", index)
+
+    # ---- the art rule (Mark1Set.hpp), applied --------------------------------------------
+
+    def test_art_fallback_not_armed_means_nothing_loaded_or_written(self):
+        # sprite_add happens at the first armed dressing, never before.
+        final = self.body("final")
+        self.assertIn("if (!g_Mark1.ArtArmed()) return;", final)
+        self.assertLess(final.index("if (!g_Mark1.ArtArmed()) return;"), final.index("Mark1IconsLoad();"))
+        # Mark1IconsLoad is reached from the armed dressing alone.
+        self.assertEqual(len(re.findall(r"\bMark1IconsLoad\(\);", self.code)), 1)
+
+    def test_art_fallback_ground_install_once_and_only_while_armed(self):
+        install = self.body("ground_install")
+        pending = ("if (!M1sNs::ArtGroundInstallPending(g_Mark1.ArtArmed(), (int)ForgePact::Mark1Icons::kIconCount, "
+                   "g_M1sGroundTried)) return;")
+        self.assertIn(pending, install)
+        self.assertIn("g_M1sGroundTried = true;", install)
+        self.assertLess(install.index(pending), install.index("g_M1sGroundTried = true;"))
+        self.assertLess(install.index("g_M1sGroundTried = true;"), install.index("FlightGroundIconInstall();"))
+        # Its callers: Mark 1's own install, the tick's art install and the
+        # research spawn; never a dressing (test_dressing_installs_nothing...).
+        self.assertEqual(len(re.findall(r"\bMark1GroundIconInstall\(\);", strip_comments(self.plugin))), 3)
+
+    def test_art_fallback_the_ticks_ground_install_waits_for_a_character(self):
+        ready = self.body("art_install_if_ready")
+        gate = ("const bool player = M1sNs::ArtGroundInstallPending(g_Mark1.ArtArmed(), "
+                "(int)ForgePact::Mark1Icons::kIconCount, g_M1sGroundTried) && g_Setup && Mark1PlayerResolves();")
+        self.assertIn(gate, ready)
+        want = ("if (!M1sNs::ArtWantsGroundInstall(g_Mark1.ArtArmed(), (int)ForgePact::Mark1Icons::kIconCount, "
+                "g_M1sGroundTried, g_Setup, player)) return;")
+        self.assertIn(want, ready)
+        self.assertLess(ready.index(want), ready.index("Mark1GroundIconInstall();"))
+        # The switch is not asked: once armed, the consumer is wanted whatever it says.
+        self.assertNotIn("Enabled()", ready)
+
+    def test_art_fallback_ground_route_is_the_shared_detours_with_its_install_state(self):
+        route = self.body("ground_route")
+        self.assertIn("M1sNs::GroundRouteName(g_HiddenLootInstallTried, ForgePact::HiddenLootMod::Instance().RouteName())",
+                      route)
+        # RouteName() is never used bare in the adapter: it reads `none` both
+        # before the install and after a refused one.
+        self.assertEqual(self.code.count("RouteName()"), 1)
 
 
 if __name__ == "__main__":

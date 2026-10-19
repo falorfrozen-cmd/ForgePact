@@ -62843,11 +62843,16 @@ static void GambaPityCommand(const std::string& rest)
 //   - the pieces' own art, by the flight charms' route (ForgePact #158): the
 //     owner's PNGs embedded in Mark1Icons.hpp, written under bp_ipc\mark1\
 //     only when no file of that name is there, loaded once a session; "11"
-//     written on dressing once a piece's bag icon loaded (RDM § 23.5), and the
-//     ground sprite set by the shared LootGroundInit detour's consumer after
-//     the game picked its own (RDM § 23.7). With no icon embedded, or one that
-//     failed, nothing is written, loaded or overridden: the piece keeps its
-//     base item's own bag and ground sprites.
+//     written on dressing (RDM § 23.5), and the ground sprite set by the
+//     shared LootGroundInit detour's consumer after the game picked its own
+//     (RDM § 23.7). Mark1Set.hpp's art rule decides both: the art is armed by
+//     the session's first `mark1set bonus 1` and stays armed; "11" only for a
+//     piece whose bag icon and ground copy both loaded, while the shared
+//     detour's route is `not-installed` or `both`; the ground consumer put in
+//     once, from the tick, once armed and a character exists. Not armed, no
+//     icon embedded, one that failed, or a table-only detour: nothing is
+//     written, loaded or overridden, and the piece keeps its base item's own
+//     bag and ground sprites.
 //   - the `mark1set` command; its forms, replies and stat line are the core's.
 // tests/test_mark1_set_contract.py pins this adapter.
 
@@ -62859,6 +62864,7 @@ static RValue g_M1sIconSprite[ForgePact::Mark1Icons::kMaxIcons];
 static bool g_M1sIconOk[ForgePact::Mark1Icons::kMaxIcons] = {};
 static bool g_M1sGroundReady = false;   // at least one ground icon loaded: the ground consumer has work
 static uint64_t g_M1sGround = 0;        // ground items given our icon
+static bool g_M1sGroundTried = false;   // the art's one ground install was tried (Mark1Set.hpp's art rule)
 
 // The icon of one piece (its bag icon, or its ground copy); kIconCount when
 // none is embedded for it.
@@ -62945,20 +62951,35 @@ static int Mark1IconsLoaded()
     return loaded;
 }
 
+// The shared LootGroundInit detour's route as the art rule names it:
+// `not-installed` before its one install attempt, then hidden loot's
+// RouteName() (`both`, `table-only`, or `none` for a refused install).
+static std::string Mark1GroundRoute()
+{
+    return M1sNs::GroundRouteName(g_HiddenLootInstallTried, ForgePact::HiddenLootMod::Instance().RouteName());
+}
+
 // On CreateItemNew's outermost return, for a dressed piece: our bag icon under
-// "11", only once that piece's icon loaded. Not saved by the game, so written
-// again on every dressing (RDM § 23.5).
+// "11" where Mark1Set.hpp's art rule allows it - the art armed by the
+// session's first switch-on, this piece's bag icon and ground copy both
+// loaded, and the shared detour's route not known to be other than `both`
+// (our sprite under "11" draws Error_spr on the ground unless the ground
+// consumer follows it, RDM § 23.7). Before the art is armed nothing is loaded.
+// Not saved by the game, so written again on every dressing (RDM § 23.5).
 static void Mark1DressFinal(RValue& item, M1sNs::Piece piece)
 {
     if (g_TruthDepth != 0) return;
     if (ForgePact::Mark1Icons::kIconCount == 0) return;   // nothing embedded: the base item's own art
+    if (!g_Mark1.ArtArmed()) return;                      // not armed: the base item's own art, nothing loaded
     RValue info;
     if (!FlightField(item, "itemInfoStruct", info)) return;
     try {
         Mark1IconsLoad();
         const size_t k = Mark1IconIndex(piece, false);
         if (k >= ForgePact::Mark1Icons::kIconCount) return;
-        if (g_M1sIconOk[k])
+        const size_t g = Mark1IconIndex(piece, true);
+        const bool groundLoaded = g < ForgePact::Mark1Icons::kIconCount && g_M1sIconOk[g];
+        if (M1sNs::ArtWritesIcon(g_Mark1.ArtArmed(), g_M1sIconOk[k], groundLoaded, Mark1GroundRoute()))
             g_Yytk->CallBuiltin("variable_struct_set", { info, RValue("11"), g_M1sIconSprite[k] });
     } catch (...) {}
 }
@@ -62993,10 +63014,14 @@ static void Mark1OnGroundInit(int argc, RValue** A)
 
 // The ground consumer rides hidden loot's one LootGroundInit detour, put in
 // through the flight charms' install; never a second hook. With no icon
-// embedded no consumer of ours has work, so nothing is installed for it.
+// embedded no consumer of ours has work, so nothing is installed for it; while
+// the art is not armed nothing is either, so the research build's spawn call
+// installs nothing for an unarmed session. Tried once a session.
 static void Mark1GroundIconInstall()
 {
     if (ForgePact::Mark1Icons::kIconCount == 0) return;
+    if (!M1sNs::ArtGroundInstallPending(g_Mark1.ArtArmed(), (int)ForgePact::Mark1Icons::kIconCount, g_M1sGroundTried)) return;
+    g_M1sGroundTried = true;
     FlightGroundIconInstall();
 }
 
@@ -63167,12 +63192,31 @@ static void Mark1InstallIfReady(bool fromTick)
     Mark1RefreshPlayer();
 }
 
-// The per-frame tick. Returns at once while the switch is off; while armed and
-// not installed, looks for the local player every kInstallPollFrames frames;
-// once installed, only the local player refreshed. The decisions happen
-// inside the hooked call, at the point of use.
+static unsigned long long g_M1sArtFrames = 0;   // frames the tick ran with the art's ground install pending
+
+// The art's one ground install from the tick (Mark1Set.hpp's
+// ArtWantsGroundInstall): the art armed, an icon embedded, no try yet, setup
+// done and the local player resolved, so never at character select. The
+// switch is not asked: once armed, the consumer is wanted whatever it says.
+static void Mark1ArtInstallIfReady()
+{
+    const bool player = M1sNs::ArtGroundInstallPending(g_Mark1.ArtArmed(), (int)ForgePact::Mark1Icons::kIconCount, g_M1sGroundTried) && g_Setup && Mark1PlayerResolves();
+    if (!M1sNs::ArtWantsGroundInstall(g_Mark1.ArtArmed(), (int)ForgePact::Mark1Icons::kIconCount, g_M1sGroundTried, g_Setup, player)) return;
+    Mark1GroundIconInstall();
+}
+
+// The per-frame tick. Returns at once while the switch is off and the art's
+// ground install is not pending (decided from the adapter's own state, before
+// any game call). While that install is pending, looks for the local player
+// every kInstallPollFrames frames, whatever the switch says. While the switch
+// is armed and not installed, looks for the local player the same way; once
+// installed, only the local player refreshed. The decisions happen inside the
+// hooked call, at the point of use.
 static void Mark1SetTick()
 {
+    const bool artPending = M1sNs::ArtGroundInstallPending(g_Mark1.ArtArmed(), (int)ForgePact::Mark1Icons::kIconCount, g_M1sGroundTried);
+    if (!g_Mark1.Enabled() && !artPending) return;
+    if (artPending && M1sNs::Bonus::LooksForPlayer(g_M1sArtFrames++)) Mark1ArtInstallIfReady();
     if (!g_Mark1.Enabled()) return;
     if (!g_Mark1.Installed()) {
         if (g_Mark1.TickNeeded() && M1sNs::Bonus::LooksForPlayer(g_M1sArmedFrames++)) Mark1InstallIfReady(true);
@@ -63181,7 +63225,8 @@ static void Mark1SetTick()
     Mark1RefreshPlayer();
 }
 
-// The stat line's fields this adapter knows: the set's part and the art's.
+// The stat line's fields this adapter knows: the set's part and the art's
+// (`art=` through FillStat, the ground count and the shared detour's route).
 // The automation, the jump and the movement levers fill theirs when they land.
 static M1sNs::StatFields Mark1SetStatFields()
 {
@@ -63189,6 +63234,8 @@ static M1sNs::StatFields Mark1SetStatFields()
     g_Mark1.FillStat(f);
     f.iconsLoaded = Mark1IconsLoaded();
     f.iconsEmbedded = (int)ForgePact::Mark1Icons::kIconCount;
+    f.ground = g_M1sGround;
+    f.groundRoute = Mark1GroundRoute();
     return f;
 }
 
