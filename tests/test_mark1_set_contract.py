@@ -35,7 +35,12 @@ text, comments stripped, and pins the adapter around it:
   copy both loaded, the shared detour's route `not-installed` or `both`); the
   ground consumer goes in once, armed, from the tick whatever the switch now
   says, never at character select; the stat line's art, ground and
-  ground-route fields come from the adapter's own state.
+  ground-route fields come from the adapter's own state;
+- art_default: a player who never turns the switch on this session gets the
+  base items' own art, bag and ground, and nothing loaded, written or
+  installed for it. The armed flag's one writer is the core's SetEnabled; the
+  dressing, the ground install and the tick each ask the core's rule before
+  anything else, and no dressing inside CreateItemNew's pass installs a hook.
 """
 import re
 import sys
@@ -48,6 +53,7 @@ from test_release_hook_contract import function_body, strip_comments, strip_rese
 ROOT = Path(__file__).resolve().parents[1]
 PLUGIN = ROOT / "plugin" / "ModuleMain.cpp"
 SDK_SCRIPTS = ROOT.parent / "hs-game-sdk" / "cpp" / "include" / "hs_game_sdk" / "scripts.hpp"
+HEADER = ROOT / "plugin" / "include" / "ForgePact" / "Mark1Set.hpp"
 
 FORGE_READS_START = "// ---- Mark 1 set (Mark1Set.hpp): what the Custom Forge reads"
 FORGE_READS_END = "// ---- end of what the Custom Forge reads for the Mark 1 set"
@@ -478,6 +484,132 @@ class Mark1SetContract(unittest.TestCase):
         # RouteName() is never used bare in the adapter: it reads `none` both
         # before the install and after a refused one.
         self.assertEqual(self.code.count("RouteName()"), 1)
+
+    # ---- the art rule for a default player: art_default ----------------------------------
+    #
+    # Round 0's finding: our runtime sprite under "11" was written whatever the
+    # switch said, while the only thing that sets a dropped piece's ground
+    # sprite rides a detour installed with the switch on, so a default
+    # player's dropped piece would draw Error_spr. These pin that the bag icon
+    # and the ground consumer now both follow the switch, through the core.
+
+    def header(self):
+        return strip_comments(HEADER.read_text(encoding="utf-8").replace("\r\n", "\n"))
+
+    def test_art_default_dressing_writes_11_only_as_the_cores_rule_allows(self):
+        lines = self.lines("final")
+        # Not armed (the switch never on this session): back before any read,
+        # load or write, so the piece keeps its base item's own bag sprite.
+        self.assertEqual(lines[:3], ["if (g_TruthDepth != 0) return;",
+                                     "if (ForgePact::Mark1Icons::kIconCount == 0) return;",
+                                     "if (!g_Mark1.ArtArmed()) return;"])
+        final = self.body("final")
+        armed = final.index("if (!g_Mark1.ArtArmed()) return;")
+        for later in ("FlightField(", "Mark1IconsLoad();", "g_Yytk->", 'RValue("11")'):
+            with self.subTest(later=later):
+                self.assertLess(armed, final.index(later))
+        # The one "11" write is the statement the core's rule governs, with
+        # the armed flag, both copies' load state and the shared detour's route.
+        governed = re.search(
+            re.escape("if (M1sNs::ArtWritesIcon(g_Mark1.ArtArmed(), g_M1sIconOk[k], groundLoaded, Mark1GroundRoute()))")
+            + r"\s*" + re.escape('g_Yytk->CallBuiltin("variable_struct_set", { info, RValue("11"), g_M1sIconSprite[k] });'),
+            final)
+        self.assertIsNotNone(governed, "the \"11\" write is not governed by ArtWritesIcon")
+        self.assertEqual(len(re.findall(r'RValue\("11"\)', self.code)), 1)
+        # The rule itself, in the core: armed, both copies loaded, the route allowing it.
+        rule = function_body(self.header(), "inline bool ArtWritesIcon(")
+        self.assertIn("return armed && bagLoaded && groundLoaded && GroundRouteAllowsArt(groundRoute);", rule)
+
+    def test_art_default_the_armed_flag_has_no_writer_but_the_cores_set_enabled(self):
+        whole = strip_comments(self.plugin)
+        # The adapter never touches the flag but through the switch.
+        self.assertNotIn("artArmed", whole)
+        self.assertEqual(re.findall(r"\bg_Mark1\.SetEnabled\([^;]*\);", whole), ["g_Mark1.SetEnabled(c.on);"])
+        self.assertIn("g_Mark1.SetEnabled(c.on);", self.body("command"))
+        # `mark1probe spawn` arms nothing: the probe block never turns the switch.
+        probe = strip_comments(self.probe)
+        self.assertNotIn("SetEnabled(", probe)
+        self.assertNotIn("artArmed", probe)
+        # In the core, the one write that sets it is SetEnabled's, on a switch-on.
+        header = self.header()
+        self.assertEqual(re.findall(r"\bartArmed_\s*=\s*true\b", header), ["artArmed_ = true"])
+        self.assertIn("if (on) artArmed_ = true;", function_body(header, "void SetEnabled(bool on)"))
+        self.assertEqual(len(re.findall(r"\bartArmed_\s*=(?!=)", header)), 2)   # that write and the member's `= false`
+
+    def test_art_default_ground_install_returns_unless_armed_before_the_flight_install(self):
+        self.assertEqual(self.lines("ground_install"), [
+            "if (ForgePact::Mark1Icons::kIconCount == 0) return;",
+            "if (!M1sNs::ArtGroundInstallPending(g_Mark1.ArtArmed(), (int)ForgePact::Mark1Icons::kIconCount, "
+            "g_M1sGroundTried)) return;",
+            "g_M1sGroundTried = true;",
+            "FlightGroundIconInstall();",
+        ])
+        pending = function_body(self.header(), "inline bool ArtGroundInstallPending(")
+        self.assertIn("return armed && iconsEmbedded > 0 && !tried;", pending)
+        # So the research spawn's call installs nothing for an unarmed session.
+        self.assertIn("Mark1GroundIconInstall();", self.body("spawn"))
+
+    def test_art_default_the_tick_installs_through_the_cores_decision_whatever_the_switch(self):
+        lines = self.lines("tick")
+        # Not armed and the switch off: back at once, and nothing before that
+        # return reaches the game.
+        self.assertEqual(lines[1], "if (!g_Mark1.Enabled() && !artPending) return;")
+        for line in lines[:2]:
+            for call in ("g_Yytk", "CallBuiltin", "CallGameScript", "Resolve", "Mark1PlayerResolves",
+                         "InstallIfReady(", "IconInstall(", "SetInstall(", "Hook"):
+                with self.subTest(line=line, call=call):
+                    self.assertNotIn(call, line)
+        self.assertIn("ArtGroundInstallPending(g_Mark1.ArtArmed(),", lines[0])
+        # The art's install comes before the switch's own return, so it runs
+        # whatever the switch now says.
+        tick = self.body("tick")
+        self.assertLess(tick.index("Mark1ArtInstallIfReady();"), tick.index("if (!g_Mark1.Enabled()) return;"))
+        self.assertEqual(self.lines("art_install_if_ready"), [
+            "const bool player = M1sNs::ArtGroundInstallPending(g_Mark1.ArtArmed(), (int)ForgePact::Mark1Icons::kIconCount, "
+            "g_M1sGroundTried) && g_Setup && Mark1PlayerResolves();",
+            "if (!M1sNs::ArtWantsGroundInstall(g_Mark1.ArtArmed(), (int)ForgePact::Mark1Icons::kIconCount, "
+            "g_M1sGroundTried, g_Setup, player)) return;",
+            "Mark1GroundIconInstall();",
+        ])
+        # The core's decision takes no switch: armed, embedded, untried, setup, player.
+        self.assertIn("inline bool ArtWantsGroundInstall(bool armed, int iconsEmbedded, bool tried, bool setupDone, "
+                      "bool playerResolved)", self.header())
+
+    def test_art_default_nothing_installs_inside_create_item_new_pass(self):
+        whole = strip_comments(self.plugin)
+        # The pass reaches the art through the one Mark1DressFinal call, in
+        # the Custom Forge's final pass.
+        self.assertEqual(len(re.findall(r"\bMark1DressFinal\(", whole)), 3)   # declaration, call, definition
+        self.assertIn("if (finalPass && mark1Matched) Mark1DressFinal(*candidate, mark1Piece);", self.body("forge"))
+        installs = ("Mark1GroundIconInstall(", "Mark1ArtInstallIfReady(", "Mark1InstallIfReady(", "Mark1SetInstall(",
+                    "FlightGroundIconInstall(", "HiddenLootInstall(", "HookOneScript", "HookBuiltin", "MmCreateHook")
+        for function in ("final", "icons_load", "icon_path", "icon_index", "ground_route", "of", "decode", "entry"):
+            for install in installs:
+                with self.subTest(function=function, install=install):
+                    self.assertNotIn(install, self.body(function))
+        # The ground install's three callers, none of them a dressing.
+        callers = {which: self.body(which).count("Mark1GroundIconInstall();")
+                   for which in ("install", "art_install_if_ready", "spawn")}
+        self.assertEqual(callers, {"install": 1, "art_install_if_ready": 1, "spawn": 1})
+        self.assertEqual(len(re.findall(r"\bMark1GroundIconInstall\(\);", whole)), 3)
+
+    def test_art_default_stat_icons_fields_come_from_the_flag_the_ground_count_and_the_route(self):
+        fields = self.body("stat_fields")
+        # `art=` from the core's flag, through FillStat; never set by the adapter.
+        self.assertIn("g_Mark1.FillStat(f);", fields)
+        self.assertNotIn("f.artArmed", self.code)
+        self.assertIn("f.artArmed = artArmed_;", function_body(self.header(), "void FillStat(StatFields& f) const"))
+        # `ground=` is the consumer's own count, bumped only after it gave a
+        # ground item our sprite.
+        self.assertIn("f.ground = g_M1sGround;", fields)
+        self.assertEqual(re.findall(r"\+\+g_M1sGround\b|\bg_M1sGround\s*(?:\+=|=(?!=))", self.code),
+                         ["g_M1sGround =", "++g_M1sGround"])   # the declaration's `= 0` and the consumer's count
+        ground = self.body("ground")
+        self.assertLess(ground.index('RValue("sprite_index"), g_M1sIconSprite[k]'), ground.index("++g_M1sGround;"))
+        # `ground-route=` is hidden loot's RouteName(), with its install state.
+        self.assertIn("f.groundRoute = Mark1GroundRoute();", fields)
+        self.assertIn("ForgePact::HiddenLootMod::Instance().RouteName()", self.body("ground_route"))
+        self.assertLess(fields.index("g_Mark1.FillStat(f);"), fields.index("f.ground = g_M1sGround;"))
 
 
 if __name__ == "__main__":
