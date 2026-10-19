@@ -33,21 +33,48 @@ namespace ForgePact::Mark1Probe {
 // member reads and writes, and the printing.
 //
 // With every lever off, each row's call runs the original once and its result
-// is returned unchanged, with nothing read or written: the baseline.
+// is returned unchanged, with nothing written: the baseline. The two stat
+// rows' own answers are noted (ReturnSpecificStat's id argument and result,
+// a getter row's result), so `statpin` can pin the last one; nothing else is
+// read.
+//
+// Phase 2's walk research (the Mark 1 set's workorder, Live procedure 1) adds
+// eleven builtin rows the walk may move the player through, `place_meeting`
+// being their control; `statlog`, which prints every local answer for one
+// stat id; `statpin`, which answers each one with the last answer before it
+// started; `hold`, a `set` restored once, when it ends; the `effect`, `pst`
+// array and `builtin` watch scopes; `pos`'s modal step and frame time; and
+// `base`, a scratch item of one class and base, never placed.
 
 // ---- the rows ----------------------------------------------------------------
 
+// The nine script rows first (ModuleMain.cpp hooks each through
+// HookOneScript), then the builtin rows (HookBuiltin), in this order.
 enum class Row : int {
     CheckTalentUse, TalentUse, TalentUseSetSpeed, PlayerMovement, ReturnSpecificStat,
     StatMovementSpeed, SkillsLeap, PlayerJumpGravity, StatJumpPower,
+    PlaceMeeting, MpLinearStep, MpLinearStepObject, MpPotentialStep, MpPotentialStepObject,
+    MoveTowardsPoint, MotionSet, MotionAdd, MoveContactSolid, MoveOutsideSolid, MoveAndCollide,
 };
-inline constexpr int kRowCount = 9;
+inline constexpr int kScriptRowCount = 9;
+inline constexpr int kBuiltinRowCount = 11;
+inline constexpr int kRowCount = kScriptRowCount + kBuiltinRowCount;
 
-// The scripts' own names, the spelling the game and the SDK use.
+// The scripts' own names, the spelling the game and the SDK use, then the
+// builtins' runtime names. place_meeting is the builtin rows' control: the
+// walk calls it with the player as self (hub RDM § 19.6, measured).
 inline constexpr std::string_view kRowNames[kRowCount] = {
     "CheckTalentUse", "TalentUse", "TalentUseSetSpeed", "PlayerMovement", "ReturnSpecificStat",
     "StatMovementSpeed", "skillsLeap", "playerJumpGravity", "StatJumpPower",
+    "place_meeting", "mp_linear_step", "mp_linear_step_object", "mp_potential_step", "mp_potential_step_object",
+    "move_towards_point", "motion_set", "motion_add", "move_contact_solid", "move_outside_solid", "move_and_collide",
 };
+
+inline bool IsBuiltinRow(Row r)
+{
+    const int i = static_cast<int>(r);
+    return i >= kScriptRowCount && i < kRowCount;
+}
 
 inline std::string_view RowName(Row r)
 {
@@ -87,10 +114,24 @@ inline bool ParseRow(std::string_view s, Row& out)
 // Profile_Manager_obj instance 0 when the player has none, and says which).
 // input: that scope's `inputState` elements. queue: `abilityQueue`,
 // `mobileTalentPressed` and `stackSkillList`, on the instance the static
-// reading places each on.
-enum class Scope : int { Player, Pst, Profile, Input, Queue };
-inline constexpr int kScopeCount = 5;
-inline constexpr std::string_view kScopeNames[kScopeCount] = { "player", "pst", "profile", "input", "queue" };
+// reading places each on. effect: the player's `playerEffect` array, element
+// by element. builtin: the player's own built-in variables (kBuiltinWatch and
+// `alarm[0..11]`). `pst` is read element by element when `pSt` is an array,
+// which phase 1's Live 3 measured (54 entries).
+enum class Scope : int { Player, Pst, Profile, Input, Queue, Effect, Builtin };
+inline constexpr int kScopeCount = 7;
+inline constexpr std::string_view kScopeNames[kScopeCount] = { "player", "pst", "profile", "input", "queue", "effect", "builtin" };
+inline constexpr const char* kScopeList = "player, pst, profile, input, queue, effect or builtin";
+
+// The `builtin` scope's members, then alarm[0] .. alarm[kAlarmCount - 1].
+inline constexpr std::string_view kBuiltinWatch[] = { "image_speed", "image_index", "sprite_index", "speed", "hspeed", "vspeed" };
+inline constexpr int kAlarmCount = 12;
+
+// The member a whole-array target names: `input[<i>]`, `effect[<i>]` and
+// `pst[<i>]` (pSt read as the player's array).
+inline constexpr std::string_view kInputMember = "inputState";
+inline constexpr std::string_view kEffectMember = "playerEffect";
+inline constexpr std::string_view kPstMember = "pSt";
 
 inline std::string_view ScopeName(Scope s)
 {
@@ -106,8 +147,9 @@ inline bool ParseScope(std::string_view s, Scope& out)
     return false;
 }
 
-// What a `set` or `scale` lever writes: `<scope>.<name>` or
-// `<scope>.<name>[<i>]`, and `input[<i>]` for an inputState element.
+// What a `set`, `scale` or `hold` lever writes: `<scope>.<name>` or
+// `<scope>.<name>[<i>]`, and `input[<i>]`, `effect[<i>]` or `pst[<i>]` for an
+// element of the scope's own array.
 struct Target {
     Scope       scope = Scope::Player;
     std::string name;
@@ -115,12 +157,30 @@ struct Target {
     long long   index = 0;
 };
 
+// `pst[<i>]`: an element of the player's pSt array, not a member of a pSt struct.
+inline bool PstArrayTarget(const Target& t)
+{
+    return t.scope == Scope::Pst && t.indexed && t.name == kPstMember;
+}
+
 inline std::string TargetText(const Target& t)
 {
     if (t.scope == Scope::Input) return "input[" + std::to_string(t.index) + "]";
+    if (t.scope == Scope::Effect) return "effect[" + std::to_string(t.index) + "]";
+    if (PstArrayTarget(t)) return "pst[" + std::to_string(t.index) + "]";
     std::string out = std::string(ScopeName(t.scope)) + "." + t.name;
     if (t.indexed) out += "[" + std::to_string(t.index) + "]";
     return out;
+}
+
+// A watched member as a `watch` line names it, which is how a target names
+// it too: `input[<i>]` and `effect[<i>]` from an element index, `pst[<i>]`
+// from a `[<i>]` key (pSt read as an array), `<scope>.<name>` otherwise.
+inline std::string WatchMember(Scope scope, const std::string& name)
+{
+    if (scope == Scope::Input || scope == Scope::Effect) return std::string(ScopeName(scope)) + "[" + name + "]";
+    if (!name.empty() && name[0] == '[') return std::string(ScopeName(scope)) + name;
+    return std::string(ScopeName(scope)) + "." + name;
 }
 
 // ---- numbers and values ---------------------------------------------------------
@@ -208,11 +268,21 @@ inline constexpr long long kMaxStatId = 999;
 inline constexpr int kMaxArgs = 100;
 inline constexpr int kWatchMaxLines = 400;        // one watch's printed lines; the rest are counted
 inline constexpr size_t kMaxNameLength = 64;
-inline constexpr size_t kMaxOutbox = 2000;        // `pos` lines waiting for the adapter to print
+inline constexpr size_t kMaxOutbox = 2000;        // `pos` and `statlog` lines waiting for the adapter to print
+inline constexpr int kStatlogMaxLines = 1200;     // one statlog's printed lines; the rest are counted
+inline constexpr int kScanMaxCount = 64;          // `walkable scan` points
+inline constexpr long long kMaxItemClass = 19;    // hs_game_sdk/item_type.hpp's highest class
+inline constexpr long long kMaxBase = 9999;
 
 // set: write `value` into `target` before each local-player call of `row`,
 //      and restore what was there after the original returns (or throws).
 // scale: the same, multiplying the member's number by `mult`.
+// hold: write `value` (or, with `holdMult`, the value read when the lever
+//       started x `mult`) before each local-player call of `row`, and restore
+//       the value read when it started once, when the lever ends (its frames
+//       run out, `off`, or another lever replaces it), not after each call.
+// statpin: a call `stat` would scale returns `value`, the last local answer
+//       for the id before the lever started, in place of its own.
 // move: after each local-player call of `row` that moved the player, set x
 //       and y to before + mult x (after - before).
 // stat: a ReturnSpecificStat call for the local player whose stat-id argument
@@ -221,7 +291,7 @@ inline constexpr size_t kMaxOutbox = 2000;        // `pos` lines waiting for the
 //       getter does too. Compiled GML reaches a getter like StatMovementSpeed
 //       by a direct call as well as through the dispatcher, so scaling the
 //       dispatcher alone would be blind to those callers.
-enum class LeverKind : int { Off, Set, Scale, Move, Stat };
+enum class LeverKind : int { Off, Set, Scale, Move, Stat, Hold, Pin };
 
 // The getter row the stat dispatcher sends an id to, for the ids that have
 // one among the rows (static reading: 64 movement speed, 66 jump power).
@@ -232,37 +302,61 @@ inline bool StatGetterRow(long long statId, Row& out)
     return false;
 }
 
+// The other way round: the stat id a getter row answers.
+inline bool GetterStatId(Row r, long long& out)
+{
+    if (r == Row::StatMovementSpeed) { out = 64; return true; }
+    if (r == Row::StatJumpPower) { out = 66; return true; }
+    return false;
+}
+
 struct Lever {
     LeverKind kind = LeverKind::Off;
     Target    target;
-    Value     value;
-    double    mult = 1;
+    Value     value;              // set, hold; statpin: the pinned answer
+    double    mult = 1;           // scale, move, stat; hold with holdMult
+    bool      holdMult = false;   // hold: `x<mult>` of the value read when it started
     Row       row = Row::CheckTalentUse;
     long long statId = 0;
     int64_t   frames = kDefaultFrames;
 };
 
+inline std::string StatRoutes(long long statId)
+{
+    Row getter = Row::ReturnSpecificStat;
+    return StatGetterRow(statId, getter) ? " on ReturnSpecificStat and " + std::string(RowName(getter))
+                                         : std::string(" on ReturnSpecificStat (no getter row)");
+}
+
 // One word, no spaces, so `lever=<form>` stays one token on the status line.
 inline std::string LeverText(const Lever& l)
 {
     const std::string frames = "frames=" + std::to_string(l.frames);
+    const std::string during = ",during=" + std::string(RowName(l.row)) + "," + frames + ")";
     switch (l.kind) {
     case LeverKind::Off:   return "off";
-    case LeverKind::Set:   return "set(" + TargetText(l.target) + "=" + ValueText(l.value) + ",during=" + std::string(RowName(l.row)) + "," + frames + ")";
-    case LeverKind::Scale: return "scale(" + TargetText(l.target) + "*" + NumberText(l.mult) + ",during=" + std::string(RowName(l.row)) + "," + frames + ")";
+    case LeverKind::Set:   return "set(" + TargetText(l.target) + "=" + ValueText(l.value) + during;
+    case LeverKind::Scale: return "scale(" + TargetText(l.target) + "*" + NumberText(l.mult) + during;
     case LeverKind::Move:  return "move(" + std::string(RowName(l.row)) + "*" + NumberText(l.mult) + "," + frames + ")";
     case LeverKind::Stat:  return "stat(" + std::to_string(l.statId) + "*" + NumberText(l.mult) + "," + frames + ")";
+    case LeverKind::Hold:
+        return "hold(" + TargetText(l.target) + (l.holdMult ? "*" + NumberText(l.mult) : "=" + ValueText(l.value)) + during;
+    case LeverKind::Pin:   return "statpin(" + std::to_string(l.statId) + "=" + ValueText(l.value) + "," + frames + ")";
     }
     return "?";
 }
 
 // The reply to a lever form. `resolved` names the instance or struct the
 // adapter resolved the target's scope to, `current` the value it read there
-// now (what a restore writes back); both are only shown for set and scale.
-// `replaced` is the lever this one replaced, empty when none was on.
-inline std::string LeverReply(const Lever& l, const std::string& resolved, const std::string& current, const std::string& replaced)
+// now (what a restore writes back); both are only shown for set, scale and
+// hold. `replaced` is the lever this one replaced, empty when none was on.
+// `from` is the frame the lever starts on, printed as `from f=<frame>`.
+// statpin's `current` names where its pinned answer came from.
+inline std::string LeverReply(const Lever& l, int64_t from, const std::string& resolved, const std::string& current,
+                              const std::string& replaced)
 {
-    const std::string during = " during " + std::string(RowName(l.row)) + " for " + std::to_string(l.frames) + " frames";
+    const std::string window = " for " + std::to_string(l.frames) + " frames from f=" + std::to_string(from);
+    const std::string during = " during " + std::string(RowName(l.row)) + window;
     const std::string where = " scope=" + (resolved.empty() ? std::string("?") : resolved)
         + " restores=" + (current.empty() ? std::string("?") : current);
     std::string out;
@@ -271,18 +365,19 @@ inline std::string LeverReply(const Lever& l, const std::string& resolved, const
     case LeverKind::Set:   out = "mark1probe set: " + TargetText(l.target) + " := " + ValueText(l.value) + during + where; break;
     case LeverKind::Scale: out = "mark1probe scale: " + TargetText(l.target) + " x" + NumberText(l.mult) + during + where; break;
     case LeverKind::Move:
-        out = "mark1probe move: " + std::string(RowName(l.row)) + " displacement x" + NumberText(l.mult) + " for "
-            + std::to_string(l.frames) + " frames";
+        out = "mark1probe move: " + std::string(RowName(l.row)) + " displacement x" + NumberText(l.mult) + window;
         break;
-    case LeverKind::Stat: {
-        Row getter = Row::ReturnSpecificStat;
-        const std::string routes = StatGetterRow(l.statId, getter)
-            ? " on ReturnSpecificStat and " + std::string(RowName(getter))
-            : std::string(" on ReturnSpecificStat (no getter row)");
-        out = "mark1probe stat: id " + std::to_string(l.statId) + " x" + NumberText(l.mult) + routes + " for "
-            + std::to_string(l.frames) + " frames";
+    case LeverKind::Stat:
+        out = "mark1probe stat: id " + std::to_string(l.statId) + " x" + NumberText(l.mult) + StatRoutes(l.statId) + window;
         break;
-    }
+    case LeverKind::Hold:
+        out = "mark1probe hold: " + TargetText(l.target) + " := " + (l.holdMult ? "x" + NumberText(l.mult) : ValueText(l.value))
+            + during + where + " (once, when the lever ends)";
+        break;
+    case LeverKind::Pin:
+        out = "mark1probe statpin: id " + std::to_string(l.statId) + " pinned=" + ValueText(l.value)
+            + (current.empty() ? std::string() : " (" + current + ")") + StatRoutes(l.statId) + window;
+        break;
     }
     if (!replaced.empty()) out += " (replaces " + replaced + ")";
     return out;
@@ -292,18 +387,22 @@ inline std::string LeverReply(const Lever& l, const std::string& resolved, const
 
 enum class Form : int {
     Status, Hook, Off, Show, ShowReset, Args, Watch, Set, Scale, Move, Stat, Count, Pos, WalkHere, WalkAt, WalkScan,
+    Statlog, Statpin, Hold, Base,
 };
 
 struct Command {
     Form        form = Form::Status;
-    Lever       lever;                     // Set, Scale, Move, Stat
-    int64_t     frames = 0;                // Watch, Count, Pos
+    Lever       lever;                     // Set, Scale, Move, Stat, Hold, Statpin
+    int64_t     frames = 0;                // Watch, Count, Pos, Statlog
     int         count = 0;                 // Args: calls to print; WalkScan: points
     Scope       scope = Scope::Player;     // Watch
     bool        after = false;             // Watch: start at the row's next local-player call
     Row         afterRow = Row::CheckTalentUse;
     std::string object;                    // Count
     double      a = 0, b = 0;              // WalkHere dx dy, WalkAt x y, WalkScan deg step
+    long long   statId = 0;                // Statlog
+    long long   itemClass = 0;             // Base: the class (hs_game_sdk ItemType) and the base b
+    long long   base = 0;
 };
 
 inline const std::string& RowList()
@@ -334,7 +433,7 @@ inline bool IsName(std::string_view s)
 
 namespace detail {
 
-inline const char* kFormError = "a target is <scope>.<name>[<i>] or input[<i>], not ";
+inline const char* kFormError = "a target is <scope>.<name>[<i>], input[<i>], effect[<i>] or pst[<i>], not ";
 
 // `[<i>]` at the end of `s`, after `head`: the index, or false.
 inline bool ParseIndexSuffix(std::string_view s, size_t open, long long& index)
@@ -347,10 +446,15 @@ inline bool ParseTarget(std::string_view s, Target& t, std::string& why)
 {
     const size_t dot = s.find('.');
     if (dot == std::string_view::npos) {
-        if (s.size() >= 6 && SameWord(s.substr(0, 6), "input[")) {
+        // An element of the scope's own array: input[<i>], effect[<i>], pst[<i>].
+        const struct { std::string_view head; Scope scope; std::string_view member; } kArrays[] = {
+            { "input[", Scope::Input, kInputMember }, { "effect[", Scope::Effect, kEffectMember }, { "pst[", Scope::Pst, kPstMember },
+        };
+        for (const auto& a : kArrays) {
+            if (s.size() < a.head.size() || !SameWord(s.substr(0, a.head.size()), a.head)) continue;
             long long index = 0;
-            if (!ParseIndexSuffix(s, 5, index)) { why = "an index is a whole number 0..9999, not " + std::string(s); return false; }
-            t = Target{ Scope::Input, "inputState", true, index };
+            if (!ParseIndexSuffix(s, a.head.size() - 1, index)) { why = "an index is a whole number 0..9999, not " + std::string(s); return false; }
+            t = Target{ a.scope, std::string(a.member), true, index };
             return true;
         }
         why = kFormError + std::string(s);
@@ -358,8 +462,8 @@ inline bool ParseTarget(std::string_view s, Target& t, std::string& why)
     }
     Scope scope = Scope::Player;
     const std::string_view head = s.substr(0, dot);
-    if (!ParseScope(head, scope)) { why = "unknown scope " + std::string(head) + " (player, pst, profile, input or queue)"; return false; }
-    if (scope == Scope::Input) { why = kFormError + std::string(s); return false; }
+    if (!ParseScope(head, scope)) { why = "unknown scope " + std::string(head) + " (" + kScopeList + ")"; return false; }
+    if (scope == Scope::Input || scope == Scope::Effect) { why = kFormError + std::string(s); return false; }
     const std::string_view rest = s.substr(dot + 1);
     const size_t open = rest.find('[');
     const std::string_view name = rest.substr(0, open);
@@ -437,7 +541,7 @@ inline bool Parse(const std::vector<std::string>& tok, Command& c, std::string& 
     if (head == "watch") {
         const char* usage = "usage: watch <scope> <frames> [after <row>]";
         if (n != 3 && n != 5) { why = usage; return false; }
-        if (!ParseScope(tok[1], c.scope)) { why = "unknown scope " + tok[1] + " (player, pst, profile, input or queue)"; return false; }
+        if (!ParseScope(tok[1], c.scope)) { why = "unknown scope " + tok[1] + " (" + kScopeList + ")"; return false; }
         if (!detail::ParseFrames(tok[2], c.frames, why)) return false;
         if (n == 5) {
             if (!SameWord(tok[3], "after")) { why = usage; return false; }
@@ -465,6 +569,25 @@ inline bool Parse(const std::vector<std::string>& tok, Command& c, std::string& 
         c.form = set ? Form::Set : Form::Scale;
         return true;
     }
+    if (head == "hold") {
+        const char* usage = "usage: hold <scope>.<name>[<i>] <value|x<mult>> during <row> [frames]";
+        if ((n != 5 && n != 6) || !SameWord(tok[3], "during")) { why = usage; return false; }
+        Lever& l = c.lever;
+        l.kind = LeverKind::Hold;
+        if (!detail::ParseTarget(tok[1], l.target, why)) return false;
+        const std::string& v = tok[2];
+        if (v.size() > 1 && Lower(v[0]) == 'x') {
+            if (!detail::ParseMult(std::string_view(v).substr(1), l.mult, why)) return false;
+            l.holdMult = true;
+        } else if (!ParseValue(v, l.value)) {
+            why = "a hold value is a number, true, false or x<mult>, not " + v;
+            return false;
+        }
+        if (!detail::ParseRowArg(tok[4], l.row, why)) return false;
+        if (n == 6 && !detail::ParseFrames(tok[5], l.frames, why)) return false;
+        c.form = Form::Hold;
+        return true;
+    }
     if (head == "move") {
         if (n != 3 && n != 4) { why = "usage: move <row> <mult> [frames]"; return false; }
         Lever& l = c.lever;
@@ -484,6 +607,30 @@ inline bool Parse(const std::vector<std::string>& tok, Command& c, std::string& 
         if (!detail::ParseMult(tok[2], l.mult, why)) return false;
         if (n == 4 && !detail::ParseFrames(tok[3], l.frames, why)) return false;
         c.form = Form::Stat;
+        return true;
+    }
+    if (head == "statpin") {
+        if (n != 2 && n != 3) { why = "usage: statpin <id> [frames]"; return false; }
+        Lever& l = c.lever;
+        l.kind = LeverKind::Pin;
+        l.row = Row::ReturnSpecificStat;
+        if (!ParseWhole(tok[1], 0, kMaxStatId, l.statId)) { why = "stat id must be a whole number 0..999, not " + tok[1]; return false; }
+        if (n == 3 && !detail::ParseFrames(tok[2], l.frames, why)) return false;
+        c.form = Form::Statpin;
+        return true;
+    }
+    if (head == "statlog") {
+        if (n != 3) { why = "usage: statlog <id> <frames>"; return false; }
+        if (!ParseWhole(tok[1], 0, kMaxStatId, c.statId)) { why = "stat id must be a whole number 0..999, not " + tok[1]; return false; }
+        if (!detail::ParseFrames(tok[2], c.frames, why)) return false;
+        c.form = Form::Statlog;
+        return true;
+    }
+    if (head == "base") {
+        if (n != 3) { why = "usage: base <class 0-19> <b>"; return false; }
+        if (!ParseWhole(tok[1], 0, kMaxItemClass, c.itemClass)) { why = "class must be a whole number 0..19, not " + tok[1]; return false; }
+        if (!ParseWhole(tok[2], 0, kMaxBase, c.base)) { why = "b must be a whole number 0..9999, not " + tok[2]; return false; }
+        c.form = Form::Base;
         return true;
     }
     if (head == "count") {
@@ -513,29 +660,34 @@ inline bool Parse(const std::vector<std::string>& tok, Command& c, std::string& 
         }
         if (!ParseNumber(tok[3], c.b) || c.b < 1 || c.b > 1024) { why = "scan step must be a number 1..1024, not " + tok[3]; return false; }
         long long count = 0;
-        if (!ParseWhole(tok[4], 1, 32, count)) { why = "scan count must be a whole number 1..32, not " + tok[4]; return false; }
+        if (!ParseWhole(tok[4], 1, kScanMaxCount, count)) { why = "scan count must be a whole number 1..64, not " + tok[4]; return false; }
         c.count = static_cast<int>(count);
         c.form = Form::WalkScan;
         return true;
     }
-    why = "unknown form " + tok[0] + " (hook, off, show, args, watch, set, scale, move, stat, count, pos or walkable)";
+    why = "unknown form " + tok[0]
+        + " (hook, off, show, args, watch, set, scale, hold, move, stat, statpin, statlog, count, pos, base or walkable)";
     return false;
 }
 
 inline std::vector<std::string> Usage()
 {
     return {
-        "  mark1probe hook                                      install the nine rows as pass-throughs",
-        "  mark1probe off                                       every lever and watch off (rows stay installed)",
+        "  mark1probe hook                                      install the script and builtin rows as pass-throughs",
+        "  mark1probe off                                       every lever, watch and statlog off (rows stay installed)",
         "  mark1probe show [reset]                              per-row calls local/all, the lever's counts, casts per talent id",
         "  mark1probe args <n>                                  the next n CheckTalentUse calls' arguments",
-        "  mark1probe watch <scope> <frames> [after <row>]      changed members; scopes player pst profile input queue",
+        "  mark1probe watch <scope> <frames> [after <row>]      changed members; scopes player pst profile input queue effect builtin",
         "  mark1probe set <scope>.<name>[<i>] <v> during <row> [frames]   write before each call, restore after",
         "  mark1probe scale <scope>.<name>[<i>] <m> during <row> [frames] multiply before each call, restore after",
+        "  mark1probe hold <scope>.<name>[<i>] <v|x<m>> during <row> [frames] write before each call, restore once at the end",
         "  mark1probe move <row> <mult> [frames]                scale each call's own displacement",
         "  mark1probe stat <id> <mult> [frames]                 scale one stat id's number (dispatcher, and 64/66's getter)",
+        "  mark1probe statpin <id> [frames]                     answer the id with its last local answer before the lever",
+        "  mark1probe statlog <id> <frames>                     each local answer for the id, the rows around it, min and max",
         "  mark1probe count <object name> <frames>              instance_number per frame, one line per change",
-        "  mark1probe pos <frames>                              the cursor, each moving call's dx dy, moves outside the rows, totals",
+        "  mark1probe pos <frames>                              the cursor, each moving call's dx dy, moves outside the rows, mode, ms",
+        "  mark1probe base <class> <b>                          build a scratch item of that class and base (never placed)",
         "  mark1probe walkable here <dx> <dy> | at <x> <y> | scan <deg> <step> <count>",
         "  frames default 600, at most 3600; one lever at a time, a new one replaces it",
     };
@@ -558,6 +710,55 @@ inline std::string PosStartLine(bool cursorRead, double x, double y)
 {
     if (!cursorRead) return "pos cursor=unreadable";
     return "pos cursor x=" + NumberText(x) + " y=" + NumberText(y);
+}
+
+// ---- `base` ------------------------------------------------------------------------
+// A scratch item of one class and base, built by the game's own loader the
+// way charmprobe's scratch charm is (json_parse, then InitItemFromJson with
+// the global instance as self; hs-game-sdk/curated/item_info.json `loader`)
+// and never placed: the collector takes a build nothing keeps. Its seed is
+// charmprobe's scratch seed, outside every range a ForgePact item dresses,
+// so the Mark 1 pieces' own seeds never reach this build.
+inline constexpr long long kBaseScratchSeed = 779000;
+
+// The loader's key: `0-0-<ms>-<class>`, the class last (as `angelicdrop` and
+// charmprobe's `0-0-<ms>-10` build theirs).
+inline std::string BaseKey(long long ms, long long itemClass)
+{
+    return "0-0-" + std::to_string(ms) + "-" + std::to_string(itemClass);
+}
+
+// The definition: the signature items' shape, no unique (`j` 0), base `b`.
+inline std::string BaseJson(long long b)
+{
+    return "{\"w\":1,\"a\":" + std::to_string(kBaseScratchSeed) + ",\"j\":0,\"b\":" + std::to_string(b) + ",\"c\":0,\"o\":1}";
+}
+
+// What the build gave. `built` is a struct with an itemInfoStruct and a
+// non-empty name (info key 28); otherwise `why` says which part was missing.
+// rarity is info key 27, the display sprite info key 11 (item_info.json's
+// info_keys, measured), and `spriteExists` sprite_exists' answer on it.
+struct BaseResult {
+    long long             itemClass = 0;
+    long long             base = 0;
+    bool                  built = false;
+    std::string           why;
+    std::string           name;
+    std::optional<double> rarity;
+    std::optional<double> sprite;
+    std::optional<bool>   spriteExists;
+};
+
+inline std::string BaseLine(const BaseResult& r)
+{
+    std::string out = "mark1probe base: class=" + std::to_string(r.itemClass) + " b=" + std::to_string(r.base)
+        + " built=" + (r.built ? "yes" : "no");
+    if (!r.why.empty()) out += " why=" + r.why;
+    out += " rarity=" + (r.rarity ? NumberText(*r.rarity) : std::string("none"));
+    out += " sprite=" + (r.sprite ? NumberText(*r.sprite) : std::string("none"));
+    if (r.spriteExists) out += std::string(" sprite-exists=") + (*r.spriteExists ? "yes" : "no");
+    out += " name=" + (r.name.empty() ? std::string("none") : "\"" + r.name + "\"");
+    return out;
 }
 
 // ---- `walkable` ---------------------------------------------------------------------
@@ -708,7 +909,9 @@ inline std::vector<std::pair<double, double>> ScanPoints(double px, double py, d
 
 // ---- the probe ------------------------------------------------------------------------
 
-enum class HookState : int { NotTried, Detoured, Failed, Held };
+// NotFound: a builtin row whose name the runtime does not know. Listed, never
+// counted as failed: the walk cannot be moving the player through it.
+enum class HookState : int { NotTried, Detoured, Failed, Held, NotFound };
 
 struct RowCalls {
     uint64_t local = 0;   // calls whose self is the local player
@@ -727,6 +930,16 @@ struct LeverCounts {
     uint64_t skip = 0;             // stat: a matching call whose result was not a number
 };
 
+// The answers `statlog` has seen.
+struct StatlogCounts {
+    uint64_t calls = 0;      // dispatcher calls for the id
+    uint64_t direct = 0;     // getter-row calls with no dispatcher around them
+    int      lines = 0;
+    uint64_t dropped = 0;
+    bool     have = false;   // a number was seen: min and max hold it
+    double   min = 0, max = 0;
+};
+
 class Probe {
 public:
     // ---- the rows' hooks (`hook`) ------------------------------------------
@@ -743,11 +956,22 @@ public:
     int Hooked() const { return CountHooks(HookState::Detoured); }
     int Held() const { return CountHooks(HookState::Held); }
     int Failed() const { return CountHooks(HookState::Failed); }
+    int NotFound() const { return CountHooks(HookState::NotFound); }
 
     std::string HookLine() const
     {
         return "mark1probe hook: " + std::to_string(Hooked()) + " detoured, " + std::to_string(Failed()) + " failed, "
-            + std::to_string(Held()) + " held";
+            + std::to_string(Held()) + " held, " + std::to_string(NotFound()) + " not-found";
+    }
+
+    // The builtin names the runtime does not know, one line, or none.
+    std::vector<std::string> NotFoundLines() const
+    {
+        std::string names;
+        for (int i = 0; i < kRowCount; ++i)
+            if (hook_[i] == HookState::NotFound) names += (names.empty() ? "" : ", ") + std::string(kRowNames[i]);
+        if (names.empty()) return {};
+        return { "  not-found: " + names + " (no builtin by that name on this runtime; not counted as failed)" };
     }
 
     std::vector<std::string> HeldLines() const
@@ -767,7 +991,8 @@ public:
         std::vector<std::string> out = {
             "mark1probe: research build",
             "mark1probe: rows=" + std::to_string(kRowCount) + " hooked=" + std::to_string(Hooked()) + " held="
-                + std::to_string(Held()) + " lever=" + LeverText() + " watch=" + (WatchOn() ? "on" : "off"),
+                + std::to_string(Held()) + " lever=" + LeverText() + " watch=" + (WatchOn() ? "on" : "off")
+                + " statlog=" + (statlogOn_ ? "on" : "off"),
         };
         for (std::string& l : Usage()) out.push_back(std::move(l));
         return out;
@@ -789,18 +1014,70 @@ public:
     std::string LeverText() const { return Mark1Probe::LeverText(lever_); }
     const LeverCounts& Applied() const { return counts_; }
 
+    int64_t LeverStart() const { return leverStart_; }
+
     // On frames start .. start + frames - 1.
     bool LeverLive(int64_t frame) const
     {
         return lever_.kind != LeverKind::Off && frame >= leverStart_ && frame - leverStart_ < lever_.frames;
     }
 
-    // `off`: every lever, watch, args, count and pos off; the rows stay
-    // installed as pass-throughs and the counts stay for `show`.
+    // `hold`: SetLever, plus the value the adapter read at the target now
+    // (`startRead` false when it could not), which the lever's end writes
+    // back once. With nothing read there is nothing to restore, so the lever
+    // writes nothing at all (each call counts `missing`); neither does `x<m>`
+    // of a bool. The caller restores an earlier hold first (RestoreHold with
+    // force), so `start` is never the earlier hold's own value.
+    std::string StartHold(const Lever& l, int64_t frame, bool startRead, const Value& start)
+    {
+        const std::string replaced = SetLever(l, frame);
+        holdTarget_ = l.target;
+        holdStart_ = start;
+        holdReady_ = startRead && !(l.holdMult && start.isBool);
+        holdValue_ = l.holdMult ? Value{ false, start.number * l.mult } : l.value;
+        holdDirty_ = false;
+        return replaced;
+    }
+
+    // Whether a hold wrote and its restore is still owed.
+    bool HoldOwed() const { return holdDirty_; }
+
+    // Writes the value a hold read when it started back, once, when the hold
+    // is no longer live at `frame` (it ran out, `off` turned it off, or
+    // another lever replaced it), or at once with `force` (the adapter, just
+    // before a new lever starts). The line says what was written back, or ""
+    // when nothing was owed.
+    template <class Access>
+    std::string RestoreHold(Access& access, int64_t frame, bool force)
+    {
+        if (!holdDirty_) return {};
+        if (!force && lever_.kind == LeverKind::Hold && LeverLive(frame)) return {};
+        holdDirty_ = false;
+        const bool ok = access.Write(holdTarget_, holdStart_);
+        return "mark1probe hold: restored " + TargetText(holdTarget_) + " := " + ValueText(holdStart_)
+            + (ok ? std::string() : std::string(" (the write did not land)"));
+    }
+
+    // `statpin`: the last local answer for the id before now, from either
+    // route (the dispatcher with that id, or the id's getter row), and the
+    // frame it was seen on. False when none was seen since the rows went in.
+    bool LastStat(long long statId, double& value, int64_t& frame) const
+    {
+        const auto it = lastStat_.find(statId);
+        if (it == lastStat_.end()) return false;
+        value = it->second.first;
+        frame = it->second.second;
+        return true;
+    }
+
+    // `off`: every lever, watch, statlog, args, count and pos off; the rows
+    // stay installed as pass-throughs and the counts stay for `show`. A
+    // hold's restore stays owed until the adapter's RestoreHold.
     void Off()
     {
         LeverOff();
         StopWatch();
+        statlogOn_ = false;
         argsLeft_ = 0;
         countOn_ = false;
         posOn_ = false;
@@ -815,15 +1092,19 @@ public:
     //   bool SetPosition(double x, double y)
     //   bool StatId(double& id)                 the call's stat-id argument
     //   bool Result(double& n)                  the call's result, if a number
+    //   std::string ResultKind()                the result's kind, for one that is not
     //   void SetResult(double n)
     // A call whose self is not the local player runs the original and nothing
-    // else. set, scale and move act on the outermost call of their row only,
-    // so a row the game calls inside itself is written once. stat acts on
-    // every matching ReturnSpecificStat call (an inner call may ask for a
-    // different id) and on the outermost call of the id's getter row, and
-    // scales a number once: a call whose original already ran a scaling
-    // (the dispatcher handing id 64 to a detoured StatMovementSpeed) returns
-    // that number as it is.
+    // else. set, scale, hold and move act on the outermost call of their row
+    // only, so a row the game calls inside itself is written once. stat and
+    // statpin act on every matching ReturnSpecificStat call (an inner call
+    // may ask for a different id) and on the outermost call of the id's
+    // getter row, and change a number once: a call whose original already
+    // ran one (the dispatcher handing id 64 to a detoured StatMovementSpeed)
+    // returns that number as it is. Whatever the lever, a local
+    // ReturnSpecificStat call's id and answer and an outermost getter-row
+    // call's answer are noted (statpin's pin, statlog's lines), before any
+    // lever changes the answer.
     template <class Access, class Original>
     void Around(Row row, int64_t frame, bool local, Access& access, Original&& original)
     {
@@ -841,11 +1122,15 @@ public:
         const bool outer = depth_[i] == 0;
         const bool live = LeverLive(frame) && lever_.row == row;
         const bool writes = live && outer && (lever_.kind == LeverKind::Set || lever_.kind == LeverKind::Scale);
+        const bool holds = live && outer && lever_.kind == LeverKind::Hold;
         const bool moves = live && outer && lever_.kind == LeverKind::Move;
-        const bool statOn = LeverLive(frame) && lever_.kind == LeverKind::Stat;
-        Row getter = Row::ReturnSpecificStat;
-        const bool statDispatch = statOn && row == Row::ReturnSpecificStat;
-        const bool statGetter = statOn && outer && StatGetterRow(lever_.statId, getter) && getter == row;
+        const bool statOn = LeverLive(frame) && (lever_.kind == LeverKind::Stat || lever_.kind == LeverKind::Pin);
+        long long getterId = 0;
+        const bool isDispatch = row == Row::ReturnSpecificStat;
+        const bool isGetter = outer && GetterStatId(row, getterId);
+        const bool statDispatch = statOn && isDispatch;
+        const bool statGetter = statOn && isGetter && getterId == lever_.statId;
+        const bool getterDirect = isGetter && depth_[static_cast<int>(Row::ReturnSpecificStat)] == 0;
         const uint64_t scaledBefore = statScaled_;
         const bool tracing = PosRunning(frame);
         const bool outermostOfAll = depthAll_ == 0;
@@ -862,22 +1147,31 @@ public:
                 else ++counts_.missing;
             }
         }
+        if (holds) {
+            // No restore after the call: the value read when the hold
+            // started goes back once, through RestoreHold.
+            if (holdReady_ && access.Write(lever_.target, holdValue_)) { holdDirty_ = true; ++counts_.applied; }
+            else ++counts_.missing;
+        }
         double x0 = 0, y0 = 0;
         const bool havePos = (moves || tracing) && access.Position(x0, y0);
         const double mult = lever_.mult;
 
         ++depth_[i];
         ++depthAll_;
+        stack_.push_back(row);
         try {
             original();
         } catch (...) {
             --depth_[i];
             --depthAll_;
+            stack_.pop_back();
             if (restore) access.Write(target, old);
             throw;
         }
         --depth_[i];
         --depthAll_;
+        stack_.pop_back();
         if (restore) access.Write(target, old);
 
         if (havePos) {
@@ -908,23 +1202,30 @@ public:
             }
         }
 
-        if (statDispatch || statGetter) {
-            double id = 0;
-            const bool matches = statGetter || (access.StatId(id) && id == static_cast<double>(lever_.statId));
-            if (matches && statScaled_ == scaledBefore) {
-                double n = 0;
-                if (access.Result(n)) {
-                    access.SetResult(n * lever_.mult);
-                    ++statScaled_;
-                    if (statGetter) {
-                        ++counts_.changedGetter;
-                        if (depth_[static_cast<int>(Row::ReturnSpecificStat)] == 0) ++counts_.getterDirect;
-                    } else {
-                        ++counts_.changedDispatch;
-                    }
+        if (!isDispatch && !isGetter) return;
+        // The call's stat id: the getter row's own, or the dispatcher's argument.
+        double id = static_cast<double>(getterId);
+        const bool haveId = isGetter || access.StatId(id);
+        if (!haveId) return;
+        double n = 0;
+        const bool number = access.Result(n);
+        if (number) lastStat_[static_cast<long long>(id)] = { n, frame };
+        if (StatlogRunning(frame) && id == static_cast<double>(statlogId_) && (isDispatch || getterDirect))
+            NoteStatlog(frame, row, number, n, number ? std::string() : access.ResultKind(), isDispatch);
+
+        const bool matches = statGetter || (statDispatch && id == static_cast<double>(lever_.statId));
+        if (matches && statScaled_ == scaledBefore) {
+            if (number) {
+                access.SetResult(lever_.kind == LeverKind::Stat ? n * lever_.mult : lever_.value.number);
+                ++statScaled_;
+                if (statGetter) {
+                    ++counts_.changedGetter;
+                    if (getterDirect) ++counts_.getterDirect;
                 } else {
-                    ++counts_.skip;
+                    ++counts_.changedDispatch;
                 }
+            } else {
+                ++counts_.skip;
             }
         }
     }
@@ -967,7 +1268,7 @@ public:
                       + " still=" + std::to_string(counts_.still) + " " + StatCountsText());
         for (int i = 0; i < kRowCount; ++i) {
             const char* state = hook_[i] == HookState::Detoured ? "" : hook_[i] == HookState::Held ? " held"
-                : hook_[i] == HookState::Failed ? " failed" : " not hooked";
+                : hook_[i] == HookState::Failed ? " failed" : hook_[i] == HookState::NotFound ? " not-found" : " not hooked";
             out.push_back("  " + std::string(kRowNames[i]) + " calls=" + std::to_string(calls_[i].local) + "/"
                           + std::to_string(calls_[i].all) + state);
         }
@@ -984,6 +1285,24 @@ public:
         if (argsLeft_ <= 0) return 0;
         --argsLeft_;
         return ++argsTaken_;
+    }
+
+    // ---- `statlog` -----------------------------------------------------------
+    // From `frame` for `frames` frames: one line per local ReturnSpecificStat
+    // call for the id, and per local call of the id's getter row that no
+    // dispatcher call is around (compiled GML reaches StatMovementSpeed
+    // directly too). A new statlog replaces the old one.
+    void StartStatlog(long long statId, int64_t frames, int64_t frame)
+    {
+        statlogOn_ = true;
+        statlogId_ = statId;
+        statlogFrames_ = frames;
+        statlogStart_ = frame;
+        statlog_ = StatlogCounts{};
+    }
+    bool StatlogRunning(int64_t frame) const
+    {
+        return statlogOn_ && frame >= statlogStart_ && frame - statlogStart_ < statlogFrames_;
     }
 
     // ---- `watch` -------------------------------------------------------------
@@ -1018,11 +1337,12 @@ public:
     }
     Scope WatchScope() const { return watch_.scope; }
 
-    // One snapshot of the scope's numeric and bool members (input: element
-    // index -> value), each value as the adapter printed it. The first is the
-    // baseline; each later one prints a line per member that changed, appeared
-    // (`none->v`) or went away (`v->none`). Past kWatchMaxLines the rest are
-    // counted and the watch ends, its end line last.
+    // One snapshot of the scope's numeric and bool members (input and effect:
+    // element index -> value; pst as an array: `[<i>]` -> value), each value
+    // as the adapter printed it. The first is the baseline; each later one
+    // prints a line per member that changed, appeared (`none->v`) or went away
+    // (`v->none`), named the way a `set` or `hold` target is written. Past
+    // kWatchMaxLines the rest are counted and the watch ends, its end line last.
     std::vector<std::string> ObserveWatch(int64_t frame, const std::map<std::string, std::string>& snapshot)
     {
         std::vector<std::string> out;
@@ -1031,8 +1351,7 @@ public:
         const auto line = [&](const std::string& name, const std::string& from, const std::string& to) {
             if (watchLines_ >= kWatchMaxLines) { ++watchDropped_; return; }
             ++watchLines_;
-            const std::string member = watch_.scope == Scope::Input ? "input[" + name + "]" : std::string(ScopeName(watch_.scope)) + "." + name;
-            out.push_back("watch f=" + std::to_string(frame) + " " + member + "=" + from + "->" + to);
+            out.push_back("watch f=" + std::to_string(frame) + " " + WatchMember(watch_.scope, name) + "=" + from + "->" + to);
         };
         for (const auto& [name, value] : snapshot) {
             const auto it = watchLast_.find(name);
@@ -1085,9 +1404,17 @@ public:
     // does not account for is a move outside the nine rows: its residual
     // (the frame's step minus the rows' summed dx and dy) is printed and
     // added to `outside`. Without the sample, a player moved by code that is
-    // not a row would read the same as a player standing still.
+    // not a row would read the same as a player standing still. The samples
+    // need no row hooked. They also give the end line's `mode=` (the most
+    // frequent non-zero frame-to-frame step, to 0.001 px, the walk's steady
+    // speed) and `ms=` (the mean wall-clock time between samples, so two walks
+    // can be told apart by frame time before their steps are compared).
     void StartPos(int64_t frames, int64_t frame)
     {
+        posSteps_.clear();
+        posClocks_ = 0;
+        posClockFirst_ = 0;
+        posClockLast_ = 0;
         posOn_ = true;
         posFrames_ = frames;
         posStart_ = frame;
@@ -1108,14 +1435,22 @@ public:
     }
 
     // Once a frame while `pos` runs: the local player's x and y, or `read`
-    // false when they could not be read (counted, never taken as a position).
-    void ObservePosFrame(int64_t frame, bool read, double x, double y)
+    // false when they could not be read (counted, never taken as a position),
+    // and the wall clock in milliseconds (`ms`; not finite when unread).
+    void ObservePosFrame(int64_t frame, bool read, double x, double y, double ms = std::nan(""))
     {
         if (!PosRunning(frame)) return;
+        if (std::isfinite(ms)) {
+            if (posClocks_ == 0) posClockFirst_ = ms;
+            posClockLast_ = ms;
+            ++posClocks_;
+        }
         if (!read || !std::isfinite(x) || !std::isfinite(y)) { ++posUnread_; return; }
         ++posSamples_;
         if (posHaveSample_) {
             const double fx = x - posLastX_, fy = y - posLastY_;
+            const long long step = std::llround(std::hypot(fx, fy) * 1000.0);
+            if (step != 0) ++posSteps_[step];
             posPath_ += std::hypot(fx, fy);
             const double ox = fx - posRowDx_, oy = fy - posRowDy_;
             const double outside = std::hypot(ox, oy);
@@ -1151,12 +1486,23 @@ public:
             switch (lever_.kind) {
             case LeverKind::Set:
             case LeverKind::Scale: counts = "applied=" + std::to_string(counts_.applied); break;
+            case LeverKind::Hold:  counts = "applied=" + std::to_string(counts_.applied) + " missing=" + std::to_string(counts_.missing); break;
             case LeverKind::Move:  counts = "moved=" + std::to_string(counts_.moved) + " still=" + std::to_string(counts_.still); break;
-            case LeverKind::Stat:  counts = StatCountsText(); break;
+            case LeverKind::Stat:
+            case LeverKind::Pin:   counts = StatCountsText(); break;
             case LeverKind::Off:   break;
             }
             out.push_back("mark1probe: lever " + LeverText() + " ended " + counts);
             LeverOff();
+        }
+        if (statlogOn_ && frame - statlogStart_ >= statlogFrames_) {
+            const StatlogCounts& s = statlog_;
+            out.push_back("statlog end id=" + std::to_string(statlogId_) + " frames=" + std::to_string(frame - statlogStart_)
+                          + " calls=" + std::to_string(s.calls) + " direct=" + std::to_string(s.direct)
+                          + " min=" + (s.have ? NumberText(s.min) : std::string("none"))
+                          + " max=" + (s.have ? NumberText(s.max) : std::string("none"))
+                          + " lines=" + std::to_string(s.lines) + " dropped=" + std::to_string(s.dropped));
+            statlogOn_ = false;
         }
         if (watchRunning_ && frame - watchStart_ >= watch_.frames) {
             out.push_back(WatchEndLine(frame));
@@ -1178,8 +1524,18 @@ public:
             // never a 0 that reads as standing still.
             const bool measured = posSamples_ >= 2;
             const auto px = [](double v) { return NumberText(std::round(v * 10.0) / 10.0); };
+            // The modal step: the most frequent non-zero one, the smaller on a tie.
+            long long modeKey = 0;
+            uint64_t modeCount = 0;
+            for (const auto& [key, n] : posSteps_)
+                if (n > modeCount) { modeKey = key; modeCount = n; }
+            const std::string mode = modeCount ? NumberText(static_cast<double>(modeKey) / 1000.0) : std::string("none");
+            const std::string ms = posClocks_ >= 2
+                ? NumberText(std::round((posClockLast_ - posClockFirst_) / static_cast<double>(posClocks_ - 1) * 100.0) / 100.0)
+                : std::string("none");
             out.push_back("pos total=" + (measured ? px(posPath_) : std::string("none")) + " in-rows=" + px(posInRows_)
-                          + " outside=" + (measured ? px(posOutside_) : std::string("none")) + " frames="
+                          + " outside=" + (measured ? px(posOutside_) : std::string("none")) + " mode=" + mode + " ms=" + ms
+                          + " frames="
                           + std::to_string(frame - posStart_) + " samples=" + std::to_string(posSamples_)
                           + " unread=" + std::to_string(posUnread_)
                           + " movers=" + (movers.empty() ? std::string("none") : movers));
@@ -1218,15 +1574,64 @@ private:
         if (outbox_.size() < kMaxOutbox) outbox_.push_back(std::move(line));
     }
 
+    // The rows the call is inside, innermost first, each once: `in=` of a
+    // statlog line.
+    std::string StackText() const
+    {
+        std::string out;
+        bool seen[kRowCount]{};
+        for (auto it = stack_.rbegin(); it != stack_.rend(); ++it) {
+            const int r = static_cast<int>(*it);
+            if (seen[r]) continue;
+            seen[r] = true;
+            out += (out.empty() ? "" : ",") + std::string(kRowNames[r]);
+        }
+        return out.empty() ? std::string("none") : out;
+    }
+
+    // `statlog f=<frame> id=<id> <row>=<answer> in=<rows>`: the answer the
+    // call's original gave (a number, or its kind), before any lever.
+    void NoteStatlog(int64_t frame, Row row, bool number, double n, const std::string& kind, bool dispatch)
+    {
+        StatlogCounts& s = statlog_;
+        ++(dispatch ? s.calls : s.direct);
+        if (number) {
+            if (!s.have || n < s.min) s.min = n;
+            if (!s.have || n > s.max) s.max = n;
+            s.have = true;
+        }
+        if (s.lines >= kStatlogMaxLines) { ++s.dropped; return; }
+        ++s.lines;
+        Emit("statlog f=" + std::to_string(frame) + " id=" + std::to_string(statlogId_) + " " + std::string(RowName(row)) + "="
+             + (number ? NumberText(n) : (kind.empty() ? std::string("?") : kind)) + " in=" + StackText());
+    }
+
     HookState hook_[kRowCount]{};
     std::string holder_[kRowCount];
     RowCalls calls_[kRowCount]{};
     int depth_[kRowCount]{};
     int depthAll_ = 0;
+    std::vector<Row> stack_;
 
     Lever lever_;
     int64_t leverStart_ = 0;
     LeverCounts counts_;
+
+    // hold's restore, apart from lever_ so it outlives the lever's end.
+    Target holdTarget_;
+    Value holdStart_;
+    Value holdValue_;
+    bool holdReady_ = false;   // the start was read: the lever writes, and can restore
+    bool holdDirty_ = false;   // a write landed and its restore is owed
+
+    // statpin's pins: the last local answer per stat id, and its frame.
+    std::map<long long, std::pair<double, int64_t>> lastStat_;
+
+    bool statlogOn_ = false;
+    long long statlogId_ = 0;
+    int64_t statlogFrames_ = 0;
+    int64_t statlogStart_ = 0;
+    StatlogCounts statlog_;
 
     std::map<long long, uint64_t> casts_;
     uint64_t castsOther_ = 0;
@@ -1273,6 +1678,10 @@ private:
     double posLastX_ = 0;
     double posLastY_ = 0;
     uint64_t posMovers_[kRowCount]{};
+    std::map<long long, uint64_t> posSteps_;   // frame-to-frame steps in 0.001 px -> frames
+    uint64_t posClocks_ = 0;
+    double posClockFirst_ = 0;
+    double posClockLast_ = 0;
 
     std::vector<std::string> outbox_;
 };

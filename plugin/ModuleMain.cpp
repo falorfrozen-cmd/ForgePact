@@ -62750,6 +62750,16 @@ static void GambaPityCommand(const std::string& rest)
 // A row another ForgePact hook already holds is reported held and never
 // installed on top: HookOneScript gives the inline detour only to the first
 // installer, so a second install would be table-only and blind.
+//
+// Phase 2's walk research (the Mark 1 set's Live procedure 1) adds eleven
+// builtin rows, each by its runtime name through HookBuiltin (an inline
+// detour at the routine itself), place_meeting being their control; a name
+// the runtime does not know is `not-found` and does not fail `hook`. Also
+// `statlog` and `statpin` (stat 64's answers, read and pinned), `hold` (a
+// `set` restored once, when it ends, through the core like every write),
+// the `effect`, `pst` array and `builtin` watch scopes, `pos`'s modal step
+// and frame time, and `base`, a scratch item of one class and base built by
+// InitItemFromJson and never placed.
 // tests/test_mark1_probe_contract.py pins this adapter.
 #include <ForgePact/Mark1Probe.hpp>
 namespace M1pNs = ForgePact::Mark1Probe;
@@ -62800,7 +62810,48 @@ static M1pRow g_M1pRows[] = {
 };
 #undef M1P_ENTRY
 #undef M1P_ROWS
-static_assert(sizeof(g_M1pRows) / sizeof(g_M1pRows[0]) == (size_t)M1pNs::kRowCount, "one mark1probe row per core row");
+static_assert(sizeof(g_M1pRows) / sizeof(g_M1pRows[0]) == (size_t)M1pNs::kScriptRowCount, "one mark1probe row per core script row");
+
+// The builtin rows, in the core's Row order after the scripts. The runtime
+// name is the core's kRowNames entry; each goes in through HookBuiltin.
+#define M1P_BUILTINS(X) \
+    X(PlaceMeeting) X(MpLinearStep) X(MpLinearStepObject) X(MpPotentialStep) X(MpPotentialStepObject) \
+    X(MoveTowardsPoint) X(MotionSet) X(MotionAdd) X(MoveContactSolid) X(MoveOutsideSolid) X(MoveAndCollide)
+
+static void M1pOnBuiltin(int row, RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args);
+
+#define M1P_BUILTIN_DETOUR(ROW) \
+    static void M1pBuiltin_##ROW(RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args) { \
+        M1pOnBuiltin(static_cast<int>(M1pNs::Row::ROW), Result, S, O, argc, Args); \
+    }
+M1P_BUILTINS(M1P_BUILTIN_DETOUR)
+#undef M1P_BUILTIN_DETOUR
+
+struct M1pBuiltinRow {
+    M1pNs::Row  row;
+    const char* hookId;
+    PVOID       detour;
+    TRoutine    orig = nullptr;   // the trampoline once HookBuiltin went in
+    std::string why;              // a failed install's reason, for `hook`'s line
+};
+
+#define M1P_BUILTIN_ENTRY(ROW) { M1pNs::Row::ROW, "fp_m1p_" #ROW, (PVOID)M1pBuiltin_##ROW },
+static M1pBuiltinRow g_M1pBuiltinRows[] = {
+    M1P_BUILTINS(M1P_BUILTIN_ENTRY)
+};
+#undef M1P_BUILTIN_ENTRY
+#undef M1P_BUILTINS
+static_assert(sizeof(g_M1pBuiltinRows) / sizeof(g_M1pBuiltinRows[0]) == (size_t)M1pNs::kBuiltinRowCount,
+              "one mark1probe builtin row per core builtin row");
+
+// Whether a row of either kind is installed: its trampoline.
+static bool M1pRowInstalled(M1pNs::Row r)
+{
+    const int i = static_cast<int>(r);
+    if (i >= 0 && i < M1pNs::kScriptRowCount) return g_M1pRows[i].orig != nullptr;
+    if (i >= M1pNs::kScriptRowCount && i < M1pNs::kRowCount) return g_M1pBuiltinRows[i - M1pNs::kScriptRowCount].orig != nullptr;
+    return false;
+}
 
 static M1pNs::Probe g_M1pProbe;
 static CInstance*   g_M1pPlayer = nullptr;   // the local player, refreshed each frame while the probe ticks
@@ -62850,6 +62901,7 @@ struct M1pScopeRef {
     bool        isStruct = false;
     std::string name;
     bool        isGlobal = false;   // the game's globals: `value` is unused
+    bool        builtinVars = false;   // the instance's built-in variables: read without an exists check
 };
 
 // A number or a bool, the two kinds the levers read and write.
@@ -62889,10 +62941,16 @@ static std::string M1pValueToken(const RValue& r)
     } catch (...) { return "unreadable"; }
 }
 
-// A member of a scope, only if it exists (nothing is created by a read).
+// A member of a scope, only if it exists (nothing is created by a read). A
+// built-in variable (`builtin` scope) is read straight, an undefined answer
+// counting as absent: variable_instance_exists is not relied on for those.
 static bool M1pGet(const M1pScopeRef& s, const std::string& name, RValue& out)
 {
     try {
+        if (s.builtinVars) {
+            out = g_Yytk->CallBuiltin("variable_instance_get", { s.value, RValue(name) });
+            return out.m_Kind != VALUE_UNDEFINED;
+        }
         if (s.isGlobal) {
             if (!g_Yytk->CallBuiltin("variable_global_exists", { RValue(name) }).ToBoolean()) return false;
             out = g_Yytk->CallBuiltin("variable_global_get", { RValue(name) });
@@ -62936,7 +62994,9 @@ static bool M1pAsScope(const RValue& v, const std::string& label, M1pScopeRef& o
 // for it: a write anywhere else would count as applied while the gate never
 // reads it, so an unresolved route is refused with its reason. queue: the
 // player, for stackSkillList; abilityQueue and mobileTalentPressed are
-// globals, resolved per member by M1pResolveMember.
+// globals, resolved per member by M1pResolveMember. effect: the player, whose
+// playerEffect array a target indexes. builtin: the player's own built-in
+// variables.
 static bool M1pResolveScope(CInstance* player, M1pNs::Scope scope, M1pScopeRef& out, std::string& why)
 {
     if (!player) { why = "no-local-player"; return false; }
@@ -62945,7 +63005,13 @@ static bool M1pResolveScope(CInstance* player, M1pNs::Scope scope, M1pScopeRef& 
     switch (scope) {
     case M1pNs::Scope::Player:
     case M1pNs::Scope::Queue:
+    case M1pNs::Scope::Effect:
         out = self;
+        return true;
+    case M1pNs::Scope::Builtin:
+        out = self;
+        out.name = "player(builtin)";
+        out.builtinVars = true;
         return true;
     case M1pNs::Scope::Pst: {
         RValue v;
@@ -63013,9 +63079,11 @@ static bool M1pResolveScope(CInstance* player, M1pNs::Scope scope, M1pScopeRef& 
 // abilityQueue and mobileTalentPressed are global arrays indexed by the
 // gate's slot counter, stackSkillList is the gate's self's (the player), and
 // any other name is refused rather than read off the player under the
-// queue's name.
+// queue's name. `pst[<i>]` (pSt read as the player's array, which phase 1's
+// Live 3 measured) is the player's own pSt member, indexed.
 static bool M1pResolveMember(CInstance* player, M1pNs::Scope scope, const std::string& name, M1pScopeRef& out, std::string& why)
 {
+    if (scope == M1pNs::Scope::Pst && name == M1pNs::kPstMember) return M1pResolveScope(player, M1pNs::Scope::Player, out, why);
     if (scope != M1pNs::Scope::Queue) return M1pResolveScope(player, scope, out, why);
     if (name == "abilityQueue" || name == "mobileTalentPressed") {
         out = M1pScopeRef{ RValue(), false, "global", true };
@@ -63023,6 +63091,20 @@ static bool M1pResolveMember(CInstance* player, M1pNs::Scope scope, const std::s
     }
     if (name != "stackSkillList") { why = "queue-holds-abilityQueue,mobileTalentPressed,stackSkillList-only"; return false; }
     return M1pResolveScope(player, scope, out, why);
+}
+
+// `builtin.alarm[<i>]`: an alarm is read through alarm_get with the player as
+// self, never as a variable; nothing writes one.
+static bool M1pIsAlarm(const M1pNs::Target& t)
+{
+    return t.scope == M1pNs::Scope::Builtin && t.name == "alarm";
+}
+
+static bool M1pAlarmGet(CInstance* player, long long index, RValue& out)
+{
+    try {
+        return player && AurieSuccess(g_Yytk->CallBuiltinEx(out, "alarm_get", player, player, { RValue((double)index) }));
+    } catch (...) { return false; }
 }
 
 // A target's value now: the member (or its element), a number or a bool.
@@ -63033,6 +63115,7 @@ static bool M1pReadTarget(CInstance* player, const M1pNs::Target& t, M1pNs::Valu
     if (!M1pResolveMember(player, t.scope, t.name, s, why)) return false;
     M1pBusyScope busy;
     RValue m;
+    if (M1pIsAlarm(t)) return t.indexed && t.index < M1pNs::kAlarmCount && M1pAlarmGet(player, t.index, m) && M1pToValue(m, v);
     if (!M1pGet(s, t.name, m)) return false;
     if (t.indexed) {
         try {
@@ -63054,6 +63137,7 @@ static bool M1pWriteTarget(CInstance* player, const M1pNs::Target& t, const M1pN
 {
     M1pScopeRef s;
     std::string why;
+    if (M1pIsAlarm(t)) return false;
     if (!M1pResolveMember(player, t.scope, t.name, s, why)) return false;
     M1pBusyScope busy;
     RValue m;
@@ -63113,6 +63197,8 @@ struct M1pAccess {
         if (!out || !*out || !N1Numeric(**out)) return false;
         try { n = (*out)->ToDouble(); return std::isfinite(n); } catch (...) { return false; }
     }
+    // statlog's answer when it is not a number: its kind, as `walkable`'s raw fields name one.
+    std::string ResultKind();
     void SetResult(double n) { if (out && *out) **out = RValue(n); }
 };
 
@@ -63156,6 +63242,21 @@ static RValue& M1pOnScript(int row, CInstance* S, CInstance* O, RValue& R, int a
     return *out;
 }
 
+// A builtin row's detour: the same core call, around the routine's
+// trampoline. A builtin takes no part in args, casts or stat ids.
+static void M1pOnBuiltin(int row, RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args)
+{
+    const int b = row - M1pNs::kScriptRowCount;
+    if (b < 0 || b >= M1pNs::kBuiltinRowCount) return;
+    const TRoutine orig = g_M1pBuiltinRows[b].orig;
+    if (!orig) return;
+    if (g_M1pBusy) { orig(Result, S, O, argc, Args); return; }
+    const bool local = S && S == g_M1pPlayer;
+    RValue* out = &Result;
+    M1pAccess access{ S, 0, nullptr, &out };
+    g_M1pProbe.Around(static_cast<M1pNs::Row>(row), (int64_t)g_RuntimeFrame, local, access, [&]() { orig(Result, S, O, argc, Args); });
+}
+
 // ---- hook -------------------------------------------------------------------------
 
 // Whether another ForgePact hook holds this row's script now, and its name
@@ -63192,9 +63293,59 @@ static bool M1pHeldBy(const M1pRow& t, std::string& holder)
     return true;
 }
 
+// Whether another ForgePact hook detours this builtin now, and its name: the
+// collision builtins jumpscenery and the flight charms share, and
+// jumpprobe's builtin rows. A builtin detours once, so a held one is left to
+// its holder rather than installed on top.
+static bool M1pBuiltinHeldBy(std::string_view name, std::string& holder)
+{
+    holder.clear();
+    for (int i = 0; i < JsNs::kBuiltinCount; ++i)
+        if (g_JsOrig[i] && JsNs::kBuiltins[i].name == name) { holder = "jumpscenery / the flight charms (their shared collision builtins)"; return true; }
+    for (int i = 0; i < JpNs::kBuiltinCount; ++i)
+        if (g_JpBuiltinRows[i].installed && JpNs::kBuiltins[i].name == name) { holder = "jumpprobe hook"; return true; }
+    return false;
+}
+
+// `hook`'s builtin half: each builtin row by its runtime name through
+// HookBuiltin, once its routine resolved by name and is game code. A name
+// the runtime does not know is `not-found`, not a failure.
+static void M1pInstallBuiltins()
+{
+    for (M1pBuiltinRow& t : g_M1pBuiltinRows) {
+        if (t.orig) continue;
+        const std::string name(M1pNs::RowName(t.row));
+        std::string holder;
+        if (M1pBuiltinHeldBy(name, holder)) {
+            g_M1pProbe.NoteHook(t.row, M1pNs::HookState::Held, holder);
+            continue;
+        }
+        PVOID p = nullptr;
+        const AurieStatus st = g_Yytk->GetNamedRoutinePointer(name.c_str(), &p);
+        if (!AurieSuccess(st) || !p) {
+            g_M1pProbe.NoteHook(t.row, M1pNs::HookState::NotFound);
+            continue;
+        }
+        if (!AddrIsExecutableInModule(GetModuleHandleA(nullptr), p)) {
+            t.why = "its routine is not game code (another hook may hold it)";
+            g_M1pProbe.NoteHook(t.row, M1pNs::HookState::Failed);
+            continue;
+        }
+        if (!HookBuiltin(name.c_str(), t.hookId, t.detour, &t.orig) || !t.orig) {
+            t.orig = nullptr;
+            t.why = "HookBuiltin did not go in (see its line above)";
+            g_M1pProbe.NoteHook(t.row, M1pNs::HookState::Failed);
+            continue;
+        }
+        t.why.clear();
+        g_M1pProbe.NoteHook(t.row, M1pNs::HookState::Detoured);
+    }
+}
+
 // `hook`: each row by name, both routes. A row an earlier `hook` installed
 // stays as it is, a held row is left to its holder, and a row whose inline
 // detour did not go in is `failed` (its table route still passes through).
+// Then the builtin rows (M1pInstallBuiltins).
 static void M1pInstall()
 {
     M1pBusyScope busy;
@@ -63212,14 +63363,19 @@ static void M1pInstall()
         }
         g_M1pProbe.NoteHook(t.row, native ? M1pNs::HookState::Detoured : M1pNs::HookState::Failed);
     }
+    M1pInstallBuiltins();
     g_M1pTicking = true;
     M1pRefreshPlayer();
     Out(g_M1pProbe.HookLine());
     for (const std::string& l : g_M1pProbe.HeldLines()) Out(l);
+    for (const std::string& l : g_M1pProbe.NotFoundLines()) Out(l);
     for (const M1pRow& t : g_M1pRows)
         if (g_M1pProbe.HookOf(t.row) == M1pNs::HookState::Failed)
             Out(std::string("  ") + t.shortName + (t.orig ? " is table-only (no inline detour): compiled GML's direct calls"
                 " bypass it, so it is not counted as hooked" : " did not install (see the hook line above)"));
+    for (const M1pBuiltinRow& t : g_M1pBuiltinRows)
+        if (g_M1pProbe.HookOf(t.row) == M1pNs::HookState::Failed)
+            Out("  " + std::string(M1pNs::RowName(t.row)) + " failed: " + t.why);
 }
 
 // ---- the reading forms ---------------------------------------------------------
@@ -63238,8 +63394,74 @@ static std::string M1pPlayerText()
 // length and first entries). False when the scope does not resolve now.
 static constexpr int kM1pWatchMaxMembers = 1024;
 static constexpr int kM1pQueueEntries = 4;
+
+// An array's number and bool elements, by index (`[<i>]` with `brackets`,
+// pst's spelling); anything else in it is left out. Inside a busy scope.
+static void M1pArraySnapshot(const RValue& arr, bool brackets, std::map<std::string, std::string>& snap)
+{
+    const int n = (int)g_Yytk->CallBuiltin("array_length", { arr }).ToDouble();
+    for (int i = 0; i < n && i < kM1pWatchMaxMembers; ++i) {
+        M1pNs::Value v;
+        if (M1pToValue(g_Yytk->CallBuiltin("array_get", { arr, RValue((double)i) }), v))
+            snap[brackets ? "[" + std::to_string(i) + "]" : std::to_string(i)] = M1pNs::ValueText(v);
+    }
+}
+
+// The phase 2 scopes: effect (the player's playerEffect, element-wise), pst
+// when pSt is an array (element-wise, `[<i>]`), and builtin (kBuiltinWatch
+// and alarm[0..11], each alarm through alarm_get). `handled` false leaves the
+// scope to M1pSnapshot's own route (pst as a struct).
+static bool M1pSnapshotPlayerArrays(M1pNs::Scope scope, std::map<std::string, std::string>& snap, std::string& said, bool& handled)
+{
+    handled = false;
+    if (scope != M1pNs::Scope::Effect && scope != M1pNs::Scope::Pst && scope != M1pNs::Scope::Builtin) return false;
+    if (!g_M1pPlayer) {
+        if (scope == M1pNs::Scope::Pst) return false;
+        handled = true;
+        said = "no-local-player";
+        return false;
+    }
+    M1pBusyScope busy;
+    const M1pScopeRef self{ g_M1pPlayer->ToRValue(), false, "player" };
+    try {
+        if (scope == M1pNs::Scope::Builtin) {
+            handled = true;
+            M1pScopeRef vars = self;
+            vars.builtinVars = true;
+            for (std::string_view name : M1pNs::kBuiltinWatch) {
+                RValue m;
+                M1pNs::Value v;
+                if (M1pGet(vars, std::string(name), m) && M1pToValue(m, v)) snap[std::string(name)] = M1pNs::ValueText(v);
+            }
+            for (int i = 0; i < M1pNs::kAlarmCount; ++i) {
+                RValue m;
+                M1pNs::Value v;
+                if (M1pAlarmGet(g_M1pPlayer, i, m) && M1pToValue(m, v)) snap["alarm[" + std::to_string(i) + "]"] = M1pNs::ValueText(v);
+            }
+            said = "player(builtin)";
+            return true;
+        }
+        const std::string member(scope == M1pNs::Scope::Effect ? M1pNs::kEffectMember : M1pNs::kPstMember);
+        RValue arr;
+        const bool isArray = M1pGet(self, member, arr) && arr.m_Kind == VALUE_ARRAY;
+        if (scope == M1pNs::Scope::Pst && !isArray) return false;   // a struct: M1pSnapshot's route
+        handled = true;
+        if (!isArray) { said = "player." + member + "(not-an-array)"; return false; }
+        M1pArraySnapshot(arr, scope == M1pNs::Scope::Pst, snap);
+        said = "player." + member + "(array)";
+        return true;
+    } catch (...) {
+        handled = true;
+        said = "player(read-failed)";
+        return false;
+    }
+}
+
 static bool M1pSnapshot(M1pNs::Scope scope, std::map<std::string, std::string>& snap, std::string& said)
 {
+    bool handled = false;
+    const bool read = M1pSnapshotPlayerArrays(scope, snap, said, handled);
+    if (handled) return read;
     if (scope == M1pNs::Scope::Queue) {
         // Each member where it lives, named in `scope=`; an absent member
         // reads `absent` rather than vanishing from the watch.
@@ -63354,7 +63576,84 @@ static void M1pPos(int64_t frames)
     Out(M1pNs::PosStartLine(cursor, x, y) + (cursor ? " route=" + route : std::string())
         + (player ? " player x=" + M1pNs::NumberText(px) + " y=" + M1pNs::NumberText(py) : std::string(" player=unreadable"))
         + " frames=" + std::to_string(frames)
-        + (g_M1pProbe.Hooked() == 0 ? " (no row is detoured: run `mark1probe hook` first, or no mover is seen)" : ""));
+        + (g_M1pProbe.Hooked() == 0 ? " (no row is detoured: the position is sampled each frame, total, mode and ms"
+           " included, but no mover is named until `mark1probe hook`)" : ""));
+}
+
+// `statlog <id> <frames>`: starts now; its lines come from the rows' own
+// calls, so it needs ReturnSpecificStat (and the id's getter row) detoured.
+static void M1pStatlog(const M1pNs::Command& c)
+{
+    M1pRefreshPlayer();
+    const int64_t frame = (int64_t)g_RuntimeFrame;
+    g_M1pProbe.StartStatlog(c.statId, c.frames, frame);
+    g_M1pTicking = true;
+    M1pNs::Row getter = M1pNs::Row::ReturnSpecificStat;
+    const bool hasGetter = M1pNs::StatGetterRow(c.statId, getter);
+    std::string missing;
+    if (g_M1pProbe.HookOf(M1pNs::Row::ReturnSpecificStat) != M1pNs::HookState::Detoured)
+        missing = std::string(M1pNs::RowName(M1pNs::Row::ReturnSpecificStat));
+    if (hasGetter && g_M1pProbe.HookOf(getter) != M1pNs::HookState::Detoured)
+        missing += (missing.empty() ? "" : ", ") + std::string(M1pNs::RowName(getter));
+    Out("mark1probe statlog: id " + std::to_string(c.statId) + " for " + std::to_string(c.frames) + " frames from f="
+        + std::to_string(frame) + ", one line per local ReturnSpecificStat answer"
+        + (hasGetter ? " and per " + std::string(M1pNs::RowName(getter)) + " call no dispatcher is around" : std::string())
+        + (missing.empty() ? std::string() : " (" + missing + " not detoured: run `mark1probe hook` first, or those lines never come)")
+        + "; " + M1pPlayerText());
+}
+
+// `base <class> <b>`: a scratch item of that class and base, built by the
+// game's own loader (json_parse, then InitItemFromJson with the global
+// instance as self, as charmprobe's scratch charm is) and never placed, so
+// the collector takes it. It reads the built item's name, rarity and display
+// sprite (itemInfoStruct keys 28, 27 and 11; hs-game-sdk/curated/
+// item_info.json) and asks sprite_exists about the sprite. Writes nothing.
+static void M1pBase(const M1pNs::Command& c)
+{
+    M1pNs::BaseResult r;
+    r.itemClass = c.itemClass;
+    r.base = c.base;
+    CInstance* g = nullptr;
+    g_Yytk->GetGlobalInstance(&g);
+    if (!g) { r.why = "no-global-instance"; Out(M1pNs::BaseLine(r)); return; }
+    M1pBusyScope busy;
+    try {
+        RValue parsed;
+        g_Yytk->CallBuiltinEx(parsed, "json_parse", g, g, { RValue(M1pNs::BaseJson(c.base)) });
+        if (parsed.m_Kind != VALUE_OBJECT) { r.why = "json_parse-gave-" + M1pValueToken(parsed); Out(M1pNs::BaseLine(r)); return; }
+        const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        RValue item;
+        const AurieStatus st = g_Yytk->CallGameScriptEx(item, HeroSiege::Scripts::gml_Script_InitItemFromJson, g, g,
+                                                        { parsed, RValue(M1pNs::BaseKey(ms, c.itemClass)) });
+        if (!AurieSuccess(st) || item.m_Kind != VALUE_OBJECT) {
+            r.why = "InitItemFromJson-st=" + std::to_string((int)st) + "-gave-" + M1pValueToken(item);
+            Out(M1pNs::BaseLine(r));
+            return;
+        }
+        RValue info;
+        if (!M1pGet(M1pScopeRef{ item, true, "item" }, "itemInfoStruct", info) || info.m_Kind != VALUE_OBJECT) {
+            r.why = "no-itemInfoStruct";
+            Out(M1pNs::BaseLine(r));
+            return;
+        }
+        const M1pScopeRef infoRef{ info, true, "itemInfoStruct" };
+        RValue v;
+        if (M1pGet(infoRef, "27", v) && N1Numeric(v)) r.rarity = v.ToDouble();
+        if (M1pGet(infoRef, "11", v) && N1Numeric(v)) {
+            r.sprite = v.ToDouble();
+            try { r.spriteExists = g_Yytk->CallBuiltin("sprite_exists", { v }).ToBoolean(); } catch (...) {}
+        }
+        if (M1pGet(infoRef, "28", v) && v.m_Kind == VALUE_STRING) {
+            r.name = v.ToString();
+            for (char& ch : r.name) if (ch == '"' || ch == '\n' || ch == '\r') ch = '\'';
+        }
+        r.built = !r.name.empty();
+        if (!r.built) r.why = "no-name";
+    } catch (...) {
+        r.built = false;
+        r.why = "the-build-threw";
+    }
+    Out(M1pNs::BaseLine(r));
 }
 
 // ---- walkable ----------------------------------------------------------------------
@@ -63387,6 +63686,12 @@ static M1pNs::RawResult M1pRaw(const RValue& r)
         else if (kind == VALUE_REAL || kind == VALUE_INT32 || kind == VALUE_INT64 || kind == VALUE_REF) out.number = r.ToDouble();
     } catch (...) { out.number.reset(); }
     return out;
+}
+
+std::string M1pAccess::ResultKind()
+{
+    if (!out || !*out) return "none";
+    return M1pRaw(**out).kind;
 }
 
 // One builtin called with the player as self: its raw answer, `Failed` when
@@ -63508,37 +63813,68 @@ static void M1pWalkable(const M1pNs::Command& c)
 
 // ---- the levers ------------------------------------------------------------------
 
+// A hold's owed restore, written back through the core (RestoreHold calls the
+// access's Write, M1pWriteTarget, like every lever write): when the hold is no
+// longer live at `frame`, or at once with `force`.
+static void M1pRestoreHold(int64_t frame, bool force)
+{
+    if (!g_M1pProbe.HoldOwed()) return;
+    M1pAccess access{ g_M1pPlayer, 0, nullptr, nullptr };
+    const std::string line = g_M1pProbe.RestoreHold(access, frame, force);
+    if (!line.empty()) Out(line);
+}
+
 static void M1pLever(const M1pNs::Command& c)
 {
-    const M1pNs::Lever& l = c.lever;
-    if (!g_M1pRows[static_cast<int>(l.row)].orig) {
+    M1pNs::Lever l = c.lever;
+    if (!M1pRowInstalled(l.row)) {
         Out("mark1probe: refused - " + std::string(M1pNs::RowName(l.row)) + " is not hooked (" + g_M1pProbe.HookLine()
             + "); run `mark1probe hook` first");
         return;
     }
+    const int64_t frame = (int64_t)g_RuntimeFrame;
+    M1pRefreshPlayer();
+    // An earlier hold goes back first, so a new hold never reads its value
+    // as the one to restore.
+    M1pRestoreHold(frame, true);
     std::string resolved, current;
-    if (l.kind == M1pNs::LeverKind::Set || l.kind == M1pNs::LeverKind::Scale) {
-        M1pRefreshPlayer();
+    bool startRead = false;
+    M1pNs::Value start;
+    if (l.kind == M1pNs::LeverKind::Set || l.kind == M1pNs::LeverKind::Scale || l.kind == M1pNs::LeverKind::Hold) {
         M1pScopeRef s;
         std::string why;
         if (M1pResolveMember(g_M1pPlayer, l.target.scope, l.target.name, s, why)) {
             resolved = s.name;
-            M1pNs::Value v;
-            current = M1pReadTarget(g_M1pPlayer, l.target, v) ? M1pNs::ValueText(v) : std::string("unreadable");
+            startRead = M1pReadTarget(g_M1pPlayer, l.target, start);
+            current = startRead ? M1pNs::ValueText(start) : std::string("unreadable");
         } else {
             resolved = "unresolved:" + why;
             current = "unreadable";
         }
     }
-    const std::string replaced = g_M1pProbe.SetLever(l, (int64_t)g_RuntimeFrame);
+    if (l.kind == M1pNs::LeverKind::Pin) {
+        double pin = 0;
+        int64_t at = 0;
+        if (!g_M1pProbe.LastStat(l.statId, pin, at)) {
+            Out("mark1probe statpin: refused - no local answer for id " + std::to_string(l.statId) + " seen since `mark1probe hook`"
+                " (walk once first; " + g_M1pProbe.HookLine() + ")");
+            return;
+        }
+        l.value = M1pNs::Value{ false, pin };
+        current = "the last local answer, f=" + std::to_string(at);
+    }
+    const std::string replaced = l.kind == M1pNs::LeverKind::Hold ? g_M1pProbe.StartHold(l, frame, startRead, start)
+                                                                  : g_M1pProbe.SetLever(l, frame);
     g_M1pTicking = true;
-    Out(M1pNs::LeverReply(l, resolved, current, replaced));
+    Out(M1pNs::LeverReply(l, frame, resolved, current, replaced));
     if (g_M1pProbe.HookOf(l.row) != M1pNs::HookState::Detoured)
         Out("  " + std::string(M1pNs::RowName(l.row)) + " is table-only here: only calls routed through the script table reach the lever");
+    if (l.kind == M1pNs::LeverKind::Hold && !startRead)
+        Out("  nothing was read at the target now, so the hold writes nothing (each call counts missing=)");
     M1pNs::Row getter = M1pNs::Row::ReturnSpecificStat;
-    if (l.kind == M1pNs::LeverKind::Stat && M1pNs::StatGetterRow(l.statId, getter)
+    if ((l.kind == M1pNs::LeverKind::Stat || l.kind == M1pNs::LeverKind::Pin) && M1pNs::StatGetterRow(l.statId, getter)
         && g_M1pProbe.HookOf(getter) != M1pNs::HookState::Detoured)
-        Out("  " + std::string(M1pNs::RowName(getter)) + " is not detoured here: its direct callers are not scaled"
+        Out("  " + std::string(M1pNs::RowName(getter)) + " is not detoured here: its direct callers are not changed"
             " (changed-getter stays 0)");
 }
 
@@ -63558,7 +63894,8 @@ static void M1pCommand(const std::string& rest)
     case M1pNs::Form::Hook: M1pInstall(); return;
     case M1pNs::Form::Off:
         g_M1pProbe.Off();
-        Out("mark1probe off: every lever, watch, args, count and pos off; the rows stay installed as pass-throughs ("
+        M1pRestoreHold((int64_t)g_RuntimeFrame, false);
+        Out("mark1probe off: every lever, watch, statlog, args, count and pos off; the rows stay installed as pass-throughs ("
             + g_M1pProbe.HookLine() + ")");
         return;
     case M1pNs::Form::Show:
@@ -63580,8 +63917,12 @@ static void M1pCommand(const std::string& rest)
     case M1pNs::Form::Watch: M1pWatch(c); return;
     case M1pNs::Form::Set:
     case M1pNs::Form::Scale:
+    case M1pNs::Form::Hold:
     case M1pNs::Form::Move:
-    case M1pNs::Form::Stat: M1pLever(c); return;
+    case M1pNs::Form::Stat:
+    case M1pNs::Form::Statpin: M1pLever(c); return;
+    case M1pNs::Form::Statlog: M1pStatlog(c); return;
+    case M1pNs::Form::Base: M1pBase(c); return;
     case M1pNs::Form::Count: M1pCount(c.object, c.frames); return;
     case M1pNs::Form::Pos: M1pPos(c.frames); return;
     case M1pNs::Form::WalkHere:
@@ -63592,8 +63933,9 @@ static void M1pCommand(const std::string& rest)
 
 // The one per-frame piece, from FrameCallback: refreshes the local player
 // the detours compare their self against, samples `watch` and `count`,
-// prints `pos`' lines and ends whatever ran out of frames. Returns at once
-// until a form needed it.
+// samples `pos` (with the wall clock, for its `ms=`), prints `pos`' and
+// `statlog`'s lines, ends whatever ran out of frames and writes back a
+// hold that ended. Returns at once until a form needed it.
 static void M1pFrameTick()
 {
     if (!g_M1pTicking) return;
@@ -63611,7 +63953,8 @@ static void M1pFrameTick()
         M1pNs::Value vx, vy;
         const bool read = M1pReadTarget(g_M1pPlayer, M1pNs::Target{ M1pNs::Scope::Player, "x" }, vx)
             && M1pReadTarget(g_M1pPlayer, M1pNs::Target{ M1pNs::Scope::Player, "y" }, vy) && !vx.isBool && !vy.isBool;
-        g_M1pProbe.ObservePosFrame(frame, read, vx.number, vy.number);
+        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        g_M1pProbe.ObservePosFrame(frame, read, vx.number, vy.number, ms);
     }
     if (g_M1pProbe.CountRunning(frame) && g_M1pCountIndex >= 0) {
         M1pBusyScope busy;
@@ -63625,6 +63968,7 @@ static void M1pFrameTick()
     }
     for (const std::string& l : g_M1pProbe.TakeLines()) Out(l);
     for (const std::string& l : g_M1pProbe.Tick(frame)) Out(l);
+    M1pRestoreHold(frame, false);
 }
 
 // Dispatched from its own function for the same C1061 reason as

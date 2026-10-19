@@ -24,6 +24,16 @@ source. Every test name carries `research_only`:
 - game state is written only inside the set, scale, move and stat levers:
   M1pWriteTarget (members, for set, scale and move) and the result write
   (stat), both reached only through the core's Around.
+
+Phase 2's walk research (the Mark 1 set's Live procedure 1) adds, research
+build only like the rest: eleven builtin rows, each by the core's runtime name
+through one HookBuiltin site once its routine is game code, a held one left to
+its holder and an unknown name `not-found` rather than failed; their detour
+passes every call through and touches only the local player; `hold`'s one
+restore, written through the core like every lever write; statpin's answer
+through the same SetResult as stat; `pos` sampling (with a clock) whether or
+not a row is hooked; and `base`, whose one game-script call is InitItemFromJson
+by its SDK constant, never placing what it builds.
 """
 import re
 import sys
@@ -59,13 +69,30 @@ ROWS = (
 )
 SDK_OBJECTS = ("Profile_Manager_obj", "Input_Device_Manager_obj", "Collision_Parent_obj", "Wall_Parent_obj")
 
+# The builtin rows, in the core's Row order after the nine scripts:
+# (Row enumerator, the runtime name the core's kRowNames gives it).
+BUILTIN_ROWS = (
+    ("PlaceMeeting", "place_meeting"),
+    ("MpLinearStep", "mp_linear_step"),
+    ("MpLinearStepObject", "mp_linear_step_object"),
+    ("MpPotentialStep", "mp_potential_step"),
+    ("MpPotentialStepObject", "mp_potential_step_object"),
+    ("MoveTowardsPoint", "move_towards_point"),
+    ("MotionSet", "motion_set"),
+    ("MotionAdd", "motion_add"),
+    ("MoveContactSolid", "move_contact_solid"),
+    ("MoveOutsideSolid", "move_outside_solid"),
+    ("MoveAndCollide", "move_and_collide"),
+)
+
 # Builtins and calls that change game state. The adapter may use the first
-# three only inside M1pWriteTarget; the rest never.
+# three only inside M1pWriteTarget; the rest never. A game script is called
+# in one place only, `base`'s InitItemFromJson (its own test below).
 MEMBER_WRITES = ("variable_instance_set", "variable_struct_set", "array_set")
 NEVER = ("variable_global_set", "instance_create", "instance_destroy", "instance_deactivate", "instance_activate",
          "ds_list_add", "ds_list_set", "ds_list_delete", "ds_map_set", "ds_map_add", "ds_map_delete",
-         "mp_grid_add", "mp_grid_clear", "tilemap_set", "layer_set", "CallGameScript", "keyboard_key_press",
-         "io_clear", "game_set_speed")
+         "mp_grid_add", "mp_grid_clear", "tilemap_set", "layer_set", "keyboard_key_press",
+         "io_clear", "game_set_speed", "alarm_set", "LootGroundCreate", "CallGameScript(")
 
 
 class Mark1ProbeContract(unittest.TestCase):
@@ -91,7 +118,9 @@ class Mark1ProbeContract(unittest.TestCase):
         # A scan that finds nothing would pass vacuously.
         for expected in ("M1pNs", "M1pCommand", "M1pInstall", "M1pHeldBy", "M1pOnScript", "M1pAccess", "M1pFrameTick",
                          "M1pRefreshPlayer", "M1pResolveScope", "M1pReadTarget", "M1pWriteTarget", "M1pSnapshot",
-                         "M1pWalkable", "M1pCount", "M1pPos", "g_M1pRows", "g_M1pProbe", "g_M1pPlayer"):
+                         "M1pWalkable", "M1pCount", "M1pPos", "g_M1pRows", "g_M1pProbe", "g_M1pPlayer",
+                         "M1pOnBuiltin", "M1pInstallBuiltins", "M1pBuiltinHeldBy", "M1pRowInstalled", "g_M1pBuiltinRows",
+                         "M1pStatlog", "M1pBase", "M1pRestoreHold", "M1pSnapshotPlayerArrays", "M1pAlarmGet"):
             self.assertIn(expected, symbols)
         # Negative control: the strip keeps player code, so an absence below
         # is the strip working, not an empty string.
@@ -176,6 +205,90 @@ class Mark1ProbeContract(unittest.TestCase):
         for other in ("MmCreateHook", "HookOneScriptTable", "InstallScriptHook"):
             self.assertNotIn(other, self.code)
 
+    def test_research_only_builtin_rows_through_hook_builtin_by_the_cores_names(self):
+        table = self.code[self.code.index("#define M1P_BUILTINS(X)"):]
+        table = table[:table.index("\n\n")]
+        listed = tuple(re.findall(r"X\((\w+)\)", table))
+        self.assertEqual(listed, tuple(row for row, _ in BUILTIN_ROWS), "the builtin rows are the core's, in its order")
+        # The core names each one, after the nine scripts, by its runtime name.
+        names = self.header[self.header.index("kRowNames[kRowCount] = {"):]
+        names = names[:names.index("};")]
+        quoted = re.findall(r'"(\w+)"', names)
+        self.assertEqual(tuple(quoted[len(ROWS):]), tuple(name for _, name in BUILTIN_ROWS))
+        # The adapter spells none of them; place_meeting only where `walkable`
+        # calls it as a query of its own.
+        point = self.body("static M1pNs::WalkPoint M1pWalkPoint(double px, double py, double x, double y)")
+        for row, name in BUILTIN_ROWS:
+            self.assertIn(row + ",", self.header)
+            self.assertEqual(self.code.count('"' + name + '"'), point.count('"' + name + '"'),
+                             name + " is spelled in the adapter, not taken from the core")
+        install = self.body("static void M1pInstallBuiltins()")
+        self.assertEqual(self.code.count("HookBuiltin("), 1, "one builtin install site, in M1pInstallBuiltins")
+        self.assertIn("HookBuiltin(name.c_str(), t.hookId, t.detour, &t.orig)", install)
+        self.assertIn("const std::string name(M1pNs::RowName(t.row));", install)
+        # Held first, then the name, then game code, then the install.
+        held = install.index("M1pBuiltinHeldBy(name, holder)")
+        lookup = install.index("GetNamedRoutinePointer(name.c_str(), &p)")
+        game = install.index("AddrIsExecutableInModule(")
+        hook = install.index("HookBuiltin(")
+        self.assertLess(held, lookup)
+        self.assertLess(lookup, game)
+        self.assertLess(game, hook)
+        # An unknown name is not-found, never failed; a held one is left alone.
+        not_found = install[lookup:game]
+        self.assertIn("M1pNs::HookState::NotFound", not_found)
+        self.assertNotIn("M1pNs::HookState::Failed", not_found)
+        self.assertIn("g_M1pProbe.NoteHook(t.row, M1pNs::HookState::Held, holder);", install[held:lookup])
+        self.assertIn("continue;", install[held:lookup])
+        holder = self.body("static bool M1pBuiltinHeldBy(std::string_view name, std::string& holder)")
+        for check in ("g_JsOrig[i]", "g_JpBuiltinRows[i].installed"):
+            self.assertIn(check, holder)
+        # M1pInstall runs it, and `hook` lists what it did not find.
+        whole = self.body("static void M1pInstall()")
+        self.assertIn("M1pInstallBuiltins();", whole)
+        self.assertIn("g_M1pProbe.NotFoundLines()", whole)
+        self.assertIn('"an earlier hook (table-only)"', self.header)
+
+    def test_research_only_the_builtin_detour_passes_through_and_touches_only_the_local_player(self):
+        detour = self.body("static void M1pOnBuiltin(int row, RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args)")
+        self.assertIn("if (g_M1pBusy) { orig(Result, S, O, argc, Args); return; }", detour)
+        self.assertIn("const bool local = S && S == g_M1pPlayer;", detour)
+        self.assertIn("g_M1pProbe.Around(static_cast<M1pNs::Row>(row), (int64_t)g_RuntimeFrame, local, access, "
+                      "[&]() { orig(Result, S, O, argc, Args); });", detour)
+        self.assertEqual(detour.count("orig(Result, S, O, argc, Args)"), 2)
+        # A lever is refused on a row of either kind that is not installed.
+        lever = self.body("static void M1pLever(const M1pNs::Command& c)")
+        self.assertIn("if (!M1pRowInstalled(l.row)) {", lever)
+        self.assertNotIn("g_M1pRows[static_cast<int>(l.row)]", lever)
+
+    def test_research_only_base_builds_through_the_loader_by_its_sdk_constant_and_places_nothing(self):
+        base = self.body("static void M1pBase(const M1pNs::Command& c)")
+        # The adapter's one game-script call.
+        self.assertEqual(self.code.count("CallGameScriptEx("), 1)
+        self.assertIn("g_Yytk->CallGameScriptEx(item, HeroSiege::Scripts::gml_Script_InitItemFromJson, g, g,", base)
+        self.assertIn('g_Yytk->CallBuiltinEx(parsed, "json_parse", g, g, { RValue(M1pNs::BaseJson(c.base)) });', base)
+        self.assertIn("M1pNs::BaseKey(ms, c.itemClass)", base)
+        self.assertLess(base.index('"json_parse"'), base.index("CallGameScriptEx("))
+        # It reads the build and writes nothing back.
+        for name in MEMBER_WRITES:
+            self.assertNotIn(name, base)
+        self.assertNotIn("M1pWriteTarget", base)
+        self.assertIn('"sprite_exists"', base)
+        # The scratch seed is outside every range a ForgePact item dresses.
+        self.assertIn("inline constexpr long long kBaseScratchSeed = 779000;", self.header)
+        command = self.body("static void M1pCommand(const std::string& rest)")
+        self.assertIn("case M1pNs::Form::Base: M1pBase(c); return;", command)
+
+    def test_research_only_pos_samples_with_a_clock_whether_or_not_a_row_is_hooked(self):
+        tick = self.body("static void M1pFrameTick()")
+        self.assertIn("g_M1pProbe.ObservePosFrame(frame, read, vx.number, vy.number, ms);", tick)
+        self.assertIn("std::chrono::steady_clock::now()", tick)
+        pos = self.body("static void M1pPos(int64_t frames)")
+        # A probe with no row hooked still samples: no early return on it.
+        self.assertIn("g_M1pProbe.StartPos(frames, (int64_t)g_RuntimeFrame);", pos)
+        self.assertIn("g_M1pTicking = true;", pos)
+        self.assertNotIn("return", pos)
+
     def test_research_only_a_held_row_is_named_and_never_installed_on_top(self):
         install = self.body("static void M1pInstall()")
         self.assertIn("if (t.orig) continue;", install)              # an earlier `hook`'s row stays as it is
@@ -228,9 +341,12 @@ class Mark1ProbeContract(unittest.TestCase):
             self.assertIsNone(re.search(r"\(\s*char\s*\*\s*\)\s*\w+\s*[+-]", source))
             self.assertNotIn("reinterpret_cast<PFUNC", source)
             self.assertNotIn("exe+", source)
-        # The one module handle is the held check's: is the table entry game code.
-        self.assertEqual(self.code.count("GetModuleHandle"), 1)
-        self.assertIn("AddrIsExecutableInModule(GetModuleHandleA(nullptr)", self.code)
+        # The two module handles are the game-code checks: is a script's table
+        # entry game code (M1pHeldBy), and is a builtin's routine (M1pInstallBuiltins).
+        self.assertEqual(self.code.count("GetModuleHandle"), 2)
+        self.assertEqual(self.code.count("AddrIsExecutableInModule(GetModuleHandleA(nullptr)"), 2)
+        self.assertIn("AddrIsExecutableInModule(GetModuleHandleA(nullptr)", self.body("static bool M1pHeldBy(const M1pRow& t, std::string& holder)"))
+        self.assertIn("AddrIsExecutableInModule(GetModuleHandleA(nullptr), p)", self.body("static void M1pInstallBuiltins()"))
 
     def test_research_only_walkable_reads_a_meeting_and_a_line_through_their_own_verdicts(self):
         # Live 2 read family=blocked at the player's own position: one shared
@@ -293,6 +409,26 @@ class Mark1ProbeContract(unittest.TestCase):
         self.assertLess(around.index("if (writes) {"), around.index("access.Write("))
         self.assertLess(around.index("if (moves) {"), around.index("access.SetPosition("))
         self.assertLess(around.index("lever_.kind == LeverKind::Stat"), around.index("access.SetResult("))
+        # hold writes before each call under its own lever, and its one
+        # restore goes through the core's RestoreHold, which the adapter
+        # reaches only through M1pRestoreHold with an M1pAccess.
+        self.assertIn("const bool holds = live && outer && lever_.kind == LeverKind::Hold;", around)
+        self.assertLess(around.index("if (holds) {"), around.index("access.Write(lever_.target, holdValue_)"))
+        restore = self.header[self.header.index("std::string RestoreHold(Access& access, int64_t frame, bool force)"):]
+        restore = restore[:restore.index("\n    }\n")]
+        self.assertIn("access.Write(holdTarget_, holdStart_)", restore)
+        self.assertIn("if (!holdDirty_) return {};", restore)
+        adapter_restore = self.body("static void M1pRestoreHold(int64_t frame, bool force)")
+        self.assertIn("M1pAccess access{ g_M1pPlayer, 0, nullptr, nullptr };", adapter_restore)
+        self.assertIn("g_M1pProbe.RestoreHold(access, frame, force)", adapter_restore)
+        self.assertEqual(len(re.findall(r"\.RestoreHold\(", self.code)), 1)
+        # statpin answers through the same SetResult as stat, only under one of the two.
+        self.assertIn("const bool statOn = LeverLive(frame) && (lever_.kind == LeverKind::Stat || lever_.kind == LeverKind::Pin);",
+                      around)
+        self.assertIn("access.SetResult(lever_.kind == LeverKind::Stat ? n * lever_.mult : lever_.value.number);", around)
+        # An alarm is read through alarm_get and never written.
+        write = self.body("static bool M1pWriteTarget(CInstance* player, const M1pNs::Target& t, const M1pNs::Value& v)")
+        self.assertIn("if (M1pIsAlarm(t)) return false;", write)
 
     def test_research_only_the_profile_scope_says_which_it_read(self):
         resolve = self.body("static bool M1pResolveScope(CInstance* player, M1pNs::Scope scope, M1pScopeRef& out, std::string& why)")

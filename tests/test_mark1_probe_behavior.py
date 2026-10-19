@@ -21,6 +21,20 @@ blocked family met), place_meeting's answer read as a meeting (false or 0
 free, true or 1 blocked) apart from collision_line's instance-or-`noone`, an
 unrecognised kind left unreadable, and `scan`'s point list. `parse`: every form, accepted and
 refused. The status, `hook`, `show`, `args`, `watch`, `count` and `pos` lines.
+
+Phase 2's walk research (the Mark 1 set's Live procedure 1) adds, each with its
+baseline (off, every row passes its call through unchanged): the builtin rows
+(`builtin`: a pass-through that counts, `move` on one, `pos` naming one, and a
+name the runtime lacks listed `not-found`, never failed); `statlog` (one line
+per local answer for the id with the rows around it, the getter's direct calls
+apart, an end line with min and max, a line cap, nothing written); `statpin`
+(the last local answer before it, on both routes, once per call, the reply
+naming it); `hold` (written before each outer local call, restored once when
+it ends, is replaced or is turned off, nothing written without a start value);
+the `effect`, `pst` array and `builtin` watch scopes, whose names parse back
+as targets; `pos`'s `mode=` and `ms=` from the frame samples alone, with no
+row hooked; `base`'s key, definition and line; and every lever reply's
+`from f=`.
 """
 import os
 import shutil
@@ -92,8 +106,8 @@ class Mark1ProbeBehaviorTests(unittest.TestCase):
         self.assertIn("RESULT OK", self.output, self.output)
         self.assertNotIn("FAIL ", self.output, self.output)
 
-    def test_the_nine_rows(self):
-        self.assertScenario("rows/nine_names_round_trip")
+    def test_the_script_and_builtin_rows(self):
+        self.assertScenario("rows/names_round_trip")
 
     # ---- baseline: no lever ----------------------------------------------------
 
@@ -136,6 +150,42 @@ class Mark1ProbeBehaviorTests(unittest.TestCase):
         self.assertScenarios("lever/a_second_lever_replaces_the_first", "lever/off_turns_every_lever_off",
                              "lever/text_has_no_spaces", "lever/reply_names_scope_value_and_restored_value")
 
+    def test_lever_every_reply_names_its_start_frame(self):
+        self.assertScenario("lever/every_reply_names_its_start_frame")
+
+    # ---- phase 2: the walk research additions ------------------------------------
+
+    def test_builtin_rows_are_rows(self):
+        self.assertScenarios("builtin/a_builtin_row_passes_through_and_counts",
+                             "builtin/move_scales_a_builtin_rows_displacement", "builtin/pos_names_a_builtin_mover",
+                             "hook/a_builtin_not_found_is_listed_not_failed")
+
+    def test_statlog_lines_and_baseline(self):
+        self.assertScenarios("statlog/one_line_per_local_answer_with_the_rows_around_it",
+                             "statlog/end_line_counts_min_and_max", "statlog/writes_nothing",
+                             "statlog/no_line_before_after_or_once_off", "statlog/a_line_cap_counts_the_rest")
+
+    def test_statpin_pins_the_last_answer(self):
+        self.assertScenarios("statpin/answers_with_the_last_answer_before_it", "statpin/reply_names_the_pinned_value",
+                             "statpin/ends_with_its_counts")
+
+    def test_hold_restores_once(self):
+        self.assertScenarios("hold/writes_before_each_call_and_restores_once_at_the_end",
+                             "hold/a_value_once_per_outer_call_and_only_for_the_local_player",
+                             "hold/a_new_lever_restores_it_first", "hold/off_ends_it_and_the_restore_follows",
+                             "hold/an_unread_start_or_a_bool_multiple_writes_nothing")
+
+    def test_watch_scopes_effect_pst_array_and_builtin(self):
+        self.assertScenarios("watch/effect_pst_array_and_builtin_name_members_as_targets",
+                             "watch/a_watched_name_is_a_hold_target")
+
+    def test_pos_mode_and_ms_without_a_hook(self):
+        self.assertScenarios("pos/samples_with_no_row_hooked_give_mode_and_ms",
+                             "pos/ms_counts_every_frame_and_mode_a_vertical_step")
+
+    def test_base_key_definition_and_line(self):
+        self.assertScenarios("base/key_and_definition", "base/line_built_and_not_built")
+
     # ---- the lines -------------------------------------------------------------
 
     def test_status_hook_show_and_args_lines(self):
@@ -170,7 +220,7 @@ class Mark1ProbeBehaviorTests(unittest.TestCase):
 
     def test_parse_accepted_forms(self):
         self.assertScenarios("parse/bare_hook_off_show_args", "parse/watch_forms", "parse/set_and_scale_forms",
-                             "parse/move_and_stat_forms", "parse/count_pos_and_walkable_forms")
+                             "parse/move_and_stat_forms", "parse/count_pos_and_walkable_forms", "parse/phase2_forms")
 
     def test_parse_refused_forms_name_their_reason(self):
         self.assertScenario("parse/refused_forms_name_their_reason")
