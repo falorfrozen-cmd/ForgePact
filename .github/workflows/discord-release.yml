@@ -1,0 +1,82 @@
+name: Announce a release on Discord
+
+# Posts a published release's notes to the ForgePact Discord channel, with an
+# @everyone ping, through the channel's webhook (the DISCORD_WEBHOOK_URL
+# repository secret). The notes are split into as many 2000-character messages
+# as they need by tools/discord_release_post.py; only the first one pings.
+#
+# A release published by a person (the owner's "Publish release") starts it.
+# A prerelease does not, the same rule notify-hub-release.yml uses.
+#
+# By hand (Actions -> this workflow -> Run workflow) it takes a tag and is a
+# dry run by default: the messages are printed in the job log and nothing is
+# sent. Untick "dry_run" to post a release again; "everyone" decides whether
+# that repost pings.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to announce, e.g. v2.3.1'
+        required: true
+      dry_run:
+        description: 'Only print the messages, send nothing'
+        type: boolean
+        default: true
+      everyone:
+        description: 'Ping @everyone when posting'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: discord-release-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  announce:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || github.event.release.prerelease == false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "release" ]; then
+            jq -r '.release.tag_name' "$GITHUB_EVENT_PATH" > tag.txt
+            jq -r '.release.name // ""' "$GITHUB_EVENT_PATH" > name.txt
+            jq -r '.release.html_url' "$GITHUB_EVENT_PATH" > url.txt
+            jq -r '.release.body // ""' "$GITHUB_EVENT_PATH" > notes.md
+          else
+            gh api "repos/$REPO/releases/tags/$INPUT_TAG" > release.json
+            jq -r '.tag_name' release.json > tag.txt
+            jq -r '.name // ""' release.json > name.txt
+            jq -r '.html_url' release.json > url.txt
+            jq -r '.body // ""' release.json > notes.md
+          fi
+          echo "release $(cat tag.txt): $(wc -c < notes.md) characters of notes"
+
+      - name: Post to Discord
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          EVENT_NAME: ${{ github.event_name }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          EVERYONE: ${{ inputs.everyone }}
+        run: |
+          set -euo pipefail
+          args=(--tag "$(cat tag.txt)" --name "$(cat name.txt)" --url "$(cat url.txt)" --notes-file notes.md)
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            [ "$DRY_RUN" = "true" ] && args+=(--dry-run)
+            [ "$EVERYONE" = "true" ] || args+=(--no-everyone)
+          fi
+          python3 tools/discord_release_post.py "${args[@]}"
