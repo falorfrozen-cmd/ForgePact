@@ -1409,15 +1409,21 @@ mods' state, `mods.txt` (every file in `mods\aurie\` and `AurieCore.dll` with
 its size, version and SHA-256) and `system.txt` (Windows build, CPU, graphics
 card and driver, memory). Every report also holds `yytoolkit-tail.txt` and
 `aurie-tail.txt`, the last 500 lines of the game's `bin\YYToolkit.log` and
-`bin\aurie.log`; for a crash they are copies taken as the game died, because
+`bin\aurie.log`; for a crash they are copies taken at the crash, because
 both logs start over at every launch (when no copy could be taken, the file
 says so in one line). A crash report adds `trap.txt`, ForgePact's record of
 what crashed, and `crash.dmp`, a small crash dump (Windows' `MiniDumpNormal`
 type): the stack of every thread of
 the game and the list of loaded files, which is what a developer needs to see
-the function that crashed, and none of the game's other memory. It is written
-only when the crash reached Windows' last-chance handler and only once a
-session; `incident stat` says whether it is ready. Your user folder in every
+the function that crashed, and none of the game's other memory. The dump and
+the two log copies are taken the moment ForgePact first sees a crash-type
+error (an access violation, say), before anything else gets to handle it, and
+are staged in `bp_ipc\crashtrap\`, at most once a minute and four times a
+session. The next start keeps them in the report only if the game then really
+crashed from that error, and deletes them otherwise, so an error the game
+survived leaves nothing behind. Errors inside ForgePact's own guarded memory
+reads never take one. `incident stat` says whether the dump is ready and how
+many were taken this session. Your user folder in every
 text file is replaced with `%USERPROFILE%`; `crash.dmp` is binary and is left
 as it is, so the paths of the loaded files in it are the real ones. The ten
 newest folders are kept, dumps included. A line also lands in

@@ -17,22 +17,27 @@ crash report now says what crashed.
   until you restart the game (the ore multiplier keeps working) and writes one
   `miningrolls: an extra roll failed` line to `out.txt`.
 
-  This is tested outside the game, with a stand-in for the dig that uses the
-  text the way the game does; it has not yet been checked in a game session.
+  Checked in a game session: with Extra Rolls at 3 and mining XP below the
+  cap, a node dug with all three rolls paid, gave mining XP, did not crash the
+  game, and left one XP text on screen.
 
 ## Changed
 
 - **A crash report now says what crashed (#223).** Until now a crash report
   could only say that the game had not closed cleanly: the hook and mod read
   `unknown`, and when Windows kept no record of the crash, nothing named what
-  crashed either. ForgePact now writes down, as the game dies, the error code,
-  the file it happened in (the game, ForgePact's plugin or another DLL) and
-  where in that file, whether it was the game's main thread, which ForgePact
-  hook and mod were running, and, for an error thrown as a C++ exception, its
-  type. The next start folds that into the report, together with the end of
-  the game's `YYToolkit.log` and `aurie.log` as they were at the crash and a
-  small crash dump, `crash.dmp`, that holds the stack of every thread and the list of
-  loaded files but none of the game's other memory. Every report, crash, freeze
+  crashed either. ForgePact now writes down, the moment the error happens, the
+  error code, the file it happened in (the game, ForgePact's plugin or another
+  DLL) and where in that file, whether it was the game's main thread, which
+  ForgePact hook and mod were running, and, for an error thrown as a C++
+  exception, its type. At the same moment it saves the end of the game's
+  `YYToolkit.log` and `aurie.log` and a small crash dump, `crash.dmp`, that
+  holds the stack of every thread and the list of loaded files but none of the
+  game's other memory. Because they are taken at the error itself, a crash
+  report gets them even when the game dies without Windows' own last-chance
+  crash handling ever running. The next start folds all of it into the crash report; when the game
+  survived the error and closed normally, the saved copies are deleted
+  instead. Every report, crash, freeze
   or FPS drop, now carries the end of those two logs too. As before, a report
   is saved without any notification and nothing is uploaded. A game that was
   killed, or that ended itself without raising an error, still leaves a report
