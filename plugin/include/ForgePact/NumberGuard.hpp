@@ -36,7 +36,9 @@
 // with a native one on this script (Live 2 ran native only).
 //
 // Arming: Arm() is called only by a Modifiers lever set off vanilla
-// (StatsManager's `stat` and `statadd`, SkillSlidersMod's `skillslider`) and,
+// (StatsManager's `stat` for its damage and crit entries alone, as
+// StatsManager::ArmsNumberGuard decides from kGuardArmAliases; `statadd`;
+// SkillSlidersMod's `skillslider`) and,
 // in the research build, by `numguard trace on`. With every lever at vanilla
 // nothing is hooked. A native or table-only install is kept for the session;
 // a failed one (no resolve) is tried again at the next arming.

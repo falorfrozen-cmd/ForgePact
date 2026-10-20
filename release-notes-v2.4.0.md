@@ -25,11 +25,11 @@ Release date: 2026-10-23
   At that extreme, leaving a zone of 28,000 monsters still took the game
   half a minute to unload.
 - **Very high damage no longer crashes the game when damage numbers are
-  shown (#230).** With Total Damage and Critical Strike Damage raised high
-  (for example both at 1000% with Critical Strike Chance at 500%), hitting a
-  training dummy could close the game to desktop with no error, when the
-  game's damage numbers were switched on and shortened (the "12,3K" / "5M"
-  style). The game's own number shortener cannot write a number of 100
+  shown (#230).** With damage raised very high, hitting a training dummy
+  could close the game to desktop with no error, when the game's damage
+  numbers were switched on and shortened (the "12,3K" / "5M" style). The
+  crash report had Total Damage and Critical Strike Damage both at 1000% and
+  Critical Strike Chance at 500%. The game's own number shortener cannot write a number of 100
   trillion or more, and ends the game when it is handed one. Now, while any
   Modifiers slider that can raise a damage number is on, ForgePact hands it
   the largest number it can show instead, so a damage number that large

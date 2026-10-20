@@ -81,8 +81,12 @@ class SkillSlidersBehaviorTests(unittest.TestCase):
             "static consteval const char* SdkShortScriptName(",
         )])
 
-        out = ROOT / "build/skill-sliders-behavior"
+        # One directory per process: a serial run and run_tests_parallel.py's
+        # worker started side by side would otherwise write and lock the same
+        # .cpp, .obj, .exe and compile.cmd (C1083, Permission denied).
+        out = ROOT / "build/skill-sliders-behavior" / f"pid-{os.getpid()}"
         out.mkdir(parents=True, exist_ok=True)
+        cls.addClassCleanup(shutil.rmtree, out, ignore_errors=True)
         code = (ROOT / "tests/skill_sliders_harness.cpp").read_text(encoding="utf-8")
         code = (code.replace("// PRODUCTION_HELPERS", helpers)
                     .replace("// PRODUCTION_SKILLSLIDERS", skill_sliders(header)))
