@@ -1806,8 +1806,7 @@ all four.
   game's own Heroic roll, the one that runs when you open a vault from your
   bag (and, as far as is known, for one Chaos Tower NPC), not
   from kills. Each piece is about as likely as any single Heroic unique the
-  roll can give, so expect one in a few hundred vaults per piece and far more
-  for the whole set; the exact rate has not been measured yet. A dropped
+  roll can give; the rate has not been measured yet. A dropped
   piece shows its own art on the ground and in the bag. If the game holds no
   Heroic item of a piece's kind on that roll, that piece cannot drop there
   (`mark1set stat` shows it as `none`). With the switch off the roll is the
