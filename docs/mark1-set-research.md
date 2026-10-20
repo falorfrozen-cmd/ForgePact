@@ -1884,8 +1884,10 @@ short. No decompiled text is quoted here.
   `lootListUnique[5]` (380 entries) and `[4]` hold, and so T_H and which class
   has a stand-in. The Item Editor's catalog lists 13, 15, 17 and 17 Heroic
   uniques of classes 0, 1, 2 and 4, but that is not a reading of the game.
-  Mod live procedure 4's `pool` reads sub-list 5; what a vault's sub-list 4
-  holds is left to `mark1probe pool 4`.
+  Mod live procedure 4's `pool` reads both: `mark1probe pool` for sub-list 5
+  and `mark1probe pool 4` for the vault's starting list. How often a vault
+  reads [4] rather than [5] is still not read, and the procedure does not
+  measure it.
 
 ### Mod live procedure 4
 
@@ -1934,9 +1936,15 @@ and not tracked.
 - `heroic-control` (validity): `mark1probe heroic 10` places at least 8
   items, every rarity 6 or 9, `pieces=` all 0, and the candidate's hits are
   recorded.
-- `pool` (research): `mark1probe pool` recorded whole: the length,
-  `droppable=` above 0, and per class a stand-in or `none`. The driver sets
-  the route from it: stand-ins for all four classes, for some, or for none.
+- `pool` (research): `mark1probe pool`, then `mark1probe pool 4`, each
+  recorded whole: the length, `droppable=` above 0, and per class a stand-in
+  or `none`. The driver records the stand-ins per list (for example
+  `[5]: all`, `[4]: partial`) and sets the route from [5] alone, the list
+  `mark1probe heroic` reads: stand-ins for all four classes, for some, or for
+  none. `reach` and `rate`'s T_H are for [5] only. A vault starts its roll at
+  [4] and moves to [5] only on a random check whose bound was not read, so
+  which share of a vault's rolls read [4] is not measured, and a route of
+  `all` taken from [5] does not mean every piece can drop from a vault.
 - `drops-on` (acceptance): `mark1set drops 1` replies `drops=on
   install=installed`; `mark1set stat`'s drops line shows `gate=on`,
   `hook=detoured` and each class's stand-in as `pool` named it, and its first
@@ -1954,8 +1962,8 @@ and not tracked.
   recorded not observed).
 - `rate` (research): `mark1probe copies 1`, then `mark1probe heroic 20` five
   times and `mark1set stat`. The pieces' sum over the 100 calls lies inside
-  `observation_within`'s band for 4 / (T_H + 4), T_H from `pool`, run from the
-  hub checkout's root; `refused=0 anomalies=0`.
+  `observation_within`'s band for 4 / (T_H + 4), T_H from `pool`'s [5], run
+  from the hub checkout's root; `refused=0 anomalies=0`.
 - `drop-off` (acceptance): `mark1set drops 0`, `mark1probe copies 200`,
   `mark1probe heroic 20` and `mark1set stat`: at least one item placed,
   `pieces=` all 0, and `injected=` unchanged since before the step.
