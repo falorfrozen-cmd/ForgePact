@@ -38,10 +38,11 @@
 //
 // The Mark 1 set's adapter (labels spawn/*): `spawn`'s pieces by word, each
 // piece's definition and loader key from Mark1Set.hpp's own row, the form's
-// parse, and its line placed, refused at the ground and not built.
+// parse, and its line placed, refused at the ground and not built, with the
+// tier it read (info key 32) after `dressed=`, `?` when unread.
 //
 // The drops' forms (labels heroic/*, pool/*, copies/*): `heroic`'s per-call
-// line and its summary (rarities rising, the pieces by their own recognition),
+// line (the tier, info key 32, after `rarity=`, `?` when unread) and its summary (rarities rising, the pieces by their own recognition),
 // `pool`'s summary of one sub-list as the Heroic roll keeps it - its rarity
 // histograms, the entries it draws past by why, and each piece's stand-in by
 // Mark1Drops.hpp's rule, each distinct triple's verdict asked once - and each
@@ -1059,20 +1060,33 @@ int main()
         placed.b = 7;
         placed.a = 777500;
         placed.dressed = true;
+        placed.tier = 5;
         placed.ground = "ref:100234";
         SpawnResult refused = placed;
         refused.piece = "body";
         refused.dressed = false;
+        refused.tier.reset();
         refused.ground.reset();
         refused.why = "LootGroundCreateFromItem-st=3";
         SpawnResult unbuilt;
         unbuilt.piece = "gloves";
         unbuilt.why = "InitItemFromJson-st=3-gave-undefined";
         check("spawn/line_placed_refused_and_not_built",
-              SpawnLine(placed) == "mark1probe spawn: piece=helmet t=0 b=7 a=777500 dressed=yes ground=ref:100234"
-                  && SpawnLine(refused) == "mark1probe spawn: piece=body t=0 b=7 a=777500 dressed=no ground=none why=LootGroundCreateFromItem-st=3"
+              SpawnLine(placed) == "mark1probe spawn: piece=helmet t=0 b=7 a=777500 dressed=yes tier=5 ground=ref:100234"
+                  && SpawnLine(refused) == "mark1probe spawn: piece=body t=0 b=7 a=777500 dressed=no tier=? ground=none why=LootGroundCreateFromItem-st=3"
                   && SpawnLine(unbuilt) == "mark1probe spawn: piece=gloves built=no why=InitItemFromJson-st=3-gave-undefined",
               SpawnLine(placed) + " | " + SpawnLine(refused) + " | " + SpawnLine(unbuilt));
+        // The tier sits right after `dressed=`, the dressing's SS 5 or whatever
+        // the base kept, and `?` when info key 32 could not be read.
+        SpawnResult based = placed;
+        based.dressed = false;
+        based.tier = 2;
+        check("spawn/line_tier_after_dressed_question_mark_when_unread",
+              SpawnLine(placed).find(" dressed=yes tier=5 ") != std::string::npos
+                  && SpawnLine(based).find(" dressed=no tier=2 ") != std::string::npos
+                  && SpawnLine(refused).find(" dressed=no tier=? ") != std::string::npos
+                  && SpawnLine(unbuilt).find("tier=") == std::string::npos,
+              SpawnLine(based));
     }
 
     // ---- heroic, pool, copies (the drops' forms) ------------------------------------
@@ -1085,7 +1099,8 @@ int main()
         piece.t = 2;
         piece.b = 0;
         piece.c = 0;
-        piece.rarity = 9;
+        piece.rarity = 6;   // the dressing's Satanic (Mark1Set.hpp's kRarity)
+        piece.tier = 5;     // and its SS
         piece.name = "Mark 1 Boots";
         piece.isPiece = true;
         piece.piece = ForgePact::Mark1Set::Piece::Boots;
@@ -1094,22 +1109,31 @@ int main()
         other.b = 12;
         other.c = 1;
         other.rarity = 6;
+        other.tier = 4;
         other.name = "Some Unique";
         other.isPiece = false;
+        HeroicCall heroicUnique = other;
+        heroicUnique.rarity = 9;
         HeroicCall unread = other;
         unread.rarity.reset();
+        unread.tier.reset();
         HeroicCall nothing;
         nothing.why = "returned undefined";
         check("heroic/call_lines_placed_and_nothing",
-              HeroicCallLine(3, piece) == "mark1probe heroic #3: placed t=2 b=0 c=0 rarity=9 name=\"Mark 1 Boots\" piece=boots"
-                  && HeroicCallLine(4, other) == "mark1probe heroic #4: placed t=5 b=12 c=1 rarity=6 name=\"Some Unique\" piece=none"
+              HeroicCallLine(3, piece) == "mark1probe heroic #3: placed t=2 b=0 c=0 rarity=6 tier=5 name=\"Mark 1 Boots\" piece=boots"
+                  && HeroicCallLine(4, other) == "mark1probe heroic #4: placed t=5 b=12 c=1 rarity=6 tier=4 name=\"Some Unique\" piece=none"
                   && HeroicCallLine(5, nothing) == "mark1probe heroic #5: nothing placed (returned undefined)",
               HeroicCallLine(3, piece) + " | " + HeroicCallLine(4, other) + " | " + HeroicCallLine(5, nothing));
+        check("heroic/call_line_tier_after_rarity_question_mark_when_unread",
+              HeroicCallLine(6, unread) == "mark1probe heroic #6: placed t=5 b=12 c=1 rarity=? tier=? name=\"Some Unique\" piece=none"
+                  && HeroicCallLine(3, piece).find(" rarity=6 tier=5 name=") != std::string::npos
+                  && HeroicCallLine(5, nothing).find("tier=") == std::string::npos,
+              HeroicCallLine(6, unread));
         HeroicTally tally;
-        for (const HeroicCall& r : { piece, other, other, nothing, unread, piece })
+        for (const HeroicCall& r : { piece, other, heroicUnique, nothing, unread, piece })
             tally.Add(r);
         check("heroic/summary_rarities_rising_and_pieces_by_recognition",
-              tally.Line() == "mark1probe heroic: calls=6 placed=5 rarity=6:2,9:2 rarity-unread=1 pieces=helmet:0,body:0,boots:2,gloves:0 self=player"
+              tally.Line() == "mark1probe heroic: calls=6 placed=5 rarity=6:3,9:1 rarity-unread=1 pieces=helmet:0,body:0,boots:2,gloves:0 self=player"
                   && tally.Calls() == 6 && tally.Placed() == 5 && tally.Pieces(ForgePact::Mark1Set::Piece::Boots) == 2,
               tally.Line());
         check("heroic/a_fresh_summary_reads_none",

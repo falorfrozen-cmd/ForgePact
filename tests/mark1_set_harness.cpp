@@ -16,7 +16,10 @@
 // it (Mod live 2's `equip-detect`: the gloves were not at slot 3), with the
 // switch on make the bonus active, and the line names each piece's slot
 // (active/*); the install state's transitions (install/*); the
-// refresh period (refresh/*); the dressing (dressing/*); the stat line
+// refresh period (refresh/*); the dressing (dressing/*), and its tier and
+// rarity: an item that is not a piece keeps both, every piece comes out SS and
+// Satanic (tier_baseline/*, tier_target/*, rarity_baseline/*,
+// rarity_target/*; the owner, 2026-10-20); the stat line
 // (stat/*) and the command's forms (parse/*). failure_counts/*: every field
 // the line prints is there once, in order, and each failure count reaches it
 // under its own name. art_rule/*: the pieces' art is armed by the first
@@ -225,11 +228,94 @@ int main()
         bool ok = kPieces[0].name == "Mark 1 Helmet" && kPieces[1].name == "Mark 1 Body Armor"
             && kPieces[2].name == "Mark 1 Boots" && kPieces[3].name == "Mark 1 Gloves";
         check("dressing/display_names", ok);
-        check("dressing/heroic_rarity_and_mechanic", kRarity == 9 && kMechanic == "mark1");
+        check("dressing/satanic_rarity_and_mechanic", kRarity == 6 && kMechanic == "mark1");
         ok = kAffixRowCount >= 1 && kAffixRowCount <= 3 && kAffixRows[0] == "Mark 1";
         for (int i = 1; i < kAffixRowCount; ++i)
             if (kAffixRows[i].empty() || kAffixRows[i] == "Mark 1") ok = false;
         check("dressing/affix_rows_first_reads_mark_1", ok, "rows=" + std::to_string(kAffixRowCount));
+        // The constants as compiled, for the runner to pin against hs-game-sdk's
+        // curated item_info.json (`tiers` SS, `rarities` Satanic).
+        std::cout << "DRESSING tier=" << kTier << " rarity=" << kRarity << std::endl;
+    }
+
+    // ---- the dressing's tier and rarity (owner, 2026-10-20) ------------------------
+    {
+        // What an item came with, read off its info before dressing: every tier
+        // code, and -1 for one the base left unset.
+        const double tiers[] = { -1, 1, 2, 3, 4, 5 };
+        const double rarities[] = { -1, 1, 2, 3, 5, 6, 7, 9, 10 };
+
+        // Baseline: an item that is not a piece keeps the tier it came with. A
+        // vanilla helmet, a weapon on a piece's seed, the seed after the table,
+        // a unique on a piece's seed (j 1) and a stand-in-shaped unique.
+        struct Other { double t, a, b, c, j; const char* what; };
+        const Other others[] = {
+            { 0, 1234, 7, 0, 0, "vanilla-helmet" }, { 3, 777500, 0, 0, 0, "weapon-on-a-seed" },
+            { 1, 777504, 0, 0, 0, "seed-after-the-table" }, { 2, 777502, 0, 1, 1, "unique-on-a-seed" },
+            { 4, 4321, 3, 1, 12, "stand-in" },
+        };
+        bool ok = true;
+        std::string bad;
+        for (const Other& o : others)
+            for (double t : tiers) {
+                const Dressed d = Dress(o.t, o.a, o.b, o.c, o.j, 6, t);
+                if (d.tier != t) { ok = false; bad += std::string(o.what) + ":" + std::to_string(t) + " "; }
+            }
+        check("tier_baseline/an_item_that_is_not_a_piece_keeps_its_tier", ok, bad);
+
+        // Baseline: a piece's info before dressing holds the base's value,
+        // whatever it is; the decision reads it and changes nothing it was given.
+        ok = true;
+        for (const PieceRow& r : kPieces)
+            for (double t : tiers) {
+                double before = t;
+                (void)Dress(r.itemType, static_cast<double>(r.seed), r.baseB, 0, 0, 1, before);
+                if (before != t) ok = false;
+            }
+        check("tier_baseline/a_pieces_info_before_dressing_holds_the_bases_value", ok);
+
+        // Target: every piece, all four classes, comes out of the dressing at
+        // tier 5 (SS), whatever tier its base gave it, with any b and c.
+        ok = true;
+        bad.clear();
+        for (const PieceRow& r : kPieces)
+            for (double t : tiers)
+                for (double b : { static_cast<double>(r.baseB), 0.0, 12.0 })
+                    for (double c : { 0.0, 1.0 }) {
+                        const Dressed d = Dress(r.itemType, static_cast<double>(r.seed), b, c, 0, 9, t);
+                        if (d.tier != 5 || d.tier != kTier) { ok = false; bad += std::string(r.key) + " "; }
+                    }
+        check("tier_target/every_piece_comes_out_at_tier_5", ok, bad);
+
+        // Rarity baseline: an item that is not a piece keeps the rarity it came
+        // with, and a stand-in's build before the rewrite (a unique of the
+        // piece's class, a different seed, j not 0) carries the stand-in's own.
+        ok = true;
+        bad.clear();
+        for (const Other& o : others)
+            for (double rr : rarities) {
+                const Dressed d = Dress(o.t, o.a, o.b, o.c, o.j, rr, 3);
+                if (d.rarity != rr || d.tier != 3) { ok = false; bad += std::string(o.what) + ":" + std::to_string(rr) + " "; }
+            }
+        check("rarity_baseline/an_item_that_is_not_a_piece_keeps_its_rarity", ok, bad);
+        ok = true;
+        for (const PieceRow& r : kPieces)
+            for (double rr : { 9.0, 6.0, 3.0 }) {
+                const Dressed d = Dress(r.itemType, 4321, 3, 1, 12, rr, 4);   // the stand-in of this class
+                if (d.rarity != rr) ok = false;
+            }
+        check("rarity_baseline/a_stand_ins_build_before_the_rewrite_keeps_its_own_rarity", ok);
+
+        // Rarity target: every piece, all four classes, comes out at 6
+        // (Satanic), whatever rarity its base gave it; never 9 (Heroic).
+        ok = true;
+        bad.clear();
+        for (const PieceRow& r : kPieces)
+            for (double rr : rarities) {
+                const Dressed d = Dress(r.itemType, static_cast<double>(r.seed), r.baseB, 0, 0, rr, -1);
+                if (d.rarity != 6 || d.rarity != kRarity || d.rarity == 9) { ok = false; bad += std::string(r.key) + " "; }
+            }
+        check("rarity_target/every_piece_comes_out_at_rarity_6", ok, bad);
     }
 
     // ---- the full-set read -------------------------------------------------------

@@ -4773,10 +4773,13 @@ static bool Mark1PieceOf(const RValue& item, M1sNs::Piece& piece)
     return Mark1PieceDecode(item, definition, piece);
 }
 
-// The built-in entry for one piece: its display name, rarity Heroic, the gold
-// rows (the first reads exactly `Mark 1`), fp_mechanic = mark1, the native
-// stats removed and none of its own. No tier and no lore. The selector is the
-// item's own.
+// The built-in entry for one piece: its display name, rarity Satanic and tier
+// SS (Mark1Set.hpp's kRarity and kTier, what its Dress decision gives a piece;
+// the owner, 2026-10-20), the gold rows (the first reads exactly `Mark 1`), fp_mechanic =
+// mark1, the native stats removed and none of its own. No lore. The forge's
+// final pass writes the rarity and the tier on every dressed piece: the drops'
+// rewrite, the research build's spawn and a piece loaded from a save alike. The
+// selector is the item's own.
 static bool Mark1ForgeEntry(const RValue& item, const RValue& definition, CustomForgeEntry& entry, M1sNs::Piece& piece)
 {
     if (!Mark1PieceDecode(item, definition, piece)) return false;
@@ -4791,6 +4794,7 @@ static bool Mark1ForgeEntry(const RValue& item, const RValue& definition, Custom
     entry.selector = { {"t", t}, {"a", a}, {"b", b}, {"c", c}, {"j", j} };
     entry.keepNative = false;
     entry.rarity = M1sNs::kRarity;
+    entry.tier = M1sNs::kTier;
     entry.name = std::string(row.name);
     std::string rows;
     for (const std::string_view r : M1sNs::kAffixRows) rows += (rows.empty() ? "" : "\n") + std::string(r);
@@ -63085,7 +63089,7 @@ static void GambaPityCommand(const std::string& rest)
 // ===== end of gambapity (ForgePact #134) =====
 
 // ---- Mark 1 set (Mark1Set.hpp): the adapter ------------------------------------
-// ForgePact #166, phase 2. Four built-in Heroic pieces; while all four are
+// ForgePact #166, phase 2. Four built-in Satanic pieces at SS tier; while all four are
 // worn, each counted once wherever it sits among the gear slots, and the Mods
 // -> Items switch "Mark 1 set" is on (`mark1set bonus 1`), the set bonus is
 // active. Mark1Set.hpp decides; this adapter supplies the game reads, all by
@@ -65825,6 +65829,11 @@ static void M1pSpawn(const M1pNs::Command& c)
                 if (M1pGet(defRef, "a", v) && N1Numeric(v)) r.a = v.ToDouble();
             }
             r.dressed = M1pGet(itemRef, "fp_mechanic", v) && v.m_Kind == VALUE_STRING && v.ToString() == M1sNs::kMechanic;
+            // The tier the dressing wrote (info key 32, SS 5), read back before the placement.
+            RValue info;
+            if (M1pGet(itemRef, "itemInfoStruct", info) && info.m_Kind == VALUE_OBJECT
+                && M1pGet(M1pScopeRef{ info, true, "itemInfoStruct" }, "32", v) && N1Numeric(v))
+                r.tier = v.ToDouble();
             // Side by side at the player, a cell apart, so each can be picked up.
             const double x = vx.number + (static_cast<double>(i) - (pieces.size() - 1) / 2.0) * 32.0;
             RValue res;
@@ -65879,6 +65888,7 @@ static void M1pHeroic(const M1pNs::Command& c)
         if (FcpMember(def, "b", v) && FcpNumber(v, n)) r.b = n;
         if (FcpMember(def, "c", v) && FcpNumber(v, n)) r.c = n;
         if (FcpMember(info, "27", v) && FcpNumber(v, n)) r.rarity = n;
+        if (FcpMember(info, "32", v) && FcpNumber(v, n)) r.tier = n;
         if (FcpMember(info, "28", v) && v.m_Kind == VALUE_STRING) r.name = v.ToString();
         r.isPiece = Mark1PieceOf(item, r.piece);
         tally.Add(r);

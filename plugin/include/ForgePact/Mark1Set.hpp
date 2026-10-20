@@ -13,7 +13,7 @@ namespace ForgePact::Mark1Set {
 
 // ---- Mark 1: the set's decision core (ForgePact #166, phase 2) ----------------
 //
-// Four built-in Heroic pieces: helmet, body armor, boots and gloves. While all
+// Four built-in Satanic pieces at SS tier: helmet, body armor, boots and gloves. While all
 // four are worn, wherever among the gear slots, and the "Mark 1 set" switch is on, the
 // set bonus is active: Mark1Automation.hpp casts the bar's Q, E, R and Y,
 // Mark1Jump.hpp scales the jump and Mark1Movement.hpp halves the walk.
@@ -22,9 +22,9 @@ namespace ForgePact::Mark1Set {
 //   - the piece table and recognition. A piece is saved as its base item of
 //     its own class with a fixed seed `a` in ForgePact's built-in band; the
 //     seed layout is a save format after release.
-//   - the dressing's constants (name, rarity, mechanic, affix rows). The
-//     adapter writes them through a recognition-only CustomForgeEntry, as the
-//     flight charms' are.
+//   - the dressing's constants (name, rarity, tier, mechanic, affix rows) and
+//     its rarity and tier decision (Dress). The adapter writes them through a
+//     recognition-only CustomForgeEntry, as the flight charms' are.
 //   - the full-set read's verdict, from the worn gear slots the adapter reads,
 //     refreshed at most once every kRefreshFrames at the point of use (inside
 //     the CheckTalentUse detour) and on `mark1set stat`.
@@ -94,10 +94,15 @@ static_assert(SeedsDistinctInBand(), "the four seeds are distinct and inside 777
 
 // ---- the dressing --------------------------------------------------------------
 
-inline constexpr int kRarity = 9;                       // Heroic (itemInfoStruct "27")
+// Rarity Satanic, as the game's own set pieces are (Live 1's D4 measured Sacred
+// Pendant at 6), and tier SS, so a loot filter does not hide a piece (the
+// owner, 2026-10-20). hs-game-sdk/curated/item_info.json names both codes; the
+// behavior test pins them against it.
+inline constexpr int kRarity = 6;                       // Satanic (itemInfoStruct "27")
+inline constexpr int kTier = 5;                         // SS (itemInfoStruct "32")
 inline constexpr std::string_view kMechanic = "mark1";  // fp_mechanic
 // The gold affix rows: the first reads exactly "Mark 1", the rest the full-set
-// bonus in player words. No stats, no tier and no lore are written.
+// bonus in player words. No stats and no lore are written.
 inline constexpr int kAffixRowCount = 3;
 inline constexpr std::string_view kAffixRows[kAffixRowCount] = {
     "Mark 1",
@@ -141,6 +146,23 @@ inline bool IsPiece(double itemType, double a, double /*b*/, double /*c*/, doubl
         return true;
     }
     return false;
+}
+
+// The dressing's decision on one item's rarity ("27") and tier ("32"): a piece,
+// by its own fields (IsPiece), comes out at kRarity and kTier whatever its base
+// gave it; any other item keeps what it came with, a stand-in's build before
+// the drops' rewrite included. The adapter takes it through Mark1ForgeEntry,
+// which only a piece reaches, and the Custom Forge's final pass writes both.
+struct Dressed {
+    double rarity;
+    double tier;
+};
+
+inline Dressed Dress(double itemType, double a, double b, double c, double j, double rarity, double tier)
+{
+    Piece p = Piece::Helmet;
+    if (!IsPiece(itemType, a, b, c, j, p)) return { rarity, tier };
+    return { static_cast<double>(kRarity), static_cast<double>(kTier) };
 }
 
 // ---- the full-set read ----------------------------------------------------------

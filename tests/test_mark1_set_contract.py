@@ -12,9 +12,9 @@ text, comments stripped, and pins the adapter around it:
 - the four pieces are Custom Forge built-ins, recognition only (`builtin =
   true`), tried after every loaded entry and after the flight charms, so a
   sidecar entry for the same item still wins; ForgeCouldMatch lets their seeds
-  through; dressing writes the name, Heroic rarity, the gold rows and
-  `fp_mechanic` = `mark1`, removes the native stats, writes no tier and no lore,
-  and installs nothing inside CreateItemNew;
+  through; dressing writes the name, Satanic rarity, SS tier (the core's
+  `kTier`), the gold rows and `fp_mechanic` = `mark1`, removes the native
+  stats, writes no lore, and installs nothing inside CreateItemNew;
 - the bonus arms like jumpscenery since 2.2.1 (the guide's Known Limitations
   item 8): the tick returns at once while the switch is off, and nothing is
   hooked until the local player resolves, so nothing installs at character
@@ -303,8 +303,8 @@ class Mark1SetContract(unittest.TestCase):
         # The gold rows: the core's, joined by newlines (at most three rows).
         self.assertIn("M1sNs::kAffixRows", entry)
         self.assertIn('"\\n"', entry)
-        # No stats, no tier and no lore written.
-        for absent in ("entry.tier", "entry.lore", "entry.stats", "entry.sprite"):
+        # No stats and no lore written (the tier is the next test's).
+        for absent in ("entry.lore", "entry.stats", "entry.sprite"):
             self.assertNotIn(absent, entry)
         # The selector is the item's own, as the flight charms'.
         for key in ('{"t", t}', '{"a", a}', '{"b", b}', '{"c", c}', '{"j", j}'):
@@ -312,6 +312,24 @@ class Mark1SetContract(unittest.TestCase):
         decode = self.body("decode")
         self.assertIn("M1sNs::IsPiece(t, a, b, c, j, piece)", decode)
         self.assertLess(decode.index('"itemType"'), decode.index('"a"'))
+
+    def test_the_forge_entry_sets_the_pieces_tier_from_the_cores_constant(self):
+        # Every piece is SS (the owner, 2026-10-20): the entry's tier is the
+        # core's constant, never a literal, and the Custom Forge's final pass
+        # writes it to itemInfoStruct["32"] beside the rarity's "27" for any
+        # entry whose tier is set - the drops' rewrite, `mark1probe spawn` and a
+        # piece loaded from a save alike.
+        entry = self.body("entry")
+        self.assertEqual(entry.count("entry.tier"), 1)
+        self.assertIn("entry.tier = M1sNs::kTier;", entry)
+        self.assertIn("entry.rarity = M1sNs::kRarity;", entry)
+        forge = self.body("forge")
+        self.assertIn("if (entry.tier >= 0)", forge)
+        self.assertIn('{ info, RValue("32"), RValue((double)entry.tier) }', forge)
+        self.assertIn('{ info, RValue("27"), RValue((double)entry.rarity) }', forge)
+        # Still no lore, stats or sprite of its own.
+        for absent in ("entry.lore", "entry.stats", "entry.sprite"):
+            self.assertNotIn(absent, entry)
 
     def test_the_pieces_are_tried_after_every_loaded_entry_and_the_flight_charms(self):
         forge = self.body("forge")

@@ -38,10 +38,11 @@ row hooked; `base`'s key, definition and line; and every lever reply's
 
 The Mark 1 set's adapter adds `spawn`: the pieces one word places, each
 piece's definition from Mark1Set.hpp's own row, the form's parse and refusals,
-and its line (placed, refused at the ground, not built).
+and its line (placed, refused at the ground, not built), with the tier
+it read after `dressed=`.
 
 The drops (phase 3) add `heroic <n>`, `pool [<k>]` and `copies <k>` for their
-live session: `heroic`'s per-call line and summary, `pool`'s summary of one
+live session: `heroic`'s per-call line (the tier after `rarity=`) and summary, `pool`'s summary of one
 sub-list as the Heroic roll keeps it with each piece's stand-in by
 Mark1Drops.hpp's rule, `copies`' line, and each form's parse and refusals.
 """
@@ -205,11 +206,21 @@ class Mark1ProbeBehaviorTests(unittest.TestCase):
     # ---- the drops' forms (Mark1Drops.hpp's live session) -------------------------
 
     def test_heroic_call_lines_summary_and_parse(self):
-        # `heroic <n>`: one line per call (placed with its class, base, c, rarity, name and
+        # `heroic <n>`: one line per call (placed with its class, base, c, rarity, tier, name and
         # whether it is a piece, or nothing placed and why), then the summary: rarities rising,
         # the unread ones apart, and the pieces by their own recognition, never by name.
         self.assertScenarios("heroic/parse", "heroic/call_lines_placed_and_nothing",
                              "heroic/summary_rarities_rising_and_pieces_by_recognition", "heroic/a_fresh_summary_reads_none")
+
+    def test_heroic_and_spawn_lines_carry_the_tier(self):
+        # Every Mark 1 piece is SS (the owner, 2026-10-20): `heroic`'s placed line carries
+        # `tier=<info 32>` after `rarity=` (a piece reads rarity=6 tier=5, Satanic SS), and
+        # `spawn`'s line after `dressed=`; `?` when the key could not be read, and a line that
+        # built or placed nothing carries none.
+        self.assertScenarios("heroic/call_line_tier_after_rarity_question_mark_when_unread",
+                             "heroic/call_lines_placed_and_nothing",
+                             "spawn/line_tier_after_dressed_question_mark_when_unread",
+                             "spawn/line_placed_refused_and_not_built")
 
     def test_pool_summary_standins_and_parse(self):
         # `pool [<k>]`: 5 by default; T_H (`droppable=`) counts the entries the Heroic roll keeps,

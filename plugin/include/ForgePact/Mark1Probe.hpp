@@ -845,13 +845,15 @@ inline std::string PieceJson(long long a, long long b)
 
 // What one piece's spawn gave. t, b and a are read back from the built item
 // (its itemType and its definition), `dressed` is whether it carries
-// fp_mechanic = mark1, and `ground` is what LootGroundCreateFromItem returned;
-// with no ground, `why` says which step refused.
+// fp_mechanic = mark1, `tier` is its info key 32 (5 SS once dressed; `?` when
+// unread), and `ground` is what LootGroundCreateFromItem returned; with no
+// ground, `why` says which step refused.
 struct SpawnResult {
     std::string                piece;
     bool                       built = false;
     std::optional<double>      t, b, a;
     bool                       dressed = false;
+    std::optional<double>      tier;
     std::optional<std::string> ground;
     std::string                why;
 };
@@ -861,7 +863,8 @@ inline std::string SpawnLine(const SpawnResult& r)
     auto num = [](const std::optional<double>& v) { return v ? NumberText(*v) : std::string("?"); };
     std::string out = "mark1probe spawn: piece=" + r.piece;
     if (!r.built) return out + " built=no why=" + (r.why.empty() ? std::string("?") : r.why);
-    out += " t=" + num(r.t) + " b=" + num(r.b) + " a=" + num(r.a) + " dressed=" + (r.dressed ? "yes" : "no");
+    out += " t=" + num(r.t) + " b=" + num(r.b) + " a=" + num(r.a) + " dressed=" + (r.dressed ? "yes" : "no")
+        + " tier=" + num(r.tier);
     if (r.ground) return out + " ground=" + *r.ground;
     return out + " ground=none why=" + (r.why.empty() ? std::string("?") : r.why);
 }
@@ -874,12 +877,12 @@ inline std::string SpawnLine(const SpawnResult& r)
 // IsPiece), never by its name.
 
 // What one call gave: nothing placed (`why` says what the adapter saw), or the
-// placed item's class, base, c, rarity (info key 27), name (info key 28) and
-// whether it is a piece.
+// placed item's class, base, c, rarity (info key 27), tier (info key 32; `?`
+// when unread), name (info key 28) and whether it is a piece.
 struct HeroicCall {
     bool                   placed = false;
     std::string            why;
-    std::optional<double>  t, b, c, rarity;
+    std::optional<double>  t, b, c, rarity, tier;
     std::string            name;
     bool                   isPiece = false;
     Mark1Set::Piece        piece = Mark1Set::Piece::Helmet;
@@ -891,7 +894,7 @@ inline std::string HeroicCallLine(int k, const HeroicCall& r)
     std::string out = "mark1probe heroic #" + std::to_string(k) + ": ";
     if (!r.placed) return out + "nothing placed (" + (r.why.empty() ? std::string("?") : r.why) + ")";
     out += "placed t=" + num(r.t) + " b=" + num(r.b) + " c=" + num(r.c) + " rarity=" + num(r.rarity)
-        + " name=" + (r.name.empty() ? std::string("none") : "\"" + r.name + "\"");
+        + " tier=" + num(r.tier) + " name=" + (r.name.empty() ? std::string("none") : "\"" + r.name + "\"");
     out += " piece=" + (r.isPiece ? std::string(Mark1Set::RowOf(r.piece).key) : std::string("none"));
     return out;
 }

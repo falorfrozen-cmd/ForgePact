@@ -1,6 +1,6 @@
 """Run the Mark 1 set's real core against controlled worn reads.
 
-Mark 1 (ForgePact #166 phase 2) is a set of four built-in Heroic pieces:
+Mark 1 (ForgePact #166 phase 2) is a set of four built-in Satanic pieces:
 helmet, body armor, boots and gloves. While all four are worn, each in
 whichever of gear slots 0-9 holds it, and the "Mark 1 set" switch is on, the
 set bonus is active. These
@@ -17,7 +17,11 @@ band and clear of every band in use; recognition ignores `b` and `c` and needs
 wherever among gear slots 0-9 each is worn (Mod live 2's `equip-detect`: the
 gloves were not at slot 3), and the line's `worn=` names each one's slot; the
 install state's
-transitions; the 30-frame refresh period; the dressing; the stat line, fresh
+transitions; the 30-frame refresh period; the dressing, and its tier and
+rarity (`tier_baseline`/`rarity_baseline`: an item that is not a piece keeps
+both, a stand-in's build its own; `tier_target`/`rarity_target`: every piece
+comes out SS 5 and Satanic 6, pinned against hs-game-sdk's curated
+item_info.json; the owner, 2026-10-20); the stat line, fresh
 (`mark1set: bonus=off` first) and filled, and the command's forms.
 `failure_counts`: the automation's four per-column failures, the gate's
 entries and throws, and the jump's failed reads and per-reason rejections
@@ -30,6 +34,7 @@ table-only; the ground consumer is wanted only when armed, in game.
 art flag (one flag, either switch) while the first stat line and the bonus
 reply stay byte for byte.
 """
+import json
 import os
 import re
 import shutil
@@ -202,8 +207,50 @@ class Mark1SetBehaviorTests(unittest.TestCase):
                              "stat/worn_names_the_slot_each_piece_was_found_in")
 
     def test_dressing(self):
-        self.assertScenarios("dressing/display_names", "dressing/heroic_rarity_and_mechanic",
+        self.assertScenarios("dressing/display_names", "dressing/satanic_rarity_and_mechanic",
                              "dressing/affix_rows_first_reads_mark_1")
+
+    # ---- the dressing's tier and rarity (owner, 2026-10-20) ---------------------------
+
+    def curated(self):
+        return json.loads((HUB / "hs-game-sdk/curated/item_info.json").read_text(encoding="utf-8"))
+
+    def dressing_constants(self):
+        for line in self.output.split("\n"):
+            if line.startswith("DRESSING "):
+                return {k: int(v) for k, v in (p.split("=") for p in line.split()[1:])}
+        raise AssertionError(f"no DRESSING line in harness output:\n{self.output}")
+
+    def test_tier_baseline_an_item_that_is_not_a_piece_keeps_its_tier(self):
+        self.assertScenario("tier_baseline/an_item_that_is_not_a_piece_keeps_its_tier")
+
+    def test_tier_baseline_a_pieces_info_before_dressing_holds_the_bases_value(self):
+        self.assertScenario("tier_baseline/a_pieces_info_before_dressing_holds_the_bases_value")
+
+    def test_tier_target_every_piece_comes_out_at_tier_5(self):
+        self.assertScenario("tier_target/every_piece_comes_out_at_tier_5")
+
+    def test_tier_target_the_cores_tier_is_the_sdks_ss_code(self):
+        ss = [t["code"] for t in self.curated()["tiers"] if t["letter"] == "SS"]
+        self.assertEqual(len(ss), 1)
+        self.assertEqual(self.dressing_constants()["tier"], ss[0])
+        self.assertEqual(ss[0], 5)
+
+    def test_rarity_baseline_an_item_that_is_not_a_piece_keeps_its_rarity(self):
+        self.assertScenario("rarity_baseline/an_item_that_is_not_a_piece_keeps_its_rarity")
+
+    def test_rarity_baseline_a_stand_ins_build_before_the_rewrite_keeps_its_own_rarity(self):
+        self.assertScenario("rarity_baseline/a_stand_ins_build_before_the_rewrite_keeps_its_own_rarity")
+
+    def test_rarity_target_every_piece_comes_out_at_rarity_6(self):
+        self.assertScenario("rarity_target/every_piece_comes_out_at_rarity_6")
+
+    def test_rarity_target_the_cores_rarity_is_the_sdks_satanic_code_and_no_other(self):
+        codes = {r["name"]: r["code"] for r in self.curated()["rarities"]}
+        rarity = self.dressing_constants()["rarity"]
+        self.assertEqual(rarity, codes["Satanic"])
+        self.assertNotEqual(rarity, codes["Heroic"])
+        self.assertEqual([name for name, code in codes.items() if code == rarity], ["Satanic"])
 
     def test_install_state_transitions(self):
         self.assertScenarios("install/fresh_is_not_armed", "install/switch_off_never_installs",
