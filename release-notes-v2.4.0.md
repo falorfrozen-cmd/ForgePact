@@ -31,9 +31,10 @@ Release date: 2026-10-23
   game's damage numbers were switched on and shortened (the "12,3K" / "5M"
   style). The game's own number shortener cannot write a number of 100
   trillion or more, and ends the game when it is handed one. Now, while any
-  Modifiers slider is on, ForgePact hands it the largest number it can show
-  instead, so a damage number that large reads `99999B`. The damage you
-  deal is unchanged: only the number written on screen stops at that limit.
+  Modifiers slider that can raise a damage number is on, ForgePact hands it
+  the largest number it can show instead, so a damage number that large
+  reads `99999B`. The damage you deal is unchanged: only the number written
+  on screen stops at that limit.
   With every Modifiers slider at its normal value, nothing changes. Tested
   in a game session on 2026-10-20 with a development build of the plugin, in
   Act 1's town at the crash report's settings and then with Total Damage
