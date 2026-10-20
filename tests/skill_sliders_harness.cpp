@@ -249,6 +249,14 @@ static bool HookOneScript(const char* shortName, const char* id, void* dest, PFU
 #define sprintf_s(buf, ...) std::snprintf(buf, sizeof(buf), __VA_ARGS__)
 #endif
 
+// The number guard (NumberGuard.hpp, #230), reduced to the surface the mod
+// touches: Arm() counts the levers that arm it. tests/number_guard_harness.cpp
+// runs the real one.
+namespace ForgePact { namespace NumberGuard {
+inline int armCalls = 0;
+inline void Arm() { ++armCalls; }
+}}
+
 // PRODUCTION_HELPERS
 
 // PRODUCTION_SKILLSLIDERS
@@ -332,12 +340,14 @@ static int Installs() {
 
 static void Print(const std::string& label, const std::string& fields) {
     std::cout << "SCENARIO " << label << " " << fields << "\n";
+    std::cout << "ARMS " << label << " " << ForgePact::NumberGuard::armCalls << "\n";
     for (const auto& l : world.log) std::cout << "LOG " << label << " :: " << l << "\n";
 }
 
 static void Scenario(const std::string& label, const std::function<std::string()>& body) {
     ResetWorld();
     g_Runner.builtinCalls = 0;
+    ForgePact::NumberGuard::armCalls = 0;
     static SkillSlidersMod& instance = SkillSlidersMod::Instance();
     instance.~SkillSlidersMod();
     new (&instance) SkillSlidersMod();   // NOLINT: re-run the default member initializers

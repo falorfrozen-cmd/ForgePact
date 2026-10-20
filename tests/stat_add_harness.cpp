@@ -110,12 +110,29 @@ static RValue& GameStat(RValue& R, const std::vector<double>& values) {
 static RValue& GameFasterCastRate(CInstance*, CInstance*, RValue& R, int, RValue**) { return GameStat(R, world.fasterCastRate); }
 static RValue& GameSpellHaste(CInstance*, CInstance*, RValue& R, int, RValue**) { return GameStat(R, world.spellHaste); }
 static RValue& GameAllSkills(CInstance*, CInstance*, RValue& R, int, RValue**) { return GameStat(R, world.allSkills); }
+// The `stat` multiplier entries' scripts: only the number guard's arming is
+// asked of them (#230), so one plain number stands in for each.
+static RValue& GameMultStat(CInstance*, CInstance*, RValue& R, int, RValue**) { R = RValue(10.0); return R; }
+static const char* const kMultScripts[] = {
+    "StatMagicFind", "StatAttackSpeed", "StatExperienceGain", "StatMovementSpeed", "CalculateEndDamage",
+    "StatExtraGold", "StatLifeReplenish", "StatManaReplenish", "StatDefense", "StatCritDamage",
+    "StatCritRate", "StatSpellCritDamage", "StatSpellCritRate", "EnemyCalculateExperience",
+};
 
 static void ResetWorld() {
     world = World{};
     world.scripts["StatFasterCastRate"].game = GameFasterCastRate;
     world.scripts["StatSpellHaste"].game = GameSpellHaste;
     world.scripts["StatAllSkills"].game = GameAllSkills;
+    for (const char* name : kMultScripts) world.scripts[name].game = GameMultStat;
+}
+
+// How many `stat` entries' hooks went in: a lever that does not arm the
+// guard must still have been set, or its zero would say nothing.
+static int MultInstalls() {
+    int n = 0;
+    for (const char* name : kMultScripts) n += world.scripts[name].detour ? 1 : 0;
+    return n;
 }
 
 // ModuleMain's installer, reduced to its contract with StatsManager: the
@@ -166,6 +183,18 @@ inline bool (*rewardScopeActive)() = nullptr;
 inline bool Install() { return false; }
 }}
 
+// The number guard (NumberGuard.hpp, #230), reduced to the surface
+// StatsManager touches: Arm() counts the levers that arm it, the research
+// trace callout takes anything, and the routes name CalculateEndDamage's hook
+// for the trace. tests/number_guard_harness.cpp runs the real one.
+namespace ForgePact { namespace NumberGuard {
+inline int armCalls = 0;
+inline void Arm() { ++armCalls; }
+enum Route : int { kRouteNone = 0, kRouteNative, kRouteTableOnly, kRouteFailed };
+enum TraceSite : int { kSiteCompress = 0, kSiteEndDamageNative, kSiteEndDamageReturned };
+template <class V> inline void TraceResult(int, const V&) {}
+}}
+
 #define BP_DIAG_INCREMENT(counter) (++(counter))
 #ifndef _MSC_VER
 #define sprintf_s(buf, ...) std::snprintf(buf, sizeof(buf), __VA_ARGS__)
@@ -184,9 +213,11 @@ static StatsManager* g_Manager = nullptr;
 static StatsManager& Manager() { return *g_Manager; }
 
 static void Command(const std::string& line) { Manager().HandleStatAddCommand(line); }
+static void StatCommand(const std::string& line) { Manager().HandleStatCommand(line); }
 
 static void Print(const std::string& label, const std::string& fields) {
     std::cout << "SCENARIO " << label << " " << fields << "\n";
+    std::cout << "ARMS " << label << " " << ForgePact::NumberGuard::armCalls << "\n";
     for (const auto& l : world.log) std::cout << "LOG " << label << " :: " << l << "\n";
 }
 
@@ -205,6 +236,7 @@ static std::string Built() {
 
 static void Scenario(const std::string& label, const std::function<std::string()>& body) {
     ResetWorld();
+    ForgePact::NumberGuard::armCalls = 0;
     // StatsManager's constructor is private (a singleton): the harness takes
     // one fresh object per scenario through the class's own Instance(), then
     // resets its state by placement on a copy of a default-built image.
@@ -337,6 +369,35 @@ int main() {
         Command("foo 3");
         Command("skillhaste abc");
         return "installs=" + std::to_string(world.scripts["StatSpellHaste"].installs);
+    });
+    // The number guard and `stat` (#230): only an entry that scales the damage
+    // or crit numbers the game's shortener shows arms it. Baseline: Experience
+    // and Extra Gold off vanilla are hooked and set, and arm nothing.
+    Scenario("stat_exp_does_not_arm", [] {
+        StatCommand("exp 2");
+        return "installed=" + std::to_string(MultInstalls());
+    });
+    Scenario("stat_extragold_does_not_arm", [] {
+        StatCommand("extragold 2");
+        return "installed=" + std::to_string(MultInstalls());
+    });
+    // Target: Total Damage off vanilla arms it once; back to x1 arms nothing.
+    Scenario("stat_damage_arms", [] {
+        StatCommand("damage 2");
+        StatCommand("damage 1");
+        return "installed=" + std::to_string(MultInstalls());
+    });
+    // Every damage entry arms, by alias; every other entry does not.
+    Scenario("stat_damage_entries_arm", [] {
+        for (const char* a : { "damage", "critdamage", "critchance", "spellcritdamage", "spellcritchance" })
+            StatCommand(std::string(a) + " 3");
+        return "installed=" + std::to_string(MultInstalls());
+    });
+    Scenario("stat_other_entries_do_not_arm", [] {
+        for (const char* a : { "magicfind", "attackspeed", "expgain", "movespeed", "extragold",
+                               "lifereplenish", "manareplenish", "defense", "exp" })
+            StatCommand(std::string(a) + " 3");
+        return "installed=" + std::to_string(MultInstalls());
     });
     std::cout << "HARNESS DONE\n";
     return 0;

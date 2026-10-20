@@ -48,6 +48,7 @@ def stats_manager(header):
         and '#include "Common.hpp"' not in line
         and "#include <hs_game_sdk/reward_scope.hpp>" not in line
         and '#include "CombatTextHook.hpp"' not in line
+        and '#include "NumberGuard.hpp"' not in line
     )
     private_ctor = "private:\n    StatsManager() = default;"
     if text.count(private_ctor) != 1:
@@ -120,6 +121,13 @@ class StatAddBehaviorTests(unittest.TestCase):
     def logs(self, label):
         prefix = f"LOG {label} :: "
         return [line[len(prefix):] for line in self.output.split("\n") if line.startswith(prefix)]
+
+    def arms(self, label):
+        """How many times the scenario's commands armed the number guard (#230)."""
+        for line in self.output.split("\n"):
+            if line.startswith(f"ARMS {label} "):
+                return int(line[len(f"ARMS {label} "):])
+        raise AssertionError(f"no ARMS line for {label!r}:\n{self.output}")
 
     def first_call_lines(self, label):
         return [line for line in self.logs(label) if ": first boosted call " in line]
@@ -200,6 +208,47 @@ class StatAddBehaviorTests(unittest.TestCase):
         self.assertEqual(self.fields("not_found_refused"), {"haste": "12"})
         self.assertIn("statadd: StatSpellHaste hook is FAILED - the game calls it directly, "
                       "so the bonus could never apply; not armed", self.logs("not_found_refused"))
+
+    # ---- the number guard (#230) -------------------------------------------
+
+    def test_a_bonus_armed_natively_arms_the_number_guard(self):
+        # Each `statadd` set above 0 on a native hook arms it (the guard itself
+        # installs once); 0, junk and a refused hook arm nothing.
+        self.assertEqual(self.arms("baseline_off"), 0)
+        self.assertEqual(self.arms("zero_installs_nothing"), 0)
+        self.assertEqual(self.arms("bad_input"), 0)
+        self.assertEqual(self.arms("table_only_refused"), 0)
+        self.assertEqual(self.arms("not_found_refused"), 0)
+        self.assertEqual(self.arms("skillhaste_target"), 1)
+        self.assertEqual(self.arms("first_call_once_per_arming"), 2)
+        # allskills 19.6, 19.4 and 250 arm; -3 and nan are 0.
+        self.assertEqual(self.arms("allskills_whole_and_capped"), 3)
+
+    def test_stat_exp_does_not_arm(self):
+        # Baseline (owner, 2026-10-20: "Irrelevant mods shouldn't arm it"): the
+        # Experience multiplier is hooked and set, and arms nothing.
+        self.assertEqual(self.fields("stat_exp_does_not_arm"), {"installed": "1"})
+        self.assertIn("stat EnemyCalculateExperience -> x2.00", self.logs("stat_exp_does_not_arm"))
+        self.assertEqual(self.arms("stat_exp_does_not_arm"), 0)
+
+    def test_stat_extragold_does_not_arm(self):
+        self.assertEqual(self.fields("stat_extragold_does_not_arm"), {"installed": "1"})
+        self.assertIn("stat StatExtraGold -> x2.00", self.logs("stat_extragold_does_not_arm"))
+        self.assertEqual(self.arms("stat_extragold_does_not_arm"), 0)
+
+    def test_stat_damage_arms(self):
+        # Target: Total Damage off vanilla arms the guard once; x1 again does not.
+        self.assertEqual(self.fields("stat_damage_arms"), {"installed": "1"})
+        self.assertIn("stat CalculateEndDamage -> x2.00", self.logs("stat_damage_arms"))
+        self.assertEqual(self.arms("stat_damage_arms"), 1)
+
+    def test_only_the_damage_and_crit_stat_entries_arm(self):
+        # The five entries that scale a shown hit each arm it; the other nine,
+        # every one of them hooked and set, arm nothing (the negative control).
+        self.assertEqual(self.fields("stat_damage_entries_arm"), {"installed": "5"})
+        self.assertEqual(self.arms("stat_damage_entries_arm"), 5)
+        self.assertEqual(self.fields("stat_other_entries_do_not_arm"), {"installed": "9"})
+        self.assertEqual(self.arms("stat_other_entries_do_not_arm"), 0)
 
     # ---- names -------------------------------------------------------------
 
