@@ -17,7 +17,7 @@ Scenario names (criterion 3 of the workorder):
   target/nan_capped_to_zero, target/caller_argument_never_written,
   target/arms_from_levers_once, target/table_only_install_not_armed,
   target/first_cap_logged_once, research/forced_off_passes_through,
-  research/trace_line_before_original
+  research/trace_line_before_original, research/trace_negative_after_positive
 """
 import os
 import shutil
@@ -329,6 +329,24 @@ class NumberGuardBehaviorTests(unittest.TestCase):
         self.assertIn("numguard trace -> off (7 lines written)", logs)
         self.assertEqual(logs[-1], "numguard: armed route=native clamped=1 first=200000000000000"
                                    " forced=auto trace=off calls=6 largest=200000000000000")
+
+    def test_research_trace_negative_after_positive(self):
+        # research/trace_negative_after_positive: with the cap forced off, a
+        # failing negative of the same magnitude as an earlier positive still
+        # writes its trace line, and that line is the last one before the
+        # shortener fails on it. A single magnitude mark for both signs (the
+        # trace as first written) saw -2e9 as no new decade after 1e9 and wrote
+        # nothing, so the last line named 1e9 instead of the fatal value.
+        self.assertIn("research/trace_negative_after_positive", self.research.labels())
+        fields = self.research.fields("research/trace_negative_after_positive")
+        self.assertEqual(fields, {"shown": "FAILFAST", "handed": "1000000000|-2000000000", "failfast": "1"})
+        logs = self.research.logs("research/trace_negative_after_positive")
+        self.assertEqual([l for l in logs if l.startswith("numguard trace: num_compressSteam ")], [
+            "numguard trace: num_compressSteam 1000000000",
+            "numguard trace: num_compressSteam -2000000000",
+        ])
+        fatal = logs.index("GAME num_compressSteam -2000000000")
+        self.assertEqual(logs[fatal - 1], "numguard trace: num_compressSteam -2000000000", logs)
 
     def test_research_trace_stops_at_400_lines(self):
         self.assertEqual(self.research.fields("research/trace_limit"), {"lines": "400", "limit": "1"})

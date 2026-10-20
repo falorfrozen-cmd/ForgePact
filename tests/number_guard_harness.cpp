@@ -462,6 +462,17 @@ int main() {
         return "installs=" + Installs("num_compressSteam") + " enddamage=" + Installs("CalculateEndDamage")
              + " native=" + Num(native) + " scaled=" + Num(scaled) + " failfast=" + std::to_string(world.failFast);
     });
+    // With the cap forced off, a failing negative after a big positive of the
+    // same magnitude still writes its line before the shortener fails on it:
+    // the trace keeps a separate mark per sign, so 1e9 cannot hide -2e9.
+    Scenario("research/trace_negative_after_positive", [] {
+        world.markCalls = true;
+        Guard("off");
+        Guard("trace on");
+        Compress(RValue(1e9));
+        const std::string shown = Compress(RValue(-2e9));
+        return "shown=" + shown + " handed=" + Handed() + " failfast=" + std::to_string(world.failFast);
+    });
     // A non-finite value writes a line each time; the trace stops at 400
     // lines a session and says so once.
     Scenario("research/trace_limit", [] {
