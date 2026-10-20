@@ -9,10 +9,11 @@ requested". Two player crash reports from 2.3.1 (2026-10-19 19:02 and
 with Battlefield, Chaos Pillars and Shadow Realm at 100×. Both dumps fault at
 `ac_dll_gm.dll!SetVariable+0xb4` on the game thread, under the game's own
 `instance_create_layer` (`bp_icl`; the second was a density copy). The
-handle in the faulting call resolves to page 0, slot -1. The allocator returns
--1.0 only after scanning to the end of the 512 × 512 store, and a free moves its
-cursor back, so the store was full (measured from the dumps and the export
-machine code; what filled it is not established).
+handle in the faulting call resolves to page 0, slot -1 (measured from the
+dumps). The allocator returns -1.0 only after scanning to the end of the
+512 × 512 store, and a free moves its cursor back, so the store was full. That
+is a static reading of the exported functions; Live 1 below measured the refusal
+and its cost. What filled the store is not established.
 
 `FrameCallback` now arms the router once per process, after setup, while
 `PopulationCapacityWanted()` holds: density above 1, any Special Content
