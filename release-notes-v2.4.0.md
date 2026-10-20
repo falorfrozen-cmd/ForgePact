@@ -2,19 +2,21 @@
 
 Release date: 2026-10-23
 
-A new item set of ForgePact's own, **Mark 1**: four Heroic pieces that, worn
-together with the new **Mark 1 set** switch on (off by default), cast the
-skills on your Q, E, R and Y slots for you and send your jump three times as
-far over scenery, at the price of walking at half speed. A second switch,
-**Mark 1 drops** (also off by default), lets the pieces drop from vaults.
+A new item set of ForgePact's own, **Mark 1**: four Satanic pieces, like the
+game's own set pieces, that, worn together with the new **Mark 1 set** switch
+on (off by default), cast the skills on your Q, E, R and Y slots for you and
+send your jump three times as far over scenery, at the price of walking at
+half speed. A second switch, **Mark 1 drops** (also off by default), lets the
+pieces drop from the monsters you kill anywhere, like the game's own set
+items, and from vaults.
 
 ## New
 
 - **Mark 1 set (#166).** Mark 1 is an item set of ForgePact's own: the
   **Mark 1 Helmet**, **Mark 1 Body Armor**, **Mark 1 Boots** and **Mark 1
-  Gloves**, four Heroic pieces, each with its own icon in the bag and on the
-  ground and a gold **Mark 1** line in its tooltip, and no stats of their
-  own. The set's bonus works only while you wear all four and the new switch
+  Gloves**, four Satanic pieces like the game's own set pieces, each with its
+  own icon in the bag and on the ground and a gold **Mark 1** line in its
+  tooltip, and no stats of their own. The set's bonus works only while you wear all four and the new switch
   (Mods → Items → **Mark 1 set**, off by default) is on.
   - **Your skills cast themselves.** The skills on your Q, E, R and Y slots
     are cast for you whenever the game would let you cast them: the game still
@@ -47,12 +49,14 @@ far over scenery, at the price of walking at half speed. A second switch,
     built on.
   - **Finding the pieces.** Switch on **Mark 1 drops** (Mods → Items, off by
     default; it works with or without the set's own switch). The pieces then
-    drop from the game's own Heroic roll, the one that runs when you open a
-    vault from your bag, not from kills. Each piece is about as likely as any
-    single Heroic unique that roll can give you; the rate has not been
-    measured yet. A
-    dropped piece shows its own art. With the switch off, vaults drop exactly
-    what they always did.
+    drop from the monsters you kill anywhere, among the game's own items, the
+    way the game's own set items such as White Mage's Sacred set and Zealot's
+    Prophecy do, each about as likely as any single unique the game can drop
+    from a kill. They also drop from the game's own Heroic roll, the one that
+    runs when you open a vault from your bag, each about as likely as any
+    single Heroic unique that roll can give you. The rates have not been
+    measured yet. A dropped piece shows its own art. With the switch off,
+    kills and vaults drop exactly what they always did.
 
   The set was checked in play on a research build of the plugin: the
   pieces, their art, the outlines and the jump worked, and in that session,
@@ -63,4 +67,4 @@ far over scenery, at the price of walking at half speed. A second switch,
   and Healing Zone 3. It also measured the walk at half speed with the set on,
   and a cast's slowdown on top of that: while a cast slows you, you walk at
   about a third of your normal speed. A toggle skill on the bar, and the
-  pieces dropping from vaults, have not been checked in play yet.
+  pieces dropping from kills and vaults, have not been checked in play yet.

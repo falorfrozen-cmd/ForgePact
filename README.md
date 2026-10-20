@@ -50,7 +50,7 @@ none of these diagnostic hooks or the recorder. See
 | **Loot Announcements** | Mods → Quality of Life, off by default (plugin command `lootann 1` / `lootann 0`, `lootann stat`). Offline play shows no chat line when a great item drops; online play announces it. With this on, a Heroic, Angelic or Unholy item the game drops on the ground is announced once in the in-game chat, as a red `SERVER: <your character> found <item name>` line (not the game's own online announcement). Satanic, Mythic and lower items, gold, gems, materials and relics are not announced, and neither are items you drop yourself from the bag. Checked in play on 2026-10-04: a placed Heroic and Angelic item announced, a Satanic one not, an item dropped from the bag not announced again, nothing with the switch off, and a drop from a kill announced ([details](#loot-announcements)) |
 | **Always Show Chaos Pillar Mods** | Mods → Quality of Life, off by default (plugin command `pillartips 1` / `pillartips 0`, `pillartips stat`). A Chaos Pillar shows its box of mods only while your mouse cursor is on it. With this on, every Chaos Pillar on screen shows its box without being hovered, like a strongbox in Path of Exile: the game's own box, text and colours. A pillar that leaves the screen hides it again, and a pillar you have activated stops showing its box. Mouse play only; gamepad is not supported. Checked in a game session with mouse play ([details](#always-show-chaos-pillar-mods)) |
 | **Flight Charms** | Mods → Items, three switches, all off by default (plugin command `flightcharm elf\|wings\|broom 1` / `0`, `flightcharm stat`). Three charms of ForgePact's own: **Pocket Elf** (Satanic, one cell), **Gabriel Wings** (Angelic, 2x2, 1-12% less physical and magic damage taken) and **Witch's Broomstick** (Unholy, 1x5, +10-100% movement speed), each with its own icon and a gold Flight line. While you wear one, you walk through scenery and are drawn in front of it, tree canopies included, and you walk through monsters too, though they still hit you (owner-confirmed in play, 2026-10-13); walls, zone gates, locked doors and the map's edge still stop you, though a few stone walls the game builds as scenery, such as the town church's, can be crossed (measured as scenery in a game session, not yet walked with a charm on). The game counts only one flight charm at a time. Each switch lets its charm drop from the game's own rolls (Pocket Elf among the ordinary uniques, the other two from the Angelic roll); a charm you own works either way. Offline only. Checked in three game sessions on a research build, drop rates included, plus the owner's play check for monsters ([details](#flight-charms-pocket-elf-gabriel-wings-witchs-broomstick)) |
-| **Mark 1 Set** | Mods → Items → **Mark 1 set** and **Mark 1 drops**, both off by default (plugin commands `mark1set bonus 1` / `mark1set bonus 0`, `mark1set drops 1` / `mark1set drops 0`, `mark1set stat`). Four Heroic pieces of ForgePact's own, the Mark 1 Helmet, Body Armor, Boots and Gloves, each with its own art. With the switch on and all four worn, the skills on your Q, E, R and Y slots cast themselves whenever the game lets them and take turns, so a skill with no cooldown cannot keep the others from being cast, each slot outlined; your jump always goes three times as far toward your cursor, over scenery, and lands only where you can walk (until it has learned your reach, a jump can stop short of its landing); in exchange you walk at half speed, and a cast still slows you as it does without the set. With **Mark 1 drops** on, the pieces drop from vaults, each about as often as any single Heroic unique the game can roll there. Checked in play: the pieces, their art, the jump, the taking turns and the half walk; a toggle skill on the bar and the drops not yet ([details](#mark-1-set)) |
+| **Mark 1 Set** | Mods → Items → **Mark 1 set** and **Mark 1 drops**, both off by default (plugin commands `mark1set bonus 1` / `mark1set bonus 0`, `mark1set drops 1` / `mark1set drops 0`, `mark1set stat`). Four Satanic pieces of ForgePact's own, like the game's own set pieces: the Mark 1 Helmet, Body Armor, Boots and Gloves, each with its own art. With the switch on and all four worn, the skills on your Q, E, R and Y slots cast themselves whenever the game lets them and take turns, so a skill with no cooldown cannot keep the others from being cast, each slot outlined; your jump always goes three times as far toward your cursor, over scenery, and lands only where you can walk (until it has learned your reach, a jump can stop short of its landing); in exchange you walk at half speed, and a cast still slows you as it does without the set. With **Mark 1 drops** on, the pieces drop from the monsters you kill anywhere, among the game's own items, like the game's own set items, and from vaults, each about as often as any single unique of the roll that drops it. Checked in play: the pieces, their art, the jump, the taking turns and the half walk; a toggle skill on the bar and the drops not yet ([details](#mark-1-set)) |
 | **Goburin's Head pity** | Mods → Quality of Life, off by default (plugin command `gambapity <1-200>` / `gambapity off`, `gambapity status`). A switch and a slider from 1 to 200. Each slot machine explosion without a head counts one, and the explosion that reaches your number drops exactly one Goburin's Head; then the count starts over. If the game drops the charm itself, the count starts over too. The count carries over between machines and between sessions, kept in `forgepact_gamba_pity.json`. Checked in play on 2026-10-06 with the number at 2: the first machine to explode dropped nothing and was counted, the second dropped one Goburin's Head, and the count started over. A head the game drops on its own has not been observed yet ([details](#goburins-head-pity)) |
 | **Extra Packs As You Approach** | Mods → Quality of Life, off by default; matters only with Monster Density above 1x. Monster Density's extra spawners are made within about 3,000 px of you, and ahead of you as you move, instead of across the whole zone at once, so the far ones cost nothing until you get there. Up close nothing changes: in Act_01_01 at 5x the spawners and monsters within 1,500 px of the player were the same, while the zone held 430 spawners instead of 1,570 and the game's own work per frame fell from 84% to 70% of a 60 fps frame ([details](#extra-packs-as-you-approach-lighter-frames-at-high-density)) |
 | **Timed skill countdown** | For a small set of timed skills measured and tested in-game, plus most other skills with both a duration and a real cooldown, covered by rule and untested: draws how much of the cast is left over its skill-bar slot, in one of four looks (arc / bar / number / fade), disappearing at zero. A few skills are left out where a measurement showed the timer on the skill's own object is not the skill's duration. Companion skills (turrets, totems, hydra) are not covered. A few skills whose duration is a buff on you, measured in-game, are covered too, and other buff-only skills are not. In a fight, hits can add a little time to some skills (roughly 0.2 s each in our test) and the countdown rises slightly to match. A skill switched on as a toggle never gets a countdown. Off by default; a cast already running when you turn it on shows as full until the next cast |
@@ -1756,8 +1756,9 @@ Mods → Items → **Mark 1 set** (plugin command `mark1set bonus 1|0`) and
 **Mark 1 drops** (plugin command `mark1set drops 1|0`), with `mark1set stat`
 for the state. Both off by default.
 
-Mark 1 is an item set of ForgePact's own: four Heroic pieces, **Mark 1
-Helmet**, **Mark 1 Body Armor**, **Mark 1 Boots** and **Mark 1 Gloves**. They
+Mark 1 is an item set of ForgePact's own: four Satanic pieces, like the game's
+own set pieces, **Mark 1 Helmet**, **Mark 1 Body Armor**, **Mark 1 Boots** and
+**Mark 1 Gloves**. They
 carry no stats of their own; each shows a gold **Mark 1** line and the set's
 bonus in its tooltip. The bonus works only while the switch is on and you wear
 all four.
@@ -1803,14 +1804,18 @@ all four.
   from the next load.
 - **Getting the pieces.** Switch on **Mark 1 drops** (Mods → Items, off by
   default, apart from the set's own switch). The pieces then drop from the
+  monsters you kill anywhere, among the game's own items, the way the game's
+  own set items such as White Mage's Sacred set and Zealot's Prophecy do:
+  they join the game's own unique roll that a kill's drop runs. Each piece is
+  about as likely as any single unique that roll can give; how often a kill
+  runs that roll has not been measured yet. They also still drop from the
   game's own Heroic roll, the one that runs when you open a vault from your
-  bag (and, as far as is known, for one Chaos Tower NPC), not
-  from kills. Each piece is about as likely as any single Heroic unique the
-  roll can give; the rate has not been measured yet. A dropped
-  piece shows its own art on the ground and in the bag. If the game holds no
-  Heroic item of a piece's kind on that roll, that piece cannot drop there
-  (`mark1set stat` shows it as `none`). With the switch off the roll is the
-  game's own.
+  bag (and, as far as is known, for one Chaos Tower NPC), each about as
+  likely as any single Heroic unique that roll can give. A dropped piece
+  shows its own art on the ground and in the bag. If the game holds no
+  fitting item of a piece's kind on a roll, that piece cannot drop from it
+  (`mark1set stat` shows it as `none`); the other pieces still can. With the
+  switch off both rolls are the game's own.
 
 `mark1set stat` prints the switch, whether you wear the full set and where
 each piece was found, the casts it pressed, the skips, the casts that landed
@@ -1818,8 +1823,9 @@ and the turns each of the four slots waited or gave up, the jumps it
 lengthened or left alone and the reach it used, how many of the pieces' icons
 loaded, and how many movement-speed answers it halved. A second line,
 beginning `mark1set drops:`, shows the drops: the switch, how many Heroic
-rolls it saw and added the pieces to, each piece's drops, and the Heroic item
-each piece stands in for on the roll.
+rolls and how many unique rolls from kills it saw and added the pieces to,
+each piece's drops from each, and the game's item each piece stands in for on
+each roll.
 
 The set was checked in play on a research build of the plugin (2026-10-19):
 the pieces, their art in the bag, on the ground and on the worn body armour,
