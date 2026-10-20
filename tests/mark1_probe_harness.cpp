@@ -1977,6 +1977,72 @@ int main()
               kinds.size() == 5 && kinds[0] == std::make_pair(std::string("helmet"), 0) && kinds[1] == std::make_pair(std::string("body"), 1)
                   && kinds[2] == std::make_pair(std::string("boots"), 2) && kinds[3] == std::make_pair(std::string("gloves"), 4)
                   && kinds[4] == std::make_pair(std::string("elf"), 10));
+
+        // The lever's stand-ins are these candidates: the helmet's SS best (0/7/10), not the
+        // field-41 or rarity-7 entries `pool kill`'s rule could take; body, boots and gloves have
+        // none and are refused. With no SS candidate the below-SS best is the fallback.
+        const DrawLeverStandIns picks = DrawLeverPick(classes);
+        std::vector<PoolDrawClass> belowOnly = classes;
+        belowOnly[0].bestSs.reset();
+        const DrawLeverStandIns fallback = DrawLeverPick(belowOnly);
+        check("draws/target_lever_stand_ins_are_pool_draws_candidates_ss_first",
+              picks[0].pick && picks[0].pick->triple.t == 0 && picks[0].pick->triple.sub == 7 && picks[0].pick->triple.b == 10
+                  && picks[0].ss && !picks[0].fallback && !picks[1].pick && !picks[2].pick && !picks[3].pick
+                  && fallback[0].pick && fallback[0].pick->triple.b == 13 && !fallback[0].ss && fallback[0].fallback);
+        const std::vector<D::PushEntry> plan = DrawPushPlan(picks, 3);
+        DrawLeverStandIns sentBack = picks;
+        sentBack[0].pick->f41 = true;
+        DrawLeverStandIns otherRarity = picks;
+        otherRarity[0].pick->rarity = 7;
+        check("draws/target_lever_plan_pushes_only_what_the_draw_keeps",
+              plan.size() == 1 && plan[0].piece == ForgePact::Mark1Set::Piece::Helmet && plan[0].triple.b == 10 && plan[0].n == 1
+                  && plan[0].copies == 3 && DrawPushPlan(picks, 0).empty() && DrawPushPlan(picks, 900)[0].copies == 400
+                  && DrawPushPlan(sentBack, 3).empty() && DrawPushPlan(otherRarity, 3).empty()
+                  && DrawLeverRefusal(*picks[0].pick).empty() && DrawLeverRefusal(*sentBack[0].pick) == "field 41 set"
+                  && DrawLeverRefusal(*otherRarity[0].pick) == "rarity 7"
+                  && DrawLeverStandInText(sentBack[0]) == "helmet=refused (7:10: field 41 set)");
+        const std::string none = "=refused (class %d has no draw candidate: no rarity-6 entry with fields 40 and 41 clear on lootListUnique[0..5])";
+        auto refusedText = [&](const char* key, int t) {
+            std::string s = std::string(key) + none;
+            return s.replace(s.find("%d"), 2, std::to_string(t));
+        };
+        const std::string head = "mark1probe draws push: stand-ins (pool draw's candidates, SS first, the side Mark 1's kill draw is to use) ";
+        const std::string rest = " | " + refusedText("body", 1) + " | " + refusedText("boots", 2) + " | " + refusedText("gloves", 4);
+        const std::string onLine = DrawLeverLine(picks, true);
+        check("draws/target_lever_line_exact",
+              onLine == head + "helmet=7:10 rarity=6 tier=5 f40=0 f41=0 lists=1,1,1,1,1,0 side=ss" + rest
+                  && DrawLeverLine(picks, false) == onLine + " (the watch is off: `draws on` to push)"
+                  && DrawLeverLine(fallback, true)
+                         == head + "helmet=7:13 rarity=6 tier=4 f40=0 f41=0 lists=1,1,1,1,1,0 side=below-ss (fallback)" + rest,
+              onLine);
+        // Pushed and taken off exactly, through the same book the watch uses.
+        FakeDrawLists fake;
+        for (int k = 0; k < 6; ++k) fake.lists[(size_t)k] = { { 0, 7, 10 }, { 0, 7, 13 } };
+        DrawPushBook book;
+        std::vector<std::string> pushLines;
+        const DrawPushResult pushed = book.Push(plan, fake, pushLines);
+        bool grown = true;
+        for (const auto& l : fake.lists) grown = grown && l.size() == 5 && l.back() == D::Triple{ 0, 7, 10 };
+        const std::vector<std::string> removed = book.Remove(fake);
+        bool back = true;
+        for (const auto& l : fake.lists) back = back && l.size() == 2;
+        check("draws/target_lever_pushes_the_draw_stand_in_onto_each_list_and_off",
+              pushed == DrawPushResult::Held && grown && fake.adds == 18 && removed.empty() && pushLines.empty() && back
+                  && fake.deletes == 18 && book.Pushed() == 0,
+              std::to_string(fake.adds) + " adds, " + std::to_string(fake.deletes) + " deletes");
+        // Resolved again when any list changed: another array or another length.
+        DrawLeverCache cache;
+        D::KillListKeys keys{};
+        for (int k = 0; k < 6; ++k) keys[(size_t)k] = D::ListKey{ (uint64_t)(100 + k), 9 };
+        const bool firstStale = cache.Stale(keys) && cache.Find() == nullptr;
+        cache.Store(keys, picks);
+        const bool held = !cache.Stale(keys) && cache.Find() && (*cache.Find())[0].pick && (*cache.Find())[0].pick->triple.b == 10;
+        D::KillListKeys longer = keys;
+        longer[3].length = 10;
+        D::KillListKeys other = keys;
+        other[5].id = 999;
+        check("draws/target_lever_stand_ins_resolved_again_when_a_list_changed",
+              firstStale && held && cache.Stale(longer) && cache.Stale(other));
     }
 
     // ---- walkable -------------------------------------------------------------

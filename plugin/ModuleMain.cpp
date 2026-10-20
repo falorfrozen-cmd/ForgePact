@@ -66525,12 +66525,13 @@ static void M1pKillgate(const M1pNs::Command& c)
 //
 // The lever's push and removal are the core's DrawPushBook on the six lists read by name
 // (Mark1KillReadLists), with the drop adapter's own add, delete and tail check; the stand-ins
-// are `pool kill`'s (ResolveKillStandIns), resolved again whenever a list's id or length
-// changes. Nothing is rewritten, and with the watch off every spliced call is the original's.
+// are `pool draw`'s candidates (DrawLeverPick: an entry the draw keeps as read, SS first),
+// resolved again whenever a list's id or length changes. Nothing is rewritten, and with the
+// watch off every spliced call is the original's.
 
 static M1pNs::Draws g_M1pDraws;
 static M1pNs::DrawPushBook g_M1pDrawsBook;
-static M1dNs::KillStandInCache g_M1pDrawsStandIns;
+static M1pNs::DrawLeverCache g_M1pDrawsStandIns;
 static int g_M1pDrawsBusy = 0;                                  // the probe's own reads: never counted
 static PFUNC_YYGMLScript g_M1pDrawsDropItemOrig = nullptr;      // what DropManager's slot held: the trampoline
 static PFUNC_YYGMLScript g_M1pDrawsUniqueOrig = nullptr;        // what the shared DropUniqueItems detour's held
@@ -66743,16 +66744,20 @@ struct M1pDrawsListOps {
 };
 static M1pDrawsListOps g_M1pDrawsOps;   // the lists the call in progress pushed onto
 
-// `pool kill`'s stand-ins over the six lists, resolved again when a list changed; every verdict
-// read outside a roll's scope and never counted as a read.
-static const M1dNs::KillResolution* M1pDrawsStandIns(RValue subs[], const M1dNs::KillListKeys& keys)
+static bool M1pDrawVerdict(const M1dNs::Triple& key, M1pNs::DrawVerdict& out);
+
+// The lever's stand-ins: per Mark 1 piece, `pool draw`'s candidate of its class (rarity 6,
+// fields 40 and 41 clear, SS first), so the entry pushed is one the draw keeps as read.
+// Resolved again when a list changed; every verdict read outside a roll's scope and never
+// counted as a read.
+static const M1pNs::DrawLeverStandIns* M1pDrawsStandIns(RValue subs[], const M1dNs::KillListKeys& keys)
 {
     if (g_M1pDrawsStandIns.Stale(keys)) {
         M1pDrawsBusyScope busy;
         FlightDropOutsideRoll outside;
         M1dNs::KillLists lists;
         for (int k = 0; k < M1dNs::kListCount; ++k) lists[(size_t)k] = Mark1DropEntries(subs[k], keys[(size_t)k].length);
-        g_M1pDrawsStandIns.Store(keys, M1dNs::ResolveKillStandIns(lists, Mark1DropVerdict));
+        g_M1pDrawsStandIns.Store(keys, M1pNs::DrawLeverPick(M1pNs::PoolDraw(lists, M1pDrawVerdict)));
     }
     return g_M1pDrawsStandIns.Find();
 }
@@ -66763,11 +66768,11 @@ static void M1pDrawsPush()
     M1dNs::KillListKeys keys{};
     std::string why;
     if (!Mark1KillReadLists(subs, keys, why)) return;
-    const M1dNs::KillResolution* r = M1pDrawsStandIns(subs, keys);
-    if (!r) return;
+    const M1pNs::DrawLeverStandIns* s = M1pDrawsStandIns(subs, keys);
+    if (!s) return;
     for (int k = 0; k < M1dNs::kListCount; ++k) g_M1pDrawsOps.subs[k] = subs[k];
     std::vector<std::string> lines;
-    const M1pNs::DrawPushResult result = g_M1pDrawsBook.Push(M1pNs::DrawPushPlan(*r, g_M1pDraws.Push()), g_M1pDrawsOps, lines);
+    const M1pNs::DrawPushResult result = g_M1pDrawsBook.Push(M1pNs::DrawPushPlan(*s, g_M1pDraws.Push()), g_M1pDrawsOps, lines);
     for (const std::string& l : lines) { g_M1pDraws.NoteAnomaly(); Out(l); }
     if (result == M1pNs::DrawPushResult::Held) {
         g_M1pDraws.NotePushed(g_M1pDrawsBook.Entries());
@@ -66880,11 +66885,9 @@ static void M1pDrawsPushCommand(const M1pNs::Command& c)
     M1dNs::KillListKeys keys{};
     std::string why;
     if (!Mark1KillReadLists(subs, keys, why)) { Out("mark1probe draws push: the lists are not readable now (" + why + ")"); return; }
-    const M1dNs::KillResolution* r = M1pDrawsStandIns(subs, keys);
-    std::string standIns;
-    for (const M1sNs::PieceRow& row : M1sNs::kPieces)
-        standIns += " " + std::string(row.key) + "=" + (r ? M1dNs::StandInText(r->standIns[(size_t)row.piece]) : std::string("none"));
-    Out("mark1probe draws push: stand-ins" + standIns + (g_M1pDraws.On() ? std::string() : std::string(" (the watch is off: `draws on` to push)")));
+    const M1pNs::DrawLeverStandIns* s = M1pDrawsStandIns(subs, keys);
+    if (!s) { Out("mark1probe draws push: the stand-ins could not be resolved now"); return; }
+    Out(M1pNs::DrawLeverLine(*s, g_M1pDraws.On()));
 }
 
 // `mark1probe pool draw`: the six lists read through the kill route's own reads, each distinct

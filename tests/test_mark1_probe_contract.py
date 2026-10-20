@@ -746,8 +746,17 @@ class Mark1ProbeContract(unittest.TestCase):
         self.assertIn("Mark1ListTailHolds(subs[k], before, entries, on, len);", ops)
         self.assertEqual(self.code.count("Mark1DropAddEntry("), 1)
         self.assertEqual(self.code.count("Mark1DropDeleteLast("), 1)
-        self.assertIn("g_M1pDrawsBook.Push(M1pNs::DrawPushPlan(*r, g_M1pDraws.Push()), g_M1pDrawsOps, lines)",
+        self.assertIn("g_M1pDrawsBook.Push(M1pNs::DrawPushPlan(*s, g_M1pDraws.Push()), g_M1pDrawsOps, lines)",
                       self.body("static void M1pDrawsPush()"))
+        # The lever's stand-ins are `pool draw`'s candidates (an entry the draw keeps as read),
+        # never `pool kill`'s DropUniqueItems choice, and its reply is the core's line.
+        standins = self.body("static const M1pNs::DrawLeverStandIns* M1pDrawsStandIns(RValue subs[], const M1dNs::KillListKeys& keys)")
+        self.assertIn("M1pNs::DrawLeverPick(M1pNs::PoolDraw(lists, M1pDrawVerdict))", standins)
+        self.assertIn("FlightDropOutsideRoll outside;", standins)
+        self.assertNotIn("ResolveKillStandIns", standins)
+        self.assertIn("static M1pNs::DrawLeverCache g_M1pDrawsStandIns;", self.code)
+        self.assertIn("Out(M1pNs::DrawLeverLine(*s, g_M1pDraws.On()));",
+                      self.body("static void M1pDrawsPushCommand(const M1pNs::Command& c)"))
         call = self.code[self.code.index("struct M1pDrawsCall {"):]
         call = call[:call.index("\n};")]
         self.assertIn("g_M1pDraws.ShouldPush(g_M1Drop.core.Enabled(), M1pDrawsElfOn())", call)

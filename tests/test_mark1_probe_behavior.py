@@ -350,6 +350,17 @@ class Mark1ProbeBehaviorTests(unittest.TestCase):
         # never on-k; the same pair picked inside a nested roll is no draw pick.
         self.assertScenarios("draws/target_picks_and_pick_builds_of_a_pushed_stand_in")
 
+    def test_draws_target_the_lever_pushes_pool_draws_candidates(self):
+        # The lever's stand-in per piece is `pool draw`'s candidate of its class (rarity 6,
+        # fields 40 and 41 clear), SS first and the below-SS side only as a named fallback; an
+        # entry the draw would send back is never planned, a class with no candidate is named as
+        # refused, the reply is exact, and the stand-ins are resolved again when a list changed.
+        self.assertScenarios("draws/target_lever_stand_ins_are_pool_draws_candidates_ss_first",
+                             "draws/target_lever_plan_pushes_only_what_the_draw_keeps",
+                             "draws/target_lever_line_exact",
+                             "draws/target_lever_pushes_the_draw_stand_in_onto_each_list_and_off",
+                             "draws/target_lever_stand_ins_resolved_again_when_a_list_changed")
+
     def test_draws_target_lines_refusals_and_parse(self):
         self.assertScenarios("draws/target_built_lines_exact", "draws/target_status_line_and_off_reply",
                              "draws/target_push_refused_while_mark1_or_pocket_elf_is_on",
