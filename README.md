@@ -1810,9 +1810,10 @@ loaded, and how many movement-speed answers it halved.
 
 The set was checked in play on a research build of the plugin (2026-10-19):
 the pieces, their art in the bag, on the ground and on the worn body armour,
-the full-set read, the outlines and the jump all worked. That session also
-showed why the skills now take turns: with every slot pressed at once, Shadow
-Bolt kept Heavenly Fire beside it from ever being cast. Taking turns, and the
+the full-set read, the outlines and the jump all worked. In that session, with
+every slot pressed at once, Shadow Bolt was cast 20 times and Heavenly Fire
+beside it not once; the turns make sure no one skill is pressed every time.
+Taking turns, and the
 half walk while skills are being cast, are checked in the next session. An
 earlier session measured the walk at exactly half its step and found no way
 to lift the cast slowdown.
