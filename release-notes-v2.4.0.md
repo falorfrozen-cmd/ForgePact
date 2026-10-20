@@ -95,8 +95,9 @@ items, and from vaults.
 ## How to update
 
 Download and extract the complete release, then reopen ForgePact and press
-**Install Mod Plugin** once. Only the plugin changed. Your existing settings
-are retained. Start the game after installing; a game that was already open
-keeps the old plugin until it is restarted.
+**Install Mod Plugin** once. Both the plugin and the panel changed: the panel
+has the new **Mark 1 set** and **Mark 1 drops** switches under Mods → Items.
+Your existing settings are retained. Start the game after installing; a game
+that was already open keeps the old plugin until it is restarted.
 
 Use ForgePact only with an offline / EAC-disabled copy of Hero Siege.
