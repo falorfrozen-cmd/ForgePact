@@ -265,9 +265,15 @@ the evidence.
   multiplier after `CalculateEndDamage`, or something else, was not read.
 - **The compressed DPS meter.** In launch B, with `dps_meter_compress` 1, the
   DPS meter read `0` in the x1e12 grab (and `Sorak 0` right after loading,
-  before any hit). What it shows with compression on, and whether the cap
-  plays any part in that `0`, is not established. Launch A's meter (not
-  compressed) drew full digits.
+  before any hit). Two readings narrow it: the meter already read `Sorak 0`
+  while `numguard` counted `calls=0`, before the shortener had seen a single
+  number, and the first cap substituted a real number
+  (`first=100300112243000`), not NaN, so the cap's NaN-to-0 substitute was
+  not the source of that `0`. What the meter shows with compression on, and
+  whether the cap plays any part in the later `0`, is still not established:
+  no window ran with the meter compressed and the cap forced off, which is
+  what would separate the game's own behaviour from the cap's. Launch A's
+  meter (not compressed) drew full digits.
 - **The other `num_compress` consumers** (enemy health bars, HUD, menus)
   get the same cap, since it sits on the shortener they all meet, but none of
   them was observed past the limit.

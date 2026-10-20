@@ -37,10 +37,11 @@ Release date: 2026-10-23
   With every Modifiers slider at its normal value, nothing changes. Tested
   in a game session on 2026-10-20 with a development build of the plugin, in
   Act 1's town at the crash report's settings and then with Total Damage
-  raised in steps: with this fix turned off the game crashed at a damage
-  number of about 102 trillion, as reported; with it on, damage numbers up
-  to about 100 quintillion (1e20) all read `99999B`, the game kept running
-  through every step and closed cleanly.
+  raised in steps: with this fix turned off the game closed with the crash
+  report's error code once a damage number reached about 102 trillion (the
+  session's own figure; the report names no number); with it on, damage
+  numbers up to about 100 quintillion (1e20) all read `99999B`, the game
+  kept running through every step and closed cleanly.
 
 ## How to update
 

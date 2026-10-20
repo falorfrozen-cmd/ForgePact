@@ -36,7 +36,7 @@ LARGEST = "99999000000000"
 SMALLEST = "-999999"
 NOT_CAPPED = "numguard: num_compressSteam hook is {route} - numbers past the display limit are not capped"
 TABLE_ONLY = ("numguard: num_compressSteam hook is table-only - only calls through the script table are capped;"
-              " the game's calls through its method value are not")
+              " the game's calls through its method value are not (static reading)")
 FORCED_OFF = "numguard: forced off - every number reaches the shortener as given, still counted and traced"
 FORCED_AUTO = "numguard: forced auto - a number past the display limit is capped while armed"
 

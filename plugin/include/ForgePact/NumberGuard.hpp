@@ -31,7 +31,9 @@
 // and has no direct call site, so only the inline detour at the function
 // sees it. A table-only or failed install is not armed and says so once per
 // route result: a table-only hook caps only the calls that go through the
-// script table, which the game's method-value calls do not.
+// script table. That the game's method-value calls skip the table is a
+// static reading, not measured: no session compared a table-only install
+// with a native one on this script (Live 2 ran native only).
 //
 // Arming: Arm() is called only by a Modifiers lever set off vanilla
 // (StatsManager's `stat` and `statadd`, SkillSlidersMod's `skillslider`) and,
@@ -240,7 +242,7 @@ inline bool Install() {
         s.route = route;
         if (changed && route == kRouteTableOnly)
             Out("numguard: num_compressSteam hook is table-only - only calls through the script table are capped;"
-                " the game's calls through its method value are not");
+                " the game's calls through its method value are not (static reading)");
         else if (changed && route == kRouteFailed)
             Out("numguard: num_compressSteam hook is failed - numbers past the display limit are not capped");
     }
