@@ -24506,6 +24506,19 @@ static bool EnsureProtGetHook()
     return true;
 }
 
+// Any lever that puts more monsters in a zone than the game would: density,
+// Special Content (g_ObjMult), `enemyall`, or map reveal's spawn pass. The game
+// keeps 262,144 protected records in ac_dll_gm.dll and builds a monster with an
+// unchecked -1 handle once they run out, which faults inside SetVariable
+// (ForgePact#232). A raised lever gets the room for what it asked for; it is
+// never capped or refused, since the frame-rate cost is the player's choice.
+static bool PopulationCapacityWanted()
+{
+    const auto& reveal = ForgePact::MapRevealManager::Instance();
+    return ForgePact::DensityManager::Instance().Mult > 1.0 || g_EnemyMultAll > 1 || !g_ObjMult.empty()
+        || (reveal.IsEnabled() && reveal.PacksEnabled());
+}
+
 static bool PreparePopulationCapacity()
 {
     // Reuse the existing drop-rate getter hook; never put two independent
@@ -68269,6 +68282,15 @@ void FrameCallback(FWFrame& FrameContext)
             ForgePact::RestartAnytimeMod::Instance().ClearPending();
             RestartAnytimeInstall();
         }
+    }
+
+    // Room for a raised population (ForgePact#232): armed once per process,
+    // after setup, the first time any population lever is raised. Bank zero
+    // stays the game's own pool, which keeps every record it already holds;
+    // the extra pools only take what it cannot. Install() names any refusal
+    // in the log and in modstate's population.reason.
+    if (g_Setup && (fc % 60) == 0 && !ForgePact::ProtectedPool::Runtime::attempted && PopulationCapacityWanted()) {
+        PreparePopulationCapacity();
     }
 
     // Auto-prospect, toggled by `autoprospect 1`: the m_MoveItemToGrid hook
