@@ -45,11 +45,27 @@ or a hash that does not match it, and a manifest entry with no PNG.
 
 ## In the game
 
-A piece's embedded PNG is written to `bp_ipc\mark1\` under its file name only
-when no file of that name is there yet, and loaded once a session. The bag
-icon is set on every dressing of a piece whose icon loaded, and the dropped
-icon replaces a piece's ground sprite only when its own copy loaded. With no
-PNG embedded, or a load that failed, nothing is written or replaced and the
-piece shows its base item's art. `mark1set stat` reports how many loaded as
-`icons=<loaded>/<embedded>` (`0/0` while no PNG is embedded); a failed load
-prints one line naming the files.
+The art follows the set's switch. Nothing is loaded, written or installed for
+it until the session's first `mark1set bonus 1` (character select included);
+from then on it stays armed for the rest of the session, and turning the
+switch off does not disarm it. `mark1probe spawn` arms nothing. While the art
+is not armed, every piece shows its base item's art, in the bag and on the
+ground.
+
+Once armed, a piece's embedded PNG is written to `bp_ipc\mark1\` under its file
+name only when no file of that name is there yet, and loaded once a session.
+A dressing writes our bag icon only for a piece whose bag icon and ground copy
+both loaded, and only while the shared `LootGroundInit` detour is not known to
+run table-only. The ground copy is drawn by one more consumer of that detour
+(hidden loot's, after the Flight charms'), installed once, when an icon is
+embedded and a character exists. With no PNG embedded, or a load that failed,
+nothing is written or replaced and the piece shows its base item's art.
+`mark1set stat` reports how many loaded as `icons=<loaded>/<embedded>` (`0/8`
+before the art is armed, `0/0` in a build with no PNG embedded), `art=`
+`off` or `armed`, and the ground route; a failed load prints one line naming
+the files.
+
+Measured in Mod live 2 (2026-10-19, `docs/mark1-set-research.md`, "Mod live 2
+results"): before arming, the body armour showed its base item's art; after
+`mark1set bonus 1`, `icons=8/8`, and the bag, the ground and the worn body slot
+drew the owner's art. The tooltip draws no item icon at all.

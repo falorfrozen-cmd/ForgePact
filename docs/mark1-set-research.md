@@ -71,6 +71,16 @@ anything that suspends the game's own loop.
   (`penalty-route: none`). The facts are folded into the same four sections
   of `docs/RUNTIME_DATA_MODELS.md` and into `mod_live_1` of the curated
   measurements.
+- **Mod live procedure 2** (the built set with its switch on): run on
+  2026-10-19 in two attempts, the second after the worn read was fixed
+  (§ Phase 2: the mod, "Mod live 2 results"). The pieces, their art, the
+  full-set read, the border and the jump passed; the automation failed,
+  because pressing every column let Shadow Bolt keep Heavenly Fire from ever
+  casting; and the half walk and the cast's slowdown on it were not observed,
+  because the automated casts kept the slowdown on through every window. The
+  facts are folded into `docs/RUNTIME_DATA_MODELS.md` (the equipment slots,
+  § 7.7, § 7.8, § 19.10, § 19.11 and § 21.7) and into `mod_live_2` of the
+  curated measurements.
 
 ## Static search
 
@@ -1071,10 +1081,29 @@ walkable landing point is told from one past the edge (inside the room, and
 - **Whether the gate still charges mana** for a cast made through the input
   lever (`cast-gate`, not-observed: no mana member was found to watch), and
   whether it checks the other requirements `TalentRequirement` covers.
-- **Whether the cooldown applies to a forced press, and Mana Orb's
-  cooldown.** Over more than 480 forced frames Mana Orb was cast once
-  (`cast-gate`), but what refused the repeats (cooldown, mana, the orb still
-  alive) was not read.
+- **What unit `abilityCooldown` is in, and Mana Orb's cooldown.** Over more
+  than 480 forced frames Mana Orb was cast once (`cast-gate`), but what
+  refused the repeats (cooldown, mana, the orb still alive) was not read. Mod
+  live 2 showed the game refusing forced presses of Healing Zone between
+  casts (`gate-kept`, `cooldown-recast`), so a forced press does wait for
+  something, but its recasts came 501 to 1071 frames apart against an
+  `abilityCooldown` of 14, which in seconds would be 2016 frames at that
+  session's frame rate; what the value counts, and what makes the intervals
+  differ, was not read.
+- **In which order the gate serves the bar slots.** With Q, E and R all
+  pressed in every gate call, Heavenly Fire on R never cast while Shadow Bolt
+  on Q cast about once in 60 frames (Mod live 2, `on-automation`). Whether
+  the gate serves one asking slot a call, and in which order, was not read.
+- **Whether the cast's slowdown stacks on the half walk.** Not observed in
+  Mod live 2 (`on-speed`, `on-penalty`, `penalty-stack`): the automated casts
+  held `playerEffect[199]` at 0.65 through every bonus-on window. The windows'
+  mode, 0.325 of the walk control's, equals 0.5 × 0.65, which is consistent
+  with stacking by arithmetic but measures nothing about it.
+- **The gear slots the set does not use.** Mod live 2 measured the helmet at
+  gear slot 0, body armour 1, boots 2 and gloves 4 on Sorak; with the off hand
+  (9) and the relics (10 to 14) measured earlier, slots 3 and 5 to 8 hold
+  nothing measured, and whether another character wears its gloves at 4 too
+  was not read.
 - **The other bar columns.** Only the entries of Q, E, R and Y (3 to 6) were
   measured; how the gate derives the entry for the other columns, and why
   entries 26 and 25 move with Q and E, were not read. Whether a slot's
@@ -1276,9 +1305,9 @@ same slowdown as the keyed one. Soul Spurn was left on after
 | `speed-factor` | pass | Holding `hSpeedFactor` (D walk) and `vSpeedFactor` (S walk) at half during `PlayerMovement` left both ratios at 1.000, with the hold applied on all 240 frames. |
 | `penalty-control` | pass | After the E cast the step fell to 1.943 px (0.650 of the mode) for 57 frames, then climbed back over 16 frames; 64 consecutive frames were below 0.8 of the mode. |
 | `penalty-stat` | pass | Id 64's answer did not fall: 151 on all 120 frames through the slowdown and its recovery. |
-| `penalty-watch` | fail | `playerEffect[199]` fell from 1 to 0.65 on the cast frame and rose back to 1 over the 16 ramp frames, 57 to 73 frames after the cast, in step with the walk; nothing came back within 40 frames. `pSt` changed in no element; of the builtin variables only `image_index` moved. |
+| `penalty-watch` | fail | `playerEffect[199]` fell from 1 to 0.65 on the cast frame and rose back to 1 over the 16 ramp frames, 57 to 73 frames after the cast, in step with the walk; nothing came back within 40 frames. The `pst` watch saw no change in the number and bool entries it reads, which is not observed rather than a negative: how many of the 54 entries it read was not counted, and with no `pSt` change in any watch of the session it had no positive control there. Of the builtin variables only `image_index` moved. |
 | `penalty-lever` | fail | Holding `playerEffect[199]` at 1 during `PlayerMovement` took the 16-frame ramp away, but the 57 frames at 0.650 of the mode stayed; the cast was made (Healing Zone's count rose by one). |
-| `cast-mana` | not-observed | No element of `pSt` changed on the key cast nor on the forced one, though both cast (Healing Zone's count rose by one each). A forced press made too soon after the key cast cast nothing. |
+| `cast-mana` | not-observed | None of the `pSt` entries the watch reads (number and bool entries only) changed on the key cast nor on the forced one, though both cast (Healing Zone's count rose by one each). A forced press made too soon after the key cast cast nothing. |
 | `toggle-settle` | fail | One forced press switched Soul Spurn on 19 frames later. The second pair did not end off: the toggle went off 20 frames after the press and on again 57 frames after it, and was still on minutes later. |
 | `base-control` | pass | Helmet base 7 built, "Arcane Resisting Great Helm". |
 | `base-check` | pass | Body armour, boots and gloves all built at base 0: "Steel Armor of Vitality", "Boots of Sorcerer", "Heavy Gloves of Energy". |
@@ -1308,8 +1337,10 @@ called at all during `speed-builtin`'s walk, and the debugger saw `PlayerMoveSki
 probe read and halved were 163556 for `hSpeedFactor` and 163557 for
 `vSpeedFactor`, consecutive whole numbers that do not look like speed
 factors, so whether the walk scales with those members is **not
-established**. The step does track the frame clock: at half phase 1's frame
-time the modal step was exactly half phase 1's.
+established**. Against phase 1's Live 2 the modal step's ratio was 0.500
+(2.989 against 5.979 px) at a frame-time ratio of 0.518 (6.94 against
+13.4 ms): the step halved exactly while the frame time did not quite, so
+whether and how the step follows the frame clock is **not established**.
 
 **The slowdown is two parts, and only the ramp follows `playerEffect[199]`.**
 The cast drops the walk to 0.650 of its step for 57 frames, then a ramp of
@@ -1332,6 +1363,220 @@ capture holds no return location, and there is no caller to look up. With the
 control logging through the same windows, these are negatives with a working
 instrument: the walk and a standing cast do not reach those four scripts in
 this build (not observed).
+
+### Mod live procedure 2
+
+The built set, verified on the research build with its switch on: the
+pieces, their art, the full-set read, the automation, the half walk, the
+cast's slowdown on it, the jump and the switch's teardown. The capture is the
+workorder's mod live capture 2.
+
+**Setup:**
+
+- **Build:** the research build from `plugin_build\build.bat dev` at the
+  ForgePact commit that completes the worn read over the gear slots
+  (`c598b5b`), DLL SHA-256
+  `0a44a9d06ecd3780f1b4b4117e3178b4115f1094531e7869f368017c36b76362`. The
+  owner was asked before it was installed. The first attempt ran the build
+  before that commit (SHA-256 `13abbd1e…7857`).
+- **Character:** save slot 14, "Sorak" (White Mage), in `Town_01_rm`, later
+  the Outskirts of Inoya for the zone check. No flight charm worn,
+  `jumpscenery` off, the saves backed up first and restored at the end.
+- **Control:** as Mod live procedure 1 (`ping`, bare `mark1probe`).
+- **Pieces:** `mark1probe spawn set` at the player, one piece per class, each
+  picked up by a left click and worn by a right click, then Save & Exit and a
+  reload from character select.
+- **Bar:** `hs_skills_status` and `tgprobe talents` for every learned skill,
+  recording each one's `abilityCooldown`. A no-cooldown skill is a learned
+  skill that is not an aura and whose `abilityCooldown` is at most 0.25. Q
+  takes Shadow Bolt, R the next such skill (ties: Heavenly Fire first), E
+  keeps Healing Zone as the one cooldown skill, and Y stays empty as the
+  empty-slot outlier. Soul Spurn left the bar for the session, so there is no
+  toggle case. The bind goes through the game's skill popup.
+- **Walks:** Mod live procedure 1's modal-step rule (`pos 240` from one spot,
+  `ms=` within 10%). A walk with the bonus on also runs `watch effect` over
+  the same window, and its mode is taken over the frames whose
+  `playerEffect[199]` reads 1 (casts left out); fewer than 60 such frames is
+  not-observed for that check.
+- **Debugger:** none: every check is an outcome, and a per-frame logpoint
+  lengthens the frame and moves the modal step.
+
+**Checks**, in the order they run:
+
+- `dll-hash`, `control`, `marker` (validity).
+- `fresh-off`: before any `mark1set` command, the stat line reads the switch
+  off and nothing installed.
+- `art-default`: before anything arms the art, a spawned body armour shows
+  its base item's sprite on the ground and in the bag, never our art and
+  never the error sprite.
+- `arm-at-select`, `art-load`: `mark1set bonus 1` at character select waits
+  for the character and installs after the load; the art loads every
+  embedded PNG and the armour from `art-default` takes our bag icon.
+- `art-ground`, `art-fallback`: with every PNG loaded the spawned pieces lie
+  on the ground as our ground copies; with none, as their base items'
+  sprites. Only one of the pair can be seen in one build.
+- `spawn-control` (validity for what follows), `art-bag`, `art-tooltip`
+  (research): the four pieces carry the table's names, Heroic rarity and the
+  gold `Mark 1` row; the bag draws our icon; what the tooltip draws as its
+  icon is recorded.
+- `equip-detect`, `art-equipped` (research): with all four worn the set reads
+  full with no unreadable read; what the worn body slot draws is recorded.
+- `walk-control` (validity for the walks): two walks with the switch off,
+  modes within 3%.
+- `off-vanilla`: with the switch off, no press, only the key cast counted,
+  and a jump of about 97 px for a cursor 100 px away.
+- `on-automation`: with the switch on and no key, each skill on Q, E and R
+  cast at least once, column 6 never pressed, and every failure count 0.
+- `gate-kept`: Healing Zone's column casts fewer than half its presses.
+- `cooldown-recast`: Healing Zone cast at least twice with no key, its
+  presses refused in between, the frames between casts recorded.
+- `on-border`: the deep-red border on each bound column, none on an empty one.
+- `on-speed`: the bonus-on mode over its effect-1 frames is 0.47 to 0.53 of
+  `walk-control`'s mean.
+- `on-penalty`, `penalty-stack` (research): the run of frames below 0.9 of
+  the bonus-on mode around an automated cast; and, for a keyed Healing Zone
+  cast, the cast frames' mode against the same walk's pre-cast mode (about
+  0.65 if the slowdown stacks on the half walk, about 1.3 if it replaces it).
+- `jump-learn`, `jump-near`, `jump-far`: the jump's maximum M as learned, and
+  jumps with the cursor 300, 100, about 500 and about 900 px away each landing
+  about 3M (738 px) away.
+- `jump-backoff`, `jump-prop`, `jump-edge`, `zone-jump-edge` (research): a
+  take-off whose 3M point is blocked backs off to a walkable point past M; a
+  jump across the Bounty Board lands past it; a jump at the town's south edge
+  and one at the Outskirts' edge are refused, the player staying inside, and
+  the refusal comes from read answers, not failed reads.
+- `unequip-stops`, `bonus-off-restores`: the gloves off stop the presses and
+  give back the walk; the switch off stops them too, and the jump returns to
+  about M.
+
+**Amendment 11**, after the first attempt's `equip-detect` failed: the worn
+read finds each piece wherever the worn gear holds it among gear slots 0 to 9
+rather than at the table's slot for its class, and the stat line names the
+slot each piece was found in (`worn=`); the build became that commit's; from
+character select the operator clicks Back before loading the slot; and
+`lootshow` follows each spawn, because the owner's loot filter hides the
+pieces, with no piece spawned twice. The steps and the checks were otherwise
+unchanged.
+
+### Mod live 2 results
+
+The built set on the research build (Mod live procedure 2, 2026-10-19, two
+attempts: 18:18 to 18:27 UTC and, after Amendment 11, 19:15 to 19:33 UTC).
+`tools/live_checks.py` reads 32 checks from the second attempt's block of
+`forgepact-166-mark1-set-mod-live-2.md` (its last `## Checks` block): 26
+pass, 1 fail (`on-automation`), 5 not-observed (`art-fallback`, `on-speed`,
+`on-penalty`, `penalty-stack`, `jump-far`), none not-run. The validity checks
+passed, and so did `spawn-control`, `equip-detect` and `walk-control`, which
+the later checks stand on.
+
+**The first attempt** ran the earlier build and stopped at `equip-detect`.
+Everything before it passed as in the second attempt below, but with all four
+pieces worn the stat line read `set=` `partial(3)`, `unreadable=0`, on seven reads,
+a reload included, and taking the gloves off and putting them back left it at
+`partial(3)`: the read did not see the gloves. That build read each piece
+only at its class's row of the toolkit's equipment-slot table, whose gloves
+row (slot 3) had never been measured. The walk, automation and jump checks
+were not run, and Amendment 11 followed.
+
+The second attempt ran at about 6.94 ms a frame (6.93 to 6.96 in every
+window), as Mod live 1 did. With the four pieces worn in place of Sorak's own
+gear, the unlevered modal step was 2.385 px, against Mod live 1's 2.989 px in
+that gear.
+
+| Check | Verdict | What it showed |
+|---|---|---|
+| `dll-hash` | pass | The installed DLL was the research build above. |
+| `control` | pass | `ping` answered `pong (YYTK 4.0.1)`. |
+| `marker` | pass | `mark1probe: research build`, `rows=20 hooked=0 held=0`. |
+| `fresh-off` | pass | At the main menu, before the first load: `bonus=off`, `install=not-armed`, `set=none`, `reads=0`. |
+| `art-default` | pass | `icons=0/8 art=off ground=0`; the spawned body armour lay as a small grey plate and showed a grey chest-plate icon in the bag, its base item's art; no error sprite. |
+| `arm-at-select` | pass | `bonus=on install=waiting-for-character` at select, then `installed` after the load with `set=none`, presses 0 and `art=armed`. |
+| `art-load` | pass | `icons=8/8`, `ground-route=both`; the armour from `art-default` now drew our detailed 2x3 icon. |
+| `art-ground` | pass | Four spawn lines `dressed=yes`, `ground=4`; the body armour on the ground drew our armour sprite. |
+| `art-fallback` | not-observed | The build embeds all eight PNGs (`icons=8/8`), so the no-art case could not occur. |
+| `spawn-control` | pass | `Mark 1 Body Armor` (`Heroic Body Armor`) with the gold `Mark 1` row and two `Full set:` rows; the other three labelled `Mark 1 Helmet`, `Mark 1 Boots`, `Mark 1 Gloves`. |
+| `art-bag` | pass | Both body armours in the bag drew our 2x3 icon. |
+| `art-tooltip` | pass | The armour's tooltip draws no item icon at all, only its text rows (research, recorded). |
+| `equip-detect` | pass | `set=full unreadable=0 worn=0/1/2/4`: helmet at gear slot 0, body armour 1, boots 2, gloves 4; the same after a reload. |
+| `art-equipped` | pass | The worn body slot drew our armour art, the same as the bag (research, recorded). |
+| `walk-control` | pass | Two walks with the switch off, modal step 2.385 px both, 6.93 and 6.94 ms a frame. |
+| `off-vanilla` | pass | Switch off: presses 0, the probe's `TalentUse` row counted one call and `casts=252:1` (the key cast of Healing Zone); a jump with the cursor 101 px west covered 96.9 px. |
+| `on-automation` | fail | The switch on and no key, for 1350 gate calls (one a frame): Q, E and R pressed 1350 times each and column 6 never; Shadow Bolt (Q) cast 20 times, Healing Zone (E) once, Heavenly Fire (R) not at all; the gate was called 1350 times and every failure count read 0, `threw=0`. |
+| `gate-kept` | pass | From the same window: E's 1350 presses gave 1 cast, Q's 1350 gave 20 and R's 1350 gave 0. |
+| `cooldown-recast` | pass | With no key for the 3600-frame count, `White_Mage_Healing_Zone_obj`'s count rose at five frames, 661, 910, 1071 and 501 frames apart, and the probe read `casts=252:4`; E's presses rose from 5250 to 9750 while its casts stayed put. The setup read Healing Zone's `abilityCooldown` as 14. |
+| `on-border` | pass | The deep-red border framed Q, E and R; Y is empty and the bar does not draw it. |
+| `on-speed` | not-observed | No frame of the window read `playerEffect[199]` at 1: it read 0.65, rising to 0.670833 for one frame at each automated Shadow Bolt cast, about 60 frames apart. The whole window's mode was 0.775 px at 6.93 ms. |
+| `on-penalty` | not-observed | Under the same reading no frame ran below 0.9 of the bonus-on mode (0.6975 px) although casts rose (Shadow Bolt by 26, Healing Zone by 1, over the walk and the seconds around it): with the slowdown held on by the automation, a cast's dip cannot be told from the bonus-on mode. |
+| `penalty-stack` | not-observed | No frame read `playerEffect[199]` at 1, so there was no pre-cast mode, and the keyed E cast fell after the window, because the walk's calls ran one after another. |
+| `jump-learn` | pass | `max=` read `250.3(cap)`, jumpscenery's cap; with the cursor 300 px west, jump 1 covered 525.0 px and jump 2 734.9 px. |
+| `jump-near` | pass | Cursor 110 px west: 740.9 px, to the full distance and not the cursor; `granted` 2 to 3. |
+| `jump-far` | not-observed | The 500 px case (cursor 510 px away) landed 750.9 px away; the 900 px case was not run, because no point on screen is 900 px from the player. |
+| `jump-backoff` | pass | From (912, 1560), cursor due south: 250.0 px to y 1810, short of the blocked ground, `backed-off` 1 to 2, the landing walkable. |
+| `jump-prop` | pass | From (1300, 822) west across the Bounty Board: 718.9 px, landing past it on free ground, `granted` 5 to 6. |
+| `jump-edge` | pass | At the town's south edge: `refused-landing` 0 to 1 and a vanilla jump of 40.3 px; `refused-unreadable` 0 and every `unread=` count 0; the family's `rejected=` count rose; `grid-reads` rose only in its free count through the town jumps (18/0/0), never nogrid. |
+| `zone-jump-edge` | pass | At the Outskirts' edge: `refused-landing` 1 to 2, a vanilla jump of 125.1 px that stopped inside the wall (research). |
+| `unequip-stops` | pass | Gloves off: `set=` `partial(3)` and `worn=0/1/2/-`, presses held at 78873 across two reads about a second apart (the first about 140 frames after the gloves came off, not within 60), and the walk's mode back at 2.385 px. |
+| `bonus-off-restores` | pass | Switch off with the set worn: presses unchanged across about 360 frames, the mode 2.385 px, and a 300 px jump covered 250.3 px with the mod's jump count unchanged. |
+
+**The set is read where the pieces really are.** The worn read found the
+helmet at gear slot 0, the body armour at 1, the boots at 2 and the gloves at
+4 of the local player's worn gear, and lost only the gloves when they came
+off (`worn=0/1/2/-`). So slot 3 is not where this character's gloves are
+worn, against the toolkit's equipment-slot table, whose rows 1 to 8 had no
+measurement behind them.
+
+**The automation pressed every column, and one skill took every turn
+that mattered.** Pressing Q, E and R inside every gate call cast Shadow Bolt
+about once in 60 frames and Healing Zone whenever it was ready, but
+Heavenly Fire, whose `abilityCooldown` (0.25) is Shadow Bolt's, was never
+cast in those 1350 frames. Plausibly the gate serves one asking slot a call
+in a fixed order and Shadow Bolt, ready again within about 60 frames, keeps
+it from reaching R; in which order the gate serves the slots, and whether
+it serves more than one a call, was not read. The owner's answer after the
+session (take turns: when a column's cast lands, the next press goes to
+the column that has waited longest) is this workorder's turn rule.
+
+**The game's cooldown holds a forced press.** Healing Zone's column was
+pressed every gate call and cast once in `on-automation`'s 1350 presses, and in the
+3600-frame count it was recast 501 to 1071 frames apart. Its
+`abilityCooldown` reads 14; at 144 frames a second 14 seconds would be 2016
+frames, longer than every measured interval, so what unit it is in, and
+whether something shortens it, is **not established**. Five rises of the
+zone object's count stand against four casts the probe counted in the same
+window; the two were not reconciled.
+
+**The half walk under the automation: not observed.** With Shadow Bolt
+recast about every 60 frames, `playerEffect[199]` never returned to 1 in a
+bonus-on window, so no window had frames free of the cast's slowdown, and
+`on-speed`, `on-penalty` and `penalty-stack` are not observed. One number
+is still worth keeping, as a consistency observation and not a verdict: the
+bonus-on windows' mode, 0.775 px, is 0.325 of `walk-control`'s 2.385 px, and
+0.325 is exactly 0.5 × 0.65, the half walk times the slowdown's flat factor
+from Mod live 1. That is what stacking would give, but by arithmetic only:
+the frames behind it are all under the slowdown, nothing measured them
+against an unslowed bonus-on step, and the check that would tell (`on-speed`
+with no automated cast) did not run. The `watch effect` reply also hit its
+400-line cap after about 126 of the 240 frames in each window, so the rest
+of each window was not watched.
+
+**The jump.** M read 250.3 px, jumpscenery's cap; landings of 734.9, 740.9
+(cursor 110 px away) and 750.9 px (cursor 510 px away) are 2.94 to 3.00 times
+it, a back-off stopped at 250.0 px, and a jump across the Bounty Board covered
+718.9 px. Both edges refused: the town's south edge, and the Outskirts' edge,
+which loaded in a different layout from Mod live 1 and was found again by the
+same signature (an `Invisible_Wall_obj` met by the family, then the grid alone
+blocked over the cliff tiles). The view is 1280 × 720 room pixels centred on
+the player, so an on-screen cursor reaches about 645 px across and 741 px at a
+corner: `jump-far`'s 900 px case cannot be made with the mouse, and no
+on-screen cursor lies past 3M (751 px) either. It is recorded not observed and
+not re-run; the harness scenario for a cursor past 3M pins that rule.
+
+**The art.** The worn body slot draws the piece's `"11"` sprite, our art, as
+the bag does; the tooltip draws no item icon at all; and the fallback to base
+art was not observed in this build, which embeds all eight PNGs.
+
+**The toggle guard was not observed live**: Soul Spurn left the bar's cases
+for the session (owner, 2026-10-19).
 
 ### Phase 2 decision
 
