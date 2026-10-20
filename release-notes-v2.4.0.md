@@ -49,8 +49,8 @@ far over scenery, at the price of walking at half speed. A second switch,
     default; it works with or without the set's own switch). The pieces then
     drop from the game's own Heroic roll, the one that runs when you open a
     vault from your bag, not from kills. Each piece is about as likely as any
-    single Heroic unique that roll can give you, so expect one in a few
-    hundred vaults per piece; the exact rate has not been measured yet. A
+    single Heroic unique that roll can give you; the rate has not been
+    measured yet. A
     dropped piece shows its own art. With the switch off, vaults drop exactly
     what they always did.
 
