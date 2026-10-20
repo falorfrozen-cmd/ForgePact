@@ -40,7 +40,7 @@ far over scenery, at the price of walking at half speed.
     your movement speed, so what else reads your movement speed, such as the
     character sheet, can show the changed value while the bonus is on.
     Casting a skill still slows your walk for about a second, as it does
-    without the set.
+    without the set, on top of the half speed.
   - **Its own art** shows once you have switched the set on in that game
     session; until then a piece looks like the base item it is built on.
   - **The pieces cannot be found in the game yet.** A later update lets them
@@ -50,5 +50,9 @@ far over scenery, at the price of walking at half speed.
   pieces, their art, the outlines and the jump worked, and in that session,
   with every slot pressed at once, Shadow Bolt was cast 20 times and Heavenly
   Fire beside it not once; the turns make sure no one skill is pressed every
-  time. Taking turns, and the half walk while skills are being cast, are
-  checked in the next session.
+  time. A second session checked the turns on that same bar: in about 32
+  seconds with no key pressed, Shadow Bolt was cast 31 times, Heavenly Fire 30
+  and Healing Zone 3. It also measured the walk at half speed with the set on,
+  and a cast's slowdown on top of that: while a cast slows you, you walk at
+  about a third of your normal speed. A toggle skill on the bar has not been
+  checked in play yet.

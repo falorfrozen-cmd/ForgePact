@@ -81,6 +81,16 @@ anything that suspends the game's own loop.
   facts are folded into `docs/RUNTIME_DATA_MODELS.md` (the equipment slots,
   § 7.7, § 7.8, § 19.10, § 19.11 and § 21.7) and into `mod_live_2` of the
   curated measurements.
+- **Mod live procedure 3** (the turn rule, and the half walk re-measured with
+  Healing Zone alone on the bar): run on 2026-10-20 (§ Phase 2: the mod, "Mod
+  live 3 results"). The turns passed: on Mod live 2's own bar Shadow Bolt,
+  Heavenly Fire and Healing Zone were each cast with no key, 31, 30 and 3
+  times, every landing attributed to its column. The half walk measured 0.500
+  of the control, and a cast's 0.65 slowdown stacks on it
+  (`penalty-stack: stacks`). `landed-control` failed on one clause only: one
+  Healing Zone cast can leave two zone instances. The facts are folded into
+  `docs/RUNTIME_DATA_MODELS.md` § 7.7, § 7.8 and § 19.10 and into
+  `mod_live_3` of the curated measurements.
 
 ## Static search
 
@@ -1076,7 +1086,12 @@ casts the slot; which script moves the
 player during a jump (`skillsLeap`); why Live 2's walkable control failed
 (the probe read `place_meeting`'s `real` 0 as a meeting); and, in town, how a
 walkable landing point is told from one past the edge (inside the room, and
-`family` free). Still open:
+`family` free). Mod live 3 (2026-10-20) settled two more: a cast's slowdown
+stacks on the half walk (`penalty-stack: stacks`, the cast frames' step 0.650
+of the bonus-on step), and Heavenly Fire casts by key on Sorak in town with
+Shadow Bolt and Healing Zone beside it (Part B's positive control), which Mod
+live 2's starvation could not tell from a skill that does not cast there.
+Still open:
 
 - **Whether the gate still charges mana** for a cast made through the input
   lever (`cast-gate`, not-observed: no mana member was found to watch), and
@@ -1089,16 +1104,28 @@ walkable landing point is told from one past the edge (inside the room, and
   something, but its recasts came 501 to 1071 frames apart against an
   `abilityCooldown` of 14, which in seconds would be 2016 frames at that
   session's frame rate; what the value counts, and what makes the intervals
-  differ, was not read.
+  differ, was not read. Mod live 3 widened the spread: with Healing Zone
+  alone on the bar its automated recasts came 1575 frames apart in both
+  windows, and beside Shadow Bolt and Heavenly Fire 587 to 1627 frames apart.
+- **Why one Healing Zone cast can leave two zone instances.** In Mod live 3
+  (`landed-control`) a rise of `White_Mage_Healing_Zone_obj`'s count went
+  from 0 to 2 at one cast in each of two windows while the probe counted one
+  cast, and in Part B four rises stood against three casts, the extra zone
+  lasting 88 frames. So the zone count is at least the casts, not equal to
+  them; what the second instance is, and when the game makes one, was not
+  read.
 - **In which order the gate serves the bar slots.** With Q, E and R all
   pressed in every gate call, Heavenly Fire on R never cast while Shadow Bolt
   on Q cast about once in 60 frames (Mod live 2, `on-automation`). Whether
   the gate serves one asking slot a call, and in which order, was not read.
-- **Whether the cast's slowdown stacks on the half walk.** Not observed in
-  Mod live 2 (`on-speed`, `on-penalty`, `penalty-stack`): the automated casts
-  held `playerEffect[199]` at 0.65 through every bonus-on window. The windows'
-  mode, 0.325 of the walk control's, equals 0.5 × 0.65, which is consistent
-  with stacking by arithmetic but measures nothing about it.
+  The turn rule presses one column a call, so the set no longer depends on
+  it (Mod live 3, `on-automation`).
+- **Why the cast's flat slowdown ran longer under the half walk.** In Mod
+  live 3 (`on-penalty`) an automated Healing Zone cast held the step at
+  0.650 of the bonus-on step for 76 frames before the 16-frame ramp, against
+  Mod live 1's 57 flat frames for a key cast without the set at the same
+  frame time. Whether the flat part depends on the walk's speed, the cast's
+  route or something else was not read.
 - **The gear slots the set does not use.** Mod live 2 measured the helmet at
   gear slot 0, body armour 1, boots 2 and gloves 4 on Sorak; with the off hand
   (9) and the relics (10 to 14) measured earlier, slots 3 and 5 to 8 hold
@@ -1578,11 +1605,176 @@ art was not observed in this build, which embeds all eight PNGs.
 **The toggle guard was not observed live**: Soul Spurn left the bar's cases
 for the session (owner, 2026-10-19).
 
+### Mod live procedure 3
+
+The turn rule that replaced Mod live 2's press-every-column automation, and
+the half walk re-measured with Healing Zone alone on the bar (the owner's
+answers after Mod live 2, 2026-10-19), on the research build with the switch
+on. The capture is the turns workorder's live capture 1,
+`forgepact-166-mark1-set-turns-live-1.md`, kept with the hub's workorder
+files and not tracked.
+
+**Setup:**
+
+- **Build:** the research build from `plugin_build\build.bat dev` at the
+  ForgePact commit that completes the landing detour and the turn rule's
+  adapter (`506038b`), DLL SHA-256
+  `96c6d215ac87ab5e614b908abc937a404664b3aec60214a24a44c3401781483e`. The
+  owner was asked before it was installed.
+- **Character:** save slot 14, "Sorak" (White Mage), in `Town_01_rm`, from
+  the save before Mod live 2 (no Mark 1 pieces yet), with Mana Orb (253) on
+  Q, Healing Zone (252) on E, Soul Spurn (240) on R and Y empty. No flight
+  charm, `jumpscenery` off, the saves backed up first and restored at the
+  end.
+- **Control:** as Mod live procedure 1 (`ping`, bare `mark1probe`).
+- **Pieces:** `mark1probe spawn set` once, then `lootshow`; each piece picked
+  up by a left click and worn by a right click from the bag (C).
+- **Install:** `mark1set bonus 1`, then `mark1set bonus 0` (the install stays
+  in), and only then `mark1probe hook`, so that the probe's `TalentUse` row
+  goes in and the rows the set holds are named as held by `mark1set`.
+- **Part A, Healing Zone alone:** Q and R emptied through the game's skill
+  popup, so Healing Zone is the one automated column and Y the empty one.
+- **Part B, Mod live 2's own bar:** Shadow Bolt (239) on Q, Healing Zone on
+  E, Heavenly Fire (245) on R and Y empty, bound through the popup.
+- **Walks:** from `playerwarp 912 822`, D held, `mark1probe pos <n>`; with the
+  bonus on, `mark1probe watch effect <n>` in the same command file, and a
+  window's mode taken over its watched frames whose `playerEffect[199]` reads
+  1. Fewer than 60 such frames leaves that window not observed.
+- **Debugger:** none. Every check is an outcome counted by the probe's
+  `TalentUse` row and `mark1probe count` beside the set's own counters, and
+  a per-frame logpoint lengthens the frame and moves the modal step.
+
+**Checks**, in the order they run:
+
+- `dll-hash`, `control`, `marker` (validity).
+- `equip-detect` (validity): with the four pieces worn, `set=full`,
+  `unreadable=0` and four slots in `worn=`.
+- `install` (validity): `install=installed` with no refusal, `landed=0/0/0/0`
+  and `cast-calls=` on the stat line, and the probe's `hook` naming
+  `mark1set` for the rows it holds.
+- `walk-control` (validity for the walks): two walks with the switch off,
+  modes within 3%.
+- `cast-control` (validity for Part A): one key cast of E, counted by the
+  probe as `casts=252:1`.
+- `landed-control`: Part A, the switch on and no key for a 2400-frame count of
+  `White_Mage_Healing_Zone_obj`: Healing Zone cast at least once, column 4's
+  `landed=` equal to the probe's casts within 1, the count showing as many
+  new zones, presses on column 4 only and `yielded=0/0/0/0` (a lone column
+  never rests).
+- `on-speed`: Part A, the bonus-on mode over at least 60 watched frames
+  reading 1 is 0.47 to 0.53 of `walk-control`'s mean.
+- `on-penalty`, `penalty-stack` (research): Part A, a bonus-on walk holding
+  an automated Healing Zone cast after at least 60 watched frames reading 1:
+  the run of frames below 0.9 of the pre-cast mode, its length and lowest
+  ratio; and the cast frames' modal step against the pre-cast mode, about
+  0.65 if the slowdown stacks on the half walk, about 1.3 if it replaces it.
+- Part B's positive control (no check of its own): with the switch off, one
+  key cast of Q and one of R, counted as 239 and 245. No session had yet
+  recorded a cast of Heavenly Fire, so without it the two checks below would
+  be recorded not observed, never failed.
+- `on-automation`: Part B, the switch on and no key for a 3600-frame count:
+  239, 245 and 252 each cast at least once, 239's and 245's casts each at
+  least half the other's, column 6 never pressed, the four failure counts
+  `0/0/0/0` and `threw=0`.
+- `turn-landed`: from the same reads, each column's `landed=` rise equals the
+  probe's casts for its talent within 1, and `cast-calls=` rose at least as
+  much as their sum.
+- `cooldown-recast`: from the count, at least two new Healing Zone instances
+  with no key, and the frames between them.
+
+`landed-control` is off the session's required passes by the owner's
+decision of 2026-10-20, after it ran: one Healing Zone cast can leave two zone
+instances, so the zone count is no exact control for landings (below).
+
+### Mod live 3 results
+
+The turn rule and the half walk on the research build (Mod live procedure 3,
+2026-10-20, 09:37 to 09:50 UTC, one attempt). `tools/live_checks.py` reads 14
+checks from `forgepact-166-mark1-set-turns-live-1.md`: 13 pass, 1 fail
+(`landed-control`), none not observed, none not run. The validity checks
+passed, and so did `equip-detect`, `install`, `walk-control` and
+`cast-control`, which the later checks stand on. The session ran at 6.93 to
+6.94 ms a frame, as Mod live 1 and 2 did, and the unlevered modal step in the
+set was 2.385 px, Mod live 2's.
+
+| Check | Verdict | What it showed |
+|---|---|---|
+| `dll-hash` | pass | The installed DLL was the research build above. |
+| `control` | pass | `ping` answered `pong (YYTK 4.0.1)`. |
+| `marker` | pass | `mark1probe: research build`, `rows=20 hooked=0 held=0`. |
+| `equip-detect` | pass | `set=full unreadable=0 worn=0/1/2/4`, the slots Mod live 2 measured. |
+| `install` | pass | `install=installed`, no refusal; `landed=0/0/0/0` and `cast-calls=0`; `mark1probe hook` detoured 15 rows, its `TalentUse` row among them, and named `CheckTalentUse`, `TalentUseSetSpeed` and `ReturnSpecificStat` as held by `mark1set`. |
+| `walk-control` | pass | Two walks with the switch off, modal step 2.385 px both, 6.93 and 6.94 ms a frame. |
+| `cast-control` | pass | One key cast of E: the probe's `TalentUse` row counted one call and `casts=252:1`. |
+| `landed-control` | fail | Every clause but one held: over the first window column 4's `landed=` read 4 and the probe `casts=252:4`; presses only on column 4 (`presses=0/5760/0/0`, `skip-empty=5760/0/5760/5760`); `yielded=0/0/0/0`. The clause that missed is the zone count's: in each of two windows one rise of `White_Mage_Healing_Zone_obj`'s count went from 0 to 2, so the second window's two casts left three new zones. |
+| `on-speed` | pass | 103 watched frames read `playerEffect[199]` at 1, every one at a step of 1.192 px: 1.192 / 2.385 = 0.4998 of `walk-control`. |
+| `on-penalty` | pass | An automated Healing Zone cast (no key) after 86 watched frames at 1 dropped the step below 0.9 of the pre-cast 1.192 px for 86 of the next 87 frames (one double step broke the run, 28 and 58 frames); lowest step 0.775 px, 0.650 of the pre-cast mode (research, recorded). |
+| `penalty-stack` | pass | The cast frames' modal step, from the fall to the step's return to 1.192 px 92 frames later, was 0.775 px on 75 of them: 0.650 of the pre-cast mode. The slowdown stacks on the half walk. |
+| `on-automation` | pass | The switch on and no key, over 4590 gate calls (one a frame): `casts=239:31,245:30,252:3`; column 6 never pressed; `col-unreadable`, `orig-unreadable`, `write-failed` and `restore-failed` `0/0/0/0`, `threw=0`. Part B's positive control had cast both by key first (`casts=239:1,245:1`). |
+| `turn-landed` | pass | `landed=` rose 31, 3 and 30 on columns 3, 4 and 5 against the probe's 239:31, 252:3 and 245:30, and `cast-calls=` by 64, their sum. |
+| `cooldown-recast` | pass | With no key, `White_Mage_Healing_Zone_obj`'s count rose at four frames, 1064, 587 and 1627 frames apart, against three casts the probe counted; the extra zone lasted 88 frames. |
+
+**The skills take turns.** On Mod live 2's own bar, where pressing every
+column had given Shadow Bolt 20 casts and Heavenly Fire none, one column a
+call gave Shadow Bolt 31, Heavenly Fire 30 and Healing Zone 3 in 4590 frames
+(about 32 seconds). Over the same calls the set pressed Q 1772 times, E 993
+and R 1825, never Y, and counted `skip-turn=` rises of 2818, 3597 and 2765.
+Healing Zone, the column on cooldown most of the time, gave up its turn 11
+times (`yielded=0/11/0/0`), and the two no-cooldown skills never did. Those
+are the casts per column the provisional patience (90 frames) and rest (288
+frames) give on this bar. Heavenly Fire cast by key in the positive control
+and 30 times through the press write here, so Mod live 2's zero came from
+pressing every column at once, not from the skill or the route; which of
+several pressed slots the gate serves is still not read.
+
+**The landing instrument agrees with the probe.** Every landing the set
+counted matched a cast the probe's `TalentUse` row counted, column by column,
+alone (4 against 4) and beside two other skills (31, 3 and 30 against the
+same), and `cast-calls=`, the detour's own control, rose by exactly their
+sum. A lone eligible column was pressed on every call and never rested
+(5760 presses, `yielded=0`).
+
+**One Healing Zone cast can leave two zones.** The only clause that failed,
+in `landed-control`, was the zone count's: one rise of
+`White_Mage_Healing_Zone_obj`'s count went from 0 to 2 in each of two
+windows, and in Part B four rises stood against three casts, the extra zone
+lasting 88 frames. So the zone count is at least the casts and not equal to
+them; it was the wrong control for landings, and what the second instance is
+was not read (§ Not established). Alone on the bar, Healing Zone was recast
+1575 frames apart in both windows; beside the other two, 587 to 1627 frames
+apart.
+
+**The half walk measures half, and a cast's slowdown stacks on it.** With
+no cast in its window, the bonus-on step was 1.192 px against 2.385 px
+switched off, 0.4998: the shipped lever halves Sorak's walk in the set, as
+`speed-half` found in his own gear. An automated Healing Zone cast then held
+the step at 0.775 px, 0.650 of the bonus-on step, for 76 frames (one double
+step among them) and brought it back over a 16-frame ramp. So the slowdown
+multiplies the halved walk rather than replacing it: under a cast the set
+walks at 0.325 of the unlevered step, which Mod live 2's 0.325 only matched
+by arithmetic and this session measured. The flat part ran 76 frames here
+against Mod live 1's 57 for a key cast without the set (§ Not established).
+The `watch effect` reply again hit its 400-line cap, after 132 of the 480
+frames, so the step's return was read from `pos`.
+
+**Emptying a bar slot.** The operator emptied Q and R without the owner:
+a left click on the bar slot opens the skill popup, and a left click on the
+skill already bound to that slot (the one labelled with the slot's key)
+unbinds it. `hs_skills_status` then read the two slots at talent 0.
+
+**What ran differently.** In Part A's first window the operator idled about
+5760 frames, longer than the 2400-frame count, so that window's probe and
+stat reads cover more than its count; the second window took the reads right
+after the count, but the set's counters were cumulative there. Neither
+changes a verdict: the first window's landings and casts were counted over
+the same span from zero.
+
 ### Phase 2 decision
 
-Recorded on 2026-10-19 from Mod live 1 and the owner's answers after it.
-Each key takes exactly one value, on a line of its own, and the check that
-decides it is on the line below.
+Recorded on 2026-10-19 from Mod live 1 and the owner's answers after it;
+`penalty-stack` on 2026-10-20 from Mod live 3. Each key takes exactly one
+value, on a line of its own, and the check that decides it is on the line
+below.
 
 speed-route: stat-model
 Decided by `speed-sweep` and `speed-half` (both pass, control `walk-control` passed): one affine shape fits every swept point within 0.02%, and the interpolated answer gave 0.500; `speed-builtin` found no builtin that moves the walk and `speed-factor` no effect from the factor members. `stat-trace` placed the id-64 call outside every row Mark 1 wraps, so the halved answer goes to every local id-64 call, and the character sheet and the damage scripts that read id 64 see it too.
@@ -1605,6 +1797,9 @@ Decided by `base-control` and `base-check` (both pass): the helmet builds at bas
 zone-edge: both
 Decided by `zone-edge` (pass, control `zone-control` passed): at the Outskirts' upper edge `family` met an `Invisible_Wall_obj` one step before the path grid turned blocked, and past the wall only the grid still read blocked, to the room's edge, as in town; the tile layers read did not mark it. One edge of one zone was measured.
 
+penalty-stack: stacks
+Decided by `penalty-stack` (Mod live 3, research; `on-speed` passed in the same walk form, control `walk-control` passed): an automated Healing Zone cast in a bonus-on walk held the step at 0.775 px against the walk's pre-cast 1.192 px, a ratio of 0.650, the slowdown's flat factor, and not about 1.3, so the cast's slowdown multiplies the half walk. Mod live 2 had left it not observed.
+
 The values each key may take:
 
 - `speed-route`, the lever that halves the walk: `stat-model`, `builtin`,
@@ -1621,3 +1816,6 @@ The values each key may take:
   times, comma-separated.
 - `zone-edge`, which fields mark a generated zone's edge: `grid`, `family`,
   `both`, `neither` or `not-observed`.
+- `penalty-stack`, how a cast's slowdown combines with the half walk:
+  `stacks` (the cast frames' step about 0.65 of the bonus-on step),
+  `replaces` (about 1.3) or `not-observed`.
