@@ -2225,9 +2225,16 @@ the lever the owner chose on 2026-10-20 (route (a)) after Mod live procedure
 5's `kill-natural` saw no natural call in 30 minutes. It reruns
 `kill-natural` with the lever on, reruns `filter-shown` with
 `filter-control` in the same session, and checks that the lever, once off,
-leaves the gate vanilla. The capture is the drops workorder's live capture
-3, `forgepact-166-mark1-set-drops-live-3.md`, kept with the hub's workorder
-files and not tracked. Each check reads as Mod live procedure 5 defines it,
+leaves the gate vanilla, and ends with one window of the owner's own play
+with the lever off, which asks which code drops a vanilla unique from a
+kill (`vanilla-unique-path`). The capture is the drops workorder's live capture 3,
+`forgepact-166-mark1-set-drops-live-3.md`, kept with the hub's workorder
+files and not tracked. Its first attempt (2026-10-20) aborted: a debugger
+logpoint on `LoadDrops`' entry fired about 14,400 times in a few kills and
+froze the game, the kills were handed to the owner, and F on the town
+waypoint picked up a test item. The second attempt follows the procedure
+below, appends `# Attempt 2` to the same capture with its own checks, and
+reruns every step on the same DLL. Each check reads as Mod live procedure 5 defines it,
 except where this procedure says otherwise.
 
 **The lever** (research build only; the player build carries none of it).
@@ -2282,40 +2289,75 @@ these and the exact text.
 - **Control:** `ping` answers `pong (YYTK 4.0.1)`, and a bare `mark1probe`
   answers `mark1probe: research build` with its rows line.
 - **Cases:** one ordinary kill route (the lever on, monsters in
-  `Act_01_01`), the lever off (natural kills, the baseline), one piece
-  placed by name for the filter, and one tier-5 item without affixes as the
-  filter's control. Bosses and other acts are not run (not observed live).
-- **Why the filter can be read this time.** Mod live procedure 5 ran
-  `lootshow` and then judged labels drawn after it. This session runs no
-  `lootshow` at all, and reads the filter's verdict from the game's own
-  counter as well as from a picture: `lootcensus` before and after one
-  `mark1probe unique 1`. When that call placed exactly one item, `ground=`
-  rises by 1 and `hidden=` by that item's verdict (0 shown, 1 hidden). The
-  player stands still in town for the filter steps, so no other ground item
-  appears, and waits about 1 s before the second census, since the game
-  applies the verdict within 0.3 s.
+  `Act_01_01`), the lever off (the operator's kills, then the owner's own
+  play), one piece placed by name for the filter, and one tier-5 item
+  without affixes as the filter's control. The operator runs no bosses or
+  other acts; in the owner's window they are whatever the owner meets.
+- **Places:** nothing is placed on or near the town waypoint. The filter
+  steps run at a free point well away from the waypoint and the stash
+  (found with `mark1probe walkable scan`, checked with `mark1probe
+  walkable at`, reached with `playerwarp`), and the player stands still
+  there through them. The zone change warps onto the waypoint and opens it
+  with F; if F picks something up instead, it is redone from a point a
+  little off, never by walking.
+- **Driving the kills:** the operator drives every kill in its own windows;
+  none is handed to the owner. No command lists monster positions, so the
+  operator takes a screenshot, picks a pack, converts its offset from the
+  screen centre to world units (half the client pixels on this view),
+  checks the spot just short of it with `mark1probe walkable here`,
+  `playerwarp`s there and right-click casts at the pack with hs-drive's
+  mouse input, up to five casts per batch. Kills are counted by `arrays=`
+  (one array per kill). After every batch, at most a minute apart, `ping`
+  must answer; if it does not, the debugger is detached first and the
+  session is aborted if `ping` still does not answer.
+- **Owner window:** the owner, 2026-10-20: a unique (Satanic or better)
+  "can drop from anything, but the tier of it depend on how rare it is", so
+  low-tier uniques drop easily without the lever once the loot filter
+  shows them; the window "has to be playable (at least 30 fps for longer
+  sessions)". Mod live procedure 5 saw no `DropUniqueItems` call in 30
+  minutes of kills, so whether a kill's unique comes through
+  `DropUniqueItems` at all is what this window answers. It runs after
+  `lever-off`'s confirmed `killgate 0`, with the drops switch on. Before
+  it the owner sets the loot filter to show every unique tier; the filter
+  file lives in the saves directory the session backs up, so the restore
+  at the end puts the owner's filter back (the filter checks above run on
+  the owner's own filter, before the change). Nothing per-frame or hot runs
+  in it: the debugger's once-a-frame control is disabled after its count
+  is read and enabled again afterwards, when it must log again;
+  `dbg-unique` stays armed because it is cold, its positive control being
+  `kill-control` in the same session, and is deleted if the frame rate
+  falls under 30. Before the hand-over the frame rate is measured from
+  `incident stat`'s frame counter over 5 s and must be at least 30; below
+  that the window is not run. The owner plays normally until 3 to 5
+  uniques have dropped from kills and shown, or until a time cap the owner
+  sets, and reports each one's name, rarity and tier. The operator reads
+  `kill-calls=`, `loaddrops=`, `arrays=`, `game45=`, `c45-nonzero=`,
+  `c45-max=`, `dbg-unique` and the frame rate at each reported drop and at
+  least every 5 minutes. The window's length is never a pass condition.
 - **Debugger:** the hub's x64dbg MCP, attached under the hs-drive lease, only
   if the decompile index's build hash is this build's (else the session is
-  aborted). Three non-breaking logpoints: the control on `CheckTalentUse`,
-  armed first, which logs about once a frame; then `dbg-unique` on
-  `DropUniqueItems`' own entry and `dbg-loaddrops` on `LoadDrops`' own
-  entry. The locations and expected entry bytes are in the capture and the
-  hub's x64dbg guide, never in this doc. Both candidates are armed before
-  the switch and the lever install their detours, so they see the game's
-  bytes; a candidate refused for a byte mismatch is recorded `not-run` and
-  is not re-armed without bytes. Once the detours are in, a by-name call
-  enters through the script table and skips the entry, so the candidates
-  count direct calls only. The lever's re-entry calls the trampoline, so
-  `dbg-loaddrops` does not count it, while its inner direct call to
-  `DropUniqueItems` does reach `dbg-unique`. The debugger detaches before
-  the game is stopped.
+  aborted). Two non-breaking logpoints at most, and none on `LoadDrops` at
+  any time (the first attempt's froze the game): the control on
+  `CheckTalentUse`, armed first, which logs about once a frame; then
+  `dbg-unique` on `DropUniqueItems`' own entry. The locations and expected
+  entry bytes are in the capture and the hub's x64dbg guide, never in this
+  doc. `dbg-unique` is armed before the switch and the lever install their
+  detours, so it sees the game's bytes; refused for a byte mismatch, it is
+  recorded `not-run` and is not re-armed without bytes. Once the detours
+  are in, a by-name call enters through the script table and skips the
+  entry, so it counts direct calls only; the lever's inner direct call to
+  `DropUniqueItems` does reach it. If it rises by more than 200 in one
+  batch it is deleted and recorded not observed (hot). `dbg-loaddrops`
+  keeps its name but is the plugin's own reading, `loaddrops=` and
+  `game45=` from `mark1probe killgate`. The debugger detaches before the
+  game is stopped.
 
 **Steps and checks**, in the order they run:
 
 - `dll-hash` (validity): the installed DLL's SHA-256 equals the build's.
 - `control`, `marker` (validity): `ping` and `mark1probe` answer as above.
-- `dbg-control` (validity): attached; the control, then `dbg-unique` and
-  `dbg-loaddrops` armed; the control logs about once a frame.
+- `dbg-control` (validity): attached; the control, then `dbg-unique`
+  armed; the control logs about once a frame.
 - `kill-control` (validity): with the drops switch off, `mark1probe unique
   10` places at least 8 items, and `dbg-unique` rises by 10.
 - `filter-control` (control for `filter-shown`): still with the drops
@@ -2336,46 +2378,66 @@ these and the exact text.
   call's census rises are `ground=` +1 and `hidden=` +0 and the screenshot
   shows a `Mark 1 <piece>` label.
 - `lever-sees` (validity), `dbg-loaddrops`, `natural-45` (research):
-  `mark1probe killgate 0`; `mark1probe killgate`, `mark1set stat` and both
-  candidates' counts recorded; the waypoint to `Act_01_01`, then monsters
-  killed by teleporting to them and right-click casting (hs-drive input; the
-  owner only if that fails, and recorded so), every chest met opened, for 10
-  kills or 5 minutes; then the same three readings again. Expected
-  `lever=off hook=detoured` and `raised=0 reentered=0`. `lever-sees` passes
-  when `loaddrops=` rose by N, at least 1, and `dbg-loaddrops` rose by the
-  same N: the lever's hook sees the game's own direct calls. `natural-45`
-  is `arrays=`, `c45-nonzero=`, `c45-max=` and `game45=`, recorded whole;
-  `dbg-unique`'s and `kill-calls=`' rises are recorded beside them.
+  `mark1probe killgate 0`; `mark1probe killgate`, `mark1set stat` and
+  `dbg-unique`'s count recorded in town; the waypoint to `Act_01_01`, then
+  the operator's kills as above, every chest met opened, until `arrays=`
+  rose by 10 or 5 minutes; then the same three readings again. Expected
+  `lever=off hook=detoured` and `raised=0 reentered=0` throughout.
+  `lever-sees` passes when `loaddrops=` and `arrays=` each rose by at least
+  1 over the kills: the lever's hook sees the game's own direct calls.
+  `dbg-loaddrops` is `loaddrops=` and `game45=` before and after, recorded.
+  `natural-45` (operator part) is `arrays=`, `c45-nonzero=`, `c45-max=` and
+  `game45=`, recorded whole; `dbg-unique`'s and `kill-calls=`' rises are
+  recorded beside them.
 - `kill-natural` (acceptance), `dbg-unique`, `lever-opened` (research):
-  `mark1probe killgate 1`, `mark1probe killgate` recorded; monsters killed
-  the same way, chests opened, until `dbg-unique` has risen by at least 3
-  since the step began, or 15 minutes; then `mark1probe killgate` and
-  `mark1set stat`. `lever-opened` is `lever=on` with `reentered=` or
-  `raised=` above 0 and `threw=0`, with `unique-during=` recorded.
+  `mark1probe killgate 1`, `mark1probe killgate` recorded; the operator
+  kills the same way, chests opened, until `dbg-unique` has risen by at
+  least 3 since the step began, or `arrays=` by 40, or 15 minutes; then
+  `mark1probe killgate` and `mark1set stat`. `lever-opened` is `lever=on`
+  with `reentered=` or `raised=` above 0 and `threw=0`, with
+  `unique-during=` recorded beside `dbg-unique`'s rise, the independent
+  instrument.
   `kill-natural` passes when, across this step and the previous one
   together, `dbg-unique` rose by N, at least 1, and `kill-calls=` rose by
   the same N. A Mark 1 piece on the ground from a kill, with its
   `kill-<key>` ours and built each up by 1, is recorded when seen and is not
   required.
-- `lever-off` (acceptance): `mark1probe killgate 0`; 5 monsters killed, or
-  3 minutes; `mark1probe killgate`. It passes on `lever=off` with `raised=`
+- `lever-off` (acceptance): `mark1probe killgate 0`; the operator kills
+  until `arrays=` rose by 5, or 3 minutes; `mark1probe killgate`. It passes on `lever=off` with `raised=`
   and `reentered=` unchanged since the step began while `loaddrops=` rose:
   the hook still sees the game's calls, so the unchanged counts are not
   blindness.
+- `vanilla-unique-path` and `natural-45` (owner part), both research: the
+  owner window above, after the control's count is read and it is
+  disabled, and the frame rate measured; afterwards the same readings and
+  the control enabled, logging again. `vanilla-unique-path` reads
+  `via-dropuniqueitems` when every reported unique coincided with a rise
+  of `dbg-unique` or `kill-calls=`; `other-path` when at least one unique
+  dropped while both stayed flat and `kill-control` passed in the same
+  session; otherwise `not-observed`. `natural-45`'s owner part is the
+  window's rises of `loaddrops=`, `arrays=`, `c45-nonzero=`, `c45-max=`,
+  `game45=`, `kill-calls=` and `dbg-unique`, its length and the frame-rate
+  readings. Nothing rising is recorded as it is, never as a fail.
 - Last: `mark1set drops 0`, detach, stop the game, inspect the saves,
   restore this session's backup and inspect again.
 
 The session passes on `dll-hash`, `control`, `marker`, `dbg-control`,
 `kill-control`, `lever-sees`, `drops-on`, `filter-shown`, `kill-natural`
 and `lever-off`. `filter-control` is `filter-shown`'s control.
-`dbg-loaddrops`, `natural-45`, `dbg-unique` and `lever-opened` are research
-and never required. A check whose control failed is recorded `not-run
+`dbg-loaddrops`, `natural-45`, `dbg-unique`, `lever-opened` and
+`vanilla-unique-path` are research and never required. If
+`vanilla-unique-path` reads `other-path`, a kill's unique does not come
+through `DropUniqueItems`, so the kill route would need a different hook:
+that is a design question for the owner before any release, not a
+record. A check whose control failed is recorded `not-run
 (control)`: `kill-natural` when `kill-control` or `lever-sees` failed, and
 `filter-shown` as Mod live procedure 5 says.
 
 `kill-natural` takes `seen`, `blind` or `not-observed` exactly as Mod live
-procedure 5 defines them; the roll stays the game's own call, so `seen` is
-still its only accepted value. Under the lever, `not-observed` with
+procedure 5 defines them, over the two operator windows before
+`lever-off`; the roll stays the game's own call, so `seen` is still its
+only accepted value. A `kill-calls=` rise in the owner window is recorded
+under `natural-45` as a rise in a lever-off window. Under the lever, `not-observed` with
 `reentered=` above 0 says the type-45 path did not call `DropUniqueItems`;
 that is recorded as a finding and is not a reading that kills do not roll.
 If `natural-45` reads zero on every array, ordinary kills of those monsters
