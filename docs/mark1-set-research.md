@@ -1985,3 +1985,191 @@ are research and never required. A research check whose control failed
 `heroic-natural` with `heroic-calls=` unmoved while the candidate's count
 rose is a blind hook, recorded as a fail, never as "the vault does not
 roll".
+
+### Phase 3 kill route static reading
+
+The owner's decision, 2026-10-20, after Mod live procedure 4 ran: "Nooo, it
+should drop normally from kills like white mage set the holy one (sacred) or
+zealots prophecy (zealot). Both are ss rarity sets with drops available
+anywhere". Asked about the two defaults that followed, the owner chose
+"Kills and vaults (default)", so the Heroic route stays beside the kill
+route, and for the pieces' rarity "Satanic, like real sets", so the pieces
+come out Satanic (6) at SS tier instead of Heroic (9).
+
+**Why the Heroic roll was not enough.** As far as is read, `DropItemHeroic`
+runs when a player uses a vault or the Chaos Tower NPC, never on a kill
+([Phase 3 static reading](#phase-3-static-reading)). A piece that only that
+roll can place is a vault reward, not a drop "available anywhere". The
+ordinary unique roll is the one a kill runs, and it keeps only rarities below
+7, so the Heroic route's rarity-9 stand-ins are refused there; the kill route
+needs Satanic stand-ins of the pieces' classes.
+
+Read on 2026-10-20 through the hub's ghidra MCP on the same build. The shared
+facts are in the hub's `docs/RUNTIME_DATA_MODELS.md` § 23.4; this is the part
+the kill route builds on, in short. No decompiled text is quoted here.
+
+- **A kill reaches the ordinary roll.** A dying monster's Destroy event calls
+  `DropItem`, `DropItem` calls `LoadDrops`, and `LoadDrops` calls
+  `DropUniqueItems` (1424). Drop type 45 is the one the shared references
+  measured as "a unique item" by opening every gate on one monster
+  (2026-08-27). How often type 45's gate passes on a kill was **not read** and
+  not measured. Chests, goblins, destructibles and piles reach `DropItem`
+  too, so the route covers them as well (an inference). **Static reading.**
+- **One draw, no set branch.** `DropUniqueItems` picks a sub-list k from 0 to
+  4 by a zone value with random step-ups, draws one random index of
+  `Controller_obj.lootListUnique[k]`, keeps the entry only when its rarity is
+  below 7 and it is not hidden, then builds and places it with the entry's
+  own type. A refused draw places nothing. Nothing in it treats set items
+  differently. **Static reading**, agreeing with the 2026-10-11 reading.
+- **Set items are Satanic uniques.** Mod live procedure 4's `heroic-control`
+  placed "Sacred Pendant" from the unique repository at rarity 6, and its
+  `pool` found `lootListUnique[4]`'s 218 droppable entries all rarity 6
+  (**measured**, 2026-10-20). The ordinary roll keeps every rarity below 7, so
+  a set piece on lists 0 to 4 drops through it like any other Satanic unique
+  (an inference). Which lists hold the Sacred or Zealot's Prophecy pieces is
+  **not established**.
+- **How the game names a set.** `GetSetInformation` maps a set's name to one
+  of 70 indices. `GetSetName`, `GetSetNames` and `DefineSetPieceRequirements`
+  exist by name and were not read, and how an item names its set was not
+  read. No drop script names a set: **not observed** by name, never "there is
+  none". The pieces are not made a game set item; only their rarity follows
+  the game's set pieces.
+- **Not readings of the game.** HS Offline Tracker's item table and the Item
+  Editor's catalog label the Sacred and Zealot pieces "Set"; neither says how
+  the game drops them.
+- **Not observed.** The MCP's callers and disassembly of `DropUniqueItems`
+  are empty, as for `DropItemHeroic`.
+
+**What the kill route does with it.** For each piece class (helmet 0, body
+1, boots 2, gloves 4) the stand-in is a distinct triple of that class on the
+unique lists that the ordinary roll keeps and that is listed the same number
+of times n on each of lists 0 to 4, preferring n = 0 and then the smallest n.
+The roll cannot say which list it drew, so the coin c / (n + c) that
+attributes a hit to the piece is exact only when n is equal on all five, the
+rule Pocket Elf's charm uses. A class with no such triple has no stand-in on
+the kill route; the other pieces still drop and the Heroic route is
+untouched. Each call pushes one entry per resolved piece onto each of lists
+0 to 4 and removes them on every way out, so each piece gets c / (L_k + p) of
+the calls that read list k, p being every entry pushed. With the measured
+lengths (50, 61, 79, 152 and 221) at c = 1 and p = 4 that is between 1 call
+in 225 and 1 in 54, the share of any single unique on that list; per kill it
+is that times type 45's chance, which is not measured. Pocket Elf already
+holds `DropUniqueItems`' one inline detour, and a second install would be
+table-only and blind, so both features share one detour and one install,
+called by whichever switch comes first; with Mark 1's switch off every flight
+charm drop behaves as before.
+
+### Mod live procedure 5
+
+The kill route, the pieces' tier and the owner's loot filter on the research
+build, with a re-check of Mod live procedure 4's `drops-on`, `drop-built` and
+`drop-art`. The capture is the drops workorder's live capture 2,
+`forgepact-166-mark1-set-drops-live-2.md`, kept with the hub's workorder files
+and not tracked.
+
+**Setup:**
+
+- **Build:** the research build from `plugin_build\build.bat dev` at the
+  ForgePact commit that completes the kill route's adapter, with the tier
+  change in it; its SHA-256 and `DropUniqueItems`' expected entry bytes are
+  recorded in the capture. The owner is asked before it is installed.
+- **Character:** save slot 14, "Sorak", in `Town_01_rm`, with no Mark 1 piece
+  in the bag. No flight charm worn; `mark1set bonus`, `jumpscenery`,
+  Headhunter, Tyrant's Crown and every flight charm drop switch, Pocket Elf's
+  included, stay off. The saves are backed up first and this session's
+  backup is restored at the end.
+- **Control:** `ping` answers `pong (YYTK 4.0.1)`, and a bare `mark1probe`
+  answers `mark1probe: research build` with its rows line.
+- **Cases:** the four pieces through the ordinary roll called by name
+  (`mark1probe unique`, the measured call shape of Pocket Elf's `rate-elf`);
+  one piece through the Heroic roll, the route the owner kept; `mark1probe
+  spawn set`, the loader route, as an outlier; and real kills in
+  `Act_01_01`, the game's own direct call from `LoadDrops`, as the other
+  outlier. A piece loaded from a save is not run (not observed live).
+- **Debugger:** the hub's x64dbg MCP, attached under the hs-drive lease, only
+  if the decompile index's build hash is this build's (else the session is
+  aborted). Two non-breaking logpoints: the control on `CheckTalentUse`,
+  which logs about once a frame, armed first; then the candidate on
+  `DropUniqueItems`' own entry. The locations and expected entry bytes are in
+  the capture and the hub's x64dbg guide, never in this doc. Both are armed
+  before the switch goes on, so they see the game's bytes. Before the shared
+  detour is in, a by-name call reaches the entry, which proves the logpoint;
+  once it is in, a by-name call enters the hook through the script table, so
+  from then on the candidate counts direct calls only, which a kill's is. The
+  debugger detaches before the game is stopped.
+
+**Steps and checks**, in the order they run:
+
+- `dll-hash` (validity): the installed DLL's SHA-256 equals the build's.
+- `control`, `marker` (validity): `ping` and `mark1probe` answer as above.
+- `dbg-control` (validity): attached, the control logpoint and then the
+  candidate armed; the control logs about once a frame.
+- `kill-control` (validity): with the drops switch off, `mark1probe unique
+  10` places at least 8 items, every rarity below 7, `pieces=` all 0, and the
+  candidate's count rises by 10.
+- `drops-on` (acceptance): `sigdrop status` and `flightcharm stat` recorded
+  whole; `mark1set drops 1` replies `drops=on install=installed gate=pending
+  kill-gate=pending`; `mark1set stat` then shows `kill-hook=detoured`,
+  `gate=pending`, `kill-gate=pending`, every `standin-<key>=` and
+  `kill-standin-<key>=` `pending`, and its first line `art=armed`. After one
+  `mark1probe unique 1`, `mark1set stat` shows `kill-gate=on` or
+  `not-resolved`, each `kill-standin-<key>=` a stand-in or `none`,
+  `gate=pending` still, and `kill-calls=` up by 1.
+- `pool-kill` (research): `mark1probe pool kill`, recorded whole: the five
+  list lengths and, per class, a stand-in whose `counts=` are all equal, or
+  `none`. The driver records the route from it: stand-ins for all four
+  classes, for some, or for none.
+- `reach-kill`, `tier-read`, `sig-untouched` (acceptance): `mark1probe
+  copies 200`, then `mark1probe unique 20` twice, `mark1set stat`, `sigdrop
+  status` and `flightcharm stat`. Every class `pool-kill` gave a stand-in is
+  placed at least once in the 40 calls; each piece's `kill-<key>` ours equals
+  its built; `refused=0 anomalies=0`; `kill-calls=` up by 40 (`reach-kill`).
+  Every Mark 1 placed line reads `rarity=6 tier=5`, and the other lines'
+  `tier=` are recorded (`tier-read`). `sigdrop status`' `injected=`,
+  `ourHits=` and `built=`, and `flightcharm stat`'s drops line, equal those
+  recorded at `drops-on` (`sig-untouched`).
+- `filter-shown` (acceptance), `filter-control` (research): the ground around
+  the player screenshotted without `lootshow`. A `Mark 1 <piece>` ground
+  label shows past the owner's loot filter (`filter-shown`). An item that is
+  not a Mark 1 piece and whose placed line read `tier=5` shows its label
+  (`filter-control`); none placed at tier 5 is recorded not observed.
+- `drop-built`, `drop-art`, `tier-ss` (acceptance): if the filter showed no
+  piece, `lootshow` first. One piece hovered on the ground and
+  screenshotted, then picked up by a left click, the bag opened (C), the
+  piece hovered and screenshotted. Its placed line named it `Mark 1 <piece>`
+  at rarity 6; the ground sprite is the owner's art, never `Error_spr`; the
+  tooltip, on the ground or in the bag, reads the piece's name, Satanic and
+  "Tier SS"; the bag icon is the owner's art (a full bag is recorded not
+  observed).
+- `heroic-still` (acceptance): `mark1probe heroic 20` and `mark1set stat`:
+  at least one Mark 1 placed line reads `rarity=6 tier=5`, `gate=on`, and
+  `heroic-calls=` is up by 20.
+- `spawn-tier` (acceptance): `mark1probe spawn set`, `lootshow`, and one
+  spawned piece hovered and screenshotted: four lines `dressed=yes tier=5`,
+  and the tooltip reads "Tier SS".
+- `kill-natural`, `dbg-unique` (research): `mark1probe copies 400`,
+  `mark1set stat` and the candidate's count recorded; the waypoint to
+  `Act_01_01`, then monsters killed (by hs-drive input; by the owner only if
+  that fails, and recorded so) until the candidate's count has risen by at
+  least 1 and a placed item was seen, or for 10 minutes; then `mark1set
+  stat`. `kill-calls=` rises by exactly the candidate's rise, and a Mark 1
+  piece lies on the ground from a kill with its `kill-<key>` ours and built
+  each up by 1. No rise in 10 minutes is recorded not observed.
+- `drop-off` (acceptance): `mark1set drops 0`, `mark1probe unique 20` and
+  `mark1set stat`: at least one item placed, `pieces=` all 0, and
+  `injected=` and `kill-pushed=` unchanged since before the step.
+- Last: detach, stop the game, inspect the saves, restore this session's
+  backup and inspect again.
+
+The session passes on `dll-hash`, `control`, `marker`, `dbg-control`,
+`kill-control`, `drops-on`, `reach-kill`, `tier-read`, `sig-untouched`,
+`filter-shown`, `drop-built`, `drop-art`, `tier-ss`, `heroic-still`,
+`spawn-tier` and `drop-off`. `pool-kill`, `filter-control`, `kill-natural`
+and `dbg-unique` are research and never required. A research check whose
+control failed (`kill-control`, `dbg-control`) is recorded `not-run
+(control)`. `kill-natural` with `kill-calls=` unmoved while the candidate's
+count rose is a blind hook, recorded as a fail, never as "kills do not
+roll". No rise in 10 minutes is not observed, never "kills do not run the
+roll", because type 45's chance per kill is not read. A `filter-shown` fail
+while `filter-control` passed is a defect of ours; both failing says the
+owner's filter hides SS items too, and is recorded so.
