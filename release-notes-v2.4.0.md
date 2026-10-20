@@ -47,7 +47,8 @@ far over scenery, at the price of walking at half speed.
     drop.
 
   The set was checked in play on a research build of the plugin: the
-  pieces, their art, the outlines and the jump worked, and that session is
-  why the skills now take turns (with every slot pressed at once, Shadow Bolt
-  kept Heavenly Fire from ever being cast). Taking turns, and the half walk
+  pieces, their art, the outlines and the jump worked, and in that session,
+  with every slot pressed at once, Heavenly Fire beside Shadow Bolt was never
+  seen to cast; the skills now take turns so that one skill cannot hold
+  another back. Taking turns, and the half walk
   while skills are being cast, are checked in the next session.
