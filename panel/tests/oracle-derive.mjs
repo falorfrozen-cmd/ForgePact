@@ -152,10 +152,10 @@ export const quickDisable = (controlId) => `#enabledMods .quick-disable[data-for
 // default in a fresh sandbox, as map reveal restates its child). The
 // Satanic Zone control switch, Boss soul pieces (on the Loot tab), the
 // Tracker tab's switch (#185), the three flight charms' drop switches
-// (Mods > Items, #158) and the Mark 1 set's switch (Mods > Items, #166) sit
-// before Jump through scenery rather than last: the show key's select follows
-// this loop without a navigation step of its own, so the loop must end on
-// Mods > Quality of Life.
+// (Mods > Items, #158) and the Mark 1 set's and Mark 1 drops' switches
+// (Mods > Items, #166) sit before Jump through scenery rather than last: the
+// show key's select follows this loop without a navigation step of its own,
+// so the loop must end on Mods > Quality of Life.
 export const NATIVE_BOOLEANS = [
   { key: 'mod_far_sleep', tab: 'tab:mods', sub: 'subtab:qol', verb: 'farsleep' },
   { key: 'mod_pet_loot_unstick', tab: 'tab:mods', sub: 'subtab:qol', verb: 'petunstick' },
@@ -170,6 +170,7 @@ export const NATIVE_BOOLEANS = [
   { key: 'mod_flight_wings', tab: 'tab:mods', sub: 'subtab:items', verb: 'flightcharm wings' },
   { key: 'mod_flight_broom', tab: 'tab:mods', sub: 'subtab:items', verb: 'flightcharm broom' },
   { key: 'mod_mark1_set', tab: 'tab:mods', sub: 'subtab:items', verb: 'mark1set bonus' },
+  { key: 'mod_mark1_drops', tab: 'tab:mods', sub: 'subtab:items', verb: 'mark1set drops' },
   { key: 'mod_jump_scenery', tab: 'tab:mods', sub: 'subtab:qol', verb: 'jumpscenery' },
   { key: 'mod_loot_announce', tab: 'tab:mods', sub: 'subtab:qol', verb: 'lootann' },
   { key: 'mod_pillar_tips', tab: 'tab:mods', sub: 'subtab:qol', verb: 'pillartips' },

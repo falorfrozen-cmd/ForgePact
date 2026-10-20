@@ -103,9 +103,10 @@ QOL_CONTROL_IDS = [
 # Items holds a row for a specific item: one forged with a Mechanic
 # (Headhunter, Tyrant's Crown, Beacon), or one of ForgePact's own items (the
 # three flight charms' drop switches, forgepact-158-flight-charms-mod, and the
-# Mark 1 set's switch, forgepact-166-mark1-set-mod).
+# Mark 1 set's switch, forgepact-166-mark1-set-mod, and Mark 1 drops' switch,
+# forgepact-166-mark1-set-drops).
 ITEMS_CONTROL_IDS = ["headhunter", "tyrant", "beacon", "mod_flight_elf", "mod_flight_wings", "mod_flight_broom",
-                     "mod_mark1_set"]
+                     "mod_mark1_set", "mod_mark1_drops"]
 # The Gameplay sub-tab holds the Bosses select (issue #44), then Dungeon chest
 # opens early's switch and range and its countdown form's child select (issue
 # #31; the select, the owner's choice of 2026-10-04), and nothing else.

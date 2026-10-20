@@ -353,6 +353,10 @@ DEFAULTS = {
     # the jump goes three times as far, in exchange for a half-speed walk. Off
     # by default; offline only, like every mod here.
     "mod_mark1_set": False,
+    # Mark 1 drops (#166): lets the four Mark 1 pieces join the game's own
+    # Heroic roll (vaults), one entry's share each, the way Gabriel Wings join
+    # the Angelic roll. Off by default; offline only, like every mod here.
+    "mod_mark1_drops": False,
     # Gems of Incarnation (docs/incarnation-gems-research.md): every gem that
     # drops is Mythic (4-5 mods, a seed the game itself rolled Mythic), and every
     # gem's mods show their best tier's top value. Both off by default, like
@@ -1291,6 +1295,11 @@ def build_cmds(cfg: dict) -> list:
         # the plugin installs nothing until a character exists, and acts only
         # while that character wears the full set.
         out.append("mark1set bonus 1")
+    if cfg.get("mod_mark1_drops", False):
+        # Safe to send at launch: `mark1set drops 1` with no character only
+        # arms the drops; the plugin installs its Heroic-roll hook once a
+        # character exists and touches nothing until the game rolls a drop.
+        out.append("mark1set drops 1")
     if cfg.get("mod_gem_mythic", False):
         # Safe to send at launch, like toggleguard: `gemmythic 1` only arms it,
         # and the plugin hooks the gem drop once a player exists.
@@ -3431,7 +3440,7 @@ class H(BaseHTTPRequestHandler):
                     # moved wins and the other gives way
                     other = "rarity_ancient" if key == "rarity_rare" else "rarity_rare"
                     cfg[other] = min(_pct(cfg.get(other, 0)), 100 - cfg[key])
-                elif key in ("density_on", "auto_apply", "map_reveal", "map_reveal_packs", "map_reveal_spawn", "headhunter", "tyrant", "beacon", "mod_filter_max_relics", "mod_orb_pickup_radius", "mod_pet_quest_pickup", "mod_pet_relic_pickup", "mod_pet_loot_unstick", "mod_auto_prospect", "mod_auto_prospect_bag", "mod_toggle_indicator", "mod_toggle_guard", "mod_restart_anytime", "mod_far_sleep", "mod_stash_move_all", "density_rolling", "mod_hidden_loot", "mod_jump_scenery", "mod_loot_announce", "mod_tracker", "mod_pillar_tips", "mod_flight_elf", "mod_flight_wings", "mod_flight_broom", "mod_mark1_set", "mod_craft_mats", "mod_gem_mythic", "mod_gem_maxroll", "mod_boss_soul_pieces", "satanic_everywhere"):
+                elif key in ("density_on", "auto_apply", "map_reveal", "map_reveal_packs", "map_reveal_spawn", "headhunter", "tyrant", "beacon", "mod_filter_max_relics", "mod_orb_pickup_radius", "mod_pet_quest_pickup", "mod_pet_relic_pickup", "mod_pet_loot_unstick", "mod_auto_prospect", "mod_auto_prospect_bag", "mod_toggle_indicator", "mod_toggle_guard", "mod_restart_anytime", "mod_far_sleep", "mod_stash_move_all", "density_rolling", "mod_hidden_loot", "mod_jump_scenery", "mod_loot_announce", "mod_tracker", "mod_pillar_tips", "mod_flight_elf", "mod_flight_wings", "mod_flight_broom", "mod_mark1_set", "mod_mark1_drops", "mod_craft_mats", "mod_gem_mythic", "mod_gem_maxroll", "mod_boss_soul_pieces", "satanic_everywhere"):
                     cfg[key] = bool(val)
                 elif key == "mod_hidden_loot_key":
                     code = hidden_loot_key_value(val)
@@ -3599,6 +3608,8 @@ class H(BaseHTTPRequestHandler):
                         send_cmds([f"flightcharm {FLIGHT_CHARM_WORDS[key]} {1 if cfg[key] else 0}"], cfg)
                     elif key == "mod_mark1_set":
                         send_cmds([f"mark1set bonus {1 if cfg['mod_mark1_set'] else 0}"], cfg)
+                    elif key == "mod_mark1_drops":
+                        send_cmds([f"mark1set drops {1 if cfg['mod_mark1_drops'] else 0}"], cfg)
                     elif key == "mod_gem_mythic":
                         cmds = [f"gemmythic {1 if cfg['mod_gem_mythic'] else 0}"]
                         if cfg["mod_gem_mythic"]:
