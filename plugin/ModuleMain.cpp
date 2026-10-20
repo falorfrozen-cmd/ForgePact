@@ -29,6 +29,8 @@
 // here on, DropManager.hpp's included; its adapter is beside the frame
 // profiler's, before RunCommand.
 #include <ForgePact/IncidentMonitor.hpp>
+// The crash trap (issue #223): installed with the monitor, read by RethrowLine.
+#include <ForgePact/CrashTrap.hpp>
 #include <windows.h>
 #include <algorithm>
 #include <fstream>
@@ -247,6 +249,23 @@ static void OutRaw(const std::string& s)
     std::lock_guard<std::mutex> lock(g_OutFileLock);
     std::ofstream f(OutPath(), std::ios::app);
     f << s << "\n";
+}
+
+// Issue #223: a `catch (...)` that hands an exception back into the game with
+// `throw;` says so first, in one out.txt line naming the mod and the C++ type
+// the crash trap last saw thrown on this thread. Each site passes its own
+// counter, so a site that rethrows every frame writes kRethrowLinesPerSite
+// lines a session and no more. test_crash_trap_contract.py finds every such
+// catch block and fails one without this call.
+static constexpr long kRethrowLinesPerSite = 5;
+
+static void RethrowLine(const char* mod, volatile long& written) noexcept
+{
+    if (InterlockedIncrement(&written) > kRethrowLinesPerSite) return;
+    try {
+        Out(std::string("rethrow: ") + mod + " type=" + ForgePact::CrashTrap::LastCppType()
+            + " - an exception from the game's own call, passed back to the game");
+    } catch (...) {}
 }
 
 // out.txt is append-only and nothing ever trimmed it - one player's copy
@@ -1145,7 +1164,12 @@ static void DoReadMem(const std::string& hexaddr, const std::string& lenstr)
     try { addr = std::stoull(hexaddr, nullptr, 16); len = std::stoi(lenstr); } catch (...) { Out("readmem: bad args"); return; }
     if (len <= 0 || len > 8192) { Out("readmem: len out of range"); return; }
     unsigned char* p = (unsigned char*)addr;
-    if (IsBadReadPtr(p, len)) { Out("readmem: address not readable"); return; }
+    bool unreadable = false;
+    {
+        const ForgePact::CrashTrap::GuardedReadScope guarded;   // its own handled fault, not a crash (#223)
+        unreadable = IsBadReadPtr(p, len) != FALSE;
+    }
+    if (unreadable) { Out("readmem: address not readable"); return; }
     std::string hex;
     char b[4];
     for (int i = 0; i < len; i++) { sprintf_s(b, "%02X", p[i]); hex += b; }
@@ -10300,10 +10324,14 @@ static bool AddrIsExecutableInModule(HMODULE mod, const void* addr)
 }
 
 // Safe to read `bytes` at `p`? A wrong struct layout must produce a refusal
-// and a log line, never an access violation inside a frame callback.
+// and a log line, never an access violation inside a frame callback. The
+// probe faults and handles its own access violation: inside the crash trap's
+// guarded-read depth it is counted, not staged as a crash (#223).
 static bool ReadablePtr(const void* p, size_t bytes)
 {
-    return p && !IsBadReadPtr(p, bytes);
+    if (!p) return false;
+    const ForgePact::CrashTrap::GuardedReadScope guarded;
+    return !IsBadReadPtr(p, bytes);
 }
 
 // Which check stopped a collect, so the log can name it instead of the mod
@@ -22900,6 +22928,8 @@ static void FlightGuardClose()
     g_FlightGuard.Close(place, shrinkAndPlace, report);
 }
 
+static volatile long g_FlightParseRethrowLines = 0;   // RethrowLine's count for the hook below
+
 static RValue& Hook_FlightParseItemToGrid(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
     if (!g_FlightGuardOn) return g_Orig_FlightParseItemToGrid(S, O, R, argc, A);
@@ -22910,6 +22940,7 @@ static RValue& Hook_FlightParseItemToGrid(CInstance* S, CInstance* O, RValue& R,
         return r;
     } catch (...) {
         FlightGuardClose();
+        RethrowLine("flightcharm", g_FlightParseRethrowLines);
         throw;
     }
 }
@@ -60132,6 +60163,7 @@ static void IncidentFrameTick()
     namespace inc = ForgePact::Incident;
     const int64_t now = inc::Qpc();
     inc::g_Accounting.OnFrame(now);
+    ForgePact::CrashTrap::NoteGameThread(GetCurrentThreadId());   // the trap's `thread=game` (#223)
     if (!g_Setup) return;   // start-up's long frames are the game loading
     static int64_t nextContext = 0;
     if (now < nextContext) return;
@@ -60148,6 +60180,23 @@ static void IncidentFrameTick()
 // `incident setup` (ForgePact #151): the setup's install cost line, the
 // session's install totals, and one timed thread snapshot, the positive
 // control for the detour part. The snapshot runs here and nowhere else.
+#ifndef FORGEPACT_RELEASE
+// Research build only (`incident trapprobe`, #223): one access violation in
+// this DLL on the calling thread, outside every guarded read, handled by this
+// function's own __try, so the crash trap stages a dump and the game carries
+// on. No C++ object here: __try needs that.
+static bool IncidentTrapProbeFault() noexcept
+{
+    __try {
+        int* volatile target = nullptr;
+        *target = 223;
+        return false;
+    } __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+        return true;
+    }
+}
+#endif
+
 static void IncidentCommand(const std::string& rest)
 {
     namespace inc = ForgePact::Incident;
@@ -60158,9 +60207,19 @@ static void IncidentCommand(const std::string& rest)
         Out(inc::ThreadSnapshotLine(inc::ThreadSnapshot()));
         return;
     }
+#ifndef FORGEPACT_RELEASE
+    if (sub == "trapprobe") {
+        const long before = ForgePact::CrashTrap::StagedCount();
+        const bool handled = IncidentTrapProbeFault();
+        Out(std::string("incident: trapprobe ") + (handled ? "access violation raised and handled here" : "no fault raised")
+            + " | staged " + std::to_string(ForgePact::CrashTrap::StagedCount()) + " (was " + std::to_string(before) + ")");
+        return;
+    }
+#endif
     if (!sub.empty() && sub != "stat" && sub != "status") { Out("usage: incident stat|setup"); return; }
     for (const auto& line : ForgePact::Incident::StatLines(ForgePact::Incident::Monitor::Instance().Snapshot()))
         Out(line);
+    Out(ForgePact::CrashTrap::StatusLine());   // `incident: trap ...`: each route armed, the dump ready or why not (#223)
 }
 
 // ---- incident monitor thread: Win32 and files only ----
@@ -60345,16 +60404,45 @@ static std::string IncidentWriteBundle(ForgePact::Incident::ReportFacts facts, u
     if (ec) return {};
     const std::string profile = IncidentEnv("USERPROFILE");
     failedFiles = 0;
+    auto failed = [&] {
+        ++failedFiles;
+        ++inc::Monitor::Instance().writeErrors;
+    };
     auto put = [&](const char* file, const std::string& text) {
         std::ofstream f(pending / file, std::ios::binary | std::ios::trunc);
         f << inc::ScrubProfile(text, profile);
         f.flush();
-        if (!f) {
-            ++failedFiles;
-            ++inc::Monitor::Instance().writeErrors;
-        }
+        if (!f) failed();
     };
+    // #223: a crash's evidence is what the crash trap left in the previous
+    // session's folder. Its dump, staged at first chance or written by the
+    // unhandled route and kept by IncidentCrashCheck's settle, moves into the
+    // bundle as crash.dmp (binary, not scrubbed), so the ten folders kept
+    // bound the dumps too.
+    namespace trap = ForgePact::CrashTrap;
+    const bool crash = facts.kind == inc::Kind::crash;
+    const stdfs::path trapPrev = stdfs::path(IPC_DIR) / trap::kPrevDirName;
+    if (crash) {
+        bool moveFailed = false;
+        facts.dump = inc::TakeStagedDump(trapPrev.string(), pending.string(), moveFailed);
+        if (moveFailed) failed();
+    }
     put("report.json", inc::ReportJson(facts));
+    // The loader's two logs, every kind: a PERF or freeze report's from the
+    // live files beside the game, a crash's from the copies the trap made as
+    // the game died, since the live ones already hold this session.
+    const std::pair<const char*, const char*> logs[] = { { "yytoolkit-tail.txt", trap::kYytkLogFile },
+                                                         { "aurie-tail.txt", trap::kAurieLogFile } };
+    for (const auto& [file, logName] : logs) {
+        bool haveLog = false;
+        const std::string text = IncidentReadFile((crash ? trapPrev.string() : IncidentExeDir()) + "\\" + logName, &haveLog);
+        put(file, haveLog ? inc::TailLines(text, inc::kTailLines) : inc::LogMissingText(logName, crash));
+    }
+    if (crash) {
+        bool haveRecord = false;
+        const std::string record = IncidentReadFile((trapPrev / trap::kRecordFile).string(), &haveRecord);
+        if (haveRecord) put("trap.txt", record);
+    }
     put("out-tail.txt", inc::TailLines(IncidentReadFile(OutPath()), inc::kTailLines));
     put("out-prev-tail.txt", inc::TailLines(IncidentReadFile(IPC_DIR + "\\out.prev.txt"), inc::kTailLines));
     bool found = false;
@@ -60415,8 +60503,18 @@ static void IncidentCrashCheck()
         return inc::PreviousSession(IncidentReadFile(OutPath()), IncidentReadFile(IPC_DIR + "\\out.prev.txt"), s)
             ? s : std::string();
     }();
-    if (session.empty()) { OutRaw("incident: no previous session to check"); return; }
+    // #223: what the crash trap recorded in the previous session, rotated to
+    // crashtrap.prev at this load. Every path below that writes no crash
+    // bundle deletes its staging (a first-chance dump, its line, the log
+    // copies), so no stale staging reaches a later report.
+    const std::string trapPrev = IPC_DIR + "\\" + ForgePact::CrashTrap::kPrevDirName;
+    if (session.empty()) {
+        inc::SettleTrapPrev(trapPrev, false, false);
+        OutRaw("incident: no previous session to check");
+        return;
+    }
     if (!inc::SessionRanMonitor(session)) {
+        inc::SettleTrapPrev(trapPrev, false, false);
         OutRaw("incident: the previous session ran without the incident monitor - not checked");
         return;
     }
@@ -60433,22 +60531,40 @@ static void IncidentCrashCheck()
                               + (exitCode.empty() ? std::string("unknown") : exitCode) + " after it"
                         : std::string("incident: the previous session shut down cleanly"));
         if (haveExit) DeleteFileA(exitPath.c_str());
+        inc::SettleTrapPrev(trapPrev, true, false);
         return;
     }
-    OutRaw(inc::CrashLine(exitCode, module));
+    inc::TrapRecord record;
+    const bool haveRecord = inc::ParseTrapRecord(
+        IncidentReadFile(trapPrev + "\\" + ForgePact::CrashTrap::kRecordFile), record);
+    OutRaw(inc::CrashLine(exitCode, module, haveRecord ? inc::TrapWhere(record) : std::string()));
     auto& monitor = inc::Monitor::Instance();
-    if (!monitor.bundles.Allow(inc::Kind::crash, 0.0)) return;
+    if (!monitor.bundles.Allow(inc::Kind::crash, 0.0)) {
+        inc::SettleTrapPrev(trapPrev, false, false);
+        return;
+    }
+    // The staged dump goes into the bundle only when it was taken for the
+    // record folded here; one taken for an earlier exception is deleted.
+    if (inc::SettleStagedDump(trapPrev, haveRecord, record) == inc::StagedDump::mismatch)
+        OutRaw(inc::StagedDumpMismatchLine());
     inc::ReportFacts facts;
     facts.kind = inc::Kind::crash;
-    // Found at the next load, so where the frame thread was is unknowable:
-    // ReportJson writes "unknown" for a crash's inHook and inMod.
+    // Found at the next load: where the frame thread was comes from the crash
+    // trap's record, and ReportJson writes "unknown" for both tags without one.
     facts.episode.kind = inc::Kind::crash;
     facts.exitJson = exitJson;
     facts.previousBanner = inc::FirstLine(session);
+    facts.haveTrap = haveRecord;
+    facts.trap = record;
     unsigned failed = 0;
     const std::string dir = IncidentWriteBundle(std::move(facts), failed);
     if (haveExit) DeleteFileA(exitPath.c_str());
-    if (dir.empty()) { OutRaw("incident: the report could not be written under bp_ipc\\reports"); return; }
+    if (dir.empty()) {
+        inc::SettleTrapPrev(trapPrev, false, false);
+        OutRaw("incident: the report could not be written under bp_ipc\\reports");
+        return;
+    }
+    inc::SettleTrapPrev(trapPrev, false, true);
     monitor.bundles.Wrote(inc::Kind::crash, 0.0);
     monitor.lastReport = dir;
     OutRaw(inc::ReportWrittenLine(dir, failed));
@@ -60490,6 +60606,7 @@ static void IncidentMonitorRun() noexcept
                + inc::Fixed(inc::kSustainedMs / 1000.0, 0) + " s, freeze " + inc::Fixed(inc::kFreezeMs / 1000.0, 0)
                + " s | reports in bp_ipc\\reports");
         const double startMs = inc::QpcToMs(inc::Qpc());
+        double nextModulesMs = startMs + ForgePact::CrashTrap::kModuleRefreshMs;
         bool crashChecked = false;
         HWND window = nullptr;
         std::vector<inc::FrameSample> fresh;
@@ -60530,6 +60647,12 @@ static void IncidentMonitorRun() noexcept
                     crashChecked = true;
                     IncidentCrashCheck();
                 }
+                // The crash trap names a module from a list it never makes
+                // itself: a module loaded since the last pass joins it here.
+                if (nowMs >= nextModulesMs) {
+                    nextModulesMs = nowMs + ForgePact::CrashTrap::kModuleRefreshMs;
+                    ForgePact::CrashTrap::RefreshModules();
+                }
                 inc::StatFacts stat;
                 stat.frames = monitor.detector.Frames();
                 stat.lost = monitor.lost;
@@ -60565,11 +60688,17 @@ static void IncidentMonitorRun() noexcept
 
 // ModuleInitialize, after the frame callback registered: arms the
 // clean-shutdown marker, puts its ExitProcess writer in (above the frame
-// profiler, IncidentInstallExitHook) and starts the monitor thread.
+// profiler, IncidentInstallExitHook), installs the crash trap (#223: its
+// install rotates bp_ipc\crashtrap\ to crashtrap.prev\ before anything is
+// written, so the monitor thread's crash check reads the previous session's)
+// and starts the monitor thread.
 static void IncidentMonitorStart()
 {
     ForgePact::Incident::g_ShutdownMarker.Arm(OutPath().c_str());
     IncidentInstallExitHook();
+    Out(ForgePact::CrashTrap::Install(IPC_DIR, IncidentExeDir()));
+    // A failed Mining Ore extra roll names the C++ type the trap recorded (#222).
+    ForgePact::MiningOre::exceptionType = &ForgePact::CrashTrap::LastCppType;
     if (!ForgePact::Incident::Monitor::Instance().Start(&IncidentMonitorRun))
         Out("incident: the monitor thread could not be started - no crash, freeze or FPS-drop reports this session");
 }

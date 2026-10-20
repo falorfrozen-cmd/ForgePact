@@ -31,7 +31,9 @@
 //   * A crash runs no code of ours, so it is found afterwards: at the next
 //     load, the previous session's part of out.txt either has the line
 //     g_ShutdownMarker writes during a normal exit (from the adapter's
-//     ExitProcess hook, or else its own destructor), or it does not.
+//     ExitProcess hook, or else its own destructor), or it does not. What
+//     the crash itself was, CrashTrap.hpp records as it happens (issue #223);
+//     ParseTrapRecord below reads that record back for the report.
 //
 // Game-independent: Win32 and the standard library only, no runtime
 // interface. tests/incident_monitor_harness.cpp drives the same classes on a
@@ -53,6 +55,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <deque>
+#include <filesystem>
+#include <fstream>
 #include <mutex>
 #include <string>
 #include <type_traits>
@@ -1385,11 +1389,214 @@ inline std::string FreezeEndedLine(double ms, bool load, bool inMenu = false)
                      : load ? std::string(", after a room change: a load, not reported") : std::string());
 }
 
-inline std::string CrashLine(const std::string& exitCode, const std::string& module)
+// ---- the crash trap's record (issue #223) ----------------------------------------
+//
+// CrashTrap.hpp writes one line per exception it records into
+// bp_ipc\crashtrap\trap.txt, from inside the dying process:
+//
+//   exception 0x<code> at <module>+0x<offset> thread=<game|other> tid=<n>
+//   in-hook=<id|none> in-mod=<mod> game-original=<yes|no> cpp=<type|none>
+//   route=<first-chance|unhandled>
+//
+// (one line; `unlisted` stands for a module the trap's list did not hold). The
+// next load reads the previous session's copy, bp_ipc\crashtrap.prev\trap.txt,
+// and folds one line into the crash report: the last `route=unhandled` line,
+// the crash itself, else the last line of any route.
+
+// report.json's key for that folded line (null when there is none).
+inline constexpr const char* kReportTrapKey = "trap";
+
+struct TrapRecord {
+    std::string exceptionCode;     // "0xC0000005"
+    std::string module;            // a file name, or "unlisted"
+    std::string offset;            // "0x1A2B": from the module's base, or the address when unlisted
+    std::string thread;            // "game" | "other"
+    unsigned long threadId = 0;
+    std::string inHook;            // a hook id, or "none"
+    std::string inMod;             // ModName's text
+    bool gameOriginal = false;     // inside a game original the mod's hook wraps
+    std::string cppType;           // a C++ exception's decorated type name; empty: none
+    std::string route;             // "first-chance" | "unhandled"
+};
+
+// One line in the format above, or false. Keys are found in their order, so a
+// module name with a space in it still parses.
+inline bool ParseTrapLine(std::string line, TrapRecord& out)
+{
+    while (!line.empty() && (line.back() == '\r' || line.back() == '\n' || line.back() == ' ')) line.pop_back();
+    static const char* const keys[] = { " at ", " thread=", " tid=", " in-hook=", " in-mod=", " game-original=", " cpp=", " route=" };
+    constexpr size_t kKeys = sizeof(keys) / sizeof(keys[0]);
+    const std::string head = "exception ";
+    if (line.compare(0, head.size(), head) != 0) return false;
+    size_t at[kKeys] = {};
+    size_t from = head.size();
+    for (size_t k = 0; k < kKeys; ++k) {
+        at[k] = line.find(keys[k], from);
+        if (at[k] == std::string::npos) return false;
+        from = at[k] + std::strlen(keys[k]);
+    }
+    auto value = [&](size_t k) {
+        const size_t start = at[k] + std::strlen(keys[k]);
+        const size_t end = k + 1 < kKeys ? at[k + 1] : line.size();
+        return line.substr(start, end - start);
+    };
+    TrapRecord r;
+    r.exceptionCode = line.substr(head.size(), at[0] - head.size());
+    const std::string where = value(0);
+    const size_t plus = where.rfind("+0x");
+    if (plus == std::string::npos || r.exceptionCode.compare(0, 2, "0x") != 0) return false;
+    r.module = where.substr(0, plus);
+    r.offset = where.substr(plus + 1);
+    r.thread = value(1);
+    const std::string tid = value(2);
+    char* stop = nullptr;
+    r.threadId = std::strtoul(tid.c_str(), &stop, 10);
+    if (tid.empty() || !stop || *stop) return false;
+    r.inHook = value(3);
+    r.inMod = value(4);
+    const std::string original = value(5);
+    if (original != "yes" && original != "no") return false;
+    r.gameOriginal = original == "yes";
+    r.cppType = value(6);
+    if (r.cppType == "none") r.cppType.clear();
+    r.route = value(7);
+    if (r.route != "first-chance" && r.route != "unhandled") return false;
+    out = std::move(r);
+    return true;
+}
+
+// The record to fold out of a whole trap.txt: the last unhandled line, else
+// the last line of any route. False when it holds no record line (a session
+// line alone: nothing was recorded).
+inline bool ParseTrapRecord(const std::string& text, TrapRecord& out)
+{
+    TrapRecord last, unhandled;
+    bool haveLast = false, haveUnhandled = false;
+    size_t at = 0;
+    while (at < text.size()) {
+        size_t end = text.find('\n', at);
+        if (end == std::string::npos) end = text.size();
+        TrapRecord r;
+        if (ParseTrapLine(text.substr(at, end - at), r)) {
+            if (r.route == "unhandled") { unhandled = r; haveUnhandled = true; }
+            last = std::move(r);
+            haveLast = true;
+        }
+        at = end + 1;
+    }
+    if (haveUnhandled) out = std::move(unhandled);
+    else if (haveLast) out = std::move(last);
+    return haveLast;
+}
+
+// "Hero_Siege.exe+0x64D0F3"
+inline std::string TrapWhere(const TrapRecord& r) { return r.module + "+" + r.offset; }
+
+// The crash trap's staging (#223, Amendment 3): beside trap.txt the trap
+// stages a dump at first chance, the record line that dump was taken for and
+// copies of the game's two loader logs. CrashTrap.hpp names its files with
+// these (a static_assert there), and the next load settles them by them.
+inline constexpr char kTrapDumpFile[] = "crash.dmp";
+inline constexpr char kTrapDumpLineFile[] = "dumpline.txt";
+inline constexpr const char* kTrapLogFiles[2] = { "YYToolkit.log", "aurie.log" };
+
+// After the next-load check (#223): a clean previous session's
+// bp_ipc\crashtrap.prev\ is deleted, and so is a crash's once it was folded
+// into a report. Any other keeps its record until the next load's rotation
+// replaces it, but loses its staging (the dump, its line, the log copies), so
+// no stale staging reaches a later report. True when the folder was deleted.
+inline bool SettleTrapPrev(const std::string& prevDir, bool sessionClean, bool folded)
+{
+    std::error_code ec;
+    if (!sessionClean && !folded) {
+        const std::filesystem::path dir(prevDir);
+        for (const char* name : { kTrapDumpFile, kTrapDumpLineFile, kTrapLogFiles[0], kTrapLogFiles[1] })
+            std::filesystem::remove(dir / name, ec);
+        return false;
+    }
+    std::filesystem::remove_all(prevDir, ec);
+    return !ec && !std::filesystem::exists(prevDir, ec);
+}
+
+// Whether two record lines name the same exception: code, module, offset and
+// thread. The route may differ: the unhandled route takes no second dump of
+// an exception the first chance already staged.
+inline bool SameException(const TrapRecord& a, const TrapRecord& b)
+{
+    return a.exceptionCode == b.exceptionCode && a.module == b.module && a.offset == b.offset && a.threadId == b.threadId;
+}
+
+// What the next load did with a crashed session's staged dump.
+enum class StagedDump { none, kept, mismatch };
+
+inline const char* StagedDumpName(StagedDump d)
+{
+    return d == StagedDump::kept ? "kept" : d == StagedDump::mismatch ? "mismatch" : "none";
+}
+
+// At the next load, before the crash bundle takes it: the staged dump in
+// `prevDir` stays only when the record line written beside it names the
+// exception the fold picked (`record`); otherwise it and its line are deleted
+// (a dump with no line beside it cannot be matched and goes the same way).
+inline StagedDump SettleStagedDump(const std::string& prevDir, bool haveRecord, const TrapRecord& record)
+{
+    namespace fs = std::filesystem;
+    const fs::path dump = fs::path(prevDir) / kTrapDumpFile;
+    const fs::path line = fs::path(prevDir) / kTrapDumpLineFile;
+    std::error_code ec;
+    if (!fs::exists(dump, ec)) {
+        fs::remove(line, ec);
+        return StagedDump::none;
+    }
+    std::string text;
+    {
+        std::ifstream f(line, std::ios::binary);
+        if (f) text.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+    }
+    TrapRecord takenFor;
+    if (haveRecord && ParseTrapRecord(text, takenFor) && SameException(takenFor, record)) return StagedDump::kept;
+    fs::remove(dump, ec);
+    fs::remove(line, ec);
+    return StagedDump::mismatch;
+}
+
+// out.txt's one line when the staged dump was not the crash's.
+inline std::string StagedDumpMismatchLine()
+{
+    return "incident: the staged crash dump was taken for an earlier exception, not the one this report folds - "
+           "deleted, the report has no crash.dmp";
+}
+
+// The crash bundle takes the dump the settle kept: moved, binary and not
+// scrubbed, so the ten report folders kept bound the dumps too. True when it
+// is in the bundle; `failed` when one was there and could not be moved.
+inline bool TakeStagedDump(const std::string& prevDir, const std::string& bundleDir, bool& failed)
+{
+    namespace fs = std::filesystem;
+    const fs::path dump = fs::path(prevDir) / kTrapDumpFile;
+    std::error_code ec;
+    failed = false;
+    if (!fs::exists(dump, ec)) return false;
+    fs::rename(dump, fs::path(bundleDir) / kTrapDumpFile, ec);
+    failed = static_cast<bool>(ec);
+    return !failed;
+}
+
+// A log tail the bundle could not take (#223): a crash's comes from the copy
+// the trap made at the crash, a PERF or freeze report's from the live log.
+inline std::string LogMissingText(const std::string& logName, bool crash)
+{
+    return crash ? "the crashed session's " + logName + " was not captured (no copy in bp_ipc\\crashtrap.prev)\r\n"
+                 : logName + " was not found beside the game\r\n";
+}
+
+// `trapWhere` (the record's module+offset) stands in when the panel's
+// exit.json names no faulting module.
+inline std::string CrashLine(const std::string& exitCode, const std::string& module, const std::string& trapWhere = {})
 {
     return "CRASH previous session ended without a clean shutdown | exit "
            + (exitCode.empty() ? std::string("unknown") : exitCode) + " | module "
-           + (module.empty() ? std::string("unknown") : module);
+           + (!module.empty() ? module : !trapWhere.empty() ? trapWhere : std::string("unknown"));
 }
 
 inline std::string ReportWrittenLine(const std::string& dir, unsigned failedFiles)
@@ -1413,6 +1620,9 @@ struct ReportFacts {
     std::vector<ModCost> lastMinute;
     std::string exitJson;          // crash: the panel's exit.json, folded in as it is
     std::string previousBanner;    // crash: the banner line of the session that ended
+    bool haveTrap = false;         // crash: the crash trap left a record (#223)...
+    TrapRecord trap;               // ...this one, folded as `trap` and the crash's tags
+    bool dump = false;             // crash: crash.dmp is in the bundle
     unsigned episodes = 0;
     unsigned suppressed = 0;
 };
@@ -1433,15 +1643,30 @@ inline std::string ReportJson(const ReportFacts& f)
     auto text = [](const std::string& s) { return s.empty() ? std::string("null") : JsonString(s); };
     auto count = [](long long v) { return v < 0 ? std::string("null") : std::to_string(v); };
     const Episode& e = f.episode;
-    // The tags: a freeze's as they were captured; a crash's are unknowable at
-    // the next load; a PERF episode has none (its per-mod tables answer that).
+    // The tags: a freeze's as they were captured; a crash's from the crash
+    // trap's record, and unknown without one; a PERF episode has none (its
+    // per-mod tables answer that).
     const Kind kind = e.kind == Kind::none ? f.kind : e.kind;
     std::string inHook = "null", inMod = "null";
     if (kind == Kind::freeze) {
         inHook = JsonString(e.inHook.empty() ? std::string("none") : e.inHook);
         inMod = JsonString(InModText(e.inMod, e.inGameOriginal));
+    } else if (kind == Kind::crash && f.haveTrap) {
+        inHook = JsonString(f.trap.inHook.empty() ? std::string("none") : f.trap.inHook);
+        inMod = JsonString((f.trap.inMod.empty() ? std::string("none") : f.trap.inMod)
+                           + (f.trap.gameOriginal ? " (game original)" : ""));
     } else if (kind == Kind::crash) {
         inHook = inMod = JsonString("unknown");
+    }
+    std::string trapObject = "null";
+    if (f.haveTrap) {
+        const TrapRecord& t = f.trap;
+        trapObject = "{\"exceptionCode\": " + JsonString(t.exceptionCode) + ", \"module\": " + JsonString(t.module)
+                     + ", \"offset\": " + JsonString(t.offset) + ", \"thread\": " + JsonString(t.thread)
+                     + ", \"threadId\": " + std::to_string(t.threadId) + ", \"inHook\": " + JsonString(t.inHook)
+                     + ", \"inMod\": " + JsonString(t.inMod) + ", \"gameOriginal\": " + (t.gameOriginal ? "true" : "false")
+                     + ", \"cppType\": " + text(t.cppType) + ", \"route\": " + JsonString(t.route)
+                     + ", \"dump\": " + (f.dump ? "true" : "false") + "}";
     }
     std::string exitObject = "null";
     {
@@ -1466,6 +1691,7 @@ inline std::string ReportJson(const ReportFacts& f)
     j += "  \"modsEpisode\": " + CostJson(e.cost) + ",\n";
     j += "  \"session\": {\"episodes\": " + std::to_string(f.episodes) + ", \"suppressed\": " + std::to_string(f.suppressed) + "},\n";
     j += "  \"exit\": " + exitObject + ",\n";
+    j += std::string("  \"") + kReportTrapKey + "\": " + trapObject + ",\n";
     j += "  \"previousSession\": " + text(f.previousBanner) + "\n";
     j += "}\n";
     return j;

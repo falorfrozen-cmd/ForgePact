@@ -1,0 +1,4 @@
+session 2026-10-19T07:05:12Z pid=4242
+exception 0xC0000005 at BloodPactPlugin.dll+0x1F2A0 thread=game tid=1188 in-hook=none in-mod=frame game-original=no cpp=none route=first-chance
+exception 0xC0000005 at Hero_Siege.exe+0x64D0F3 thread=game tid=1188 in-hook=fp_mining_node_step in-mod=miner game-original=yes cpp=none route=unhandled
+exception 0xC0000005 at unlisted+0x7FF6A0001000 thread=other tid=2048 in-hook=none in-mod=none game-original=no cpp=none route=first-chance

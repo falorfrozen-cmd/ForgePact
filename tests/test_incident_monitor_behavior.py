@@ -43,7 +43,20 @@ destructor, must write it) or TerminateProcess (it must not, as after a
 crash). The probe is built with /MD /LD, as the plugin is.
 
 tests/fixtures/incident/ holds the exit.json and panel.json the panel writes;
-the harness reads them through the plugin's own parsers.
+the harness reads them through the plugin's own parsers. It also holds a
+trap.txt in the crash trap's format (issue #223): the fold scenarios parse it,
+pick its unhandled line over the first-chance lines around it, and write a
+crash report whose `trap` object and tags come from that line; with no record
+`trap` is null and the tags stay "unknown". The previous session's trap folder
+is deleted after a clean session or a fold, and kept otherwise.
+
+The crash trap's first-chance staging (Amendment 3: a dump, the record line it
+was taken for, the two log copies, in the previous session's trap folder) is
+kept only for a crash: a clean previous session deletes it with the folder; a
+crash keeps the dump only when its line names the exception the fold picked
+(the bundle then carries crash.dmp and both tails, `trap.dump` true), and
+deletes it otherwise with one out.txt line (`trap.dump` false); a crash that
+writes no bundle deletes the staging and keeps the record.
 
 Each scenario prints `<name> | <pass|fail> | <detail>`. Skips, with a message,
 only where there is no MSVC. Writes only under build/incident-monitor-behavior.
@@ -94,6 +107,11 @@ EXPECTED = (
     "bundle-retention",
     "exit-json-fixture",
     "report-json",
+    "trap-fold",
+    "trap-prev-settled",
+    "clean-exit-deletes-staging",
+    "crash-keeps-staging",
+    "crash-staged-dump-mismatch",
 )
 
 
@@ -348,6 +366,63 @@ class IncidentMonitorBehaviorTests(unittest.TestCase):
         self.assertEqual(crash["exit"]["exit_code"], "0xC0000005")
         self.assertTrue(crash["exit"]["event_probe"]["queried"])
         self.assertTrue(crash["previousSession"].startswith("==== BloodPact plugin loaded ===="))
+        # No crash-trap record: no `trap` object, and the tags stay unknown.
+        self.assertIn("trap", crash)
+        self.assertIsNone(crash["trap"])
+        self.assertIsNone(perf["trap"])
+        self.assertIsNone(freeze["trap"])
+
+    # #223. Target: the crash trap's record folds into report.json. The
+    # unhandled line wins over the first-chance lines around it, the crash's
+    # tags come from it, and the crash line names its module when the panel
+    # had none. Baseline beside it: no record leaves `trap` null and the tags
+    # "unknown" (test_the_report_files_are_json).
+    def test_target_the_trap_record_folds_into_the_crash_report(self):
+        detail = self.scenario("trap-fold")
+        path, line, rest = detail.split(";", 2)
+        self.assertEqual(line, "CRASH previous session ended without a clean shutdown | exit 0xC0000005"
+                               " | module Hero_Siege.exe+0x64D0F3")
+        self.assertEqual(rest, "last line folded, no record folds nothing")
+        report = json.loads(Path(path).read_text(encoding="utf-8"))
+        self.assertEqual(report["schema"], "forgepact-incident/1")
+        self.assertEqual(report["trap"], {
+            "exceptionCode": "0xC0000005", "module": "Hero_Siege.exe", "offset": "0x64D0F3", "thread": "game",
+            "threadId": 1188, "inHook": "fp_mining_node_step", "inMod": "miner", "gameOriginal": True,
+            "cppType": None, "route": "unhandled", "dump": True})
+        self.assertEqual(report["frames"]["inHook"], "fp_mining_node_step")
+        self.assertEqual(report["frames"]["inMod"], "miner (game original)")
+        self.assertIsNone(report["exit"]["faulting_module"])
+
+    def test_a_clean_session_deletes_the_previous_trap_folder(self):
+        self.assertEqual(self.scenario("trap-prev-settled"),
+                         "clean deleted, folded deleted, crash not folded kept")
+
+    # Amendment 3, case c. Baseline: a session that ended cleanly folds
+    # nothing, and what the trap staged in it is gone at the next load.
+    def test_a_clean_exit_deletes_the_staging(self):
+        self.assertEqual(self.scenario("clean-exit-deletes-staging"),
+                         "clean | before crash.dmp,dumpline.txt,YYToolkit.log,aurie.log | after folder gone")
+
+    # Case d. Target: a crash keeps the staged dump taken for its own record.
+    def test_target_a_crash_keeps_the_dump_staged_for_it(self):
+        path, rest = self.scenario("crash-keeps-staging").split(";", 1)
+        self.assertEqual(rest, "kept | bundle has crash.dmp, tails from the copies | prev deleted once folded"
+                               " | unhandled line over a staged first-chance one: kept")
+        report = json.loads(Path(path).read_text(encoding="utf-8"))
+        self.assertTrue(report["trap"]["dump"])
+        self.assertEqual(report["trap"]["route"], "first-chance")
+        self.assertEqual(report["trap"]["offset"], "0x1BC12A")
+
+    # A staged dump for an earlier exception is not the crash's: deleted, said
+    # once, and trap.dump is false.
+    def test_a_staged_dump_for_an_earlier_exception_is_not_kept(self):
+        path, line, rest = self.scenario("crash-staged-dump-mismatch").split(";", 2)
+        self.assertTrue(line.startswith("incident: the staged crash dump was taken for an earlier exception"), line)
+        self.assertEqual(rest, "mismatch | left YYToolkit.log,aurie.log | bundle no crash.dmp"
+                               " | no line beside it: mismatch | no dump: none"
+                               " | no bundle written: staging none, record kept")
+        report = json.loads(Path(path).read_text(encoding="utf-8"))
+        self.assertFalse(report["trap"]["dump"])
 
 
 if __name__ == "__main__":
