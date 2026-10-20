@@ -1433,8 +1433,12 @@ struct DrawBuildQuery {
 
 using DrawListCounts = std::array<int, kDrawListCount>;
 
-// The lever's plan: c copies of each Mark 1 kill stand-in `pool kill` resolves, each onto
-// every one of [0..5]. Copies below 1 push nothing, above 400 push 400.
+// The lever's first plan: c copies of each Mark 1 kill stand-in `pool kill` resolves, each
+// onto every one of [0..5]. Copies below 1 push nothing, above 400 push 400. That rule is
+// DropUniqueItems' (rarity below 7, field 40 clear), so it can pick an entry the draw always
+// sends back (field 41 set, or a rarity its other branch takes): the lever's plan is the
+// draw-candidate overload after `pool draw` below, and this one stays only for the kill
+// route's own form.
 inline std::vector<Mark1Drops::PushEntry> DrawPushPlan(const Mark1Drops::KillResolution& r, int copies)
 {
     return Mark1Drops::PlanKillPush(r, copies, std::array<bool, Mark1Set::kPieceCount>{}).entries;
@@ -1822,6 +1826,8 @@ struct DrawCandidate {
     int                rarity = 0;
     int                tier = -1;
     DrawListCounts     counts{};
+    bool               f40 = false;   // as read; a candidate has both clear
+    bool               f41 = false;
 };
 
 struct PoolDrawClass {
@@ -1879,7 +1885,7 @@ inline std::vector<PoolDrawClass> PoolDraw(const Mark1Drops::KillLists& lists, c
         for (PoolDrawClass& pc : out) {
             if (pc.itemType != key.t) continue;
             ++pc.candidates;
-            const DrawCandidate cand{ key, v.rarity, v.tier, c };
+            const DrawCandidate cand{ key, v.rarity, v.tier, c, v.f40, v.f41 };
             const bool ss = v.tier == kDrawSsTier;
             if (ss) ++pc.ss;
             std::optional<DrawCandidate>& best = ss ? pc.bestSs : pc.bestOther;
@@ -1908,6 +1914,137 @@ inline std::vector<std::string> PoolDrawLines(const std::vector<PoolDrawClass>& 
                         + " best-other=" + DrawCandidateText(pc.bestOther));
     return lines;
 }
+
+// ---- the lever's stand-ins -----------------------------------------------------------
+//
+// `draws push` pushes, per Mark 1 piece, an entry the draw itself keeps as read: a `pool
+// draw` candidate of the piece's class (rarity 6, fields 40 and 41 clear). `pool kill`'s
+// stand-in is DropUniqueItems' choice and can be one the draw always sends back, so a low or
+// zero pick count would then be about our entry, not about the draw. The side is the one
+// Mark 1's kill draw is to use, SS first (the draw's one more test on an SS entry included,
+// so the lever meets what the move would meet), and the other side only when the class has
+// no SS candidate; the reply names the side. A class with no candidate pushes nothing and
+// is named as refused. Each pushed stand-in prints its rarity, tier, fields 40 and 41 and
+// its counts on [0..5].
+
+inline constexpr bool kDrawLeverPrefersSs = true;   // Mark 1's kill-draw default: SS first
+
+struct DrawLeverStandIn {
+    Mark1Set::Piece              piece = Mark1Set::Piece::Helmet;
+    std::string                  key;
+    int                          itemType = 0;
+    std::optional<DrawCandidate> pick;
+    bool                         ss = false;         // picked on the SS side
+    bool                         fallback = false;   // the preferred side had no candidate
+};
+using DrawLeverStandIns = std::array<DrawLeverStandIn, Mark1Set::kPieceCount>;
+
+// Why the draw would not keep `c` as read: "" when it would, else the failing field.
+inline std::string DrawLeverRefusal(const DrawCandidate& c)
+{
+    if (c.rarity != kDrawRarity) return "rarity " + std::to_string(c.rarity);
+    if (c.f40) return "field 40 set";
+    if (c.f41) return "field 41 set";
+    return {};
+}
+
+// Each piece's stand-in from `pool draw`'s classes: the preferred side's best, else the
+// other side's, else none.
+inline DrawLeverStandIns DrawLeverPick(const std::vector<PoolDrawClass>& classes)
+{
+    DrawLeverStandIns out{};
+    for (int i = 0; i < Mark1Set::kPieceCount; ++i) {
+        const Mark1Set::PieceRow& row = Mark1Set::kPieces[i];
+        DrawLeverStandIn& s = out[static_cast<size_t>(i)];
+        s.piece = row.piece;
+        s.key = std::string(row.key);
+        s.itemType = row.itemType;
+        for (const PoolDrawClass& pc : classes) {
+            if (pc.itemType != row.itemType) continue;
+            const std::optional<DrawCandidate>& first = kDrawLeverPrefersSs ? pc.bestSs : pc.bestOther;
+            const std::optional<DrawCandidate>& second = kDrawLeverPrefersSs ? pc.bestOther : pc.bestSs;
+            if (first) {
+                s.pick = first;
+                s.ss = kDrawLeverPrefersSs;
+            } else if (second) {
+                s.pick = second;
+                s.ss = !kDrawLeverPrefersSs;
+                s.fallback = true;
+            }
+            break;
+        }
+    }
+    return out;
+}
+
+// The lever's plan: c copies of each piece's draw stand-in, each onto every one of [0..5];
+// a stand-in the draw would not keep is never planned. `n` is the stand-in's largest count
+// over the six lists. Copies below 1 push nothing, above 400 push 400.
+inline std::vector<Mark1Drops::PushEntry> DrawPushPlan(const DrawLeverStandIns& s, int copies)
+{
+    std::vector<Mark1Drops::PushEntry> plan;
+    if (copies < 1) return plan;
+    if (copies > Mark1Drops::kMaxCopies) copies = Mark1Drops::kMaxCopies;
+    for (const DrawLeverStandIn& e : s) {
+        if (!e.pick || !DrawLeverRefusal(*e.pick).empty()) continue;
+        int most = 0;
+        for (int n : e.pick->counts) most = n > most ? n : most;
+        plan.push_back(Mark1Drops::PushEntry{ e.piece, e.pick->triple, most, copies });
+    }
+    return plan;
+}
+
+// One piece in the lever's reply: `<key>=<sub>:<b> rarity=<r> tier=<t> f40=<0|1> f41=<0|1>
+// lists=<n0>,...,<n5> side=<ss|below-ss>[ (fallback)]`, or `<key>=refused (...)` naming why.
+inline std::string DrawLeverStandInText(const DrawLeverStandIn& s)
+{
+    if (!s.pick)
+        return s.key + "=refused (class " + std::to_string(s.itemType)
+            + " has no draw candidate: no rarity-6 entry with fields 40 and 41 clear on lootListUnique[0..5])";
+    const DrawCandidate& c = *s.pick;
+    const std::string pair = std::to_string(c.triple.sub) + ":" + std::to_string(c.triple.b);
+    const std::string why = DrawLeverRefusal(c);
+    if (!why.empty()) return s.key + "=refused (" + pair + ": " + why + ")";
+    std::string counts;
+    for (int k = 0; k < kDrawListCount; ++k) counts += (k ? "," : "") + std::to_string(c.counts[static_cast<size_t>(k)]);
+    return s.key + "=" + pair + " rarity=" + std::to_string(c.rarity) + " tier=" + std::to_string(c.tier) + " f40=" + (c.f40 ? "1" : "0")
+        + " f41=" + (c.f41 ? "1" : "0") + " lists=" + counts + " side=" + (s.ss ? "ss" : "below-ss") + (s.fallback ? " (fallback)" : "");
+}
+
+// The reply `draws push <c>` prints after the core's, naming what each call will push.
+inline std::string DrawLeverLine(const DrawLeverStandIns& s, bool watchOn)
+{
+    std::string out = std::string("mark1probe draws push: stand-ins (pool draw's candidates, ")
+        + (kDrawLeverPrefersSs ? "SS first" : "below SS first") + ", the side Mark 1's kill draw is to use)";
+    for (size_t i = 0; i < s.size(); ++i) out += (i ? " | " : " ") + DrawLeverStandInText(s[i]);
+    if (!watchOn) out += " (the watch is off: `draws on` to push)";
+    return out;
+}
+
+// The lever's stand-ins, resolved again when any of [0..5] changed (another array or
+// another length), as the kill route's cache does.
+class DrawLeverCache {
+public:
+    bool Stale(const Mark1Drops::KillListKeys& keys) const
+    {
+        if (!have_) return true;
+        for (size_t k = 0; k < keys.size(); ++k)
+            if (keys[k].id != keys_[k].id || keys[k].length != keys_[k].length) return true;
+        return false;
+    }
+    void Store(const Mark1Drops::KillListKeys& keys, const DrawLeverStandIns& s)
+    {
+        have_ = true;
+        keys_ = keys;
+        standIns_ = s;
+    }
+    const DrawLeverStandIns* Find() const { return have_ ? &standIns_ : nullptr; }
+
+private:
+    bool                         have_ = false;
+    Mark1Drops::KillListKeys     keys_{};
+    DrawLeverStandIns            standIns_{};
+};
 
 // ---- `walkable` ---------------------------------------------------------------------
 
