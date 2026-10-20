@@ -7,9 +7,10 @@ game's own set pieces, that, worn together with the new **Mark 1 set** switch
 on (off by default), cast the skills on your Q, E, R and Y slots for you and
 send your jump three times as far over scenery, at the price of walking at
 half speed. A second switch, **Mark 1 drops** (also off by default), adds the
-pieces to the game's own roll for a unique item, the one a kill's drop can
-run, and to the Heroic roll a vault runs. No piece has dropped from a kill in
-testing yet: see "Finding the pieces" below.
+pieces to two of the game's own rolls: its roll for a unique item and the
+Heroic roll a vault runs. Do not expect the pieces from kills yet: in testing
+no kill has run the unique roll at all, so no piece has dropped from a kill.
+See "Finding the pieces" below.
 
 ## New
 
@@ -50,17 +51,19 @@ testing yet: see "Finding the pieces" below.
     built on.
   - **Finding the pieces.** Switch on **Mark 1 drops** (Mods → Items, off by
     default; it works with or without the set's own switch). The pieces then
-    join the game's own roll for a unique item, the roll a kill's drop runs
-    when it gives a unique, each about as likely as any single unique that
-    roll can give you. A kill has not dropped a piece in testing yet, though:
-    in a 30-minute test of killing monsters, elites and Treasure Gobblers and
-    opening chests in Act 1 on Hell, no kill ran that roll at all, so whether
-    ordinary kills ever drop the pieces is not known yet. The pieces also
-    join the game's own Heroic roll, the one that runs when you open a vault
-    from your bag, each about as likely as any single Heroic unique that roll
-    can give you. No rate has been measured. A dropped piece shows its own
-    art. With the switch off, kills and vaults drop exactly what they always
-    did.
+    join the game's own roll for a unique item, so that whenever that roll
+    runs, each piece is about as likely as any single unique it can give you.
+    That does not mean kills drop them. The game's code ties that roll to a
+    kill's drop, but in a 30-minute test of killing monsters, elites and
+    Treasure Gobblers and opening chests in Act 1 on Hell, no kill ran the
+    roll at all, and on the one monster whose drop chances have been read,
+    the chance of a unique item was zero. So no piece has dropped from a kill,
+    and whether any ordinary kill ever drops one is not known yet. The pieces
+    also join the game's own Heroic roll, the one that runs when you open a
+    vault from your bag, each about as likely as any single Heroic unique that
+    roll can give you; a piece dropping from a vault has not been seen in play
+    yet either. No rate has been measured. A dropped piece shows its own art.
+    With the switch off, kills and vaults drop exactly what they always did.
 
   The set was checked in play on a research build of the plugin: the
   pieces, their art, the outlines and the jump worked, and in that session,
