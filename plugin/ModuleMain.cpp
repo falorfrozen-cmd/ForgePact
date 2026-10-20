@@ -13205,9 +13205,12 @@ struct FlightDropState {
     int             elfLen[FcNs::kUniqueSubLists] = { -1, -1, -1, -1, -1 };
     double          elfId[FcNs::kUniqueSubLists] = { -1.0, -1.0, -1.0, -1.0, -1.0 };
     bool            elfRefusalLogged = false;
-    // DropUniqueItems' hook, by its SDK name, installed by `flightcharm elf 1` alone.
+    // DropUniqueItems' one hook, by its SDK name, shared with the Mark 1 drops' kill route (#166):
+    // installed by `flightcharm elf 1` or the drops' install, whichever comes first. uniqueDepth is
+    // a unique roll in progress that either feature took (the detour's own nesting).
     bool            uniqueTried = false, uniqueNative = false;
     std::string     uniqueRoute = "not-installed";
+    int             uniqueDepth = 0;
     // The current roll: which, the entries it carries per charm (copies on each list), the lists
     // they went onto (their index in lootListUnique, the handle as read, the size before), and
     // whether the held read-back's refusal was logged since it last passed.
@@ -13251,6 +13254,14 @@ static void FlightDropAfterHit();
 static void Mark1DropHitReset();
 static void Mark1DropAttributeHit();
 static bool Mark1DropBeforeCreate(RValue& record, const std::string& missing);
+// Mark 1 drops' kill route (#166): the pieces' share of the ordinary unique roll, through the one
+// DropUniqueItems detour Pocket Elf shares (Hook_FlightDropUniqueItems); defined with the Mark 1
+// drop adapter. BeginCall counts every call the detour sees and says whether Mark 1 pushes; Enter
+// and Leave are the push and the removal; AfterHit is the Heroic roll's own, for either roll.
+static bool Mark1KillBeginCall(int uniqueDepth);
+static void Mark1KillEnter();
+static void Mark1KillLeave();
+static void Mark1DropAfterHit();
 // The shared ground-icon hook (hidden loot's one LootGroundInit detour), installed once; defined
 // after HiddenLootInstall.
 static void FlightGroundIconInstall();
@@ -14870,12 +14881,32 @@ static void FlightDropAfterHit()
     for (int k = 0; k < FcNs::kCharmCount; ++k) d.pending[k] = 0;
 }
 
-// The unique roll's push and removal, on every way out, a throw from the game's roll included.
+// The unique roll's push and removal, on every way out, a throw from the game's roll included; only
+// with Pocket Elf's part of the call (`on`), so the shared detour takes Mark 1's call without it.
 struct FlightUniqueInjectGuard {
-    FlightUniqueInjectGuard() { g_FlightDrop.rollUnique = true; try { FlightDropUniquePush(); } catch (...) {} }
-    ~FlightUniqueInjectGuard() { try { FlightDropRemove(); } catch (...) {} g_FlightDrop.rollUnique = false; }
+    explicit FlightUniqueInjectGuard(bool on) : on(on) { if (!on) return; g_FlightDrop.rollUnique = true; try { FlightDropUniquePush(); } catch (...) {} }
+    ~FlightUniqueInjectGuard() { if (!on) return; try { FlightDropRemove(); } catch (...) {} g_FlightDrop.rollUnique = false; }
+    const bool on;
     FlightUniqueInjectGuard(const FlightUniqueInjectGuard&) = delete;
     FlightUniqueInjectGuard& operator=(const FlightUniqueInjectGuard&) = delete;
+};
+
+// The Mark 1 pieces' push and removal on the same call (#166), after Pocket Elf's and off before
+// it, only with Mark 1's part of the call (`on`); the work is the Mark 1 drop adapter's.
+struct Mark1KillInjectGuard {
+    explicit Mark1KillInjectGuard(bool on) : on(on) { if (on) Mark1KillEnter(); }
+    ~Mark1KillInjectGuard() { if (on) Mark1KillLeave(); }
+    const bool on;
+    Mark1KillInjectGuard(const Mark1KillInjectGuard&) = delete;
+    Mark1KillInjectGuard& operator=(const Mark1KillInjectGuard&) = delete;
+};
+
+// A unique roll taken by either feature is in progress: a call nested in it is the game's own.
+struct FlightUniqueDepthScope {
+    FlightUniqueDepthScope() { ++g_FlightDrop.uniqueDepth; }
+    ~FlightUniqueDepthScope() { --g_FlightDrop.uniqueDepth; }
+    FlightUniqueDepthScope(const FlightUniqueDepthScope&) = delete;
+    FlightUniqueDepthScope& operator=(const FlightUniqueDepthScope&) = delete;
 };
 
 // #74's counters belong to the Angelic roll: what the unique roll's hits add to them is put back,
@@ -14897,17 +14928,26 @@ struct FlightUniqueCounterScope {
     FlightUniqueCounterScope& operator=(const FlightUniqueCounterScope&) = delete;
 };
 
-// DropUniqueItems, by its SDK name (FlightDropInstallUnique). With Pocket Elf's switch off, inside
-// the Angelic roll, or nested in itself, it is the game's own call untouched. Otherwise, for the
-// length of the call: the stand-in on each of lootListUnique[0..4] (outside the roll's scope),
-// then #74's roll-in-progress, so the call's GetUniqueRepoStruct read types the hit, its
-// CreateDefaultParams call is the hit, and its CreateItemNew entry is the rewrite point.
+// DropUniqueItems, by its SDK name (FlightDropInstallUnique): the one detour Pocket Elf and the
+// Mark 1 drops' kill route (#166) share, since a script takes one inline detour. Every call is
+// counted for the kill route first (`kill-calls=`, its instrument's own control), whose core says
+// before anything is read whether Mark 1 pushes. Pocket Elf's part needs its switch on and no roll
+// in progress (the Angelic roll's, or a unique roll either feature took). With neither part it is
+// the game's own call untouched. Otherwise, for the length of the call: Pocket Elf's stand-in on
+// each of lootListUnique[0..4], then the Mark 1 pieces' after it, each only with its own part
+// (both outside the roll's scope); then #74's roll-in-progress, so the call's GetUniqueRepoStruct
+// read types the hit, its CreateDefaultParams call is the hit, and its CreateItemNew entry is the
+// rewrite point; #74's counters are put back after it, each feature's after-hit runs, and the
+// entries come off in reverse order on every way out.
 static RValue& Hook_FlightDropUniqueItems(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
     if (!g_Orig_FlightDropUnique) return R;
-    if (g_SigRollDepth > 0 || g_FlightDrop.rollUnique || !g_FlightDrop.switches[(int)FcNs::Charm::Elf])
-        return g_Orig_FlightDropUnique(S, O, R, argc, A);
-    FlightUniqueInjectGuard inject;
+    const bool mark1 = Mark1KillBeginCall(g_FlightDrop.uniqueDepth);
+    const bool elf = g_SigRollDepth <= 0 && g_FlightDrop.uniqueDepth <= 0 && g_FlightDrop.switches[(int)FcNs::Charm::Elf];
+    if (!elf && !mark1) return g_Orig_FlightDropUnique(S, O, R, argc, A);
+    FlightUniqueDepthScope depth;
+    FlightUniqueInjectGuard inject(elf);
+    Mark1KillInjectGuard mark1Inject(mark1);
     SignatureRollScope roll;
     FlightUniqueCounterScope counters;
     SignatureHitReset();
@@ -14915,37 +14955,52 @@ static RValue& Hook_FlightDropUniqueItems(CInstance* S, CInstance* O, RValue& R,
     if (g_SigHitSeen) {
         g_SigHitSeen = false;
         try { FlightDropAfterHit(); } catch (...) {}
+        try { Mark1DropAfterHit(); } catch (...) {}
     }
     return r;
 }
 
-// The hook on DropUniqueItems, once, by its SDK name; anything short of an inline detour keeps
-// Pocket Elf off and says so, since the game's compiled calls pass a table-only hook by. In the
-// research build a probe row that holds the script refuses it (and is refused in turn).
+// The one hook on DropUniqueItems, once a session, by its SDK name, from whichever switch comes
+// first: `flightcharm elf 1` or the Mark 1 drops' install (Mark1DropInstall), which reads the
+// route back (FlightDropUniqueRoute) and refuses on its own line. A second install would be
+// table-only and blind, so neither feature has one of its own. Anything short of an inline detour
+// keeps Pocket Elf off and says so whenever its switch comes on, since the game's compiled calls
+// pass a table-only hook by. In the research build a probe row that holds the script refuses it
+// (and is refused in turn).
 static void FlightDropInstallUnique()
 {
     FlightDropState& d = g_FlightDrop;
-    if (d.uniqueTried) return;
+    const bool elf = d.switches[(int)FcNs::Charm::Elf];
+    if (!d.uniqueTried) {
 #ifndef FORGEPACT_RELEASE
-    if (ApRollHoldsDropUnique() || GpHoldsDropUnique()) {
-        d.uniqueRoute = ApRollHoldsDropUnique() ? "held-by-angelicprobe" : "held-by-gambaprobe";
-        Out(FcNs::RefusedLine("elf: DropUniqueItems is " + d.uniqueRoute + " - relaunch without that probe"));
-        return;
-    }
+        if (ApRollHoldsDropUnique() || GpHoldsDropUnique()) {
+            d.uniqueRoute = ApRollHoldsDropUnique() ? "held-by-angelicprobe" : "held-by-gambaprobe";
+            if (elf) Out(FcNs::RefusedLine("elf: DropUniqueItems is " + d.uniqueRoute + " - relaunch without that probe"));
+            return;
+        }
 #endif
-    d.uniqueTried = true;
-    bool native = false;
-    const bool ok = HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_DropUniqueItems), "fp_flight_duniq",
-                                  (PVOID)Hook_FlightDropUniqueItems, &g_Orig_FlightDropUnique, &native);
-    d.uniqueNative = ok && native;
-    d.uniqueRoute = !ok ? "not-found" : native ? "detoured" : "TABLE-ONLY";
-    if (!d.uniqueNative)
+        d.uniqueTried = true;
+        bool native = false;
+        const bool ok = HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_DropUniqueItems), "fp_flight_duniq",
+                                      (PVOID)Hook_FlightDropUniqueItems, &g_Orig_FlightDropUnique, &native);
+        d.uniqueNative = ok && native;
+        d.uniqueRoute = !ok ? "not-found" : native ? "detoured" : "TABLE-ONLY";
+    }
+    if (elf && !d.uniqueNative)
         Out(FcNs::RefusedLine("elf: the DropUniqueItems hook is " + d.uniqueRoute
                               + " - the game's own calls would pass it by, so Pocket Elf stays off the unique roll"));
 }
 
-// `flightcharm elf|wings|broom 1|0`: the panel switch. On installs #74's detection, Pocket Elf's
-// DropUniqueItems hook and the shared ground-icon hook, and resolves the charm's stand-in; off
+// The shared DropUniqueItems detour's route as its one install left it (`not-installed`,
+// `detoured`, `TABLE-ONLY`, `not-found`, or a research row's `held-by-...`): the Mark 1 drops'
+// install reads it, and their `kill-hook=` names it.
+static std::string FlightDropUniqueRoute()
+{
+    return g_FlightDrop.uniqueRoute;
+}
+
+// `flightcharm elf|wings|broom 1|0`: the panel switch. On installs #74's detection, the shared
+// DropUniqueItems hook (Pocket Elf's, the Mark 1 drops' too) and the shared ground-icon hook, and resolves the charm's stand-in; off
 // only stops the pushes (the hooks stay and pass through).
 static void FlightDropSwitch(FcNs::Charm c, bool on)
 {
@@ -25540,11 +25595,12 @@ static void ApRollAttach(ApRollRow& r)
             "its own counters (untyped=, typeAgree=, typeDisagree=) are the measure");
         return;
     }
-    // #158: Pocket Elf's hook installed first holds DropUniqueItems; this row refuses rather than
-    // stack a second detour on it (ApRollHoldsDropUnique is the other half of the rule).
+    // #158, #166: the shared DropUniqueItems detour (Pocket Elf's and the Mark 1 drops'), installed
+    // first, holds the script; this row refuses rather than stack a second detour on it
+    // (ApRollHoldsDropUnique is the other half of the rule, for both features).
     if (std::string_view(r.id) == "drop-unique" && g_Orig_FlightDropUnique) {
-        ApRollSetRoute(r, kApRollBlocked, "blocked: the flight charms' Pocket Elf hook (Hook_FlightDropUniqueItems) already holds this script - "
-            "`flightcharm stat`'s elf= and injected= are the measure");
+        ApRollSetRoute(r, kApRollBlocked, "blocked: the shared Pocket Elf / Mark 1 drops hook (Hook_FlightDropUniqueItems) already holds this script - "
+            "`flightcharm stat`'s elf= and `mark1set stat`'s kill-calls= are the measure");
         return;
     }
     // #166: the Mark 1 drops' hook installed first holds DropItemHeroic; this row refuses rather
@@ -52030,10 +52086,11 @@ static void GpInstallScripts(HMODULE mainMod)
             Out(GpScriptRowLine(t, "already in"));
             continue;
         }
-        // #158: Pocket Elf's hook holds DropUniqueItems; the row refuses rather than stack a
-        // second detour on it (FlightDropInstallUnique refuses the other way round).
+        // #158, #166: the shared DropUniqueItems detour (Pocket Elf's and the Mark 1 drops') holds
+        // the script; the row refuses rather than stack a second detour on it
+        // (FlightDropInstallUnique and Mark1DropInstall refuse the other way round).
         if (&t == &g_GpScriptRows[kGpScript_DropUniqueItems] && g_Orig_FlightDropUnique) {
-            t.status = "held by the flight charms' Pocket Elf hook (Hook_FlightDropUniqueItems); not hooked";
+            t.status = "held by the shared Pocket Elf / Mark 1 drops hook (Hook_FlightDropUniqueItems); not hooked";
             Out(GpScriptRowLine(t, t.status));
             continue;
         }
@@ -64286,6 +64343,13 @@ static void Mark1SetCommand(const std::string& rest)
 // install arms like the set's (the guide's Known Limitations item 8): nothing
 // is hooked before a character exists. With the switch off the hook passes
 // every call through, counted. Game thread only.
+// The kill route (the owner's 2026-10-20 route) joins the pieces to the game's
+// ordinary unique roll, DropUniqueItems, which a kill's drop runs, the same way:
+// a kill stand-in per piece onto each of lootListUnique[0..4] for the length of
+// one call, through the one detour Pocket Elf already holds on that roll
+// (Hook_FlightDropUniqueItems, installed by FlightDropInstallUnique from either
+// switch), since a script takes one inline detour. The same coin, rewrite and
+// built count, on the kill route's own tallies.
 #include <ForgePact/Mark1Drops.hpp>
 namespace M1dNs = ForgePact::Mark1Drops;
 
@@ -64309,13 +64373,29 @@ struct Mark1DropState {
     bool            heldMissLogged = false;
     std::string     listWhy;
     // The current hit: the piece whose stand-in it was (-1 none), the coin (share in n + share),
-    // the piece it fell to (-1: the game's own stand-in), whether its record was rewritten, and
-    // the rewritten records not yet seen built, this call.
+    // the piece it fell to (-1: the game's own stand-in), the roll it came from, whether its record
+    // was rewritten, and the rewritten records not yet seen built, this call.
     int             hitStandIn = -1, hitPiece = -1;
     long long       hitN = 0, hitShare = 0;
+    M1dNs::Roll     hitRoll = M1dNs::Roll::Heroic;
     bool            hitRewritten = false;
     std::string     hitWhy;
     int             pending[M1sNs::kPieceCount] = { 0, 0, 0, 0 };
+    // The kill route (the ordinary unique roll, through the DropUniqueItems detour Pocket Elf
+    // shares): the shared detour's route as the install read it, and the current call - whether
+    // one is in progress with entries of ours, the plan the core gave it, the entries of each plan
+    // row that actually went onto each of lootListUnique[0..4] (fewer after a ds_list_add that
+    // threw partway), those lists (their handle as read, their size before), every entry together,
+    // and whether the held read-back's refusal was logged since it last passed.
+    std::string     killRoute = "not-installed";
+    bool            killRolling = false;
+    M1dNs::KillPushPlan killPlan;
+    std::array<std::vector<int>, M1dNs::kKillListCount> killOn{};
+    RValue          killSub[M1dNs::kKillListCount];
+    int             killBefore[M1dNs::kKillListCount] = { -1, -1, -1, -1, -1 };
+    int             killPushed = 0;
+    bool            killHeldMissLogged = false;
+    std::string     killListWhy;
 };
 static Mark1DropState g_M1Drop;
 static PFUNC_YYGMLScript g_Orig_Mark1DropHeroic = nullptr;
@@ -64409,25 +64489,52 @@ static void Mark1DropResolve(int index, const RValue& sub, double id, int size)
     g_M1Drop.core.Cache().Store((uint64_t)id, r);
 }
 
-// Whether the list ends with exactly this call's entries: its size before, plus each plan row's
-// stand-in on[e] times, in plan order (the order they were pushed).
-static bool Mark1DropTailHolds(int& len)
+// Whether a sub-list ends with exactly one call's entries on it: its size before, plus each plan
+// row's stand-in on[e] times, in plan order (the order they were pushed). Either roll's.
+static bool Mark1ListTailHolds(const RValue& sub, int before, const std::vector<M1dNs::PushEntry>& entries,
+                               const std::vector<int>& on, int& len)
 {
-    const Mark1DropState& d = g_M1Drop;
     len = -1;
     try {
-        if (!g_Yytk->CallBuiltin("ds_exists", { d.sub, RValue(2.0) }).ToBoolean()) return false;
-        len = (int)g_Yytk->CallBuiltin("ds_list_size", { d.sub }).ToDouble();
+        if (!g_Yytk->CallBuiltin("ds_exists", { sub, RValue(2.0) }).ToBoolean()) return false;
+        len = (int)g_Yytk->CallBuiltin("ds_list_size", { sub }).ToDouble();
     } catch (...) { return false; }
-    int at = d.before;
-    for (size_t e = 0; e < d.plan.entries.size() && e < d.on.size(); ++e) {
-        const M1dNs::Triple& k = d.plan.entries[e].triple;
-        for (int n = 0; n < d.on[e]; ++n) {
+    int at = before;
+    for (size_t e = 0; e < entries.size() && e < on.size(); ++e) {
+        const M1dNs::Triple& k = entries[e].triple;
+        for (int n = 0; n < on[e]; ++n) {
             double t[3] = { 0.0, 0.0, 0.0 };
-            if (!SigEntry(d.sub, at++, t) || t[0] != (double)k.t || t[1] != (double)k.sub || t[2] != (double)k.b) return false;
+            if (!SigEntry(sub, at++, t) || t[0] != (double)k.t || t[1] != (double)k.sub || t[2] != (double)k.b) return false;
         }
     }
     return at == len;
+}
+
+// The Heroic roll's list: whether it ends with exactly this call's entries.
+static bool Mark1DropTailHolds(int& len)
+{
+    const Mark1DropState& d = g_M1Drop;
+    return Mark1ListTailHolds(d.sub, d.before, d.plan.entries, d.on, len);
+}
+
+// One stand-in entry, a fresh [type, sub, b] array, onto a sub-list: with Mark1DropDeleteLast the
+// only game writes either roll's push makes. Throws whatever the runtime threw.
+static void Mark1DropAddEntry(const RValue& sub, const M1dNs::Triple& k)
+{
+    RValue entry = g_Yytk->CallBuiltin("array_create", { RValue(3.0), RValue(0.0) });
+    g_Yytk->CallBuiltin("array_set", { entry, RValue(0.0), RValue((double)k.t) });
+    g_Yytk->CallBuiltin("array_set", { entry, RValue(1.0), RValue((double)k.sub) });
+    g_Yytk->CallBuiltin("array_set", { entry, RValue(2.0), RValue((double)k.b) });
+    g_Yytk->CallBuiltin("ds_list_add", { sub, entry });
+}
+
+// Takes the last `count` entries off a sub-list of `len` entries (a ds_list_delete each, from the
+// end), then reads its size again. Throws whatever the runtime threw.
+static int Mark1DropDeleteLast(const RValue& sub, int len, int count)
+{
+    for (int n = 0; n < count; ++n)
+        g_Yytk->CallBuiltin("ds_list_delete", { sub, RValue((double)(len - 1 - n)) });
+    return (int)g_Yytk->CallBuiltin("ds_list_size", { sub }).ToDouble();
 }
 
 // The held read-back, #74's: the variable read again by name off the first Controller_obj, the
@@ -64471,9 +64578,7 @@ static void Mark1DropRemove()
     try {
         tail = Mark1DropTailHolds(len);
         if (tail) {
-            for (int n = 0; n < d.pushed; ++n)
-                g_Yytk->CallBuiltin("ds_list_delete", { d.sub, RValue((double)(len - 1 - n)) });
-            len = (int)g_Yytk->CallBuiltin("ds_list_size", { d.sub }).ToDouble();
+            len = Mark1DropDeleteLast(d.sub, len, d.pushed);
             if (len == d.before) { Mark1DropClearRoll(); return; }
         }
     } catch (...) {}
@@ -64518,11 +64623,7 @@ static void Mark1DropPush(int index)
         const M1dNs::PushEntry& p = plan.entries[e];
         for (int n = 0; n < p.copies && !threw; ++n) {
             try {
-                RValue entry = g_Yytk->CallBuiltin("array_create", { RValue(3.0), RValue(0.0) });
-                g_Yytk->CallBuiltin("array_set", { entry, RValue(0.0), RValue((double)p.triple.t) });
-                g_Yytk->CallBuiltin("array_set", { entry, RValue(1.0), RValue((double)p.triple.sub) });
-                g_Yytk->CallBuiltin("array_set", { entry, RValue(2.0), RValue((double)p.triple.b) });
-                g_Yytk->CallBuiltin("ds_list_add", { d.sub, entry });
+                Mark1DropAddEntry(d.sub, p.triple);
                 ++d.on[e];
                 ++d.pushed;
             } catch (...) { threw = true; }
@@ -64547,6 +64648,201 @@ static void Mark1DropPush(int index)
     }
 }
 
+// ---- the kill route: the ordinary unique roll, on the DropUniqueItems detour Pocket Elf shares --
+// The same push, held read-back and tail-checked removal as the Heroic roll's, onto each of
+// lootListUnique[0..4] (the roll cannot say which of the five it drew, RDM § 23.8), with the
+// core's kill stand-ins (Mark1Drops.hpp's ResolveKillStandIns: a triple of the piece's class the
+// ordinary roll keeps, listed equally often on all five). The shared detour
+// (Hook_FlightDropUniqueItems) calls Mark1KillBeginCall on every call and, when it says so, wraps
+// the call in Mark1KillEnter / Mark1KillLeave after Pocket Elf's push and before its removal.
+
+// lootListUnique[0..5] off the first Controller_obj, by name, read lightly - each element's handle
+// and its key (id and size), no walk - for the "has a list changed" check before every call. False
+// with `why` when the variable is not an array of six live ds_lists.
+static bool Mark1KillReadLists(RValue subs[], M1dNs::KillListKeys& keys, std::string& why)
+{
+    RValue instance;
+    if (!SignatureController(instance, why)) return false;
+    try {
+        const RValue outer = g_Yytk->CallBuiltin("variable_instance_get", { instance, RValue(g_SigListName) });
+        if (outer.m_Kind != VALUE_ARRAY) { why = "Controller_obj." + g_SigListName + " is not an array"; return false; }
+        const int len = (int)g_Yytk->CallBuiltin("array_length", { outer }).ToDouble();
+        if (len < M1dNs::kListCount) { why = "Controller_obj." + g_SigListName + " has " + std::to_string(len) + " elements"; return false; }
+        for (int k = 0; k < M1dNs::kListCount; ++k) {
+            subs[k] = g_Yytk->CallBuiltin("array_get", { outer, RValue((double)k) });
+            double id = -1.0;
+            std::string step;
+            if (!SigListHandle(subs[k], id, step)) { why = "Controller_obj." + g_SigListName + "[" + std::to_string(k) + "] is not a ds_list (" + step + ")"; return false; }
+            keys[(size_t)k] = M1dNs::ListKey{ (uint64_t)id, (int)g_Yytk->CallBuiltin("ds_list_size", { subs[k] }).ToDouble() };
+        }
+    } catch (...) { why = "reading Controller_obj." + g_SigListName + " threw"; return false; }
+    return true;
+}
+
+// The kill stand-ins, resolved again (the core's ResolveKillStandIns over all six lists) and cached
+// by every list's id and length; every verdict is read outside the roll's scope.
+static void Mark1KillResolve(const RValue subs[], const M1dNs::KillListKeys& keys)
+{
+    FlightDropOutsideRoll outside;
+    M1dNs::KillLists lists;
+    for (int k = 0; k < M1dNs::kListCount; ++k) lists[(size_t)k] = Mark1DropEntries(subs[k], keys[(size_t)k].length);
+    g_M1Drop.core.KillCache().Store(keys, M1dNs::ResolveKillStandIns(lists, Mark1DropVerdict));
+}
+
+// Whether kill list k (lootListUnique[kKillLists[k]]) ends with exactly this call's entries.
+static bool Mark1KillTailHolds(int k, int& len)
+{
+    const Mark1DropState& d = g_M1Drop;
+    return Mark1ListTailHolds(d.killSub[k], d.killBefore[k], d.killPlan.entries, d.killOn[(size_t)k], len);
+}
+
+// The held read-back, #74's: the variable read again by name off the first Controller_obj; each
+// list pushed onto must be the same ds_list at the same index and hold the push (size and tail).
+static bool Mark1KillHeldReadBack(std::string& seen)
+{
+    const Mark1DropState& d = g_M1Drop;
+    seen = "nothing";
+    RValue subs[M1dNs::kListCount];
+    M1dNs::KillListKeys keys{};
+    std::string why;
+    if (!Mark1KillReadLists(subs, keys, why)) { seen = why; return false; }
+    for (int k = 0; k < M1dNs::kKillListCount; ++k) {
+        const int index = M1dNs::kKillLists[k];
+        double want = -1.0;
+        if (!SigListHandle(d.killSub[k], want, why)) { seen = "the list pushed onto: " + why; return false; }
+        if ((uint64_t)want != keys[(size_t)index].id) { seen = "another value at [" + std::to_string(index) + "]"; return false; }
+        int len = -1;
+        if (!Mark1KillTailHolds(k, len)) { seen = "[" + std::to_string(index) + "] with " + std::to_string(len) + " entries"; return false; }
+    }
+    return true;
+}
+
+static void Mark1KillClearRoll()
+{
+    Mark1DropState& d = g_M1Drop;
+    d.killPlan = M1dNs::KillPushPlan{};
+    for (int k = 0; k < M1dNs::kKillListCount; ++k) {
+        d.killOn[(size_t)k].clear();
+        d.killSub[k] = RValue();
+        d.killBefore[k] = -1;
+    }
+    d.killPushed = 0;
+}
+
+// Takes this call's entries off every list they went onto - one ds_list_delete of the last entry
+// per entry that went onto it (killOn, so a partial push comes off too), only while that list's
+// tail still holds exactly them - else leaves the list as found, says so and counts it
+// (`anomalies=`). Never throws: Pocket Elf's removal runs after it.
+static void Mark1KillRemove()
+{
+    Mark1DropState& d = g_M1Drop;
+    if (d.killPushed <= 0) { Mark1KillClearRoll(); return; }
+    for (int k = 0; k < M1dNs::kKillListCount; ++k) {
+        int perList = 0;
+        for (int n : d.killOn[(size_t)k]) perList += n;
+        if (perList <= 0) continue;
+        int len = -1;
+        bool tail = false;
+        try {
+            tail = Mark1KillTailHolds(k, len);
+            if (tail) {
+                len = Mark1DropDeleteLast(d.killSub[k], len, perList);
+                if (len == d.killBefore[k]) continue;
+            }
+        } catch (...) {}
+        d.core.NoteAnomaly();
+        Out("mark1set drops: " + g_SigListName + "[" + std::to_string(M1dNs::kKillLists[k]) + "] "
+            + (tail ? "kept entries after removal - size " + std::to_string(len) + ", expected " + std::to_string(d.killBefore[k])
+                    : "changed during the unique roll, left as found (size " + std::to_string(d.killBefore[k]) + " + "
+                      + std::to_string(perList) + " pushed, now " + std::to_string(len) + ")"));
+    }
+    Mark1KillClearRoll();
+}
+
+// Before the call, outside the roll's scope (after Pocket Elf's push, when it pushed): all six
+// lists read lightly, the kill stand-ins resolved again when any list's id or length changed, and
+// the core's plan pushed onto each of lootListUnique[0..4] (copies g_Mark1DropCopies per piece
+// that has a kill stand-in and is not latched off, the same lever as the Heroic roll's), then the
+// held read-back. A push it does not show comes off again, is logged once per change and counted,
+// and the call carries nothing.
+static void Mark1KillPush()
+{
+    Mark1DropState& d = g_M1Drop;
+    Mark1KillClearRoll();
+    RValue subs[M1dNs::kListCount];
+    M1dNs::KillListKeys keys{};
+    std::string why;
+    if (!Mark1KillReadLists(subs, keys, why)) {
+        d.core.NoteKillListsUnreadable();
+        d.killListWhy = why;
+        return;
+    }
+    d.killListWhy.clear();
+    if (d.core.KillCache().Stale(keys)) Mark1KillResolve(subs, keys);
+    const M1dNs::KillResolution* r = d.core.KillCache().Find();
+    if (!r) return;
+    const M1dNs::KillPushPlan plan = d.core.PlanKillFor(*r, g_Mark1DropCopies);
+    if (plan.entries.empty()) return;
+    d.killPlan = plan;
+    for (int k = 0; k < M1dNs::kKillListCount; ++k) {
+        const int index = M1dNs::kKillLists[k];
+        d.killSub[k] = subs[index];
+        d.killBefore[k] = keys[(size_t)index].length;
+        d.killOn[(size_t)k].assign(plan.entries.size(), 0);
+    }
+    bool threw = false;
+    for (int k = 0; k < M1dNs::kKillListCount && !threw; ++k) {
+        for (size_t e = 0; e < plan.entries.size() && !threw; ++e) {
+            for (int n = 0; n < plan.entries[e].copies && !threw; ++n) {
+                try {
+                    Mark1DropAddEntry(d.killSub[k], plan.entries[e].triple);
+                    ++d.killOn[(size_t)k][e];
+                    ++d.killPushed;
+                } catch (...) { threw = true; }
+            }
+        }
+    }
+    std::string seen;
+    if (!threw && Mark1KillHeldReadBack(seen)) {
+        d.killHeldMissLogged = false;
+        d.core.NoteKillPushed(d.killPlan);
+        return;
+    }
+    // A throw mid-push or a push a fresh read does not show: the entries that did go on come off
+    // again, so the roll never meets a partial push; the refusal counts once.
+    const int pushed = d.killPushed;
+    Mark1KillRemove();
+    d.core.NoteAnomaly();
+    if (threw) { Out("mark1set drops: pushing a kill stand-in threw - this unique roll carries no piece"); return; }
+    if (!d.killHeldMissLogged) {
+        d.killHeldMissLogged = true;
+        Out("mark1set drops: kill push not visible through Controller_obj." + g_SigListName + " (a fresh read holds " + seen
+            + ", expected " + std::to_string(pushed) + " pushed) - taken off again; unique rolls carry no piece until a push reads back");
+    }
+}
+
+// Every call the shared detour sees, counted (`kill-calls=`, switch on or off), and the core's
+// decision before anything is read: true when Mark 1 pushes for this call. `uniqueDepth` is a
+// unique roll already in progress (the detour's own nesting).
+static bool Mark1KillBeginCall(int uniqueDepth)
+{
+    return g_M1Drop.core.BeginKillCall(g_SigDetectNative, g_SigRollDepth, uniqueDepth, Mark1DropArtReady())
+        == M1dNs::CallAction::Resolve;
+}
+
+// The shared detour's Mark1KillInjectGuard: the push, and the removal on every way out.
+static void Mark1KillEnter()
+{
+    g_M1Drop.killRolling = true;
+    try { Mark1KillPush(); } catch (...) {}
+}
+
+static void Mark1KillLeave()
+{
+    try { Mark1KillRemove(); } catch (...) {}
+    g_M1Drop.killRolling = false;
+}
+
 // Before each original call (SignatureHitReset): no hit of ours.
 static void Mark1DropHitReset()
 {
@@ -64555,29 +64851,39 @@ static void Mark1DropHitReset()
     d.hitPiece = -1;
     d.hitN = 0;
     d.hitShare = 0;
+    d.hitRoll = M1dNs::Roll::Heroic;
     d.hitRewritten = false;
     d.hitWhy.clear();
     for (int i = 0; i < M1sNs::kPieceCount; ++i) d.pending[i] = 0;
 }
 
 // A typed hit inside a call that carries our entries (Hook_CreateDefaultParams, after the game's
-// CreateDefaultParams returned and #74's own attribution): when its whole entry is a pushed
-// stand-in's, the core's AttributeHit decides it, c in n + c, and ours goes to the rewrite point;
-// anything else is the game's own.
+// CreateDefaultParams returned and #74's own attribution): the Heroic roll's or the kill route's,
+// whichever call is in progress with entries of ours (a call nested in the other passes through,
+// so never both). When its whole entry is a pushed stand-in's, the core's AttributeHit decides it,
+// c in n + c, counted on the roll it came from, and ours goes to the rewrite point; anything else
+// is the game's own.
 static void Mark1DropAttributeHit()
 {
     Mark1DropState& d = g_M1Drop;
-    if (!d.rolling || d.pushed <= 0 || g_SigRollDepth <= 0 || !g_SigHitTyped || g_SigHitItem >= 0 || d.hitStandIn >= 0) return;
-    for (const M1dNs::PushEntry& e : d.plan.entries) {
+    if (g_SigRollDepth <= 0 || !g_SigHitTyped || g_SigHitItem >= 0 || d.hitStandIn >= 0) return;
+    const bool heroic = d.rolling && d.pushed > 0;
+    const bool kill = !heroic && d.killRolling && d.killPushed > 0;
+    if (!heroic && !kill) return;
+    const std::vector<M1dNs::PushEntry>& entries = heroic ? d.plan.entries : d.killPlan.entries;
+    for (const M1dNs::PushEntry& e : entries) {
         if (g_SigHitType != (double)e.triple.t || g_SigLastSub != (double)e.triple.sub || g_SigLastB != (double)e.triple.b) continue;
         d.hitStandIn = static_cast<int>(e.piece);
         d.hitN = e.n;
         d.hitShare = e.copies;
+        d.hitRoll = heroic ? M1dNs::Roll::Heroic : M1dNs::Roll::Kill;
         const double u = std::uniform_real_distribution<double>(0.0, 1.0)(TyRng());
         M1sNs::Piece piece = M1sNs::Piece::Helmet;
-        if (!M1dNs::AttributeHit(d.plan, g_SigHitType, g_SigLastSub, g_SigLastB, u, piece)) return;
+        const bool ours = heroic ? M1dNs::AttributeHit(d.plan, g_SigHitType, g_SigLastSub, g_SigLastB, u, piece)
+                                 : M1dNs::AttributeHit(d.killPlan, g_SigHitType, g_SigLastSub, g_SigLastB, u, piece);
+        if (!ours) return;
         d.hitPiece = static_cast<int>(piece);
-        d.core.NoteOurs(piece);
+        d.core.NoteOurs(piece, d.hitRoll);
         return;
     }
 }
@@ -64621,26 +64927,28 @@ static bool Mark1DropBeforeCreate(RValue& record, const std::string& missing)
 
 // From the Custom Forge's final pass (TryApplyCustomForge on CreateItemNew's own return): a piece
 // was built. It counts as built by the game (`<key>=<ours>/<built>`) only while that piece's
-// rewritten record is pending, i.e. inside the call that rewrote it.
+// rewritten record is pending, i.e. inside the call that rewrote it, and on the roll that call was.
 static void Mark1DropNoteBuilt(M1sNs::Piece piece)
 {
     const int i = static_cast<int>(piece);
     if (i < 0 || i >= M1sNs::kPieceCount || g_M1Drop.pending[i] <= 0) return;
     --g_M1Drop.pending[i];
-    g_M1Drop.core.NoteBuilt(piece);
+    g_M1Drop.core.NoteBuilt(piece, g_M1Drop.hitRoll);
 }
 
-// After a call returned with a hit: one `mark1set drops hit:` line when the hit fell to a piece,
-// saying whether the game built it; quiet otherwise. Ours with no CreateItemNew call at the
-// rewrite point is a refusal, as #74's.
+// After a call returned with a hit (the Heroic roll's hook, or the shared DropUniqueItems detour):
+// one `mark1set drops hit:` line when the hit fell to a piece, naming the roll and saying whether
+// the game built it; quiet otherwise. Ours with no CreateItemNew call at the rewrite point is a
+// refusal, as #74's.
 static void Mark1DropAfterHit()
 {
     Mark1DropState& d = g_M1Drop;
     const int i = d.hitPiece;
     if (i >= 0 && i < M1sNs::kPieceCount) {
         const M1sNs::Piece p = static_cast<M1sNs::Piece>(i);
+        const bool kill = d.hitRoll == M1dNs::Roll::Kill;
         std::string standIn = "?";
-        for (const M1dNs::PushEntry& e : d.plan.entries)
+        for (const M1dNs::PushEntry& e : kill ? d.killPlan.entries : d.plan.entries)
             if (e.piece == p) standIn = std::to_string(e.triple.t) + "/" + std::to_string(e.triple.sub) + "/" + std::to_string(e.triple.b);
         const std::string who = std::string(M1sNs::RowOf(p).name) + " (stand-in " + standIn + ", " + std::to_string(d.hitShare)
             + " in " + std::to_string(d.hitN + d.hitShare) + ")";
@@ -64652,7 +64960,7 @@ static void Mark1DropAfterHit()
         if (!d.hitRewritten) outcome = who + " refused (" + d.hitWhy + "), the game placed its own stand-in";
         else if (d.pending[i] == 0) outcome = who + " built by the game";
         else outcome = who + " handed to the game, not seen built during the roll";
-        Out("mark1set drops hit: heroic roll -> " + outcome);
+        Out(std::string("mark1set drops hit: ") + (kill ? "unique roll" : "heroic roll") + " -> " + outcome);
     }
     for (int k = 0; k < M1sNs::kPieceCount; ++k) d.pending[k] = 0;
 }
@@ -64705,13 +65013,26 @@ static std::string Mark1DropResearchHolder()
 }
 
 static bool Mark1DropHoldsHeroic() { return g_Orig_Mark1DropHeroic != nullptr; }
+
+// The research build's holders of DropUniqueItems: angelicprobe's drop-unique row and gambaprobe's
+// DropUniqueItems row, as for Pocket Elf. While the shared detour is not in, whichever holds the
+// script refuses the drops' install; once it is in, those rows refuse (ApRollAttach and
+// GpInstallScripts ask g_Orig_FlightDropUnique, which the shared detour sets for either feature).
+static std::string Mark1KillResearchHolder()
+{
+    if (ApRollHoldsDropUnique()) return "angelicprobe's drop-unique row";
+    if (GpHoldsDropUnique()) return "gambaprobe's DropUniqueItems row";
+    return "";
+}
 #endif
 
-// The one install path, through Mark1DropInstallIfReady: "" when the hook is in, detoured,
+// The one install path, through Mark1DropInstallIfReady: "" when both hooks are in, detoured,
 // otherwise why the drops stay off. The pieces' ground icon goes in first when it is pending (no
 // call builds a piece before it was tried), then #74's detection (the typing, the hit and the
-// rewrite point), then the hook on DropItemHeroic, refused unless its inline detour went in: the
-// game's compiled calls pass a table-only hook by. A hook that went in stays in.
+// rewrite point), then the hook on DropItemHeroic and the kill route's, the one DropUniqueItems
+// detour Pocket Elf shares (FlightDropInstallUnique, whichever switch comes first; no second hook
+// of Mark 1's own). It refuses whole unless both inline detours went in: the game's compiled calls
+// pass a table-only hook by. A hook that went in stays in.
 static std::string Mark1DropInstall()
 {
     Mark1DropState& d = g_M1Drop;
@@ -64721,6 +65042,14 @@ static std::string Mark1DropInstall()
         if (!holder.empty()) {
             d.hookRoute = "held-by-angelicprobe";
             return holder + " holds DropItemHeroic (a script takes one inline detour; a second install would be table-only"
+                   " and blind); the drops stay off. Relaunch without it to use mark1set drops.";
+        }
+    }
+    {
+        const std::string holder = Mark1KillResearchHolder();
+        if (!holder.empty()) {
+            d.killRoute = ApRollHoldsDropUnique() ? "held-by-angelicprobe" : "held-by-gambaprobe";
+            return holder + " holds DropUniqueItems (a script takes one inline detour; a second install would be table-only"
                    " and blind); the drops stay off. Relaunch without it to use mark1set drops.";
         }
     }
@@ -64735,9 +65064,14 @@ static std::string Mark1DropInstall()
         d.hookNative = ok && native;
         d.hookRoute = !ok ? "not-found" : native ? "detoured" : "TABLE-ONLY";
     }
+    FlightDropInstallUnique();
+    d.killRoute = FlightDropUniqueRoute();
     if (d.hookRoute == "not-found") return "DropItemHeroic was not found by name (see the hook line above)";
     if (!d.hookNative)
         return "DropItemHeroic went in " + d.hookRoute + " (no inline detour): the game's own calls would pass it by";
+    if (d.killRoute == "not-found") return "DropUniqueItems was not found by name (see the hook line above)";
+    if (d.killRoute != "detoured")
+        return "DropUniqueItems went in " + d.killRoute + " (no inline detour): the game's own calls from kills would pass it by";
     return "";
 }
 
@@ -64775,13 +65109,14 @@ static void Mark1DropsSwitch(bool on)
     Out(M1dNs::DropsReply(g_M1Drop.core, g_SigDetectNative));
 }
 
-// `mark1set stat`'s second line: every field the core's FillStat, and `hook=` the DropItemHeroic
-// route this adapter got.
+// `mark1set stat`'s second line: every field the core's FillStat, `hook=` the DropItemHeroic
+// route this adapter got, and `kill-hook=` the shared DropUniqueItems detour's as its install read it.
 static std::string Mark1DropStatLine()
 {
     M1dNs::DropStatFields f;
     g_M1Drop.core.FillStat(f, g_SigDetectNative);
     f.hook = g_M1Drop.hookRoute;
+    f.killHook = g_M1Drop.killRoute;
     return M1dNs::DropStatLine(f);
 }
 // ---- end of the Mark 1 drop adapter ----------------------------------------------
@@ -65848,35 +66183,38 @@ static void M1pSpawn(const M1pNs::Command& c)
     }
 }
 
-// ---- the drops' forms: heroic, pool, copies ------------------------------------------
+// ---- the drops' forms: heroic, unique, pool, copies ------------------------------------
 
-// `mark1probe heroic <n>`: DropItemHeroic by its SDK name with the local player as self and its
-// position as the first two arguments (charmprobe heroic's call shape, whose helpers it reads the
-// player and the ground with), n times. One line per call - what it placed, read off the newest
-// Loot_Ground_obj, and whether that is a piece (Mark1PieceOf, by its own fields) - then the
-// core's summary. While the drops are on, each call goes through their hook like the game's own.
-static void M1pHeroic(const M1pNs::Command& c)
+// `mark1probe heroic <n>` and `mark1probe unique <n>`: the Heroic roll (DropItemHeroic) or the
+// ordinary unique roll (DropUniqueItems, the kill route's) by its SDK name with the local player
+// as self and its position as the first two arguments (charmprobe heroic's and flightprobe
+// unique's call shape, whose helpers it reads the player and the ground with), n times. One line
+// per call - what it placed, read off the newest Loot_Ground_obj, and whether that is a piece
+// (Mark1PieceOf, by its own fields) - then the core's summary, under the form's name. While the
+// drops are on, each call goes through their hook like the game's own.
+static void M1pDropCalls(const char* form, std::string_view script, const char* scriptName, int count)
 {
+    const std::string head = std::string("mark1probe ") + form;
     RValue player;
     CInstance* self = nullptr;
     double x = 0, y = 0;
     std::string why;
-    if (!FcpPlayer(player, self, x, y, why)) { Out("mark1probe heroic: refused - " + why + " (load a character first)"); return; }
+    if (!FcpPlayer(player, self, x, y, why)) { Out(head + ": refused - " + why + " (load a character first)"); return; }
     double ground = -1;
     const RValue index = g_Yytk->CallBuiltin("asset_get_index", {
         RValue(std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Loot_Ground_obj))) });
-    if (!ApNumber(index, ground) || ground < 0) { Out("mark1probe heroic: refused - Loot_Ground_obj not resolved"); return; }
-    M1pNs::HeroicTally tally;
-    for (int i = 1; i <= c.count; ++i) {
+    if (!ApNumber(index, ground) || ground < 0) { Out(head + ": refused - Loot_Ground_obj not resolved"); return; }
+    M1pNs::HeroicTally tally(form);
+    for (int i = 1; i <= count; ++i) {
         M1pNs::HeroicCall r;
         const double before = FcpNewestGround(ground, nullptr);
         RValue res;
         AurieStatus st = AURIE_EXTERNAL_ERROR;
-        try { st = g_Yytk->CallGameScriptEx(res, HeroSiege::Scripts::gml_Script_DropItemHeroic, self, self, { RValue(x), RValue(y) }); }
-        catch (...) { r.why = "DropItemHeroic threw"; tally.Add(r); Out(M1pNs::HeroicCallLine(i, r)); continue; }
-        if (!AurieSuccess(st)) { r.why = "DropItemHeroic st=" + std::to_string((int)st); tally.Add(r); Out(M1pNs::HeroicCallLine(i, r)); continue; }
+        try { st = g_Yytk->CallGameScriptEx(res, script, self, self, { RValue(x), RValue(y) }); }
+        catch (...) { r.why = std::string(scriptName) + " threw"; tally.Add(r); Out(M1pNs::CallLine(form, i, r)); continue; }
+        if (!AurieSuccess(st)) { r.why = std::string(scriptName) + " st=" + std::to_string((int)st); tally.Add(r); Out(M1pNs::CallLine(form, i, r)); continue; }
         RValue newest;
-        if (FcpNewestGround(ground, &newest) <= before) { r.why = "returned " + Describe(res); tally.Add(r); Out(M1pNs::HeroicCallLine(i, r)); continue; }
+        if (FcpNewestGround(ground, &newest) <= before) { r.why = "returned " + Describe(res); tally.Add(r); Out(M1pNs::CallLine(form, i, r)); continue; }
         r.placed = true;
         RValue item, info, def, v;
         try { item = g_Yytk->CallBuiltin("variable_instance_get", { newest, RValue(std::string(HeroSiege::Player::kGroundItemInstanceField)) }); }
@@ -65892,9 +66230,19 @@ static void M1pHeroic(const M1pNs::Command& c)
         if (FcpMember(info, "28", v) && v.m_Kind == VALUE_STRING) r.name = v.ToString();
         r.isPiece = Mark1PieceOf(item, r.piece);
         tally.Add(r);
-        Out(M1pNs::HeroicCallLine(i, r));
+        Out(M1pNs::CallLine(form, i, r));
     }
     Out(tally.Line());
+}
+
+static void M1pHeroic(const M1pNs::Command& c)
+{
+    M1pDropCalls("heroic", HeroSiege::Scripts::gml_Script_DropItemHeroic, "DropItemHeroic", c.count);
+}
+
+static void M1pUnique(const M1pNs::Command& c)
+{
+    M1pDropCalls("unique", HeroSiege::Scripts::gml_Script_DropUniqueItems, "DropUniqueItems", c.count);
 }
 
 // `mark1probe pool [<k>]`: lootListUnique[k] read through the drop adapter's own reads
@@ -65913,7 +66261,30 @@ static void M1pPool(const M1pNs::Command& c)
     for (const std::string& l : M1pNs::PoolLines(s)) Out(l);
 }
 
-// `mark1probe copies <k>`: the copies each piece's stand-in is pushed with per Heroic roll.
+// `mark1probe pool kill`: lootListUnique[0..5] read through the kill route's own reads
+// (Mark1KillReadLists, Mark1DropEntries, and each distinct triple's Mark1DropVerdict outside a
+// roll), then the core's kill stand-in rule: per piece class its stand-in and that triple's count
+// on each of [0..4]. Refused while a roll's entries are on a list, so the counts are the game's
+// own. Writes nothing.
+static void M1pPoolKill(const M1pNs::Command&)
+{
+    if (g_M1Drop.pushed > 0 || g_M1Drop.killPushed > 0 || g_FlightDrop.rollPushed > 0 || g_SigRollPushed > 0) {
+        Out("mark1probe pool: refused - a roll's entries are on the lists; try again after it");
+        return;
+    }
+    RValue subs[M1dNs::kListCount];
+    M1dNs::KillListKeys keys{};
+    std::string why;
+    if (!Mark1KillReadLists(subs, keys, why)) { Out("mark1probe pool: refused - " + why); return; }
+    FlightDropOutsideRoll outside;
+    M1dNs::KillLists lists;
+    for (int k = 0; k < M1dNs::kListCount; ++k) lists[(size_t)k] = Mark1DropEntries(subs[k], keys[(size_t)k].length);
+    const M1pNs::PoolKillSummary s = M1pNs::PoolKill(lists, Mark1DropVerdict);
+    for (const std::string& l : M1pNs::PoolKillLines(s)) Out(l);
+}
+
+// `mark1probe copies <k>`: the copies each piece's stand-in is pushed with per roll, the Heroic
+// roll's and the kill route's.
 static void M1pCopies(const M1pNs::Command& c)
 {
     g_Mark1DropCopies = c.count;
@@ -66189,7 +66560,9 @@ static void M1pCommand(const std::string& rest)
     case M1pNs::Form::Base: M1pBase(c); return;
     case M1pNs::Form::Spawn: M1pSpawn(c); return;
     case M1pNs::Form::Heroic: M1pHeroic(c); return;
+    case M1pNs::Form::Unique: M1pUnique(c); return;
     case M1pNs::Form::Pool: M1pPool(c); return;
+    case M1pNs::Form::PoolKill: M1pPoolKill(c); return;
     case M1pNs::Form::Copies: M1pCopies(c); return;
     case M1pNs::Form::Count: M1pCount(c.object, c.frames); return;
     case M1pNs::Form::Pos: M1pPos(c.frames); return;

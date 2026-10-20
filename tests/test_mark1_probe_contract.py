@@ -48,7 +48,9 @@ the rest: `heroic` calls DropItemHeroic by its SDK constant with the local
 player as self (charmprobe heroic's call shape) and recognises a piece through
 the shipped Mark1PieceOf; `pool` reads through the drop adapter's own reads and
 writes nothing; `copies` is the only writer of the copies lever, a constant in
-the player build.
+the player build. The kill route adds `unique` (the same calls on
+DropUniqueItems) and `pool kill` (the kill route's own reads of all six lists,
+refused while a roll's entries are on one).
 """
 import re
 import sys
@@ -281,8 +283,9 @@ class Mark1ProbeContract(unittest.TestCase):
     def test_research_only_base_builds_through_the_loader_by_its_sdk_constant_and_places_nothing(self):
         base = self.body("static void M1pBase(const M1pNs::Command& c)")
         spawn = self.body("static void M1pSpawn(const M1pNs::Command& c)")
-        # base's one game-script call; spawn's two and heroic's one are the only others.
-        heroic = self.body("static void M1pHeroic(const M1pNs::Command& c)")
+        # base's one game-script call; spawn's two and the drops' forms' one (heroic and unique share
+        # it) are the only others.
+        heroic = self.body("static void M1pDropCalls(const char* form, std::string_view script, const char* scriptName, int count)")
         self.assertEqual(base.count("CallGameScriptEx("), 1)
         self.assertEqual(spawn.count("CallGameScriptEx("), 2)
         self.assertEqual(heroic.count("CallGameScriptEx("), 1)
@@ -329,15 +332,30 @@ class Mark1ProbeContract(unittest.TestCase):
         # `heroic`: DropItemHeroic by its SDK constant with the local player as self and its x, y
         # (charmprobe heroic's call shape), what it placed read off the newest ground item, a
         # piece recognised by the shipped Mark1PieceOf, and the core's lines.
-        heroic = self.body("static void M1pHeroic(const M1pNs::Command& c)")
-        self.assertIn("FcpPlayer(player, self, x, y, why)", heroic)
-        self.assertIn("g_Yytk->CallGameScriptEx(res, HeroSiege::Scripts::gml_Script_DropItemHeroic, self, self, { RValue(x), RValue(y) });",
-                      heroic)
-        self.assertIn("FcpNewestGround(ground, &newest)", heroic)
-        self.assertIn("r.isPiece = Mark1PieceOf(item, r.piece);", heroic)
-        self.assertIn("M1pNs::HeroicCallLine(i, r)", heroic)
-        self.assertIn("Out(tally.Line());", heroic)
-        self.assertNotIn('"gml_Script_', heroic)
+        # `unique` (the kill route's) is the same calls on DropUniqueItems, under its own name.
+        calls = self.body("static void M1pDropCalls(const char* form, std::string_view script, const char* scriptName, int count)")
+        self.assertIn("FcpPlayer(player, self, x, y, why)", calls)
+        self.assertIn("g_Yytk->CallGameScriptEx(res, script, self, self, { RValue(x), RValue(y) });", calls)
+        self.assertIn("FcpNewestGround(ground, &newest)", calls)
+        self.assertIn("r.isPiece = Mark1PieceOf(item, r.piece);", calls)
+        self.assertIn("M1pNs::CallLine(form, i, r)", calls)
+        self.assertIn("M1pNs::HeroicTally tally(form);", calls)
+        self.assertIn("Out(tally.Line());", calls)
+        self.assertNotIn('"gml_Script_', calls)
+        self.assertIn('M1pDropCalls("heroic", HeroSiege::Scripts::gml_Script_DropItemHeroic, "DropItemHeroic", c.count);',
+                      self.body("static void M1pHeroic(const M1pNs::Command& c)"))
+        self.assertIn('M1pDropCalls("unique", HeroSiege::Scripts::gml_Script_DropUniqueItems, "DropUniqueItems", c.count);',
+                      self.body("static void M1pUnique(const M1pNs::Command& c)"))
+        # `pool kill`: the kill route's own reads of all six lists and the core's kill stand-in
+        # rule; refused while a roll's entries are on a list; nothing written.
+        kill = self.body("static void M1pPoolKill(const M1pNs::Command&)")
+        self.assertIn("Mark1KillReadLists(subs, keys, why)", kill)
+        self.assertIn("FlightDropOutsideRoll outside;", kill)
+        self.assertIn("M1pNs::PoolKill(lists, Mark1DropVerdict)", kill)
+        self.assertIn("M1pNs::PoolKillLines(s)", kill)
+        self.assertLess(kill.index("g_M1Drop.killPushed > 0"), kill.index("Mark1KillReadLists("))
+        for name in MEMBER_WRITES + ("CallGameScript", "ds_list_add", "ds_list_delete"):
+            self.assertNotIn(name, kill)
         # `pool`: the drop adapter's own reads (the list by name, every entry, each distinct
         # triple's repository verdict outside a roll), the core's summary; nothing written.
         pool = self.body("static void M1pPool(const M1pNs::Command& c)")
@@ -356,7 +374,8 @@ class Mark1ProbeContract(unittest.TestCase):
                       "static int g_Mark1DropCopies = M1dNs::kPlayerCopies;\n#endif", self.plugin)
         command = self.body("static void M1pCommand(const std::string& rest)")
         for case in ("case M1pNs::Form::Heroic: M1pHeroic(c); return;", "case M1pNs::Form::Pool: M1pPool(c); return;",
-                     "case M1pNs::Form::Copies: M1pCopies(c); return;"):
+                     "case M1pNs::Form::Copies: M1pCopies(c); return;", "case M1pNs::Form::Unique: M1pUnique(c); return;",
+                     "case M1pNs::Form::PoolKill: M1pPoolKill(c); return;"):
             self.assertIn(case, command)
 
     def test_research_only_the_probes_own_hold_is_named_for_the_set(self):

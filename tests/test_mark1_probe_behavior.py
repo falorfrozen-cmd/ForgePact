@@ -45,6 +45,8 @@ The drops (phase 3) add `heroic <n>`, `pool [<k>]` and `copies <k>` for their
 live session: `heroic`'s per-call line (the tier after `rarity=`) and summary, `pool`'s summary of one
 sub-list as the Heroic roll keeps it with each piece's stand-in by
 Mark1Drops.hpp's rule, `copies`' line, and each form's parse and refusals.
+The kill route adds `unique <n>` (the same lines under its own name) and `pool
+kill` (the five lengths and each piece's kill stand-in with its counts).
 """
 import os
 import shutil
@@ -232,6 +234,18 @@ class Mark1ProbeBehaviorTests(unittest.TestCase):
 
     def test_copies_line(self):
         self.assertScenario("copies/line")
+
+    def test_unique_call_lines_and_summary_for_the_kill_route(self):
+        # `unique <n>` (the kill route, the ordinary unique roll by name): the same per-call line
+        # and summary as `heroic`'s, under its own name, with the tier after the rarity.
+        self.assertScenarios("unique/parse_kill", "unique/call_lines_for_the_kill_route",
+                             "unique/summary_under_its_own_name_for_the_kill_route")
+
+    def test_pool_kill_lengths_standins_and_counts(self):
+        # `pool kill`: [0..4]'s lengths, then per piece class the kill stand-in by Mark1Drops.hpp's
+        # equal-count rule (n 0 first), that triple's count on each of [0..4], the candidates with
+        # one count on all five and the class's kept triples; each distinct triple asked once.
+        self.assertScenarios("pool/kill_parse", "pool/kill_lengths_standins_and_counts", "pool/kill_each_distinct_triple_asked_once")
 
     # ---- the lines -------------------------------------------------------------
 

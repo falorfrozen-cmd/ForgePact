@@ -69,6 +69,14 @@ Mark 1 set's art state the drops arm. The baseline holds against the source
 before the drop adapter too (no switch: the roll is the game's own and nothing
 is hooked); the switch-off scenario and every target scenario fail there (no
 `Mark1DropState`). Every #74 and flight scenario stays as it was.
+`test_mark1_kill_baseline` and `test_mark1_kill_target` are the Mark 1 drops' kill
+route (#166, Amendment 3), on the same model of `DropUniqueItems`: the pieces
+join the ordinary unique roll through the one detour Pocket Elf already holds
+(`Hook_FlightDropUniqueItems`, one install for both), a kill stand-in per
+piece on each of `lootListUnique[0..4]`, and each feature's push only with its
+own switch. The untouched scenario holds against the source before the kill
+route; the switch-off scenario and every target scenario fail there by their
+own assertions (its drops' install hooks no `DropUniqueItems`).
 Each production name's presence is announced as `#define HAS_<NAME>`, so the
 harness compiles against any of these sources.
 """
@@ -164,8 +172,11 @@ PRODUCTION = (
     'static void FlightDropAfterHit(',
     'struct FlightUniqueInjectGuard {',
     'struct FlightUniqueCounterScope {',
+    'struct Mark1KillInjectGuard {',              # #166: the kill route's part of the shared detour
+    'struct FlightUniqueDepthScope {',
     'static RValue& Hook_FlightDropUniqueItems(',
     'static void FlightDropInstallUnique(',
+    'static std::string FlightDropUniqueRoute(',
     'static void FlightDropSwitch(',
     'static void FlightDropFillStat(',
     'static std::string FlightDropTraceLine(',
@@ -176,11 +187,25 @@ PRODUCTION = (
     'static bool Mark1DropVerdict(',
     'static std::vector<M1dNs::ListEntry> Mark1DropEntries(',
     'static void Mark1DropResolve(',
+    'static bool Mark1ListTailHolds(',
     'static bool Mark1DropTailHolds(',
+    'static void Mark1DropAddEntry(',
+    'static int Mark1DropDeleteLast(',
     'static bool Mark1DropHeldReadBack(',
     'static void Mark1DropClearRoll(',
     'static void Mark1DropRemove(',
     'static void Mark1DropPush(',
+    # #166's kill route: the same push onto lootListUnique[0..4], for the shared detour.
+    'static bool Mark1KillReadLists(',
+    'static void Mark1KillResolve(',
+    'static bool Mark1KillTailHolds(',
+    'static bool Mark1KillHeldReadBack(',
+    'static void Mark1KillClearRoll(',
+    'static void Mark1KillRemove(',
+    'static void Mark1KillPush(',
+    'static bool Mark1KillBeginCall(',
+    'static void Mark1KillEnter(',
+    'static void Mark1KillLeave(',
     'static void Mark1DropHitReset(',
     'static void Mark1DropAttributeHit(',
     'static void Mark1DropRefuse(',
@@ -451,6 +476,31 @@ class AngelicHitBehaviorTests(unittest.TestCase):
             'mark1_heroic_74s_counters_unchanged', 'mark1_heroic_installs_with_a_character',
             'mark1_heroic_table_only_and_no_detection_refuse', 'mark1_heroic_refused_rewrite_latches',
             'mark1_heroic_art_not_ready_pushes_nothing',
+        ))
+
+    def test_mark1_kill_baseline(self):
+        # #166's kill route (Amendment 3): with neither switch touched the ordinary unique roll is
+        # the game's own and nothing is hooked (holds against the source before the kill route too);
+        # the drops switched on and off again leave the shared detour in, passing every call through,
+        # each counted, the lists and what they build the game's own (fails there: no detour).
+        self.run_scenarios(('mark1_kill_untouched_installs_nothing', 'mark1_kill_switch_off_is_vanilla'))
+
+    def test_mark1_kill_target(self):
+        # #166's kill route: the pieces join the ordinary unique roll through the one DropUniqueItems
+        # detour Pocket Elf already holds - one install for both, whichever switch comes first, and a
+        # table-only hook refuses the drops whole on a line of their own. Each call carries one entry
+        # per kill stand-in on each of lootListUnique[0..4] (the equal-count rule, n 0 first), a hit
+        # on one is the piece's at c in n + c, built by the game and counted on the kill route's
+        # tallies; with Pocket Elf on too each hit goes to its own item, and each switch pushes only
+        # its own; a throw leaves all five lists as found; a call nested in the Angelic roll passes
+        # through; #74's `sigdrop status` does not move; an art not ready pushes nothing. Every
+        # Pocket Elf and Heroic scenario above stays as it was. Each fails by its own assertions
+        # against the source before the kill route, whose drops' install hooks no DropUniqueItems.
+        self.run_scenarios((
+            'mark1_kill_hit_builds_the_piece', 'mark1_kill_coin_one_in_n_plus_c', 'mark1_kill_and_pocket_elf_each_hit_their_own',
+            'mark1_kill_each_switch_pushes_only_its_own', 'mark1_kill_throw_leaves_the_lists_as_found',
+            'mark1_kill_nested_in_the_angelic_roll_passes_through', 'mark1_kill_74s_counters_unchanged',
+            'mark1_kill_shares_the_elfs_detour', 'mark1_kill_art_not_ready_pushes_nothing',
         ))
 
 

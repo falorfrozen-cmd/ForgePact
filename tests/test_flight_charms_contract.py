@@ -976,12 +976,15 @@ class FlightCharmsDropContract(unittest.TestCase):
         self.assertNotIn("HookOneScriptTable", self.code)
         # A table-only hook is passed by the game's compiled calls: the elf stays off.
         self.assertIn("d.uniqueNative = ok && native;", install)
-        self.assertIn("if (!d.uniqueNative)", install)
+        # (Said whenever the elf's switch comes on, since the Mark 1 drops may have tried it first.)
+        self.assertIn("if (elf && !d.uniqueNative)", install)
         self.assertIn("FcNs::RefusedLine(", install)
-        # One HookOneScript in the whole adapter, and one caller of the installer:
-        # the elf's switch-on.
+        # One HookOneScript in the whole adapter, and two callers of the installer: the elf's
+        # switch-on and the Mark 1 drops' install (#166), which share the one detour.
         self.assertEqual(self.code.count("HookOneScript("), 1)
-        self.assertEqual(self.all_code.count("FlightDropInstallUnique()"), 2, "the definition and the switch-on")
+        self.assertEqual(self.all_code.count("FlightDropInstallUnique()"), 3,
+                         "the definition, the switch-on and the Mark 1 drops' install")
+        self.assertIn("FlightDropInstallUnique();", strip_comments(function_body(self.plugin, "static std::string Mark1DropInstall()")))
         switch = self.body("switch")
         self.assertIn("if (on) {", switch)
         self.assertLess(switch.index("if (on) {"), switch.index("FlightDropInstallUnique();"))
@@ -1040,9 +1043,15 @@ class FlightCharmsDropContract(unittest.TestCase):
         hook = self.body("unique_hook")
         lines = [line.strip() for line in hook.split("\n") if line.strip()]
         self.assertEqual(lines[0], "if (!g_Orig_FlightDropUnique) return R;")
-        passthrough = "if (g_SigRollDepth > 0 || g_FlightDrop.rollUnique || !g_FlightDrop.switches[(int)FcNs::Charm::Elf])"
+        # Pocket Elf's part of the shared detour (#166): its switch on and no roll in progress, the
+        # Angelic roll's or a unique roll either feature took; with neither feature's part, the
+        # game's own call.
+        self.assertIn("const bool elf = g_SigRollDepth <= 0 && g_FlightDrop.uniqueDepth <= 0 && "
+                      "g_FlightDrop.switches[(int)FcNs::Charm::Elf];", hook)
+        passthrough = "if (!elf && !mark1) return g_Orig_FlightDropUnique(S, O, R, argc, A);"
         self.assertIn(passthrough, hook)
-        inject = hook.index("FlightUniqueInjectGuard inject;")
+        self.assertLess(hook.index("FlightUniqueDepthScope depth;"), hook.index("FlightUniqueInjectGuard inject(elf);"))
+        inject = hook.index("FlightUniqueInjectGuard inject(elf);")
         roll = hook.index("SignatureRollScope roll;")
         counters = hook.index("FlightUniqueCounterScope counters;")
         reset = hook.index("SignatureHitReset();")
@@ -1055,7 +1064,7 @@ class FlightCharmsDropContract(unittest.TestCase):
         self.assertLess(reset, original)
         self.assertLess(original, hook.index("FlightDropAfterHit();"))
         guard = strip_comments(function_body(self.plugin, "struct FlightUniqueInjectGuard {"))
-        self.assertRegex(guard, r"FlightUniqueInjectGuard\(\)\s*\{[^}]*FlightDropUniquePush\(\);")
+        self.assertRegex(guard, r"FlightUniqueInjectGuard\(bool on\)[^{]*\{[^}]*FlightDropUniquePush\(\);")
         self.assertRegex(guard, r"~FlightUniqueInjectGuard\(\)\s*\{[^}]*FlightDropRemove\(\);")
 
     def test_the_unique_roll_leaves_74s_counters_as_they_were(self):

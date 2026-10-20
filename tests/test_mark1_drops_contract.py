@@ -28,7 +28,17 @@ and pins what neither can see:
   the hit reset, the built count), and the rewrite is #74's
   SignatureRewriteParams with the core's RewriteFor;
 - `mark1set drops 1|0` and the second stat line are the core's, and the copies
-  are the core's constant in the player build.
+  are the core's constant in the player build;
+- kill_hook (the kill route, Amendment 3): the pieces' share of the ordinary
+  unique roll goes through one detour on DropUniqueItems by its SDK name, the
+  one Pocket Elf holds, and the drops' install refuses whole unless it went in
+  inline; its every call is counted and the core's BeginKillCall decides
+  Mark 1's part before anything is read; the push (outside the roll's scope,
+  after Pocket Elf's) and the removal (before Pocket Elf's) wrap the original;
+- shares_the_elf: Pocket Elf and the Mark 1 drops reach the same detour and the
+  same install function (FlightDropInstallUnique), which hooks the script once
+  a session; neither installs a second, and the research rows that hold
+  DropUniqueItems refuse the drops and are refused by them, as for Pocket Elf.
 """
 import re
 import sys
@@ -52,8 +62,20 @@ SIGNATURES = {
     "verdict": "static bool Mark1DropVerdict(const M1dNs::Triple& key, int& rarity, bool& hidden)",
     "resolve": "static void Mark1DropResolve(int index, const RValue& sub, double id, int size)",
     "held": "static bool Mark1DropHeldReadBack(std::string& seen)",
+    "tail": "static bool Mark1ListTailHolds(const RValue& sub, int before, const std::vector<M1dNs::PushEntry>& entries,",
+    "add_entry": "static void Mark1DropAddEntry(const RValue& sub, const M1dNs::Triple& k)",
+    "delete_last": "static int Mark1DropDeleteLast(const RValue& sub, int len, int count)",
     "remove": "static void Mark1DropRemove()",
     "push": "static void Mark1DropPush(int index)",
+    # the kill route
+    "kill_read": "static bool Mark1KillReadLists(RValue subs[], M1dNs::KillListKeys& keys, std::string& why)",
+    "kill_resolve": "static void Mark1KillResolve(const RValue subs[], const M1dNs::KillListKeys& keys)",
+    "kill_held": "static bool Mark1KillHeldReadBack(std::string& seen)",
+    "kill_remove": "static void Mark1KillRemove()",
+    "kill_push": "static void Mark1KillPush()",
+    "kill_begin": "static bool Mark1KillBeginCall(int uniqueDepth)",
+    "kill_enter": "static void Mark1KillEnter()",
+    "kill_leave": "static void Mark1KillLeave()",
     "hit_reset": "static void Mark1DropHitReset()",
     "attribute": "static void Mark1DropAttributeHit()",
     "refuse": "static void Mark1DropRefuse(int i, const std::string& record)",
@@ -70,6 +92,15 @@ SIGNATURES = {
     # research build only
     "research_holder": "static std::string Mark1DropResearchHolder()",
     "holds_heroic": "static bool Mark1DropHoldsHeroic()",
+    "kill_research_holder": "static std::string Mark1KillResearchHolder()",
+    # the shared DropUniqueItems detour, in the flight charms' drop adapter
+    "shared_hook": "static RValue& Hook_FlightDropUniqueItems(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)",
+    "shared_install": "static void FlightDropInstallUnique()",
+    "shared_route": "static std::string FlightDropUniqueRoute()",
+    "kill_guard": "struct Mark1KillInjectGuard {",
+    "elf_guard": "struct FlightUniqueInjectGuard {",
+    "flight_switch": "static void FlightDropSwitch(FcNs::Charm c, bool on)",
+    "gp_install": "static void GpInstallScripts(HMODULE mainMod)",
     # outside the block: the call-outs and the holders' other half
     "cdp": "static RValue& Hook_CreateDefaultParams(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)",
     "sig_before_create": "static void SignatureBeforeCreate(int argc, RValue** A)",
@@ -80,9 +111,11 @@ SIGNATURES = {
     "set_command": "static void Mark1SetCommand(const std::string& rest)",
     "frame": "void FrameCallback(FWFrame& FrameContext)",
 }
-SHIPPED = ("art_ready", "arg_of", "read_list", "verdict", "resolve", "held", "remove", "push", "hit_reset", "attribute",
-           "refuse", "before_create", "note_built", "after_hit", "guard", "hook", "install", "install_if_ready", "tick",
-           "switch", "stat_line")
+SHIPPED = ("art_ready", "arg_of", "read_list", "verdict", "resolve", "held", "tail", "add_entry", "delete_last", "remove",
+           "push", "kill_read", "kill_resolve", "kill_held", "kill_remove", "kill_push", "kill_begin", "kill_enter",
+           "kill_leave", "hit_reset", "attribute", "refuse", "before_create", "note_built", "after_hit", "guard", "hook",
+           "install", "install_if_ready", "tick", "switch", "stat_line", "shared_hook", "shared_install", "shared_route",
+           "kill_guard")
 
 
 class Mark1DropsContract(unittest.TestCase):
@@ -134,6 +167,8 @@ class Mark1DropsContract(unittest.TestCase):
         # The player build never writes it: its one writer is the research probe's copies form.
         self.assertIsNone(re.search(r"(?<!int )\bg_Mark1DropCopies\s*=(?!=)", strip_comments(strip_research_blocks(self.plugin))))
         self.assertIn("d.core.PlanFor(*r, g_Mark1DropCopies)", self.body("push"))
+        # The same lever on the kill route.
+        self.assertIn("d.core.PlanKillFor(*r, g_Mark1DropCopies)", self.body("kill_push"))
 
     # ---- the hook -----------------------------------------------------------------------
 
@@ -206,8 +241,9 @@ class Mark1DropsContract(unittest.TestCase):
         self.assertIn("g_M1Drop.core.Cache().Store((uint64_t)id, r);", resolve)
         push = self.body("push")
         self.assertIn("if (d.core.Cache().Stale(index, (uint64_t)id, size)) Mark1DropResolve(index, sub, id, size);", push)
-        self.assertIn('g_Yytk->CallBuiltin("ds_list_add", { d.sub, entry });', push)
-        self.assertLess(push.index('"ds_list_add"'), push.index("Mark1DropHeldReadBack(seen)"))
+        self.assertIn("Mark1DropAddEntry(d.sub, p.triple);", push)
+        self.assertIn('g_Yytk->CallBuiltin("ds_list_add", { sub, entry });', self.body("add_entry"))
+        self.assertLess(push.index("Mark1DropAddEntry("), push.index("Mark1DropHeldReadBack(seen)"))
         self.assertLess(push.index("Mark1DropHeldReadBack(seen)"), push.index("d.core.NotePushed(d.plan);"))
         self.assertIn("d.core.NoteListUnreadable(index);", push)
         # The verdict is the repository's by name, the reads FlightDropUniquePasses makes.
@@ -222,9 +258,11 @@ class Mark1DropsContract(unittest.TestCase):
         # Removal is tail-checked and counts an anomaly otherwise.
         remove = self.body("remove")
         self.assertIn("tail = Mark1DropTailHolds(len);", remove)
-        self.assertLess(remove.index("Mark1DropTailHolds(len)"), remove.index('"ds_list_delete"'))
+        self.assertLess(remove.index("Mark1DropTailHolds(len)"), remove.index("Mark1DropDeleteLast("))
         self.assertIn("d.core.NoteAnomaly();", remove)
-        # The only game writes in the block are the push and its removal.
+        self.assertIn('g_Yytk->CallBuiltin("ds_list_delete", { sub, RValue((double)(len - 1 - n)) });', self.body("delete_last"))
+        # The only game writes in the block are the push and its removal, one helper each, for
+        # both rolls.
         for name in ("variable_instance_set", "variable_struct_set", "variable_global_set", "ds_list_set", "instance_create",
                      "instance_destroy"):
             self.assertNotIn(name, self.code)
@@ -254,10 +292,15 @@ class Mark1DropsContract(unittest.TestCase):
 
     def test_a_hit_is_the_cores_attribution_and_the_rewrite_74s(self):
         attribute = self.body("attribute")
-        self.assertIn("if (!d.rolling || d.pushed <= 0 || g_SigRollDepth <= 0 || !g_SigHitTyped || g_SigHitItem >= 0 || d.hitStandIn >= 0) return;",
-                      attribute)
+        self.assertIn("if (g_SigRollDepth <= 0 || !g_SigHitTyped || g_SigHitItem >= 0 || d.hitStandIn >= 0) return;", attribute)
+        # The call in progress with entries of ours: the Heroic roll's, else the kill route's.
+        self.assertIn("const bool heroic = d.rolling && d.pushed > 0;", attribute)
+        self.assertIn("const bool kill = !heroic && d.killRolling && d.killPushed > 0;", attribute)
+        self.assertIn("if (!heroic && !kill) return;", attribute)
         self.assertIn("M1dNs::AttributeHit(d.plan, g_SigHitType, g_SigLastSub, g_SigLastB, u, piece)", attribute)
-        self.assertIn("d.core.NoteOurs(piece);", attribute)
+        self.assertIn("M1dNs::AttributeHit(d.killPlan, g_SigHitType, g_SigLastSub, g_SigLastB, u, piece)", attribute)
+        self.assertIn("d.hitRoll = heroic ? M1dNs::Roll::Heroic : M1dNs::Roll::Kill;", attribute)
+        self.assertIn("d.core.NoteOurs(piece, d.hitRoll);", attribute)
         before = self.body("before_create")
         self.assertIn("M1dNs::RewriteFor(static_cast<M1sNs::Piece>(i))", before)
         self.assertIn("SignatureRewriteParams(record, item, why)", before)
@@ -265,7 +308,8 @@ class Mark1DropsContract(unittest.TestCase):
         self.assertIn("d.core.NoteRewriteRefused(p);", self.body("refuse"))
         built = self.body("note_built")
         self.assertIn("g_M1Drop.pending[i] <= 0) return;", built)
-        self.assertIn("g_M1Drop.core.NoteBuilt(piece);", built)
+        self.assertIn("g_M1Drop.core.NoteBuilt(piece, g_M1Drop.hitRoll);", built)
+        self.assertIn("d.hitRoll = M1dNs::Roll::Heroic;", self.body("hit_reset"))
         # A hit that never reached the rewrite point is a refusal too.
         after = self.body("after_hit")
         self.assertIn("if (!g_SigHitAtPoint) {", after)
@@ -313,8 +357,115 @@ class Mark1DropsContract(unittest.TestCase):
         self.assertLess(refusal, attach.index("GetNamedRoutinePointer"))
         self.assertIn("kApRollBlocked", attach[refusal:attach.index("GetNamedRoutinePointer")])
         # Both halves are research-only.
-        for name in ("Mark1DropResearchHolder", "Mark1DropHoldsHeroic", "g_ApRollRows"):
+        for name in ("Mark1DropResearchHolder", "Mark1DropHoldsHeroic", "g_ApRollRows", "Mark1KillResearchHolder"):
             self.assertNotIn(name, self.shipped)
+
+    # ---- the kill route: the shared DropUniqueItems detour ----------------------------------
+
+    def test_the_kill_hook_is_one_detour_on_drop_unique_items_by_its_sdk_name_refused_unless_inline(self):
+        scripts = SDK_SCRIPTS.read_text(encoding="utf-8")
+        self.assertIn('std::string_view gml_Script_DropUniqueItems = "gml_Script_DropUniqueItems";', scripts)
+        shared = self.body("shared_install")
+        self.assertRegex(shared, r"HookOneScript\(SdkShortScriptName\(HeroSiege::Scripts::gml_Script_DropUniqueItems\),\s*"
+                                 r"\"fp_flight_duniq\",\s*\(PVOID\)Hook_FlightDropUniqueItems,\s*&g_Orig_FlightDropUnique,\s*&native\)")
+        self.assertIn("d.uniqueNative = ok && native;", shared)
+        self.assertIn('d.uniqueRoute = !ok ? "not-found" : native ? "detoured" : "TABLE-ONLY";', shared)
+        self.assertIn("return g_FlightDrop.uniqueRoute;", self.body("shared_route"))
+        # The drops' install adds it after the Heroic hook and refuses whole unless it is detoured,
+        # with its own line; the route is the stat line's kill-hook=.
+        install = self.body("install")
+        self.assertLess(install.index("HookOneScript("), install.index("FlightDropInstallUnique();"))
+        self.assertIn("d.killRoute = FlightDropUniqueRoute();", install)
+        self.assertLess(install.index("FlightDropInstallUnique();"), install.index("d.killRoute = FlightDropUniqueRoute();"))
+        self.assertIn('if (d.killRoute != "detoured")', install)
+        self.assertIn('"DropUniqueItems went in " + d.killRoute + " (no inline detour)', install)
+        self.assertLess(install.index('if (d.killRoute != "detoured")'), install.rindex('return "";'))
+        self.assertTrue(install.rstrip().endswith('return "";'))
+        # The detour: every call counted for the kill route first (the core's BeginKillCall, nothing
+        # read before it), each feature's part only with its own switch, the game's own call with
+        # neither; then the pushes (Pocket Elf's, then Mark 1's) outside the roll's scope, #74's roll
+        # in progress, the counter scope and the hit reset, the original, each feature's after-hit.
+        lines = [l.strip() for l in self.body("shared_hook").split("\n") if l.strip()]
+        self.assertEqual(lines[0], "if (!g_Orig_FlightDropUnique) return R;")
+        self.assertEqual(lines[1], "const bool mark1 = Mark1KillBeginCall(g_FlightDrop.uniqueDepth);")
+        self.assertEqual(lines[2], "const bool elf = g_SigRollDepth <= 0 && g_FlightDrop.uniqueDepth <= 0 && "
+                                   "g_FlightDrop.switches[(int)FcNs::Charm::Elf];")
+        self.assertEqual(lines[3], "if (!elf && !mark1) return g_Orig_FlightDropUnique(S, O, R, argc, A);")
+        hook = self.body("shared_hook")
+        order = ["FlightUniqueDepthScope depth;", "FlightUniqueInjectGuard inject(elf);", "Mark1KillInjectGuard mark1Inject(mark1);",
+                 "SignatureRollScope roll;", "FlightUniqueCounterScope counters;", "SignatureHitReset();",
+                 "RValue& r = g_Orig_FlightDropUnique(S, O, R, argc, A);", "FlightDropAfterHit();", "Mark1DropAfterHit();"]
+        for a, b in zip(order, order[1:]):
+            self.assertLess(hook.index(a), hook.index(b), a + " before " + b)
+        begin = self.body("kill_begin")
+        self.assertIn("g_M1Drop.core.BeginKillCall(g_SigDetectNative, g_SigRollDepth, uniqueDepth, Mark1DropArtReady())", begin)
+        self.assertIn("== M1dNs::CallAction::Resolve", begin)
+        for call in ("g_Yytk", "CallBuiltin", "CallGameScript"):
+            self.assertNotIn(call, begin)
+        # Mark 1's guard is its push and its removal on every way out, only with its part of the call.
+        guard = self.body("kill_guard")
+        self.assertRegex(guard, r"Mark1KillInjectGuard\(bool on\) : on\(on\) \{ if \(on\) Mark1KillEnter\(\); \}")
+        self.assertRegex(guard, r"~Mark1KillInjectGuard\(\) \{ if \(on\) Mark1KillLeave\(\); \}")
+        self.assertIn("try { Mark1KillPush(); } catch (...) {}", self.body("kill_enter"))
+        self.assertIn("try { Mark1KillRemove(); } catch (...) {}", self.body("kill_leave"))
+        self.assertIn("g_M1Drop.killRolling = false;", self.body("kill_leave"))
+
+    def test_the_kill_push_is_the_cores_plan_on_all_five_lists_held_read_back_and_tail_checked(self):
+        push = self.body("kill_push")
+        self.assertIn("if (!Mark1KillReadLists(subs, keys, why)) {", push)
+        self.assertIn("d.core.NoteKillListsUnreadable();", push)
+        self.assertIn("if (d.core.KillCache().Stale(keys)) Mark1KillResolve(subs, keys);", push)
+        self.assertIn("const int index = M1dNs::kKillLists[k];", push)
+        self.assertIn("Mark1DropAddEntry(d.killSub[k], plan.entries[e].triple);", push)
+        self.assertLess(push.index("Mark1DropAddEntry("), push.index("Mark1KillHeldReadBack(seen)"))
+        self.assertLess(push.index("Mark1KillHeldReadBack(seen)"), push.index("d.core.NoteKillPushed(d.killPlan);"))
+        resolve = self.body("kill_resolve")
+        self.assertIn("FlightDropOutsideRoll outside;", resolve)
+        self.assertIn("M1dNs::ResolveKillStandIns(lists, Mark1DropVerdict)", resolve)
+        self.assertIn("g_M1Drop.core.KillCache().Store(keys,", resolve)
+        read = self.body("kill_read")
+        self.assertIn("SignatureController(instance, why)", read)
+        self.assertIn("SigListHandle(subs[k], id, step)", read)
+        held = self.body("kill_held")
+        self.assertIn("Mark1KillReadLists(subs, keys, why)", held)
+        self.assertIn("Mark1KillTailHolds(k, len)", held)
+        remove = self.body("kill_remove")
+        self.assertLess(remove.index("Mark1KillTailHolds(k, len)"), remove.index("Mark1DropDeleteLast("))
+        self.assertIn("d.core.NoteAnomaly();", remove)
+
+    def test_pocket_elf_and_the_drops_shares_the_elfs_detour_and_install(self):
+        # One HookOneScript names DropUniqueItems in the whole plugin, in the one install function;
+        # the drops' block names neither the hook function's address nor a second install.
+        self.assertEqual(self.whole.count("HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_DropUniqueItems)"), 1)
+        self.assertEqual(self.whole.count("(PVOID)Hook_FlightDropUniqueItems"), 1)
+        self.assertEqual(self.whole.count('"fp_flight_duniq"'), 1)
+        self.assertNotIn("gml_Script_DropUniqueItems", self.code)
+        self.assertNotIn("Hook_FlightDropUniqueItems", self.code)
+        # Its callers: the definition, Pocket Elf's switch-on and the drops' install.
+        self.assertEqual(len(re.findall(r"\bFlightDropInstallUnique\(\)", self.whole)), 3)
+        self.assertIn("FlightDropInstallUnique();", self.body("flight_switch"))
+        self.assertIn("FlightDropInstallUnique();", self.body("install"))
+        # Once a session, whichever comes first; Pocket Elf's refusal is printed only with its switch on.
+        shared = self.body("shared_install")
+        self.assertIn("const bool elf = d.switches[(int)FcNs::Charm::Elf];", shared)
+        self.assertIn("if (!d.uniqueTried) {", shared)
+        self.assertIn("if (elf && !d.uniqueNative)", shared)
+        # Pocket Elf's guard pushes only with its part of the call.
+        self.assertRegex(self.body("elf_guard"), r"FlightUniqueInjectGuard\(bool on\) : on\(on\) \{ if \(!on\) return;")
+        # The research rows that hold DropUniqueItems refuse the drops (before anything is hooked),
+        # and are refused once the shared detour is in, both research-only.
+        holder = self.body("kill_research_holder")
+        self.assertIn("ApRollHoldsDropUnique()", holder)
+        self.assertIn("GpHoldsDropUnique()", holder)
+        install = self.body("install")
+        self.assertIn("const std::string holder = Mark1KillResearchHolder();", install)
+        self.assertLess(install.index("Mark1KillResearchHolder()"), install.index("Mark1GroundIconInstall();"))
+        attach = self.body("ap_attach")
+        refusal = attach.index('std::string_view(r.id) == "drop-unique" && g_Orig_FlightDropUnique')
+        self.assertLess(refusal, attach.index("GetNamedRoutinePointer"))
+        self.assertIn("kApRollBlocked", attach[refusal:attach.index("GetNamedRoutinePointer")])
+        self.assertIn("&t == &g_GpScriptRows[kGpScript_DropUniqueItems] && g_Orig_FlightDropUnique", self.body("gp_install"))
+        self.assertNotIn("Mark1KillResearchHolder", self.shipped)
 
     # ---- the command and the stat line ---------------------------------------------------
 
@@ -329,6 +480,7 @@ class Mark1DropsContract(unittest.TestCase):
             "M1dNs::DropStatFields f;",
             "g_M1Drop.core.FillStat(f, g_SigDetectNative);",
             "f.hook = g_M1Drop.hookRoute;",
+            "f.killHook = g_M1Drop.killRoute;",
             "return M1dNs::DropStatLine(f);",
         ])
         self.assertIn("Out(M1dNs::DropsReply(g_M1Drop.core, g_SigDetectNative));", self.body("switch"))
@@ -338,6 +490,7 @@ class Mark1DropsContract(unittest.TestCase):
     def test_game_names_go_through_the_sdk_and_no_address_reaches_the_block(self):
         self.assertNotIn('"gml_Script_', self.code)
         self.assertNotIn('"DropItemHeroic"', self.code)
+        self.assertNotIn('"DropUniqueItems"', self.code)
         self.assertNotIn('"GetUniqueRepoStruct"', self.code)
         self.assertIsNone(re.search(r"\b\w*Rva\w*\b", self.code))
         self.assertIsNone(re.search(r"\b0x[0-9A-Fa-f]{5,}\b", self.code))

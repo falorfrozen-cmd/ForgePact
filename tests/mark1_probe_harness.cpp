@@ -1181,8 +1181,83 @@ int main()
                   && lines[4] == "mark1probe pool: gloves class=4 standin=none kept-triples=0 kept-entries=0",
               lines.size() == 5 ? lines[1] + " | " + lines[3] + " | " + lines[4] : std::string("not five lines"));
         check("pool/each_distinct_triple_asked_once", once && asked.size() == 9, std::to_string(asked.size()));
-        check("copies/line", CopiesLine(200) == "mark1probe copies: each piece's stand-in is pushed 200 time(s) per Heroic roll (the player build pushes 1)",
+        check("copies/line", CopiesLine(200) == "mark1probe copies: each piece's stand-in is pushed 200 time(s) per roll, Heroic and unique (the player build pushes 1)",
               CopiesLine(200));
+    }
+
+    // ---- unique, pool kill (the kill route's forms) ------------------------------------
+    {
+        const Command u = parsed("unique 10");
+        const Command u20 = parsed("UNIQUE 20");
+        check("unique/parse_kill", u.form == Form::Unique && u.count == 10 && u20.form == Form::Unique && u20.count == 20);
+        HeroicCall piece;
+        piece.placed = true;
+        piece.t = 0;
+        piece.b = 7;
+        piece.c = 0;
+        piece.rarity = 6;
+        piece.tier = 5;
+        piece.name = "Mark 1 Helmet";
+        piece.isPiece = true;
+        piece.piece = ForgePact::Mark1Set::Piece::Helmet;
+        HeroicCall other = piece;
+        other.t = 4;
+        other.b = 31;
+        other.c = 1;
+        other.rarity = 3;
+        other.tier = 2;
+        other.name = "Some Unique";
+        other.isPiece = false;
+        HeroicCall nothing;
+        nothing.why = "returned undefined";
+        check("unique/call_lines_for_the_kill_route",
+              UniqueCallLine(1, piece) == "mark1probe unique #1: placed t=0 b=7 c=0 rarity=6 tier=5 name=\"Mark 1 Helmet\" piece=helmet"
+                  && UniqueCallLine(2, other) == "mark1probe unique #2: placed t=4 b=31 c=1 rarity=3 tier=2 name=\"Some Unique\" piece=none"
+                  && UniqueCallLine(3, nothing) == "mark1probe unique #3: nothing placed (returned undefined)"
+                  && CallLine("heroic", 1, piece) == HeroicCallLine(1, piece),
+              UniqueCallLine(1, piece) + " | " + UniqueCallLine(2, other));
+        HeroicTally tally("unique");
+        for (const HeroicCall& r : { piece, other, nothing, other })
+            tally.Add(r);
+        check("unique/summary_under_its_own_name_for_the_kill_route",
+              tally.Line() == "mark1probe unique: calls=4 placed=3 rarity=3:2,6:1 rarity-unread=0 pieces=helmet:1,body:0,boots:0,gloves:0 self=player"
+                  && HeroicTally("unique").Line().rfind("mark1probe unique: calls=0 placed=0 rarity=- ", 0) == 0,
+              tally.Line());
+    }
+    {
+        namespace D = ForgePact::Mark1Drops;
+        const Command kill = parsed("pool kill");
+        const Command killUpper = parsed("POOL KILL");
+        check("pool/kill_parse", kill.form == Form::PoolKill && killUpper.form == Form::PoolKill && parsed("pool 4").form == Form::Pool);
+        auto e = [](double t, double sub, double b) { D::ListEntry x; x.triple = true; x.t = t; x.sub = sub; x.b = b; return x; };
+        // Helmets: 0/7/10 once on each of [0..4] (qualifies, n 1), 0/7/11 on [5] alone (n 0, the
+        // stand-in). Body armor: 1/8/20 twice on [0], once on the rest (never). Boots: 2/9/30
+        // Heroic (the ordinary roll refuses it). Gloves: 4/6/40 on [5] alone, unread.
+        D::KillLists lists;
+        for (int k = 0; k < 5; ++k) lists[(size_t)k] = { e(0, 7, 10), e(1, 8, 20), e(2, 9, 30), e(5, 0, (double)k) };
+        lists[0].push_back(e(1, 8, 20));
+        lists[0].push_back(D::ListEntry{});
+        lists[5] = { e(0, 7, 11), e(4, 6, 40) };
+        std::map<std::tuple<long long, long long, long long>, int> asked;
+        auto verdict = [&](const D::Triple& k, int& rarity, bool& hidden) {
+            ++asked[{ k.t, k.sub, k.b }];
+            hidden = false;
+            if (k.t == 4) return false;
+            rarity = k.t == 2 ? 9 : 6;
+            return true;
+        };
+        const std::vector<std::string> lines = PoolKillLines(PoolKill(lists, verdict));
+        bool once = true;
+        for (const auto& [k, n] : asked) once = once && n == 1;
+        check("pool/kill_lengths_standins_and_counts",
+              lines.size() == 5
+                  && lines[0] == "mark1probe pool: kill lengths=6,4,4,4,4 unread=1"
+                  && lines[1] == "mark1probe pool: helmet class=0 kill-standin=7:11@6x0 counts=0,0,0,0,0 candidates=2 kept-triples=2"
+                  && lines[2] == "mark1probe pool: body class=1 kill-standin=none counts=- candidates=0 kept-triples=1"
+                  && lines[3] == "mark1probe pool: boots class=2 kill-standin=none counts=- candidates=0 kept-triples=0"
+                  && lines[4] == "mark1probe pool: gloves class=4 kill-standin=none counts=- candidates=0 kept-triples=0",
+              lines.size() == 5 ? lines[0] + " | " + lines[1] + " | " + lines[2] : std::string("not five lines"));
+        check("pool/kill_each_distinct_triple_asked_once", once && asked.size() == 5, std::to_string(asked.size()));
     }
 
     // ---- walkable -------------------------------------------------------------
@@ -1402,14 +1477,18 @@ int main()
     }
     {
         const std::vector<std::pair<std::string, std::string>> refused = {
-            { "bogus", "unknown form bogus (hook, off, show, args, watch, set, scale, hold, move, stat, statpin, statlog, count, pos, base, spawn, heroic, pool, copies or walkable)" },
+            { "bogus", "unknown form bogus (hook, off, show, args, watch, set, scale, hold, move, stat, statpin, statlog, count, pos, base, spawn, heroic, unique, pool, copies or walkable)" },
             { "heroic", "usage: heroic <n>, n a whole number 1..20" },
             { "heroic 0", "usage: heroic <n>, n a whole number 1..20, not 0" },
             { "heroic 21", "usage: heroic <n>, n a whole number 1..20, not 21" },
             { "heroic 5 5", "usage: heroic <n>, n a whole number 1..20" },
-            { "pool 6", "usage: pool [<k>], k a sub-list 0..5, not 6" },
-            { "pool x", "usage: pool [<k>], k a sub-list 0..5, not x" },
-            { "pool 1 2", "usage: pool [<k>], k a sub-list 0..5" },
+            { "unique", "usage: unique <n>, n a whole number 1..20" },
+            { "unique 0", "usage: unique <n>, n a whole number 1..20, not 0" },
+            { "unique 21", "usage: unique <n>, n a whole number 1..20, not 21" },
+            { "pool 6", "usage: pool [<k>|kill], k a sub-list 0..5, not 6" },
+            { "pool x", "usage: pool [<k>|kill], k a sub-list 0..5, not x" },
+            { "pool 1 2", "usage: pool [<k>|kill], k a sub-list 0..5" },
+            { "pool kill 2", "usage: pool [<k>|kill], k a sub-list 0..5" },
             { "copies", "usage: copies <k>, k a whole number 1..400" },
             { "copies 0", "usage: copies <k>, k a whole number 1..400, not 0" },
             { "copies 401", "usage: copies <k>, k a whole number 1..400, not 401" },
@@ -1499,7 +1578,7 @@ int main()
         const std::vector<std::string> usage = Usage();
         bool every = true;
         for (const char* f : { "hook", "off", "show", "args", "watch", "set", "scale", "hold", "move", "stat", "statpin", "statlog",
-                               "count", "pos", "base", "spawn", "heroic", "pool", "copies", "walkable" }) {
+                               "count", "pos", "base", "spawn", "heroic", "unique", "pool", "pool kill", "copies", "walkable" }) {
             bool found = false;
             for (const std::string& l : usage) found = found || l.find(std::string("mark1probe ") + f) != std::string::npos;
             every = every && found;

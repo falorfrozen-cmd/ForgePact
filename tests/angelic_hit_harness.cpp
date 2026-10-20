@@ -616,6 +616,14 @@ static void Mark1DropAttributeHit();
 static bool Mark1DropBeforeCreate(RValue& record, const std::string& missing);
 static void Mark1DropNoteBuilt(M1sNs::Piece piece);
 #endif
+#ifdef HAS_MARK1KILLINJECTGUARD
+// The kill route's part of the DropUniqueItems detour Pocket Elf shares, which calls it before the
+// Mark 1 drop adapter defines it, as ModuleMain.cpp declares it.
+static bool Mark1KillBeginCall(int uniqueDepth);
+static void Mark1KillEnter();
+static void Mark1KillLeave();
+static void Mark1DropAfterHit();
+#endif
 
 // ---- the game: CreateDefaultParams, the item builder, the script table, DropItemAngelicChance ---
 // CreateDefaultParams(sub, b, c) returns the struct Live 2 measured, {"b":51.0,"j":0.0,"c":1.0}:
@@ -734,6 +742,10 @@ static RValue originalReturn;              // what the game's roll hands back: u
 // on it), and a scenario's lever that makes the Angelic roll call it once, nested, before its die.
 static PFUNC_YYGMLScript heroicEntry = nullptr;
 static bool angelicNestsHeroic = false;
+// The same lever for the ordinary unique roll (the Mark 1 kill route): the Angelic roll calls
+// DropUniqueItems once, nested, through wherever the game's calls to it land (uniqueEntry, below).
+static bool angelicNestsUnique = false;
+static void nestedUniqueCall(CInstance* self, CInstance* other);
 static RValue& gameAngelicChance(CInstance* self, CInstance* other, RValue&, int argc, RValue** A) {
     ++originalCalls;
     lastChanceSeen = (argc > 2 && A && A[2] && A[2]->m_Kind == VALUE_REAL) ? A[2]->number : -1;
@@ -767,6 +779,10 @@ static RValue& gameAngelicChance(CInstance* self, CInstance* other, RValue&, int
         RValue hx(640.0), hy(320.0), hr;
         RValue* hargs[] = { &hx, &hy };
         heroicEntry(self, other, hr, 2, hargs);
+        if (repoRead != RepoRead::Skip) readDefinition(self, other, picked);   // the roll's own read is the last again
+    }
+    if (angelicNestsUnique) {
+        nestedUniqueCall(self, other);
         if (repoRead != RepoRead::Skip) readDefinition(self, other, picked);   // the roll's own read is the last again
     }
     const bool hit = !outcomes.empty() && outcomes.front();
@@ -832,6 +848,11 @@ static RValue& gameDropUniqueItems(CInstance* self, CInstance* other, RValue&, i
 }
 // Where the game's own calls to DropUniqueItems land: its function, or a detoured hook on it.
 static PFUNC_YYGMLScript uniqueEntry = gameDropUniqueItems;
+static void nestedUniqueCall(CInstance* self, CInstance* other) {
+    RValue ux(640.0), uy(320.0), ur;
+    RValue* uargs[] = { &ux, &uy };
+    uniqueEntry(self, other, ur, 2, uargs);
+}
 
 // DropItemHeroic(x, y, k), the Heroic roll (#166; hub RDM § 23.4 and the drops workorder's static
 // reading): element k of the same Controller_obj variable, k the third argument and 5 when it is
@@ -1044,7 +1065,7 @@ static void reset() {
     g_FlightDrop = FlightDropState{}; g_Orig_FlightDropUnique = nullptr; g_FlightDropCopies = 1;
 #endif
     g_Mark1 = ForgePact::Mark1Set::Bonus{}; g_M1sGroundTried = false; g_Setup = true; playerResolves = true; mark1GroundInstalls = 0;
-    heroicEntry = gameDropItemHeroic; angelicNestsHeroic = false;
+    heroicEntry = gameDropItemHeroic; angelicNestsHeroic = false; angelicNestsUnique = false;
     heroicCalls = 0; heroicThrows = false; heroicLayoutDuringCall.clear(); heroicListRead.clear();
 #ifdef HAS_MARK1DROPSTATE
     g_M1Drop = Mark1DropState{}; g_Orig_Mark1DropHeroic = nullptr; g_Mark1DropCopies = 1;
@@ -1311,6 +1332,41 @@ static M1dNs::DropStatFields dropsFields() {
     return f;
 }
 #endif
+// ---- the Mark 1 drops' kill route (#166): the ordinary unique roll -------------------------------
+// lootListUnique[0..4] (setUniqueLayout's twenty ordinary uniques each, class 4 and each on one
+// list only, so never a stand-in) plus the rows below, and [5] the Angelic list plus two triples
+// only it holds. The kill stand-in rule (Mark1Drops.hpp's ResolveKillStandIns): a triple of the
+// piece's class the ordinary roll keeps (rarity below 7, not hidden) with one count on all five,
+// the smallest count first.
+static const Triple kHelmetKill{ 0, 7, 10 };      // Satanic (6), once on each of [0..4]: qualifies at n 1, not chosen
+static const Triple kHelmetKillZero{ 0, 7, 11 };  // Satanic, on [5] alone: n 0 on all five, the helmet's kill stand-in
+static const Triple kBodyKill{ 1, 8, 20 };        // rarity 5, once on each of [0..4]: the body armor's kill stand-in, n 1
+static const Triple kBootsKill{ 2, 9, 30 };       // Satanic, on [5] alone: the boots' kill stand-in, n 0
+static const Triple kBootsUneven{ 2, 9, 29 };     // Satanic, twice on [0] and once on the rest: never a stand-in
+static const Triple kGlovesHeroic{ 4, 10, 40 };   // Heroic (9): the ordinary roll refuses it, so gloves have none
+static const char* const kKillStandIns =
+    " kill-standin-helmet=7:11@6x0 kill-standin-body=8:20@5x1 kill-standin-boots=9:30@6x0 kill-standin-gloves=none";
+static void setKillLayout() {
+    std::array<std::vector<Triple>, 5> extra;
+    for (auto& e : extra) e = { kHelmetKill, kBodyKill, kBootsUneven, kGlovesHeroic };
+    extra[0].push_back(kBootsUneven);
+    setUniqueLayout(extra, plus(vanillaTriples(), { kHelmetKillZero, kBootsKill }));
+    for (const Triple& t : vanillaTriples()) repoInfo[t] = { 7.0, false };   // the Angelic list's own: refused by the ordinary roll
+    repoInfo[kHelmetKill] = { 6.0, false };
+    repoInfo[kHelmetKillZero] = { 6.0, false };
+    repoInfo[kBodyKill] = { 5.0, false };
+    repoInfo[kBootsKill] = { 6.0, false };
+    repoInfo[kBootsUneven] = { 6.0, false };
+    repoInfo[kGlovesHeroic] = { 9.0, false };
+}
+// What the kill route pushes onto each of [0..4] at one copy, in the core's plan order.
+static const std::vector<Triple> kKillPush{ kHelmetKillZero, kBodyKill, kBootsKill };
+static std::vector<Triple> killCarried(size_t k, std::initializer_list<Triple> elf = {}) {
+    std::vector<Triple> v = plus(vanillaLayout[k], elf);
+    v.insert(v.end(), kKillPush.begin(), kKillPush.end());
+    return v;
+}
+
 static const char* const kFreshDropsLine =
     "mark1set drops: drops=off install=not-armed gate=off hook=not-installed list=- heroic-calls=0 pushed-calls=0 nested=0"
     " art-wait=0 helmet=0/0 body=0/0 boots=0/0 gloves=0/0 injected=0 refused=0 anomalies=0 standin-helmet=none"
@@ -2903,6 +2959,282 @@ int main(int argc, char** argv) {
             g_M1sGroundTried = true;
             dropHeroic(monster);
             require(heroicLayoutDuringCall[1][5] == plus(vanilla, { kHelmetHeroic, kBodyHeroic, kBootsHeroic }), "an art-ready call did not push");
+#else
+            require(false, "this source has no Mark 1 drop adapter");
+#endif
+        // ---- the Mark 1 drops' kill route (#166): baseline, holds against the source before it ----
+        } else if (test == "mark1_kill_untouched_installs_nothing") {
+            // Neither switch touched: the ordinary unique roll is the game's own, nothing is hooked
+            // and the plugin calls nothing.
+            setKillLayout();
+            pickPolicy = Pick::Among; pickTriples = { kBootsKill, kBodyKill };
+            for (int k = 0; k < 5; ++k) { uniqueK = k; dropUnique(monster); }
+            require(installs["DropUniqueItems"] == 0 && uniqueEntry == gameDropUniqueItems, "DropUniqueItems was hooked with no switch on");
+            require(builtinCalls == 0, "with no switch on the plugin called the runtime");
+            require(uniqueCalls == 5, "the game's unique roll did not run once per call");
+            for (const auto& seen : uniqueLayoutDuringCall) require(seen == vanillaLayout, "the unique roll saw lists that are not the game's own");
+            require(builds.size() == 5 && countPieceBuilds(-1) == 0, "a roll with no switch on built a piece");
+            for (const auto& b : builds) require(b.t == 1 && b.j == 8 && b.b == 20 && b.c == 1.0, "the unique roll did not build the game's own pick");
+            require(linesStartingWith("mark1set") == 0 && linesStartingWith("flightcharm") == 0, "a line was logged with no switch on");
+        } else if (test == "mark1_kill_switch_off_is_vanilla") {
+            // On (the shared detour goes in, detoured) and off again: the detour stays and passes every
+            // call through, each one counted (`kill-calls=`) - the lists each call reads and what it
+            // builds are the game's own.
+#ifdef HAS_MARK1DROPSTATE
+            setKillLayout();
+            dropsSwitch(true);
+            dropsSwitch(false);
+            pickPolicy = Pick::Among; pickTriples = { kBootsKill, kBodyKill };
+            for (int i = 0; i < 20; ++i) { uniqueK = i % 5; dropUnique(monster); }
+            require(installs["DropUniqueItems"] == 1 && uniqueEntry != gameDropUniqueItems, "the switch-on did not hook DropUniqueItems, detoured");
+            for (const auto& seen : uniqueLayoutDuringCall) require(seen == vanillaLayout, "switched off, the unique roll saw a changed list");
+            require(layoutNow() == vanillaLayout, "switched off, the lists are not the game's own after the rolls");
+            require(builds.size() == 20 && countPieceBuilds(-1) == 0, "switched off, a piece was built");
+            for (const auto& b : builds) require(b.c == 1.0 && b.a == kLootGroundSeed, "switched off, a record was rewritten");
+            const std::string line = dropsStatLine();
+            require(lineHas(line, " kill-gate=off kill-hook=detoured kill-calls=20 kill-pushed=0 kill-nested=0 kill-helmet=0/0 kill-body=0/0"
+                                  " kill-boots=0/0 kill-gloves=0/0 "), "switched off, the kill fields: " + line);
+            require(lineHas(line, " injected=0 refused=0 anomalies=0 "), "switched off, the counters moved: " + line);
+            require(linesStartingWith("mark1set drops hit:") == 0, "switched off, a hit was taken for a piece");
+#else
+            require(false, "this source has no Mark 1 drop adapter");
+#endif
+        // ---- the Mark 1 drops' kill route (#166): target, every scenario fails against the source before it ----
+        } else if (test == "mark1_kill_hit_builds_the_piece") {
+            // The drops' install hooks DropUniqueItems through the detour Pocket Elf shares; each call
+            // carries one entry per kill stand-in on each of lootListUnique[0..4] (none on [5]); a hit on
+            // a pushed stand-in's whole triple is the piece's at c in n + c (boots: n 0, so every one),
+            // the game builds it from the rewritten record and the forge's final pass counts it built,
+            // on the kill route's tallies; gloves (no kept triple of one count) read none.
+#ifdef HAS_MARK1DROPSTATE
+            setKillLayout();
+            dropsSwitch(true);
+            require(lastLine("mark1set:") == "mark1set: drops=on install=installed gate=pending kill-gate=pending",
+                    "the switch-on reply: " + lastLine("mark1set:"));
+            require(installs["DropUniqueItems"] == 1 && uniqueEntry != gameDropUniqueItems, "the drops' install did not hook DropUniqueItems, detoured");
+            const std::string fresh = dropsStatLine();
+            require(lineHas(fresh, " kill-gate=pending kill-hook=detoured kill-calls=0 kill-pushed=0 kill-nested=0 ")
+                        && lineHas(fresh, " kill-standin-helmet=pending kill-standin-body=pending kill-standin-boots=pending kill-standin-gloves=pending"),
+                    "the drops line before the first call: " + fresh);
+            const std::string sig = sigdropStatusLine();
+            pickPolicy = Pick::Among; pickTriples = { kBootsKill };
+            for (int i = 0; i < 10; ++i) { uniqueK = i % 5; dropUnique(monster); }
+            require(uniqueCalls == 10, "the game's unique roll did not run once per call");
+            for (const auto& seen : uniqueLayoutDuringCall) {
+                for (size_t k = 0; k < 5; ++k) require(seen[k] == killCarried(k), "lootListUnique[" + std::to_string(k) + "] did not carry the three kill stand-ins once");
+                require(seen[5] == vanillaLayout[5], "the kill route pushed onto lootListUnique[5]");
+            }
+            require(layoutNow() == vanillaLayout, "after the calls the lists are not the game's own");
+            require(builds.size() == 10 && countPieceBuilds(2) == 10 && countPieceBuilds(-1) == 10, "every boots pick (n 0) was not built as Mark 1 Boots");
+            for (const auto& b : builds) require(b.t == 2 && b.c == 0 && b.j == 0, "a piece was not built from Mark 1 Boots' own definition");
+            const M1dNs::DropStatFields f = dropsFields();
+            require(f.killPieces[2].ours == 10 && f.killPieces[2].built == 10 && f.pieces[2].ours == 0 && f.pieces[2].built == 0,
+                    "the boots were not counted ours and built on the kill route's tallies");
+            require(anyLineHas("mark1set drops hit:", "unique roll -> Mark 1 Boots (stand-in 2/9/30, 1 in 1) built by the game"),
+                    "the hit line does not say the game built the boots: " + lastLine("mark1set drops hit:"));
+            const std::string line = dropsStatLine();
+            require(lineHas(line, " kill-gate=on kill-hook=detoured kill-calls=10 kill-pushed=10 kill-nested=0 kill-helmet=0/0 kill-body=0/0"
+                                  " kill-boots=10/10 kill-gloves=0/0" + std::string(kKillStandIns)), "the kill fields after the calls: " + line);
+            require(lineHas(line, " injected=150 refused=0 anomalies=0 "), "the injected count (3 per list, 5 lists, 10 calls): " + line);
+            require(lineHas(line, " gate=pending hook=detoured list=- heroic-calls=0 pushed-calls=0 "), "the Heroic roll's fields moved: " + line);
+            const std::string after = sigdropStatusLine();
+            require(after.substr(0, after.find(" cdpCalls=")) == sig.substr(0, sig.find(" cdpCalls=")), "`sigdrop status` moved: " + after);
+            require(g_FlightDrop.injected == 0 && g_FlightDrop.tally[(int)FcNs::Charm::Elf].ours == 0, "Pocket Elf's counters moved");
+#ifdef HAS_MARK1KILLINJECTGUARD
+            require(g_SigRollDepth == 0 && !g_M1Drop.killRolling && g_FlightDrop.uniqueDepth == 0, "the roll state stayed raised");
+#endif
+#else
+            require(false, "this source has no Mark 1 drop adapter");
+#endif
+        } else if (test == "mark1_kill_coin_one_in_n_plus_c") {
+            // The body armor's kill stand-in is listed once on each of [0..4] (n 1): a pick of it is the
+            // piece's 1 in 2 whichever list the call read; every pick not ours is the game's own.
+#ifdef HAS_MARK1DROPSTATE
+            setKillLayout();
+            dropsSwitch(true);
+            pickPolicy = Pick::Among; pickTriples = { kBodyKill };
+            for (int i = 0; i < 2000; ++i) { uniqueK = i % 5; dropUnique(monster); }
+            const long long ours = (long long)dropsFields().killPieces[1].ours;
+            require(ours >= 850 && ours <= 1150, "a body armor stand-in pick was not ours about 1 in 2: " + std::to_string(ours));
+            require(builds.size() == 2000 && countPieceBuilds(1) == ours && (long long)dropsFields().killPieces[1].built == ours,
+                    "the game did not build a body armor for every pick that was ours");
+            for (const auto& b : builds)
+                if (b.c == 1.0) require(b.t == 1 && b.j == 8 && b.b == 20 && b.a == kLootGroundSeed, "a pick not ours was not the game's own stand-in");
+                else require(b.t == 1 && b.c == 0 && b.j == 0, "a body armor was not built from its own definition");
+            require(anyLineHas("mark1set drops hit:", "(stand-in 1/8/20, 1 in 2) built by the game"), "the hit line's odds");
+            require(layoutNow() == vanillaLayout, "the lists are not the game's own after the calls");
+#else
+            require(false, "this source has no Mark 1 drop adapter");
+#endif
+        } else if (test == "mark1_kill_and_pocket_elf_each_hit_their_own") {
+            // Both on, one detour: each call carries Pocket Elf's stand-in and then the pieces' on each of
+            // [0..4]; a pick of Aimbot.exe is Pocket Elf's, a pick of the boots' stand-in Mark 1 Boots', and
+            // each is counted on its own feature's tallies alone.
+#ifdef HAS_MARK1DROPSTATE
+            setKillLayout();
+            flightRepo();
+            dropsSwitch(true);
+            flightSwitch(FcNs::Charm::Elf, true);
+            require(installs["DropUniqueItems"] == 1, "a second DropUniqueItems hook went in");
+            require(flightGate(FcNs::Charm::Elf) == FcNs::Gate::On, "the elf did not arm on the shared detour: " + lastLine("flightcharm:"));
+            pickPolicy = Pick::Among; pickTriples = { kAimbot, kBootsKill };
+            for (int i = 0; i < 400; ++i) { uniqueK = i % 5; dropUnique(monster); }
+            for (const auto& seen : uniqueLayoutDuringCall)
+                for (size_t k = 0; k < 5; ++k) require(seen[k] == killCarried(k, { kAimbot }), "a list did not carry Pocket Elf's entry and then the pieces'");
+            require(layoutNow() == vanillaLayout, "the lists are not the game's own after the calls");
+            const int elf = countFlightBuilds((int)FcNs::Charm::Elf), boots = countPieceBuilds(2);
+            require(builds.size() == 400 && elf + boots == 400 && elf > 100 && boots > 100, "the picks were not each built as their own item: elf "
+                    + std::to_string(elf) + ", boots " + std::to_string(boots));
+            require((int)g_FlightDrop.tally[(int)FcNs::Charm::Elf].ours == elf && (int)g_FlightDrop.tally[(int)FcNs::Charm::Elf].built == elf,
+                    "Pocket Elf's tally is not its own builds");
+            const M1dNs::DropStatFields f = dropsFields();
+            require((int)f.killPieces[2].ours == boots && (int)f.killPieces[2].built == boots && f.pieces[2].ours == 0, "the boots' kill tally is not their builds");
+            require(g_FlightDrop.injected == 400 * 5 && f.injected == 400 * 15, "the pushes were not each counted by their own feature");
+            require(g_FlightDrop.anomalies == 0 && f.anomalies == 0, "a removal found someone else's tail");
+            require(linesEndingWith("flightcharm hit:", "Pocket Elf (stand-in Aimbot.exe, 1 in 1) built by the game") == elf,
+                    "an elf hit line is missing");
+#else
+            require(false, "this source has no Mark 1 drop adapter");
+#endif
+        } else if (test == "mark1_kill_each_switch_pushes_only_its_own") {
+            // Mark 1 on and Pocket Elf off: nothing of Pocket Elf's is pushed; Pocket Elf on and Mark 1
+            // off: nothing of Mark 1's, and still the one hook.
+#ifdef HAS_MARK1DROPSTATE
+            setKillLayout();
+            flightRepo();
+            dropsSwitch(true);
+            pickPolicy = Pick::First;
+            dropUnique(monster);
+            for (size_t k = 0; k < 5; ++k) require(uniqueLayoutDuringCall[0][k] == killCarried(k), "Mark 1 alone did not carry its stand-ins alone");
+            require(g_FlightDrop.injected == 0 && !g_FlightDrop.rollUnique, "Mark 1 alone pushed for Pocket Elf");
+            flightSwitch(FcNs::Charm::Elf, true);
+            dropsSwitch(false);
+            dropUnique(monster);
+            for (size_t k = 0; k < 5; ++k)
+                require(uniqueLayoutDuringCall[1][k] == plus(vanillaLayout[k], { kAimbot }), "Pocket Elf alone carried a Mark 1 stand-in");
+            require(installs["DropUniqueItems"] == 1, "a second DropUniqueItems hook went in");
+            require(layoutNow() == vanillaLayout, "the lists are not the game's own after the calls");
+            require(g_FlightDrop.injected == 5 && dropsFields().injected == 15, "the pushes: flight " + std::to_string(g_FlightDrop.injected));
+            require(lineHas(dropsStatLine(), " kill-calls=2 kill-pushed=1 "), "both calls were not counted: " + dropsStatLine());
+#else
+            require(false, "this source has no Mark 1 drop adapter");
+#endif
+        } else if (test == "mark1_kill_throw_leaves_the_lists_as_found") {
+            // The game's unique roll throws with both features' entries on: the throw reaches the caller,
+            // and every entry of both comes off all five lists first.
+#ifdef HAS_MARK1DROPSTATE
+            setKillLayout();
+            flightRepo();
+            dropsSwitch(true);
+            flightSwitch(FcNs::Charm::Elf, true);
+            uniqueThrows = true;
+            bool threw = false;
+            try { dropUnique(monster); } catch (const std::exception&) { threw = true; }
+            require(threw, "the game's throw did not reach the caller");
+            for (size_t k = 0; k < 5; ++k) require(uniqueLayoutDuringCall[0][k] == killCarried(k, { kAimbot }), "the call did not carry both features' entries");
+            require(layoutNow() == vanillaLayout, "after the throw a list kept stand-in entries");
+            require(g_SigRollDepth == 0 && !g_FlightDrop.rollUnique, "the roll state stayed raised after the throw");
+#ifdef HAS_MARK1KILLINJECTGUARD
+            require(!g_M1Drop.killRolling && g_FlightDrop.uniqueDepth == 0, "the kill route's state stayed raised after the throw");
+#endif
+            require(dropsFields().anomalies == 0 && g_FlightDrop.anomalies == 0, "the throw was counted as an anomaly");
+            uniqueThrows = false;
+            pickPolicy = Pick::First;
+            dropUnique(monster);
+            for (size_t k = 0; k < 5; ++k) require(uniqueLayoutDuringCall[1][k] == killCarried(k, { kAimbot }), "the next call did not push as before");
+            require(layoutNow() == vanillaLayout, "the next call did not remove as before");
+#else
+            require(false, "this source has no Mark 1 drop adapter");
+#endif
+        } else if (test == "mark1_kill_nested_in_the_angelic_roll_passes_through") {
+            // A unique call inside the Angelic roll (a roll already in progress) is the game's own,
+            // counted `kill-nested=`; the same detour pushes for a call outside any roll.
+#ifdef HAS_MARK1DROPSTATE
+            setKillLayout();
+            dropsSwitch(true);
+            angelicNestsUnique = true;
+            pickPolicy = Pick::First;
+            roll(monster, { false });
+            require(uniqueCalls == 1 && uniqueLayoutDuringCall[0] == vanillaLayout, "the nested call saw a pushed list");
+            require(countPieceBuilds(-1) == 0, "the nested call built a piece");
+            require(lineHas(dropsStatLine(), " kill-calls=1 kill-pushed=0 kill-nested=1 "), "the nested call was not counted: " + dropsStatLine());
+            angelicNestsUnique = false;
+            dropUnique(monster);
+            for (size_t k = 0; k < 5; ++k) require(uniqueLayoutDuringCall[1][k] == killCarried(k), "a call outside any roll did not carry the stand-ins");
+            require(g_SigRollDepth == 0 && layoutNow() == vanillaLayout, "the roll state or the lists were left changed");
+#else
+            require(false, "this source has no Mark 1 drop adapter");
+#endif
+        } else if (test == "mark1_kill_74s_counters_unchanged") {
+            // #74's counters belong to the Angelic roll: the kill route's typed and untyped hits leave
+            // `sigdrop status` as it was; an untyped hit is never a piece.
+#ifdef HAS_MARK1DROPSTATE
+            setKillLayout();
+            dropsSwitch(true);
+            const std::string sig = sigdropStatusLine();
+            const long untyped = g_SigUntyped;
+            pickPolicy = Pick::Among; pickTriples = { kBootsKill };
+            for (int i = 0; i < 50; ++i) { uniqueK = i % 5; dropUnique(monster); }
+            require(dropsFields().killPieces[2].ours == 50, "50 typed boots picks (n 0) were not all pieces");
+            repoRead = RepoRead::PickedThenOther;
+            for (int i = 0; i < 20; ++i) { uniqueK = i % 5; dropUnique(monster); }
+            require(dropsFields().killPieces[2].ours == 50, "an untyped hit was taken for a piece");
+            for (size_t i = 50; i < builds.size(); ++i) require(builds[i].c == 1.0 && builds[i].a == kLootGroundSeed, "an untyped hit was rewritten");
+            const std::string after = sigdropStatusLine();
+            require(after.substr(0, after.find(" cdpCalls=")) == sig.substr(0, sig.find(" cdpCalls=")), "`sigdrop status` moved: " + after);
+            require(g_SigUntyped == untyped, "the untyped hits reached #74's untyped=");
+            require(g_FlightDrop.injected == 0 && g_FlightDrop.anomalies == 0, "the flight charms' counters moved");
+#else
+            require(false, "this source has no Mark 1 drop adapter");
+#endif
+        } else if (test == "mark1_kill_shares_the_elfs_detour") {
+            // One detour and one install for both features, whichever switch comes first; a table-only
+            // DropUniqueItems hook refuses the drops whole with one line of their own and is never
+            // installed twice.
+#ifdef HAS_MARK1DROPSTATE
+            setKillLayout();
+            flightRepo();
+            dropsSwitch(true);
+            flightSwitch(FcNs::Charm::Elf, true);
+            require(installs["DropUniqueItems"] == 1 && uniqueEntry != gameDropUniqueItems, "drops first: not one detoured hook");
+            require(flightGate(FcNs::Charm::Elf) == FcNs::Gate::On, "drops first: the elf did not arm on the shared detour");
+            reset();
+            setKillLayout();
+            flightRepo();
+            flightSwitch(FcNs::Charm::Elf, true);
+            dropsSwitch(true);
+            require(installs["DropUniqueItems"] == 1 && uniqueEntry != gameDropUniqueItems, "elf first: not one detoured hook");
+            require(lastLine("mark1set:") == "mark1set: drops=on install=installed gate=pending kill-gate=pending", "elf first, the reply: " + lastLine("mark1set:"));
+            require(lineHas(dropsStatLine(), " kill-hook=detoured "), "elf first, kill-hook: " + dropsStatLine());
+            reset();
+            setKillLayout();
+            tableOnlyHook = "DropUniqueItems";
+            dropsSwitch(true);
+            require(lastLine("mark1set:") == "mark1set: drops=off install=refused gate=refused kill-gate=refused", "table-only, the reply: " + lastLine("mark1set:"));
+            require(anyLineHas("mark1set drops: refused - ", "DropUniqueItems went in TABLE-ONLY"), "the refusal line: " + lastLine("mark1set drops:"));
+            require(linesStartingWith("flightcharm") == 0, "the drops' refusal was logged as Pocket Elf's");
+            require(lineHas(dropsStatLine(), " kill-hook=TABLE-ONLY "), "table-only, kill-hook: " + dropsStatLine());
+            dropUnique(monster);
+            require(uniqueLayoutDuringCall[0] == vanillaLayout && countPieceBuilds(-1) == 0, "a table-only hook changed the roll");
+            flightSwitch(FcNs::Charm::Elf, true);
+            require(installs["DropUniqueItems"] == 1, "the elf's switch-on installed a second hook");
+            require(anyLineHas("flightcharm: refused - ", "TABLE-ONLY"), "the elf's switch-on did not say the shared hook is table-only");
+#else
+            require(false, "this source has no Mark 1 drop adapter");
+#endif
+        } else if (test == "mark1_kill_art_not_ready_pushes_nothing") {
+            // While the art is armed with icons embedded and the ground consumer's one install was not
+            // tried, a kill-route call pushes nothing (`art-wait=`).
+#ifdef HAS_MARK1DROPSTATE
+            setKillLayout();
+            dropsSwitch(true);
+            g_M1sGroundTried = false;
+            dropUnique(monster);
+            require(uniqueLayoutDuringCall[0] == vanillaLayout, "a call that is not art-ready carried a push");
+            require(lineHas(dropsStatLine(), " art-wait=1 ") && lineHas(dropsStatLine(), " kill-calls=1 kill-pushed=0 "), "the art wait: " + dropsStatLine());
+            g_M1sGroundTried = true;
+            dropUnique(monster);
+            for (size_t k = 0; k < 5; ++k) require(uniqueLayoutDuringCall[1][k] == killCarried(k), "an art-ready call did not push");
 #else
             require(false, "this source has no Mark 1 drop adapter");
 #endif
