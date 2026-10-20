@@ -24059,12 +24059,15 @@ static void NAddrAll()
         // projprobe hooks them too, in the research build.
         "ReturnExtraSpellProjectiles", "ReturnExtraProjectilesRanged",
         "StatAOESkillSize", "LoadAllModifiers", "ReturnSpecificStat",
+        // The Mark 1 set's landing detour (`mark1set`, #166). Two research
+        // probes have a row on it too, in the research build.
+        "TalentUseSetSpeed",
 #ifndef FORGEPACT_RELEASE
         // `projprobe`'s other rows (research build, issue #160). Guarded like
         // projprobe itself, so the player DLL lists only what it hooks.
         "StatExplosionAOE", "LoadProjectileSettings", "LoadProjectile",
         "LoadAOEModifiers", "CreatePhysicalProjectile", "CA_playerProjectile",
-        "TalentUseSetSpeed", "GetProjectileGravity", "AddAoeIndicatorSize",
+        "GetProjectileGravity", "AddAoeIndicatorSize",
         "CreateAoeIndicator", "CA_enemyProjectile", "ClientCreateEnemyProjectile",
 #endif
     };
@@ -41853,13 +41856,20 @@ static RValue& ProjProbeHookReturnSpecificStat(CInstance* S, CInstance* O, RValu
 
 // Install one row, once. TalentUseSetSpeed is also a tgprobe row: when tgprobe
 // already holds the game's bytes with a native detour, a second detour there
-// would be refused, so the row is counted from tgprobe's instead ("via").
+// would be refused, so the row is counted from tgprobe's instead ("via"). The
+// Mark 1 set's landing detour holds TalentUseSetSpeed too, once its switch
+// went on: refused, naming it, rather than coming up table-only beside it.
 static void ProjProbeAttach(int idx)
 {
     ProjProbeRow& t = g_PpRows[idx];
     if (t.mode != kPpUnhooked) return;
     if (idx == kPp_TalentUseSetSpeed && g_TgRows[kTg_TalentUseSetSpeed].mode == kTgNative) {
         ProjProbeSetMode(t, kPpVia, "via tgprobe TalentUseSetSpeed (native; calls= is tgprobe's count)");
+        return;
+    }
+    const std::string held = Mark1SetHolder(t.name);
+    if (!held.empty()) {
+        ProjProbeSetMode(t, kPpBlocked, "blocked: " + held + " holds it (a script takes one inline detour)");
         return;
     }
     bool native = false;
@@ -63537,6 +63547,43 @@ static void Mark1BorderDraw()
     } catch (...) {}   // the state reads themselves failed: nothing was set, so there is nothing to put back
 }
 
+// ---- the landing detour (the turns) ----
+// The turn rule needs to know whether the column it pressed was cast. A cast
+// calls TalentUseSetSpeed from inside TalentUse (RDM § 7.8: one direct call
+// site there; in Mod live 2 the two counted the same calls in every window),
+// and the gate makes its cast through its one TalentUse site, pressing one
+// column per call. So a local-player call of TalentUseSetSpeed while the
+// gate's original runs, for a call that pressed a column, is that column's
+// landing. TalentUse itself stays co-op's (HookTalentUse).
+static PFUNC_YYGMLScript g_M1sOrigTalentUseSetSpeed = nullptr;
+static bool g_M1sTussNative = false;   // its inline detour went in: the bonus is allowed to arm
+static bool g_M1sCastWindow = false;   // game thread only: the gate's original runs for a call that pressed a column
+static bool g_M1sCastLanded = false;   // a TalentUseSetSpeed call came inside the open window
+static uint64_t g_M1sCastCalls = 0;    // `cast-calls=`: the local player's calls with the switch on, from any source
+
+// Opens the window around the gate's original alone, and puts the previous
+// state back when the original returns or throws.
+struct Mark1CastWindow {
+    bool previous;
+    explicit Mark1CastWindow(bool open) : previous(g_M1sCastWindow) { g_M1sCastWindow = open; }
+    ~Mark1CastWindow() { g_M1sCastWindow = previous; }
+    Mark1CastWindow(const Mark1CastWindow&) = delete;
+    Mark1CastWindow& operator=(const Mark1CastWindow&) = delete;
+};
+
+// Counts and marks only; reads and writes nothing, and the original always
+// runs. `cast-calls=` is the instrument's own control: a key cast raises it
+// too, so `landed=0` with it rising points at the attribution, and both at 0
+// while casts happen at a blind detour.
+static RValue& Mark1HookTalentUseSetSpeed(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    if (g_Mark1.Enabled() && S && S == g_M1sPlayer) {
+        ++g_M1sCastCalls;
+        if (g_M1sCastWindow) g_M1sCastLanded = true;
+    }
+    return g_M1sOrigTalentUseSetSpeed(S, O, R, argc, A);
+}
+
 // ---- the CheckTalentUse detour ----
 static PFUNC_YYGMLScript g_M1sOrigCheckTalentUse = nullptr;
 static bool g_M1sCtuNative = false;   // the inline detour went in: the bonus is allowed to arm
@@ -63546,9 +63593,11 @@ static bool g_M1sCtuNative = false;   // the inline detour went in: the bonus is
 // self, the original alone (another self is counted, so a stale player shows).
 // Otherwise the set is read (at most once every 30 frames, Mark1Set.hpp's
 // Active), and while the bonus is active the automation runs around the
-// original: each column decided, the planned columns pressed in the profile
-// slot the gate's third argument names, and every pressed entry put back
-// after the original returns or throws. The game's gate then decides the cast.
+// original: each column decided, the turn's holder (one column, the turn
+// rule's) pressed in the profile slot the gate's third argument names, and
+// every pressed entry put back after the original returns or throws. The
+// game's gate then decides the cast; whether it landed is fed back to the
+// turn rule through the landing detour above.
 static RValue& Mark1HookCheckTalentUse(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
     if (!g_Mark1.Enabled() || g_M1sBusy || !S) return g_M1sOrigCheckTalentUse(S, O, R, argc, A);
@@ -63578,22 +63627,41 @@ static RValue& Mark1HookCheckTalentUse(CInstance* S, CInstance* O, RValue& R, in
         haveInput = plan.PressCount() > 0 && Mark1InputState(argc, A, input);
     } catch (...) { plan = ForgePact::Mark1FramePlan{}; }
     g_M1sBusy = false;
-    return automation.PressAround<RValue>(plan,
-        [&](int entry, RValue& out) {
-            const bool busy = g_M1sBusy;
-            g_M1sBusy = true;
-            const bool ok = haveInput && Mark1InputGet(input, entry, out);
-            g_M1sBusy = busy;
-            return ok;
-        },
-        [&](int entry, const RValue& value) {
-            const bool busy = g_M1sBusy;
-            g_M1sBusy = true;
-            const bool ok = haveInput && Mark1InputSet(input, entry, value);
-            g_M1sBusy = busy;
-            return ok;
-        },
-        [&]() -> RValue& { return g_M1sOrigCheckTalentUse(S, O, R, argc, A); });
+    // The landing window is open while the original runs, and only for a call
+    // that is to press a column; what it saw goes to the core's turn rule once
+    // the original returned or threw (the core credits it only to the holder
+    // PressAround actually pressed in this call).
+    const bool pressing = haveInput && plan.PressCount() > 0;
+    const bool outerLanded = g_M1sCastLanded;
+    g_M1sCastLanded = false;
+    auto feedLanding = [&]() {
+        const bool landed = g_M1sCastLanded;
+        g_M1sCastLanded = outerLanded;
+        automation.Landing(plan, landed);
+    };
+    try {
+        RValue& result = automation.PressAround<RValue>(plan,
+            [&](int entry, RValue& out) {
+                const bool busy = g_M1sBusy;
+                g_M1sBusy = true;
+                const bool ok = haveInput && Mark1InputGet(input, entry, out);
+                g_M1sBusy = busy;
+                return ok;
+            },
+            [&](int entry, const RValue& value) {
+                const bool busy = g_M1sBusy;
+                g_M1sBusy = true;
+                const bool ok = haveInput && Mark1InputSet(input, entry, value);
+                g_M1sBusy = busy;
+                return ok;
+            },
+            [&]() -> RValue& { Mark1CastWindow window(pressing); return g_M1sOrigCheckTalentUse(S, O, R, argc, A); });
+        feedLanding();
+        return result;
+    } catch (...) {
+        feedLanding();
+        throw;
+    }
 }
 
 // ---- the jump (Mark1Jump.hpp) ----
@@ -63866,6 +63934,9 @@ static std::string Mark1MovementInstall()
 static std::string M1pScriptHolder(std::string_view runtimeName);
 // Its hold on a builtin, the same way.
 static std::string M1pBuiltinHolder(std::string_view name);
+// Whether a script's table entry is some hook's thunk rather than the game's
+// own code, from the table alone: defined with that probe, below.
+static bool M1pTableHeld(std::string_view runtimeName);
 
 // A research instrument that holds skillsLeap or one of the five collision
 // builtins now, by name ("" when none): citrace and jumpprobe (jumpscenery's
@@ -63908,6 +63979,10 @@ static std::string Mark1SetHolder(std::string_view runtimeName)
     if (g_M1mWired && (runtimeName == HeroSiege::Scripts::gml_Script_ReturnSpecificStat
         || runtimeName == std::string_view(SdkShortScriptName(HeroSiege::Scripts::gml_Script_ReturnSpecificStat))))
         return "mark1set";
+    // The turns' landing detour.
+    if (g_M1sOrigTalentUseSetSpeed && (runtimeName == HeroSiege::Scripts::gml_Script_TalentUseSetSpeed
+        || runtimeName == std::string_view(SdkShortScriptName(HeroSiege::Scripts::gml_Script_TalentUseSetSpeed))))
+        return "mark1set";
     if (!g_M1sOrigCheckTalentUse) return "";
     if (runtimeName != HeroSiege::Scripts::gml_Script_CheckTalentUse
         && runtimeName != std::string_view(SdkShortScriptName(HeroSiege::Scripts::gml_Script_CheckTalentUse))) return "";
@@ -63917,16 +63992,38 @@ static std::string Mark1SetHolder(std::string_view runtimeName)
 // A research probe that holds CheckTalentUse now, by name ("" when none):
 // skillprobe and every holder it knows (tgprobe, craftprobe and the rest,
 // JpHolder), jumpprobe, and the set's own research probe. Decided from each
-// holder's own record, never by trying a second detour.
+// holder's own record, never by trying a second detour. The set's own hold
+// (JpHolder names it, through SpHolder), left by an earlier install that went
+// part of the way, is not a refusal.
 static std::string Mark1SetResearchHolder()
 {
     const std::string_view name = HeroSiege::Scripts::gml_Script_CheckTalentUse;
     volatile long* calls = nullptr;
     const std::string holder = JpHolder(name, calls);
-    if (!holder.empty()) return holder;
+    if (!holder.empty() && holder != "mark1set") return holder;
     for (const JpRow& r : g_JpRows)
         if (r.installed && std::string_view(r.runtimeName) == name) return "jumpprobe hook";
     return M1pScriptHolder(name);
+}
+
+// A research probe that holds TalentUseSetSpeed now ("" when none): tgprobe
+// and every holder skillprobe knows (JpHolder), and the set's own research
+// probe, by name; then any other hook whose thunk sits in the script table,
+// which in this build is projprobe's row (projprobe keeps its names inside its
+// own region, so it is named here by what it left behind). The set's own hold
+// is not a refusal.
+static std::string Mark1LandingResearchHolder()
+{
+    const std::string_view name = HeroSiege::Scripts::gml_Script_TalentUseSetSpeed;
+    const std::string script = std::string(SdkShortScriptName(HeroSiege::Scripts::gml_Script_TalentUseSetSpeed));
+    volatile long* calls = nullptr;
+    const std::string holder = JpHolder(name, calls);
+    if (!holder.empty() && holder != "mark1set") return holder + " holds " + script;
+    const std::string own = M1pScriptHolder(name);
+    if (!own.empty()) return own + " holds " + script;
+    if (g_M1sOrigTalentUseSetSpeed) return "";   // the table entry is the set's own
+    if (M1pTableHeld(name)) return "another hook in the script table (projprobe hook's row, in this build) holds " + script;
+    return "";
 }
 #endif
 
@@ -63940,6 +64037,10 @@ static std::string Mark1SetInstall()
     if (!holder.empty())
         return holder + " holds CheckTalentUse (a script takes one inline detour; a second install would be table-only"
                " and blind); the bonus stays off. Relaunch without it to use mark1set.";
+    const std::string landingHolder = Mark1LandingResearchHolder();
+    if (!landingHolder.empty())
+        return landingHolder + " (a script takes one inline detour, and the set's turns count their casts with their own);"
+               " the bonus stays off. Relaunch without it to use mark1set.";
     const std::string jumpHolder = Mark1JumpResearchHolder();
     if (!jumpHolder.empty())
         return jumpHolder + " (a script or builtin takes one detour, and the set's jump shares them); the bonus stays off."
@@ -63955,6 +64056,14 @@ static std::string Mark1SetInstall()
         return "CheckTalentUse was not found by name (see the hook line above)";
     if (!g_M1sCtuNative)
         return "CheckTalentUse went in TABLE-ONLY (no inline detour): compiled GML's direct calls would pass it by";
+    // The turns' landing detour: without it the turn rule never sees a cast.
+    if (!g_M1sOrigTalentUseSetSpeed
+        && !HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_TalentUseSetSpeed), "fp_mark1set_tuss",
+                          (PVOID)Mark1HookTalentUseSetSpeed, &g_M1sOrigTalentUseSetSpeed, &g_M1sTussNative))
+        return "TalentUseSetSpeed was not found by name (see the hook line above)";
+    if (!g_M1sTussNative)
+        return "TalentUseSetSpeed went in TABLE-ONLY (no inline detour): the casts the gate makes would pass it by,"
+               " and the turns would never see one land";
     const std::string jump = Mark1JumpInstall();
     if (!jump.empty()) return jump;
     const std::string walk = Mark1MovementInstall();
@@ -64014,8 +64123,9 @@ static void Mark1SetTick()
 }
 
 // The stat line's fields this adapter knows: the set's part, the automation's
-// (each column's ten counters from Mark1Automation, the gate's entries and the
-// calls whose original threw), the jump's (every JumpCounts field from the
+// (each column's thirteen counters from Mark1Automation, the turn rule's three
+// among them, the gate's entries, the calls whose original threw and the
+// landing detour's `cast-calls`), the jump's (every JumpCounts field from the
 // jump core's counter of the same name, and M with its source as the next
 // jump would read it) and the art's (`art=` through FillStat, the ground count
 // and the shared detour's route), and the movement levers' (`speed=` the half
@@ -64038,10 +64148,14 @@ static M1sNs::StatFields Mark1SetStatFields()
         c.originalUnreadable = (uint64_t)k.originalUnreadable;
         c.pressWriteFailed = (uint64_t)k.pressWriteFailed;
         c.restoreFailed = (uint64_t)k.restoreFailed;
+        c.landed = (uint64_t)k.landed;
+        c.skipTurn = (uint64_t)k.skipTurn;
+        c.yielded = (uint64_t)k.yielded;
     }
     f.gateCalls = g_M1sGateCalls;
     f.gateOther = g_M1sGateOther;
     f.threw = (uint64_t)automation.CallsThrew();
+    f.castCalls = g_M1sCastCalls;
     const M1jNs::Counters& j = g_M1jCore.Stats();
     M1sNs::JumpCounts& jc = f.jump;
     jc.granted = j.granted;
@@ -64660,6 +64774,21 @@ static std::string M1pScriptHolder(std::string_view runtimeName)
     for (const M1pRow& t : g_M1pRows)
         if (t.orig && std::string_view(t.runtimeName) == runtimeName) return "mark1probe hook";
     return "";
+}
+
+// Whether a script's table entry is some hook's thunk rather than the game's
+// own code (every HookOneScript install leaves one), for the Mark 1 set's
+// landing install (declared with the set's adapter): false when the name or
+// its table cannot be read, which leaves HookOneScript to say so itself.
+static bool M1pTableHeld(std::string_view runtimeName)
+{
+    PVOID p = nullptr;
+    const AurieStatus st = g_Yytk->GetNamedRoutinePointer(std::string(runtimeName).c_str(), &p);
+    if (!AurieSuccess(st) || !p) return false;
+    CScript* sc = reinterpret_cast<CScript*>(p);
+    if (!ReadablePtr(sc, sizeof(CScript)) || !ReadablePtr(sc->m_Functions, sizeof(*sc->m_Functions))
+        || !sc->m_Functions->m_ScriptFunction) return false;
+    return !AddrIsExecutableInModule(GetModuleHandleA(nullptr), (const void*)sc->m_Functions->m_ScriptFunction);
 }
 
 // Whether another ForgePact hook holds this row's script now, and its name

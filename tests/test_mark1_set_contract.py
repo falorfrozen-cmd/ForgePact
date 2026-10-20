@@ -75,6 +75,15 @@ text, comments stripped, and pins the adapter around it:
   the local player's id-64 calls, asks the bonus at the point of use, and the
   stat line's `speed=` is its count; no cast-penalty lever ships
   (`penalty-route: none`, `penalty=unavailable`).
+- the turns (Mark1Automation.hpp's turn rule, applied here): landing: a Mark 1
+  detour on TalentUseSetSpeed, HookOneScript's with its own id, part of the
+  all-or-nothing install, refused unless its inline detour went in and while
+  a research probe holds the script (tgprobe, projprobe, mark1probe), which
+  each refuse that row naming `mark1set`; it counts the local player's calls
+  with the switch on (`cast-calls=`) and marks a landing only while the gate's
+  original runs for a call that pressed a column, fed to the core's Landing
+  after the original returns or throws; turn_fields: `landed=`, `skip-turn=`
+  and `yielded=` from the core's counters of the same names.
 """
 import re
 import sys
@@ -110,6 +119,8 @@ SIGNATURES = {
     "art_install_if_ready": "static void Mark1ArtInstallIfReady()",
     "read_worn": "static bool Mark1ReadWorn(M1sNs::WornSlots& slots)",
     "detour": "static RValue& Mark1HookCheckTalentUse(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)",
+    "landing": "static RValue& Mark1HookTalentUseSetSpeed(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)",
+    "cast_window": "struct Mark1CastWindow {",
     "refresh": "static void Mark1RefreshPlayer()",
     "hud_row": "static bool Mark1HudRow(RValue& row0)",
     "hud_column": "static Mark1HudColumn Mark1ReadHudColumn(const RValue& row0, int column)",
@@ -133,6 +144,9 @@ SIGNATURES = {
     # research build only
     "holder": "static std::string Mark1SetHolder(std::string_view runtimeName)",
     "research_holder": "static std::string Mark1SetResearchHolder()",
+    "landing_research_holder": "static std::string Mark1LandingResearchHolder()",
+    "pp_attach": "static void ProjProbeAttach(int idx)",
+    "m1p_table_held": "static bool M1pTableHeld(std::string_view runtimeName)",
     "sp_holder": "static std::string SpHolder(std::string_view name, volatile long*& calls)",
     "tg_attach": "static void TgProbeAttach(TgProbeTarget& t)",
     "spawn": "static void M1pSpawn(const M1pNs::Command& c)",
@@ -170,7 +184,7 @@ SIGNATURES = {
 }
 
 SHIPPED = ("decode", "of", "entry", "final", "icon_index", "icon_path", "icons_load", "ground", "ground_install",
-           "ground_route", "art_install_if_ready", "read_worn", "detour", "install", "install_if_ready", "tick", "stat_fields", "command",
+           "ground_route", "art_install_if_ready", "read_worn", "detour", "landing", "cast_window", "install", "install_if_ready", "tick", "stat_fields", "command",
            "refresh", "hud_row", "hud_column", "read_toggle", "input_state", "input_get", "input_set", "border",
            "jump_position", "jump_cursor", "jump_family", "jump_gate", "jump_kind", "jump_grid", "jump_max", "jump_learn",
            "jump_entry", "jump_exit", "jump_builtin", "jump_install", "jump_tick", "leap", "leap_install", "resolve_objects",
@@ -351,8 +365,10 @@ class Mark1SetContract(unittest.TestCase):
         resolves = strip_comments(function_body(self.plugin, "static bool Mark1PlayerResolves()"))
         self.assertIn("HhResolveLocalPlayer(p)", resolves)
         self.assertIn("HhResolveInstance(p)", resolves)
-        # The one install site in the adapter, reached only through the gate.
-        self.assertEqual(len(re.findall(r"\bHookOneScript\(", self.code)), 1)
+        # The two install sites in the adapter (the gate and the landing
+        # detour, both in Mark1SetInstall), reached only through the gate.
+        self.assertEqual(len(re.findall(r"\bHookOneScript\(", self.code)), 2)
+        self.assertEqual(len(re.findall(r"\bHookOneScript\(", self.body("install"))), 2)
         self.assertEqual(len(re.findall(r"\bMark1SetInstall\(\)", self.code)), 2)   # definition and the gate's call
         command = self.body("command")
         self.assertIn("Mark1InstallIfReady(false);", command)
@@ -435,9 +451,11 @@ class Mark1SetContract(unittest.TestCase):
             with self.subTest(later=later):
                 self.assertLess(detour.index(lines[inactive]), detour.index(later))
         # The original runs inside the core's PressAround, which presses the
-        # planned columns before it and puts each pressed entry back after it.
-        self.assertIn("return automation.PressAround<RValue>(plan,", detour)
-        self.assertIn("[&]() -> RValue& { return g_M1sOrigCheckTalentUse(S, O, R, argc, A); });", detour)
+        # planned columns before it and puts each pressed entry back after it;
+        # the landing window is open around the original alone.
+        self.assertIn("RValue& result = automation.PressAround<RValue>(plan,", detour)
+        self.assertIn("[&]() -> RValue& { Mark1CastWindow window(pressing); "
+                      "return g_M1sOrigCheckTalentUse(S, O, R, argc, A); });", detour)
         self.assertIn("haveInput && Mark1InputGet(input, entry, out)", detour)
         self.assertIn("haveInput && Mark1InputSet(input, entry, value)", detour)
         # The detour itself writes nothing to the game.
@@ -514,7 +532,7 @@ class Mark1SetContract(unittest.TestCase):
         # failures by their own names, never folded into a skip.
         struct = function_body(self.header(), "struct ColumnCounts {")
         names = re.findall(r"uint64_t (\w+) = 0;", struct)
-        self.assertEqual(len(names), 10, names)
+        self.assertEqual(len(names), 13, names)   # ten since the automation, three since the turns
         for name in names:
             with self.subTest(field=name):
                 self.assertEqual(len(re.findall(r"\bc\." + name + r" = \(uint64_t\)k\.\w+;", fields)), 1)
@@ -1264,6 +1282,156 @@ class Mark1SetContract(unittest.TestCase):
         # element: the adapter names neither.
         for token in ("gml_Script_TalentUse)", "playerEffect", "Mark1Penalty"):
             self.assertNotIn(token, self.code)
+
+    # ---- the turns: the landing detour on TalentUseSetSpeed ---------------------------------
+
+    def test_landing_detour_goes_in_through_hook_one_script_with_its_own_id_in_the_all_or_nothing_install(self):
+        install = self.body("install")
+        call = ('HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_TalentUseSetSpeed), "fp_mark1set_tuss",')
+        self.assertIn(call, install)
+        self.assertIn("(PVOID)Mark1HookTalentUseSetSpeed, &g_M1sOrigTalentUseSetSpeed, &g_M1sTussNative)", install)
+        # Its own hook id, never the gate's.
+        self.assertIn('"fp_mark1set_ctu"', install)
+        self.assertEqual(self.code.count('"fp_mark1set_tuss"'), 1)
+        # Installed once: a hook that went in stays in.
+        self.assertIn("if (!g_M1sOrigTalentUseSetSpeed", install)
+        # After the gate went in native, before the jump, the walk and the art:
+        # part of the one all-or-nothing install, reached only through the gate.
+        self.assertLess(install.index("if (!g_M1sCtuNative)"), install.index(call))
+        for later in ("Mark1JumpInstall()", "Mark1MovementInstall()", "Mark1GroundIconInstall();"):
+            with self.subTest(later=later):
+                self.assertLess(install.index(call), install.index(later))
+        self.assertIn("TalentUseSetSpeed was not found by name", install)
+        # Both builds: the detour is the player's landing instrument.
+        self.assertIn(call, strip_comments(function_body(strip_research_blocks(self.plugin), SIGNATURES["install"])))
+        # Exactly one TalentUseSetSpeed detour in the adapter.
+        self.assertEqual(len(re.findall(r"\bMark1HookTalentUseSetSpeed\b", self.code)), 2)   # definition and the install
+
+    def test_landing_refused_unless_its_inline_detour_went_in(self):
+        install = self.body("install")
+        self.assertIn("if (!g_M1sTussNative)", install)
+        refusal = install[install.index("if (!g_M1sTussNative)"):]
+        refusal = refusal[:refusal.index(";") + 1]
+        self.assertIn("TalentUseSetSpeed went in TABLE-ONLY", refusal)
+        self.assertIn("return", refusal)
+        self.assertLess(install.index("fp_mark1set_tuss"), install.index("if (!g_M1sTussNative)"))
+        self.assertLess(install.index("if (!g_M1sTussNative)"), install.index("Mark1JumpInstall()"))
+
+    def test_landing_refused_while_a_research_probe_holds_the_script(self):
+        raw = function_body(self.plugin, SIGNATURES["install"])
+        research = raw[raw.index("#ifndef FORGEPACT_RELEASE"):raw.index("#endif")]
+        self.assertIn("Mark1LandingResearchHolder()", research)
+        self.assertLess(raw.index("Mark1LandingResearchHolder()"), raw.index("HookOneScript("))
+        holder = self.body("landing_research_holder")
+        self.assertIn("HeroSiege::Scripts::gml_Script_TalentUseSetSpeed", holder)
+        # tgprobe (and every holder skillprobe knows, JpHolder) and the set's
+        # research probe by name; projprobe, whose names stay in its region
+        # (test_skill_sliders_probe_contract), by the thunk its row leaves in
+        # the script table, asked before the set's own HookOneScript would
+        # chain onto it table-only.
+        for check in ("JpHolder(name, calls)", "M1pScriptHolder(name)", "M1pTableHeld(name)", "projprobe hook"):
+            self.assertIn(check, holder)
+        self.assertNotRegex(holder, r"\bg_Pp|\bkPp|\bProjProbe")
+        table = self.body("m1p_table_held")
+        self.assertIn("GetNamedRoutinePointer(", table)
+        self.assertIn("return !AddrIsExecutableInModule(GetModuleHandleA(nullptr), "
+                      "(const void*)sc->m_Functions->m_ScriptFunction);", table)
+        # Its own hold is not a refusal, by name or by its own table thunk.
+        self.assertIn('holder != "mark1set"', holder)
+        self.assertIn('if (g_M1sOrigTalentUseSetSpeed) return "";', holder)
+        self.assertLess(holder.index('if (g_M1sOrigTalentUseSetSpeed) return "";'), holder.index("M1pTableHeld(name)"))
+        self.assertNotIn("Mark1LandingResearchHolder", self.shipped)
+        # The gate's check, asked again on a retry after a partial install,
+        # does not take the set's own hold for a probe's either.
+        self.assertIn('holder != "mark1set"', self.body("research_holder"))
+
+    def test_landing_the_research_probes_name_mark1set_while_it_holds_the_script(self):
+        holder = self.body("holder")
+        self.assertIn("g_M1sOrigTalentUseSetSpeed", holder)
+        self.assertIn("HeroSiege::Scripts::gml_Script_TalentUseSetSpeed", holder)
+        # Asked before the gate's own check returns "" for any other script.
+        self.assertLess(holder.index("g_M1sOrigTalentUseSetSpeed"), holder.index("if (!g_M1sOrigCheckTalentUse)"))
+        # TalentUse stays co-op's (and the live session's independent count).
+        self.assertNotIn("gml_Script_TalentUse)", holder)
+        self.assertNotIn("gml_Script_TalentUse,", holder)
+        # tgprobe asks before it blocks; projprobe asks before it installs and
+        # refuses naming the holder; mark1probe asks through JpHolder (SpHolder).
+        self.assertIn("Mark1SetHolder(runtimeName)", self.body("tg_attach"))
+        attach = self.body("pp_attach")
+        self.assertIn("Mark1SetHolder(", attach)
+        self.assertLess(attach.index("Mark1SetHolder("), attach.index("HookOneScript("))
+        self.assertIn('"blocked: " + held + " holds it (a script takes one inline detour)"', attach)
+        self.assertIn("Mark1SetHolder(name)", self.body("sp_holder"))
+        m1p = strip_comments(function_body(self.plugin, "static bool M1pHeldBy(const M1pRow& t, std::string& holder)"))
+        self.assertIn("JpHolder(t.runtimeName, calls)", m1p)
+
+    def test_landing_counts_only_the_local_players_calls_while_the_switch_is_on(self):
+        lines = self.lines("landing")
+        self.assertEqual(lines[0], "if (g_Mark1.Enabled() && S && S == g_M1sPlayer) {")
+        landing = self.body("landing")
+        self.assertIn("++g_M1sCastCalls;", landing)
+        self.assertIn("if (g_M1sCastWindow) g_M1sCastLanded = true;", landing)
+        # The original always runs, after the counts, and its result is the game's.
+        self.assertEqual(lines[-1], "return g_M1sOrigTalentUseSetSpeed(S, O, R, argc, A);")
+        self.assertEqual(landing.count("g_M1sOrigTalentUseSetSpeed("), 1)
+        # Nothing is read from or written to the game; no kind check decides it.
+        for token in ("CallBuiltin", "variable_", "array_set", "VALUE_OBJECT", "VALUE_REF"):
+            with self.subTest(token=token):
+                self.assertNotIn(token, landing)
+        # The count's and the flag's only writers.
+        self.assertEqual(self.code.count("++g_M1sCastCalls;"), 1)
+        self.assertEqual(re.findall(r"\bg_M1sCastCalls\s*(?:\+=|=(?!=))", self.code), ["g_M1sCastCalls ="])
+        self.assertEqual(self.code.count("g_M1sCastLanded = true;"), 1)
+
+    def test_landing_attributed_only_inside_a_gate_call_that_pressed_a_column(self):
+        detour = self.body("detour")
+        # The window opens only for a call that is to press a column, and only
+        # around the original: TalentUseSetSpeed's calls before the gate or
+        # after it (the restore) are not this call's landing.
+        self.assertIn("const bool pressing = haveInput && plan.PressCount() > 0;", detour)
+        self.assertLess(detour.index("haveInput = plan.PressCount() > 0 && Mark1InputState("),
+                        detour.index("const bool pressing ="))
+        window = self.body("cast_window")
+        self.assertIn("g_M1sCastWindow = open;", window)
+        self.assertIn("~Mark1CastWindow() { g_M1sCastWindow = previous; }", window)
+        # Its writers: the definition, and the window's open and close.
+        self.assertEqual(len(re.findall(r"\bg_M1sCastWindow\s*=(?!=)", self.code)), 3)
+        # The flag starts clear for this call and is fed to the core after the
+        # original returns, and after it throws (then rethrown).
+        self.assertIn("g_M1sCastLanded = false;", detour)
+        self.assertLess(detour.index("g_M1sCastLanded = false;"), detour.index("automation.PressAround<RValue>("))
+        feed = "automation.Landing(plan, landed);"
+        self.assertEqual(detour.count(feed), 1)
+        self.assertEqual(detour.count("feedLanding();"), 2)
+        after = detour[detour.index("automation.PressAround<RValue>("):]
+        self.assertLess(after.index("feedLanding();"), after.index("return result;"))
+        catch = after[after.index("catch (...)"):]
+        self.assertLess(catch.index("feedLanding();"), catch.index("throw;"))
+        # The core credits a landing only to the holder PressAround pressed in
+        # that same Plan call, once.
+        landing = function_body(self.automation_header(), "void Landing(const Mark1FramePlan& plan, bool landed)")
+        self.assertIn("plan.call != m_PressedCall", landing)
+        self.assertIn("m_PressedCall = 0;", landing)
+        around = function_body(self.automation_header(), "decltype(auto) PressAround(")
+        self.assertIn("if (column == plan.holder) m_PressedCall = plan.call;", around)
+        self.assertLess(around.index("++m_Counters[i].presses;"), around.index("m_PressedCall = plan.call;"))
+        # Inside the adapter, the core's one Landing call.
+        self.assertEqual(self.code.count(".Landing("), 1)
+
+    def test_turn_fields_each_come_from_the_cores_counter_of_the_same_name(self):
+        fields = self.body("stat_fields")
+        for line in ("c.landed = (uint64_t)k.landed;", "c.skipTurn = (uint64_t)k.skipTurn;",
+                     "c.yielded = (uint64_t)k.yielded;"):
+            with self.subTest(line=line):
+                self.assertIn(line, fields)
+        # The core's counters of those names.
+        counters = function_body(self.automation_header(), "struct Mark1ColumnCounters {")
+        for name in ("landed", "skipTurn", "yielded"):
+            with self.subTest(counter=name):
+                self.assertRegex(counters, r"long\s+" + name + r"\s+= 0;")
+        # cast-calls: the landing detour's own count.
+        self.assertIn("f.castCalls = g_M1sCastCalls;", fields)
+        self.assertIn("uint64_t     castCalls = 0;", function_body(self.header(), "struct StatFields {"))
 
 
 if __name__ == "__main__":

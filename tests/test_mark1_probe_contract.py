@@ -323,6 +323,28 @@ class Mark1ProbeContract(unittest.TestCase):
         # The set's own detour is a holder this probe's check knows, through JpHolder.
         self.assertIn("Mark1SetHolder(name)", self.body("static std::string SpHolder(std::string_view name, volatile long*& calls)"))
 
+    def test_research_only_the_talent_use_set_speed_rows_refuse_naming_mark1set_while_it_holds_the_script(self):
+        # The set's landing detour (the turns) holds TalentUseSetSpeed; the set's
+        # holder check names it for that script, and every probe with a row on
+        # it asks before it installs: this probe through JpHolder (SpHolder),
+        # tgprobe before it blocks, projprobe before its HookOneScript.
+        holder = self.body("static std::string Mark1SetHolder(std::string_view runtimeName)")
+        self.assertIn("g_M1sOrigTalentUseSetSpeed", holder)
+        self.assertIn("HeroSiege::Scripts::gml_Script_TalentUseSetSpeed", holder)
+        self.assertIn('return "mark1set";', holder)
+        # This probe's TalentUse row (the live session's `casts=`) is not the set's.
+        self.assertNotRegex(holder, r"gml_Script_TalentUse\b")
+        held = self.body("static bool M1pHeldBy(const M1pRow& t, std::string& holder)")
+        self.assertIn("holder = JpHolder(t.runtimeName, calls);", held)
+        install = self.body("static void M1pInstall()")
+        self.assertLess(install.index("M1pHeldBy(t, holder)"), install.index("HookOneScript("))
+        self.assertIn("g_M1pProbe.NoteHook(t.row, M1pNs::HookState::Held, holder);", install)
+        self.assertIn("Mark1SetHolder(runtimeName)", self.body("static void TgProbeAttach(TgProbeTarget& t)"))
+        attach = self.body("static void ProjProbeAttach(int idx)")
+        self.assertLess(attach.index("Mark1SetHolder("), attach.index("HookOneScript("))
+        # The set's install, the other way: this probe's hold on the script is a refusal.
+        self.assertIn("M1pScriptHolder(name)", self.body("static std::string Mark1LandingResearchHolder()"))
+
     def test_research_only_pos_samples_with_a_clock_whether_or_not_a_row_is_hooked(self):
         tick = self.body("static void M1pFrameTick()")
         self.assertIn("g_M1pProbe.ObservePosFrame(frame, read, vx.number, vy.number, ms);", tick)
@@ -385,11 +407,13 @@ class Mark1ProbeContract(unittest.TestCase):
             self.assertIsNone(re.search(r"\(\s*char\s*\*\s*\)\s*\w+\s*[+-]", source))
             self.assertNotIn("reinterpret_cast<PFUNC", source)
             self.assertNotIn("exe+", source)
-        # The two module handles are the game-code checks: is a script's table
-        # entry game code (M1pHeldBy), and is a builtin's routine (M1pInstallBuiltins).
-        self.assertEqual(self.code.count("GetModuleHandle"), 2)
-        self.assertEqual(self.code.count("AddrIsExecutableInModule(GetModuleHandleA(nullptr)"), 2)
+        # The three module handles are the game-code checks: is a script's table
+        # entry game code (M1pHeldBy, and M1pTableHeld for the Mark 1 set's
+        # landing install), and is a builtin's routine (M1pInstallBuiltins).
+        self.assertEqual(self.code.count("GetModuleHandle"), 3)
+        self.assertEqual(self.code.count("AddrIsExecutableInModule(GetModuleHandleA(nullptr)"), 3)
         self.assertIn("AddrIsExecutableInModule(GetModuleHandleA(nullptr)", self.body("static bool M1pHeldBy(const M1pRow& t, std::string& holder)"))
+        self.assertIn("AddrIsExecutableInModule(GetModuleHandleA(nullptr)", self.body("static bool M1pTableHeld(std::string_view runtimeName)"))
         self.assertIn("AddrIsExecutableInModule(GetModuleHandleA(nullptr), p)", self.body("static void M1pInstallBuiltins()"))
 
     def test_research_only_walkable_reads_a_meeting_and_a_line_through_their_own_verdicts(self):
