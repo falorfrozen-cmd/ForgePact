@@ -2,6 +2,7 @@
 
 #include "Common.hpp"
 #include <atomic>
+#include <exception>
 #include <type_traits>
 #include <utility>
 
@@ -296,21 +297,27 @@ public:
                 if (!ok) ++m_Counters[i].restoreFailed;
             }
         };
-        using Result = decltype(call());
-        try {
-            if constexpr (std::is_void_v<Result>) {
-                call();
-                restore();
-                return;
-            } else {
-                decltype(auto) result = call();
-                restore();
-                return static_cast<Result>(result);
+        // The put-back runs on the way out either way, from a guard rather
+        // than a catch that rethrows: the exception reaches the adapter
+        // untouched, and the adapter's own catch writes the rethrow line
+        // before the game gets it back (test_crash_trap_contract.py).
+        struct PutBack {
+            Mark1Automation& self;
+            decltype(restore)& run;
+            const int uncaught = std::uncaught_exceptions();
+            ~PutBack()
+            {
+                if (std::uncaught_exceptions() > uncaught) ++self.m_CallsThrew;
+                run();
             }
-        } catch (...) {
-            ++m_CallsThrew;
-            restore();
-            throw;
+        } putBack{ *this, restore };
+        using Result = decltype(call());
+        if constexpr (std::is_void_v<Result>) {
+            call();
+            return;
+        } else {
+            decltype(auto) result = call();
+            return static_cast<Result>(result);
         }
     }
 

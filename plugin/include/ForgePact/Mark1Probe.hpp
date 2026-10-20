@@ -1224,15 +1224,28 @@ public:
         ++depth_[i];
         ++depthAll_;
         stack_.push_back(row);
-        try {
-            original();
-        } catch (...) {
-            --depth_[i];
-            --depthAll_;
-            stack_.pop_back();
-            if (restore) access.Write(target, old);
-            throw;
-        }
+        // A throw from the original unwinds the depth, the stack and a set or
+        // scale write through this guard, and reaches the adapter untouched
+        // (the adapter writes the rethrow line, test_crash_trap_contract.py).
+        struct Unwind {
+            Probe& self;
+            int i;
+            Access& access;
+            const Target& target;
+            const Value& old;
+            bool restore;
+            bool returned = false;
+            ~Unwind()
+            {
+                if (returned) return;
+                --self.depth_[i];
+                --self.depthAll_;
+                self.stack_.pop_back();
+                if (restore) { try { access.Write(target, old); } catch (...) {} }
+            }
+        } unwind{ *this, i, access, target, old, restore };
+        original();
+        unwind.returned = true;
         --depth_[i];
         --depthAll_;
         stack_.pop_back();

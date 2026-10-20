@@ -146,7 +146,8 @@ def rethrows_without_a_line(code, allowlist):
         text = body.strip()
         if not text.endswith("throw;"):
             continue
-        if re.search(r'RethrowLine\("[a-z]+", \w+\);\s*throw;$', text):
+        # A mod's command name may carry a digit (`mark1set`).
+        if re.search(r'RethrowLine\("[a-z][a-z0-9]*", \w+\);\s*throw;$', text):
             continue
         name = enclosing_function(code, start)
         if name not in allowlist:
@@ -551,6 +552,9 @@ class CrashTrapContractTests(unittest.TestCase):
         parse = strip_comments(function_body(
             self.plugin, "static RValue& Hook_FlightParseItemToGrid(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)"))
         self.assertIn('RethrowLine("flightcharm", g_FlightParseRethrowLines);\n        throw;', parse)
+        gate = strip_comments(function_body(
+            self.plugin, "static RValue& Mark1HookCheckTalentUse(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)"))
+        self.assertIn('feedLanding();\n        RethrowLine("mark1set", g_M1sRethrowLines);\n        throw;', gate)
         line = strip_comments(function_body(self.plugin, "static void RethrowLine(const char* mod, volatile long& written) noexcept"))
         for part in ('"rethrow: "', '" type="', "ForgePact::CrashTrap::LastCppType()", "> kRethrowLinesPerSite"):
             self.assertIn(part, line)

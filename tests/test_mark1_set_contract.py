@@ -483,10 +483,15 @@ class Mark1SetContract(unittest.TestCase):
         around = function_body(self.automation_header(), "decltype(auto) PressAround(")
         self.assertIn("if (!readOk) { ++m_Counters[i].originalUnreadable; continue; }", around)
         self.assertLess(around.index("read(entry, originals[i])"), around.index("write(entry, Value(kMark1PressValue))"))
-        self.assertIn("++m_CallsThrew;", around)
-        catch = around[around.rindex("++m_CallsThrew;"):]
-        self.assertLess(catch.index("restore();"), catch.index("throw;"))
-        self.assertGreaterEqual(around.count("restore();"), 3)   # after a void call, after a value, after a throw
+        # The put-back is a guard's destructor, declared before the call, so it
+        # runs after a void call, after a value and after a throw alike; a
+        # throw is counted there and reaches the adapter untouched (the
+        # adapter writes the rethrow line), with no catch that rethrows here.
+        guard = around[around.index("struct PutBack {"):]
+        self.assertIn("if (std::uncaught_exceptions() > uncaught) ++self.m_CallsThrew;", guard)
+        self.assertLess(guard.index("++self.m_CallsThrew;"), guard.index("run();"))
+        self.assertLess(around.index("} putBack{ *this, restore };"), around.index("call();"))
+        self.assertNotIn("throw;", around)
 
     def test_automation_the_profile_slot_is_the_one_the_gates_third_argument_names(self):
         state = self.body("input_state")

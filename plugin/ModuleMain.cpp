@@ -63055,13 +63055,15 @@ static void GambaPityCommand(const std::string& rest)
     g_GambaPity.SetEnabled(true);
     Out(g_GambaPity.StatusLine());
 }
+// ===== end of gambapity (ForgePact #134) =====
 
 // ---- Mark 1 set (Mark1Set.hpp): the adapter ------------------------------------
 // ForgePact #166, phase 2. Four built-in Heroic pieces; while all four are
-// worn, each in its own slot, and the Mods -> Items switch "Mark 1 set" is on
-// (`mark1set bonus 1`), the set bonus is active. Mark1Set.hpp decides; this
-// adapter supplies the game reads, all by name:
-//   - the worn read: the four worn slots of global.equippedItems[mplr][0]
+// worn, each counted once wherever it sits among the gear slots, and the Mods
+// -> Items switch "Mark 1 set" is on (`mark1set bonus 1`), the set bonus is
+// active. Mark1Set.hpp decides; this adapter supplies the game reads, all by
+// name:
+//   - the worn read: gear slots 0..9 of global.equippedItems[mplr][0]
 //     (fingerprint strings, RDM "Equipment Slots Layout", measured), each
 //     resolved through GetOnlinePlayerItemOwner and GetItemFromFingerprint,
 //     as MinerHelmetMod.hpp's ReadWorn reads the helmet. Done at the point of
@@ -63074,8 +63076,10 @@ static void GambaPityCommand(const std::string& rest)
 //     research probe holding the script refuses it too, naming the holder.
 //   - the automation (Mark1Automation.hpp), inside that detour while the bonus
 //     is active: bar columns 3..6 read at the point of use, toggles through
-//     the toggle border's read, each planned column pressed in the profile
-//     slot's `inputState` and put back after the original; and the border on
+//     the toggle border's read, the columns taking turns (one column, the
+//     turn's holder, pressed per call in the profile slot's `inputState` and
+//     put back after the original; a landing seen by the TalentUseSetSpeed
+//     detour, part of the install below, ends the turn); and the border on
 //     every automated column that is neither empty nor an aura, from one line
 //     in Hook_DrawHudBuffs after the toggle border's.
 //   - the jump (Mark1Jump.hpp), on jumpscenery's shared skillsLeap and
@@ -63587,6 +63591,7 @@ static RValue& Mark1HookTalentUseSetSpeed(CInstance* S, CInstance* O, RValue& R,
 // ---- the CheckTalentUse detour ----
 static PFUNC_YYGMLScript g_M1sOrigCheckTalentUse = nullptr;
 static bool g_M1sCtuNative = false;   // the inline detour went in: the bonus is allowed to arm
+static volatile long g_M1sRethrowLines = 0;   // RethrowLine's count for the gate detour below
 
 // The point of use: the local player's own call of the cast gate, once a
 // frame. With the switch off, inside the adapter's own calls, or for any other
@@ -63660,6 +63665,7 @@ static RValue& Mark1HookCheckTalentUse(CInstance* S, CInstance* O, RValue& R, in
         return result;
     } catch (...) {
         feedLanding();
+        RethrowLine("mark1set", g_M1sRethrowLines);
         throw;
     }
 }
@@ -64736,6 +64742,8 @@ static void M1pNoteLocalCall(int row, int64_t frame, int argc, RValue** A)
     }
 }
 
+static volatile long g_M1pRethrowLines = 0;   // RethrowLine's count for the two row detours below
+
 static RValue& M1pOnScript(int row, CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
     const PFUNC_YYGMLScript orig = g_M1pRows[row].orig;
@@ -64746,7 +64754,12 @@ static RValue& M1pOnScript(int row, CInstance* S, CInstance* O, RValue& R, int a
     if (local) M1pNoteLocalCall(row, frame, argc, A);
     RValue* out = &R;
     M1pAccess access{ S, argc, A, &out };
-    g_M1pProbe.Around(static_cast<M1pNs::Row>(row), frame, local, access, [&]() { out = &orig(S, O, R, argc, A); });
+    try {
+        g_M1pProbe.Around(static_cast<M1pNs::Row>(row), frame, local, access, [&]() { out = &orig(S, O, R, argc, A); });
+    } catch (...) {
+        RethrowLine("mark1probe", g_M1pRethrowLines);
+        throw;
+    }
     return *out;
 }
 
@@ -64762,7 +64775,12 @@ static void M1pOnBuiltin(int row, RValue& Result, CInstance* S, CInstance* O, in
     const bool local = S && S == g_M1pPlayer;
     RValue* out = &Result;
     M1pAccess access{ S, 0, nullptr, &out };
-    g_M1pProbe.Around(static_cast<M1pNs::Row>(row), (int64_t)g_RuntimeFrame, local, access, [&]() { orig(Result, S, O, argc, Args); });
+    try {
+        g_M1pProbe.Around(static_cast<M1pNs::Row>(row), (int64_t)g_RuntimeFrame, local, access, [&]() { orig(Result, S, O, argc, Args); });
+    } catch (...) {
+        RethrowLine("mark1probe", g_M1pRethrowLines);
+        throw;
+    }
 }
 
 // ---- hook -------------------------------------------------------------------------
