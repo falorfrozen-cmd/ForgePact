@@ -82,5 +82,14 @@ class PopulationCapacityTests(unittest.TestCase):
         result = subprocess.run([str(out / 'test.exe')], capture_output=True, text=True, timeout=RUN_TIMEOUT_SECONDS)
         self.assertEqual(result.returncode,0,result.stdout+result.stderr)
         self.assertIn('queue: bounded, complete, stale entries, reset PASS',result.stdout)
+        # A full pool is skipped until a free gives it room (#232's live freezes).
+        script.write_text(f'@echo off\ncall "{vs}\\VC\\Auxiliary\\Build\\vcvars64.bat" >nul\n'
+            f'cl /nologo /std:c++20 /EHsc /O2 /I "{ROOT / "plugin/include"}" "{ROOT / "tests/population_full_bank.cpp"}" /Fe:"{out / "full.exe"}" /Fo:"{out / "full.obj"}"\n', encoding='utf-8')
+        build = subprocess.run(['cmd','/d','/c',str(script)], capture_output=True, text=True, timeout=COMPILE_TIMEOUT_SECONDS)
+        self.assertEqual(build.returncode,0,build.stdout+build.stderr)
+        result = subprocess.run([str(out / 'full.exe')], capture_output=True, text=True, timeout=RUN_TIMEOUT_SECONDS)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        self.assertIn('full-pool scans after refusal: game=0 bank1=0',result.stdout)
+        self.assertIn('full bank: skipped until freed PASS',result.stdout)
 
 if __name__ == '__main__':unittest.main()

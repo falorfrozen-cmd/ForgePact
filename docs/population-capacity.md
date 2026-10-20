@@ -21,10 +21,57 @@ its vanilla value, nothing is loaded or detoured. The owner's rule
 (2026-10-20): a raised lever gets the monsters it asks for, and its frame-rate
 cost is the player's choice. So nothing here caps or refuses population; the
 router only makes room. The sections below still describe the pacing work
-and its unmet five-second target. Live confirmation at the reported
-settings is pending. `tests/test_population_capacity_arming.py` pins the
+and its unmet five-second target. `tests/test_population_capacity_arming.py` pins the
 arming. `test_population_capacity.py`, given the installed library through
 `FORGEPACT_POOL_TEST_DLL`, passed against `ea33261a…` the same day.
+
+### Live 1 (2026-10-20, research build, slot 14, lease `forgepact-232-pool-capacity-live-1`)
+
+The steps were the same in both runs, with saves restored between them.
+1. `density 5` plus `specialrate battlefield|chaospillars|shadowrealm 100`,
+   then `pcall NetworkRoomGoto 41` (Act_04_01).
+2. `enemyall 10`, then `NetworkRoomGoto 43` (Act_04_02).
+3. `reveal 1` and `reveal spawn 1`, then `NetworkRoomGoto 44` (Act_04_03).
+
+`enemyall` and the spawn pass go beyond the crash report's settings. Without
+them, the rolling density copies with nobody walking did not fill bank zero.
+
+- **Baseline, measured:** with every lever at vanilla, modstate read
+  `capacityReady=false`, `reason "Not requested"`, `banks 0`.
+- **Arming, measured:** the first raised lever logged `population: capacity
+  routing ready (3 native pools)` within a second.
+- **Run 1 (DLL `55bd5819…`), the router as first armed:** no crash.
+  `overflowLive` reached 593,316 with 0 allocation failures and 0 invalid
+  handles. The game froze 18 times, for 3.4–12.1 s each and 121 s in total, every
+  time inside the game's own `instance_create_layer`. 36 of 40 stall samples
+  were in the scan loop of a **full** pool (`ac_dll_gm.dll`, `ForgePactPool-1`,
+  `ForgePactPool-2`), and none were in the pool that still had room.
+  - The cause is measured, not inferred: a full native pool does not refuse
+    cheaply. A free moves its cursor back, and the next refusal scans from
+    there to the end of the table. The router asked every full pool, in order,
+    on every allocation.
+  - `tests/population_full_bank.cpp` reproduces it: 40 allocations scanned
+    2,520 records in each full pool.
+- **The router fix:** a pool that refused is skipped until a free gives it room
+  (`m_Full`/`m_FreedSinceFull`; bank zero counts every free, extra banks only
+  live ones). The same harness then reads 0 scanned records in either full
+  pool, and a later free in the game's pool is still reused.
+- **Run 2 (DLL `4b8305b3…`), with the fix:** no crash, and a clean close.
+  - Step 2 reached `overflowLive` 727,445 within about 10 s, with hitches of
+    383 ms and 1,842 ms.
+  - After step 3's zone change `overflowLive` read 0, then refilled to
+    823,541 at the peak (about 1.09 M live records with bank zero). Overflow
+    frees are reused across zones as designed.
+  - The router grew to 5 pools, with 0 failures and 0 invalid handles.
+  - No stall sample landed in any pool.
+  - One 32 s freeze came at step 3's zone change: the game unloading
+    Act_04_02 with 28,496 monsters and 88,411 instances. It ran in game code,
+    with `in-hook none`, `in-mod none` and 144 MB read from disk; that is the
+    game's own teardown at a population far beyond the player's (617 monsters,
+    5,996 instances), not ForgePact's.
+- Saves were restored (inspect: `changed: []`) and the original DLL
+  `96c6d215…` was put back. The player build itself was not run live. Its
+  arming and router are the same source; only research commands differ.
 
 > **Read first (2026-09-22):** [population-performance-analysis.md](population-performance-analysis.md)
 > explains why the lag survives an empty queue: the game walks every living

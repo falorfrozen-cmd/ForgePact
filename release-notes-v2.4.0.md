@@ -18,9 +18,12 @@ Release date: 2026-10-23
   get every monster you asked for: nothing is capped or held back, so a very
   crowded zone still costs frame rate, and lowering the multipliers is how to
   get it back. With every population setting at its normal value, nothing
-  changes. The fix was checked against the game's own store library outside
-  the game; it has not yet been confirmed in a game session at those
-  settings.
+  changes. Tested in a game session on 2026-10-20 at the crash report's
+  settings and beyond them (density x5, those three spawners at x100, every
+  monster x10 and the map's spawn pass on). The game held over a million of
+  those values, four times its own limit, with no crash and a clean close.
+  At that extreme, leaving a zone of 28,000 monsters still took the game
+  half a minute to unload.
 
 ## How to update
 
