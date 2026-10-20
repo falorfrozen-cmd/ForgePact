@@ -1819,3 +1819,161 @@ The values each key may take:
 - `penalty-stack`, how a cast's slowdown combines with the half walk:
   `stacks` (the cast frames' step about 0.65 of the bonus-on step),
   `replaces` (about 1.3) or `not-observed`.
+
+## Phase 3: the drops
+
+Phase 3 lets a player find the four pieces. Behind a second switch, **Mark 1
+drops** (`mark1set drops`, off by default), each piece joins the game's own
+Heroic roll, `DropItemHeroic`, with one entry's share, through the stand-in,
+attribution and rewrite machinery the flight charms (#74) use for the Angelic
+roll. The game builds the piece's base item and the Mark 1 dressing turns it
+into the piece. Only that roll is built; the ordinary unique roll on kills,
+the Angelic roll, vendors and crafting stay out of scope, because how the
+pieces are obtained is still the owner's call and the Heroic roll is phase 1's
+default. The toolkit's ForgePact guide documents the switch, its stat line
+and the probe forms.
+
+### Phase 3 static reading
+
+Read on 2026-10-20 through the hub's ghidra MCP, and, for the two callers the
+MCP could not decompile (`VaultUse` timed out at 240 s and at 500 s), a
+headless decompile on the same build. The shared facts are in the hub's
+`docs/RUNTIME_DATA_MODELS.md` § 23.4; this is the part phase 3 builds on, in
+short. No decompiled text is quoted here.
+
+- **The roll's arguments.** `DropItemHeroic` (1374) takes an x, a y and a
+  sub-list index. An undefined x or y is read from `self`, and an undefined
+  index means sub-list 5. **Static reading.**
+- **No empty pick.** It draws from `Controller_obj.lootListUnique` at that
+  index and draws again until an entry passes both tests: the definition's
+  flag 40 clear and a rarity (field 27) that is neither 7 nor 10. Every draw
+  makes one `GetUniqueRepoStruct` lookup. So an entry listed r times among
+  the T_H entries that pass is placed r / T_H of the time, whether or not the
+  random index can reach the list's length, and one pushed stand-in per piece
+  gives each piece 1 / (T_H + 4) of the calls with all four pushed. **Static
+  reading**; the share is arithmetic on it, not measured.
+- **One build per call.** After the loop it calls `CreateDefaultParams`
+  once, from the kept entry's sub-type and base, and then the placement with
+  the entry's own type. So the placed class comes from the entry, not the
+  parameters: a stand-in has to share its piece's class, and
+  `CreateDefaultParams` is the point where the hit is attributed and the
+  record rewritten, as in the Angelic roll. **Static reading.**
+- **Who calls it.** A byte scan for direct calls found two sites, one in
+  `VaultUse` (4597) and one in the Chaos Tower NPC's closure, with
+  `CreateDefaultParams`' 177 direct sites as the positive control in the same
+  run. The MCP's callers, callees and disassembly for `DropItemHeroic` and
+  `VaultUse` are empty: **not observed**, never "none", and a call through the
+  script table is invisible to both. As far as is read, the roll runs when a
+  player uses a vault or that NPC, and not on a kill.
+- **What a vault passes.** `VaultUse` runs from a vault item's right-click in
+  the bag. It sorts the vault into one of seven tiers and starts the roll at
+  sub-list 4, moving it to 5 on a random check whose threshold rises with the
+  tier; a second random check, also rising with the tier, sends the use to an
+  unnamed draw of the Angelic kind instead (by its body and its place most
+  likely `DropItemAngelic`, an inference). When it does call `DropItemHeroic`
+  it passes its own `self`, the x and y of an instance resolved earlier in the
+  body, and that index. So a vault's Heroic roll reads sub-list 4 or 5. The
+  random bound, and so the chances, were **not read**. **Static reading.**
+- **What the NPC passes.** The closure calls `DropItemHeroic` in a loop a
+  number of times worked out from `floor`, with all three arguments
+  undefined: its own position and sub-list 5. **Static reading.**
+- **Measured before.** Ten by-name calls with the player as `self` placed
+  seven Heroic (9) and three Satanic (6) uniques (flight charms Live 1,
+  2026-10-12, `heroic-route`).
+- **Not established.** Which Heroic uniques of the four piece classes
+  `lootListUnique[5]` (380 entries) and `[4]` hold, and so T_H and which class
+  has a stand-in. The Item Editor's catalog lists 13, 15, 17 and 17 Heroic
+  uniques of classes 0, 1, 2 and 4, but that is not a reading of the game.
+  Mod live procedure 4's `pool` reads sub-list 5; what a vault's sub-list 4
+  holds is left to `mark1probe pool 4`.
+
+### Mod live procedure 4
+
+The drops on the research build: that the switch starts off and changes
+nothing, that the roll's pool has a stand-in for each piece class, that each
+piece is reached through the roll, built as the piece and shown with its art,
+the share against one entry's, the switch's teardown, and one use of the
+game's own vault as the outlier that takes the direct-call path. The capture
+is the drops workorder's live capture 1,
+`forgepact-166-mark1-set-drops-live-1.md`, kept with the hub's workorder files
+and not tracked.
+
+**Setup:**
+
+- **Build:** the research build from `plugin_build\build.bat dev` at the
+  ForgePact commit that completes the drop adapter; its SHA-256 is recorded in
+  the capture. The owner is asked before it is installed.
+- **Character:** save slot 14, "Sorak", in `Town_01_rm`. No flight charm
+  worn; `mark1set bonus`, `jumpscenery`, Headhunter, Tyrant's Crown and the
+  flight charms' drop switches stay off. The saves are backed up first and
+  this session's backup is restored at the end.
+- **Control:** `ping` answers `pong (YYTK 4.0.1)`, and a bare `mark1probe`
+  answers `mark1probe: research build` with its rows line.
+- **Cases:** `mark1probe heroic`, the measured by-name call shape, for every
+  count; the game's own vault use once, as the outlier.
+- **Debugger:** the hub's x64dbg MCP, attached under the hs-drive lease, only
+  if the decompile index's build hash is this build's (else the session is
+  aborted). Two non-breaking logpoints: the control on `CheckTalentUse`,
+  which logs about once a frame, armed first; then the candidate on
+  `DropItemHeroic`'s own entry. The locations and expected entry bytes are in
+  the capture and the hub's x64dbg guide, never in this doc. Both are armed
+  before the switch goes on, so they see the game's bytes, not the detour's
+  jump; once the detour is in, a call through the script table enters the
+  hook rather than the entry, so from then on the candidate counts direct
+  calls only. The debugger detaches before the game is stopped.
+
+**Steps and checks**, in the order they run:
+
+- `dll-hash` (validity): the installed DLL's SHA-256 equals the build's.
+- `control`, `marker` (validity): `ping` and `mark1probe` answer as above.
+- `fresh-off` (acceptance): `mark1set stat`'s first line reads `bonus=off`
+  and `art=off`, and its drops line is the guide's fresh-session line
+  (`drops=off`, `install=not-armed`, `heroic-calls=0`, every piece `0/0`).
+- `dbg-control` (validity): attached, the control logpoint and then the
+  candidate armed; the control logs about once a frame.
+- `heroic-control` (validity): `mark1probe heroic 10` places at least 8
+  items, every rarity 6 or 9, `pieces=` all 0, and the candidate's hits are
+  recorded.
+- `pool` (research): `mark1probe pool` recorded whole: the length,
+  `droppable=` above 0, and per class a stand-in or `none`. The driver sets
+  the route from it: stand-ins for all four classes, for some, or for none.
+- `drops-on` (acceptance): `mark1set drops 1` replies `drops=on
+  install=installed`; `mark1set stat`'s drops line shows `gate=on`,
+  `hook=detoured` and each class's stand-in as `pool` named it, and its first
+  line `art=armed` and `ground-route=both`.
+- `reach` (acceptance): `mark1probe copies 200`, then `mark1probe heroic 20`
+  twice and `mark1set stat`. Every piece `pool` gave a stand-in is placed at
+  least once in the 40 calls; each piece's `ours` equals its `built`;
+  `refused=0 anomalies=0`; `heroic-calls=` up by 40; the candidate's count
+  recorded.
+- `drop-built`, `drop-art` (acceptance): a placed piece screenshotted on the
+  ground, then picked up by a left click and the bag (C) screenshotted. The
+  probe's placed line names it `Mark 1 <piece>` at rarity 9; on the ground it
+  shows the owner's ground art while `art=armed` (the base item's sprite while
+  `art=off`), never `Error_spr`; the bag shot is recorded (a full bag is
+  recorded not observed).
+- `rate` (research): `mark1probe copies 1`, then `mark1probe heroic 20` five
+  times and `mark1set stat`. The pieces' sum over the 100 calls lies inside
+  `observation_within`'s band for 4 / (T_H + 4), T_H from `pool`, run from the
+  hub checkout's root; `refused=0 anomalies=0`.
+- `drop-off` (acceptance): `mark1set drops 0`, `mark1probe copies 200`,
+  `mark1probe heroic 20` and `mark1set stat`: at least one item placed,
+  `pieces=` all 0, and `injected=` unchanged since before the step.
+- `heroic-natural`, `dbg-heroic` (research): `mark1set drops 1`; if Sorak's
+  bag holds a vault item, the owner right-clicks it once and confirms; then
+  `mark1set stat`. `heroic-calls=` and the candidate's count each rise by 1
+  and an item is placed. With no vault in the bag, not observed. A vault may
+  send the use to the Angelic-kind draw instead (Phase 3 static reading), so
+  a rise in neither count with an Angelic or Unholy item placed is that
+  branch, not a fault.
+- Last: detach, stop the game, inspect the saves, restore this session's
+  backup and inspect again.
+
+The session passes on `dll-hash`, `control`, `marker`, `fresh-off`,
+`dbg-control`, `heroic-control`, `drops-on`, `reach`, `drop-built`,
+`drop-art` and `drop-off`. `pool`, `rate`, `heroic-natural` and `dbg-heroic`
+are research and never required. A research check whose control failed
+(`heroic-control`, `dbg-control`) is recorded `not-run (control)`.
+`heroic-natural` with `heroic-calls=` unmoved while the candidate's count
+rose is a blind hook, recorded as a fail, never as "the vault does not
+roll".
