@@ -47,8 +47,16 @@
 // histograms, the entries it draws past by why, and each piece's stand-in by
 // Mark1Drops.hpp's rule, each distinct triple's verdict asked once - and each
 // form's parse and refusals.
+//
+// Mod live procedure 6's lever (labels killgate/*): baseline, the lever off, every
+// LoadDrops call is the game's own with nothing written or re-entered and only the
+// counters moving, and a hook other than the inline detour refuses the lever; target, the
+// game's own type-45 call raised and put back, the first call on a fresh array re-entered
+// once at type 45 and put back, later calls on that array untouched, a throw putting the
+// chance back and counting `threw=`, a nested call untouched; the stat line's exact text.
 #include <cmath>
 #include <cstdint>
+#include <functional>
 #include <iostream>
 #include <map>
 #include <stdexcept>
@@ -187,6 +195,60 @@ static Lever SetLever(const std::string& args)
 {
     return parsed(args).lever;
 }
+
+// `killgate`'s ops around one LoadDrops call: one 70-slot chances array, the game's
+// LoadDrops and the re-entry as recorders, and the shared DropUniqueItems detour's call
+// count. A type-45 call "rolls" a unique only while chances[45] is above the gate's die
+// (about 100 outcomes, RDM section 13.1), so a vanilla 0 never reaches DropUniqueItems. Every
+// read, write and call is logged with the chance the call saw.
+struct FakeLoadDrops {
+    std::vector<double> chances = std::vector<double>(70, 0.0);
+    int type = 0;                 // the game's call's own drop type
+    bool readable = true;
+    bool writable = true;
+    bool throwOnGame = false;
+    bool throwOnReentry = false;
+    std::function<void()> duringReentry;
+    uint64_t uniques = 0;
+    int reads = 0, writes = 0, gameCalls = 0, reentries = 0;
+    std::vector<std::string> log;
+
+    void Roll(int t)
+    {
+        if (t == 45 && chances[45] >= 100) ++uniques;
+    }
+    bool ReadChance(double& v)
+    {
+        ++reads;
+        if (!readable) return false;
+        v = chances[45];
+        return true;
+    }
+    bool WriteChance(double v)
+    {
+        ++writes;
+        if (!writable) return false;
+        log.push_back("write " + NumberText(v));
+        chances[45] = v;
+        return true;
+    }
+    void CallGame()
+    {
+        ++gameCalls;
+        log.push_back("game t=" + std::to_string(type) + " c45=" + NumberText(chances[45]));
+        Roll(type);
+        if (throwOnGame) throw std::runtime_error("game threw");
+    }
+    void CallReentry()
+    {
+        ++reentries;
+        log.push_back("reenter t=45 c45=" + NumberText(chances[45]));
+        Roll(45);
+        if (duringReentry) duringReentry();
+        if (throwOnReentry) throw std::runtime_error("re-entry threw");
+    }
+    uint64_t UniqueCalls() { return uniques; }
+};
 
 int main()
 {
@@ -1260,6 +1322,223 @@ int main()
         check("pool/kill_each_distinct_triple_asked_once", once && asked.size() == 5, std::to_string(asked.size()));
     }
 
+    // ---- killgate (Mod live procedure 6) -------------------------------------------------
+    {
+        // Baseline: the lever off. Every call is the game's own, nothing is written and
+        // nothing re-entered, and only the counters move.
+        Killgate gate;
+        FakeLoadDrops ops;
+        const std::vector<double> before = ops.chances;
+        for (int t : { 4, 6, 10, 45, 11 }) {
+            ops.type = t;
+            gate.Around(t, true, 1, 7, ops);
+        }
+        const KillgateCounts& k = gate.Counts();
+        check("killgate/baseline_off_every_call_passes_through_untouched",
+              !gate.On() && ops.gameCalls == 5 && ops.reentries == 0 && ops.writes == 0 && ops.chances == before
+                  && ops.log.size() == 5 && ops.log[3] == "game t=45 c45=0" && ops.uniques == 0,
+              std::to_string(ops.gameCalls) + " calls, " + std::to_string(ops.writes) + " writes");
+        check("killgate/baseline_off_only_the_counters_move",
+              k.loaddrops == 5 && k.arrays == 1 && k.c45Nonzero == 0 && k.c45Max == 0 && k.game45 == 1 && k.raised == 0
+                  && k.reentered == 0 && k.uniqueDuring == 0 && k.threw == 0 && ops.reads == 1,
+              gate.StatLine(KillgateHook::Detoured));
+    }
+    {
+        // Baseline: type 45's vanilla chance, read once per array before anything else; an
+        // id seen again in a later frame is a new array (one DropItem is one frame's call).
+        Killgate gate;
+        FakeLoadDrops ops;
+        ops.type = 4;
+        gate.Around(4, true, 1, 7, ops);
+        gate.Around(6, true, 1, 7, ops);
+        ops.chances[45] = 3;
+        gate.Around(4, true, 2, 7, ops);
+        ops.chances[45] = 0;
+        gate.Around(4, true, 1, 8, ops);
+        gate.Around(4, false, 0, 8, ops);   // no array: counted as a call, never as an array
+        const KillgateCounts& k = gate.Counts();
+        check("killgate/baseline_off_vanilla_45_read_once_per_array",
+              k.loaddrops == 5 && k.arrays == 3 && k.c45Nonzero == 1 && k.c45Max == 3 && ops.reads == 3 && ops.writes == 0
+                  && ops.gameCalls == 5,
+              gate.StatLine(KillgateHook::Detoured));
+    }
+    {
+        // Baseline: a hook that is not the inline detour refuses the lever, nothing changed;
+        // the inline detour is the negative control that it is not refused outright.
+        Killgate gate;
+        const std::string tableOnly = gate.Set(true, KillgateHook::TableOnly);
+        const bool offAfterTable = !gate.On();
+        const std::string none = gate.Set(true, KillgateHook::None);
+        const std::string refused = gate.Set(false, KillgateHook::Refused);
+        FakeLoadDrops ops;
+        ops.type = 4;
+        gate.Around(4, true, 1, 1, ops);
+        const bool untouched = ops.writes == 0 && ops.reentries == 0 && ops.gameCalls == 1;
+        const std::string on = gate.Set(true, KillgateHook::Detoured);
+        check("killgate/baseline_a_hook_not_inline_refuses_nothing_changed",
+              offAfterTable && untouched
+                  && tableOnly == "mark1probe killgate: refused - the LoadDrops hook is table-only, and only the inline detour sees DropItem's direct call; the lever stays off, nothing changed"
+                  && none == "mark1probe killgate: refused - the LoadDrops hook is none, and only the inline detour sees DropItem's direct call; the lever stays off, nothing changed"
+                  && refused.find("the LoadDrops hook is refused") != std::string::npos && gate.On()
+                  && on == "mark1probe killgate: lever on - the first LoadDrops call of each kill opens type 45 once, inside the game's own call"
+                  && gate.Set(true, KillgateHook::TableOnly).find("the lever stays on, nothing changed") != std::string::npos && gate.On(),
+              tableOnly + " | " + none + " | " + on);
+        check("killgate/baseline_hook_route_from_the_install",
+              KillgateHookOf(false, true, true) == KillgateHook::Detoured && KillgateHookOf(false, true, false) == KillgateHook::TableOnly
+                  && KillgateHookOf(true, false, false) == KillgateHook::Refused && KillgateHookOf(false, false, false) == KillgateHook::None
+                  && std::string(KillgateHookText(KillgateHook::Detoured)) == "detoured"
+                  && std::string(KillgateHookText(KillgateHook::TableOnly)) == "table-only"
+                  && std::string(KillgateHookText(KillgateHook::Refused)) == "refused"
+                  && std::string(KillgateHookText(KillgateHook::None)) == "none");
+    }
+    {
+        // Baseline: on, then off again: vanilla once more.
+        Killgate gate;
+        gate.Set(true, KillgateHook::Detoured);
+        gate.Set(false, KillgateHook::Detoured);
+        FakeLoadDrops ops;
+        ops.type = 45;
+        gate.Around(45, true, 1, 1, ops);
+        ops.type = 4;
+        gate.Around(4, true, 2, 1, ops);
+        check("killgate/baseline_lever_off_again_is_vanilla",
+              !gate.On() && ops.writes == 0 && ops.reentries == 0 && ops.gameCalls == 2 && gate.Counts().raised == 0
+                  && gate.Counts().reentered == 0 && gate.Counts().loaddrops == 2 && gate.Counts().arrays == 2);
+    }
+    {
+        // Target: the game's own type-45 call on a fresh array runs with chances[45] opened
+        // for that call, and the vanilla value goes back after it.
+        Killgate gate;
+        gate.Set(true, KillgateHook::Detoured);
+        FakeLoadDrops ops;
+        ops.type = 45;
+        gate.Around(45, true, 1, 1, ops);
+        const KillgateCounts& k = gate.Counts();
+        check("killgate/target_game_45_call_raised_and_put_back",
+              ops.log == std::vector<std::string>{ "write 100000", "game t=45 c45=100000", "write 0" } && ops.chances[45] == 0
+                  && ops.gameCalls == 1 && ops.reentries == 0 && k.raised == 1 && k.reentered == 0 && k.game45 == 1
+                  && k.uniqueDuring == 1 && ops.uniques == 1,
+              ops.log.empty() ? std::string("no log") : ops.log[0]);
+    }
+    {
+        // Target: the first game call on a fresh array of another type runs untouched, then
+        // the trampoline once more at type 45 with the chance opened, put back after. A later
+        // call on the same array, and a game type-45 call on it, pass untouched.
+        Killgate gate;
+        gate.Set(true, KillgateHook::Detoured);
+        FakeLoadDrops ops;
+        ops.chances[45] = 7;   // a vanilla chance that is not 0 goes back as it was
+        ops.type = 4;
+        gate.Around(4, true, 1, 1, ops);
+        const std::vector<std::string> first = ops.log;
+        ops.log.clear();
+        ops.type = 6;
+        gate.Around(6, true, 1, 1, ops);
+        ops.type = 45;
+        gate.Around(45, true, 1, 1, ops);
+        const KillgateCounts& k = gate.Counts();
+        check("killgate/target_first_call_reenters_45_once_and_puts_back",
+              first == std::vector<std::string>{ "game t=4 c45=7", "write 100000", "reenter t=45 c45=100000", "write 7" }
+                  && k.reentered == 1 && k.raised == 0 && k.uniqueDuring == 1 && k.c45Nonzero == 1 && k.c45Max == 7,
+              first.empty() ? std::string("no log") : first[0] + " .. " + first.back());
+        check("killgate/target_later_calls_on_a_handled_array_pass_untouched",
+              ops.log == std::vector<std::string>{ "game t=6 c45=7", "game t=45 c45=7" } && ops.chances[45] == 7
+                  && ops.reentries == 1 && ops.gameCalls == 3 && k.game45 == 1 && k.arrays == 1 && k.loaddrops == 3,
+              ops.log.empty() ? std::string("no log") : ops.log[0]);
+        // The next kill (a new array) is opened again, once.
+        ops.log.clear();
+        ops.type = 4;
+        gate.Around(4, true, 2, 1, ops);
+        gate.Around(4, true, 2, 1, ops);
+        check("killgate/target_each_new_array_opened_once",
+              gate.Counts().reentered == 2 && ops.reentries == 2 && ops.log.size() == 5 && ops.log.back() == "game t=4 c45=7");
+    }
+    {
+        // Target: a throw inside the opened call puts the chance back and counts threw=. The
+        // game's own (raised) call's throw is passed on; the re-entry's, ours, is not.
+        Killgate gate;
+        gate.Set(true, KillgateHook::Detoured);
+        FakeLoadDrops ops;
+        ops.type = 45;
+        ops.throwOnGame = true;
+        bool passedOn = false;
+        try { gate.Around(45, true, 1, 1, ops); } catch (const std::runtime_error&) { passedOn = true; }
+        const bool raisedBack = ops.chances[45] == 0 && ops.log.back() == "write 0";
+        ops.throwOnGame = false;
+        ops.throwOnReentry = true;
+        ops.type = 4;
+        bool escaped = false;
+        try { gate.Around(4, true, 2, 1, ops); } catch (...) { escaped = true; }
+        const KillgateCounts& k = gate.Counts();
+        check("killgate/target_a_throw_puts_the_chance_back_and_counts_threw",
+              passedOn && raisedBack && !escaped && ops.chances[45] == 0 && ops.log.back() == "write 0" && k.threw == 2
+                  && k.raised == 1 && k.reentered == 1 && ops.gameCalls == 2,
+              gate.StatLine(KillgateHook::Detoured));
+        // After both throws the gate is not left nested: the next array is opened as usual.
+        ops.throwOnReentry = false;
+        gate.Around(4, true, 3, 1, ops);
+        check("killgate/target_not_left_nested_after_a_throw", gate.Counts().reentered == 2 && ops.chances[45] == 0);
+    }
+    {
+        // Target: a LoadDrops call nested inside an opened one (another array) is the game's
+        // own, untouched: a re-entry is never nested inside another.
+        Killgate gate;
+        gate.Set(true, KillgateHook::Detoured);
+        FakeLoadDrops ops;
+        FakeLoadDrops inner;
+        inner.type = 4;
+        ops.duringReentry = [&] { gate.Around(4, true, 9, 1, inner); };
+        ops.type = 4;
+        gate.Around(4, true, 1, 1, ops);
+        check("killgate/target_a_call_nested_in_an_opened_one_passes_untouched",
+              inner.gameCalls == 1 && inner.writes == 0 && inner.reentries == 0 && inner.reads == 0 && ops.reentries == 1
+                  && gate.Counts().reentered == 1 && gate.Counts().loaddrops == 2);
+    }
+    {
+        // Target: an array whose chances[45] cannot be read, or written, is passed through.
+        Killgate gate;
+        gate.Set(true, KillgateHook::Detoured);
+        FakeLoadDrops unread;
+        unread.readable = false;
+        unread.type = 4;
+        gate.Around(4, true, 1, 1, unread);
+        FakeLoadDrops locked;
+        locked.writable = false;
+        locked.type = 45;
+        gate.Around(45, true, 2, 1, locked);
+        locked.type = 4;
+        gate.Around(4, true, 3, 1, locked);
+        check("killgate/target_unreadable_or_unwritable_chance_passes_through",
+              unread.writes == 0 && unread.reentries == 0 && unread.gameCalls == 1 && locked.gameCalls == 2 && locked.reentries == 0
+                  && locked.chances[45] == 0 && gate.Counts().raised == 0 && gate.Counts().reentered == 0,
+              gate.StatLine(KillgateHook::Detoured));
+    }
+    {
+        // The stat line's exact text: a fresh one, and one after a raise and a re-entry.
+        Killgate gate;
+        const std::string fresh = gate.StatLine(KillgateHook::None);
+        gate.Set(true, KillgateHook::Detoured);
+        FakeLoadDrops ops;
+        ops.chances[45] = 2.5;
+        ops.type = 45;
+        gate.Around(45, true, 1, 1, ops);
+        ops.type = 4;
+        gate.Around(4, true, 2, 1, ops);
+        check("killgate/stat_line",
+              fresh == "mark1probe killgate: lever=off hook=none loaddrops=0 arrays=0 c45-nonzero=0 c45-max=0 game45=0 raised=0 reentered=0 unique-during=0 threw=0"
+                  && gate.StatLine(KillgateHook::Detoured) == "mark1probe killgate: lever=on hook=detoured loaddrops=2 arrays=2 c45-nonzero=2 c45-max=2.5 game45=1 raised=1 reentered=1 unique-during=2 threw=0",
+              fresh + " | " + gate.StatLine(KillgateHook::Detoured));
+        check("killgate/off_reply",
+              gate.Set(false, KillgateHook::Detoured) == "mark1probe killgate: lever off - every LoadDrops call is the game's own (still counted)");
+    }
+    {
+        const Command bare = parsed("killgate");
+        const Command on = parsed("killgate 1");
+        const Command off = parsed("KILLGATE 0");
+        check("killgate/parse", bare.form == Form::Killgate && on.form == Form::KillgateSet && on.count == 1
+                                   && off.form == Form::KillgateSet && off.count == 0);
+    }
+
     // ---- walkable -------------------------------------------------------------
     {
         WalkPoint w;
@@ -1477,7 +1756,7 @@ int main()
     }
     {
         const std::vector<std::pair<std::string, std::string>> refused = {
-            { "bogus", "unknown form bogus (hook, off, show, args, watch, set, scale, hold, move, stat, statpin, statlog, count, pos, base, spawn, heroic, unique, pool, copies or walkable)" },
+            { "bogus", "unknown form bogus (hook, off, show, args, watch, set, scale, hold, move, stat, statpin, statlog, count, pos, base, spawn, heroic, unique, pool, copies, killgate or walkable)" },
             { "heroic", "usage: heroic <n>, n a whole number 1..20" },
             { "heroic 0", "usage: heroic <n>, n a whole number 1..20, not 0" },
             { "heroic 21", "usage: heroic <n>, n a whole number 1..20, not 21" },
@@ -1492,6 +1771,9 @@ int main()
             { "copies", "usage: copies <k>, k a whole number 1..400" },
             { "copies 0", "usage: copies <k>, k a whole number 1..400, not 0" },
             { "copies 401", "usage: copies <k>, k a whole number 1..400, not 401" },
+            { "killgate 2", "usage: killgate [0|1], not 2" },
+            { "killgate on", "usage: killgate [0|1], not on" },
+            { "killgate 1 0", "usage: killgate [0|1]" },
             { "statlog 64", "usage: statlog <id> <frames>" },
             { "statlog 1000 60", "stat id must be a whole number 0..999, not 1000" },
             { "statlog 64 0", "frames must be a whole number 1..3600, not 0" },
@@ -1578,7 +1860,7 @@ int main()
         const std::vector<std::string> usage = Usage();
         bool every = true;
         for (const char* f : { "hook", "off", "show", "args", "watch", "set", "scale", "hold", "move", "stat", "statpin", "statlog",
-                               "count", "pos", "base", "spawn", "heroic", "unique", "pool", "pool kill", "copies", "walkable" }) {
+                               "count", "pos", "base", "spawn", "heroic", "unique", "pool", "pool kill", "copies", "killgate", "walkable" }) {
             bool found = false;
             for (const std::string& l : usage) found = found || l.find(std::string("mark1probe ") + f) != std::string::npos;
             every = every && found;

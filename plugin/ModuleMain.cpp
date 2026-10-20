@@ -28496,6 +28496,16 @@ static void DropRateCmd(const std::string& rest)
 // zindan anahtari tablosunu tasimiyor.  Cozum kapiyi ATLAMAK degil, ayni
 // kapidan bir kez daha gecmek - zar yine oyunun zari.
 static PFUNC_YYGMLScript g_OrigLoadDrops = nullptr;
+#ifndef FORGEPACT_RELEASE
+// mark1probe killgate (the Mark 1 set's Mod live procedure 6), defined with mark1probe:
+// Hook_LoadDrops' first call goes through it, so the lever can open type 45 inside the
+// game's own call. With the lever off it is that one call, counted.
+static RValue& M1pKillgateLoadDrops(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A);
+// Whether the LoadDrops hook's one install put the inline detour in: set by dungeonkey's
+// install and the lever's own. The typemap, fullprobe and probe forms install it
+// table-only, which leaves this false, and the lever refuses a table-only hook.
+static bool g_M1pLoadDropsNative = false;
+#endif
 static bool g_DkOn = false;
 static double g_DkChance = -1.0;      // -1 = auto (canavarin kendi chances[11]'i)
 static double g_DkChanceMult = 1.0;   // auto modunda dis kapi carpani
@@ -28628,7 +28638,13 @@ static RValue& Hook_LoadDrops(CInstance* S, CInstance* O, RValue& R, int argc, R
 {
     if (HeroSiege::RewardScope::Active()) return g_OrigLoadDrops ? g_OrigLoadDrops(S,O,R,argc,A) : R;
     // 1) Once VANILYA davranis, hicbir sey degistirmeden.
+#ifndef FORGEPACT_RELEASE
+    // The research build's mark1probe killgate: the same one call, through the lever's core,
+    // which counts it and, only with the lever on, opens type 45 inside it or once after it.
+    RValue& res = M1pKillgateLoadDrops(S, O, R, argc, A);
+#else
     RValue& res = g_OrigLoadDrops ? g_OrigLoadDrops(S, O, R, argc, A) : R;
+#endif
 #ifdef FORGEPACT_RELEASE
     // If a key feature was enabled and later switched Off, the hook remains
     // installed for this process.  Do not parse arguments or touch arrays.
@@ -28950,7 +28966,11 @@ static void DungeonKeyCmd(const std::string& rest)
     }
 
     if (!g_OrigLoadDrops)
+#ifndef FORGEPACT_RELEASE
+        HookOneScript("LoadDrops", "fp_loaddrops", (PVOID)Hook_LoadDrops, &g_OrigLoadDrops, &g_M1pLoadDropsNative);
+#else
         HookOneScript("LoadDrops", "fp_loaddrops", (PVOID)Hook_LoadDrops, &g_OrigLoadDrops);
+#endif
     g_DkOn = (g_OrigLoadDrops != nullptr);
     Out(std::string("dungeonkey: ") + (g_DkOn ? "ACIK (dogal zar, zorlama yok)" : "kanca kurulamadi"));
 }
@@ -66304,6 +66324,104 @@ static void M1pCopies(const M1pNs::Command& c)
     Out(M1pNs::CopiesLine(g_Mark1DropCopies));
 }
 
+// ---- killgate (Mod live procedure 6) -----------------------------------------------
+//
+// The owner's route (a), 2026-10-20: a lever that opens LoadDrops' type-45 ("a unique
+// item") gate on kills, so a kill runs the game's own DropUniqueItems call from LoadDrops.
+// Every decision is the core's (M1pNs::Killgate): the raise of the game's own type-45 call,
+// the one re-entry per chances array, the put-back on every way out and the counts. This
+// supplies the call's type and chances array, the array's identity (its value's pointer,
+// within the frame), chances[45]'s read and its write (read back), the trampoline, and the
+// shared DropUniqueItems detour's `kill-calls=` for `unique-during=`. It never calls
+// DropUniqueItems and rolls no die: the gate, the draw and the placement are LoadDrops'.
+
+static M1pNs::Killgate g_M1pKillgate;
+static bool g_M1pKillgateInstallFailed = false;
+
+static M1pNs::KillgateHook M1pKillgateHook()
+{
+    return M1pNs::KillgateHookOf(g_M1pKillgateInstallFailed, g_OrigLoadDrops != nullptr, g_M1pLoadDropsNative);
+}
+
+// The first `killgate 0|1` installs LoadDrops by its SDK name, inline, unless a hook is
+// already there (dungeonkey's, inline; typemap's, fullprobe's or probe's, table-only): that
+// one is read, never installed on top, since only the first install gets the detour.
+static void M1pKillgateInstall()
+{
+    if (g_OrigLoadDrops || g_M1pKillgateInstallFailed) return;
+    bool native = false;
+    const bool ok = HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_LoadDrops), "fp_loaddrops",
+                                  (PVOID)Hook_LoadDrops, &g_OrigLoadDrops, &native);
+    g_M1pLoadDropsNative = ok && native;
+    g_M1pKillgateInstallFailed = !ok;
+}
+
+struct M1pKillgateOps {
+    CInstance* S;
+    CInstance* O;
+    RValue& R;
+    int argc;
+    RValue** A;
+    RValue* result;
+
+    bool ReadChance(double& v)
+    {
+        try {
+            const RValue c = g_Yytk->CallBuiltin("array_get", { *A[8], RValue((double)M1pNs::kKillgateType) });
+            if (!N1Numeric(c)) return false;
+            v = c.ToDouble();
+            return true;
+        } catch (...) { return false; }
+    }
+    bool WriteChance(double v)
+    {
+        try {
+            g_Yytk->CallBuiltin("array_set", { *A[8], RValue((double)M1pNs::kKillgateType), RValue(v) });
+            double back = 0;
+            return ReadChance(back) && back == v;
+        } catch (...) { return false; }
+    }
+    void CallGame()
+    {
+        result = g_OrigLoadDrops ? &g_OrigLoadDrops(S, O, R, argc, A) : &R;
+    }
+    void CallReentry()
+    {
+        if (!g_OrigLoadDrops || argc < 9) return;
+        std::vector<RValue*> A2(A, A + argc);
+        RValue type((double)M1pNs::kKillgateType);
+        A2[2] = &type;
+        RValue r2;
+        g_OrigLoadDrops(S, O, r2, argc, A2.data());
+    }
+    uint64_t UniqueCalls() { return g_M1Drop.core.KillCalls(); }
+};
+
+// Hook_LoadDrops' first call, in the research build (declared beside g_OrigLoadDrops).
+static RValue& M1pKillgateLoadDrops(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    M1pKillgateOps ops{ S, O, R, argc, A, &R };
+    int type = -1;
+    bool hasArray = false;
+    uint64_t id = 0;
+    if (A && argc >= 9 && A[2] && A[8]) {
+        try { type = (int)A[2]->ToDouble(); } catch (...) {}
+        id = (uint64_t)(uintptr_t)A[8]->m_Pointer;
+        hasArray = id != 0;
+    }
+    g_M1pKillgate.Around(type, hasArray, id, (int64_t)g_RuntimeFrame, ops);
+    return *ops.result;
+}
+
+static void M1pKillgate(const M1pNs::Command& c)
+{
+    if (c.form == M1pNs::Form::KillgateSet) {
+        M1pKillgateInstall();
+        Out(g_M1pKillgate.Set(c.count == 1, M1pKillgateHook()));
+    }
+    Out(g_M1pKillgate.StatLine(M1pKillgateHook()));
+}
+
 // ---- walkable ----------------------------------------------------------------------
 
 // A builtin's answer as the core reads it: the kind's name, and its value
@@ -66577,6 +66695,8 @@ static void M1pCommand(const std::string& rest)
     case M1pNs::Form::Pool: M1pPool(c); return;
     case M1pNs::Form::PoolKill: M1pPoolKill(c); return;
     case M1pNs::Form::Copies: M1pCopies(c); return;
+    case M1pNs::Form::Killgate:
+    case M1pNs::Form::KillgateSet: M1pKillgate(c); return;
     case M1pNs::Form::Count: M1pCount(c.object, c.frames); return;
     case M1pNs::Form::Pos: M1pPos(c.frames); return;
     case M1pNs::Form::WalkHere:

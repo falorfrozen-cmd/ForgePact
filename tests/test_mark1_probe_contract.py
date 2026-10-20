@@ -51,6 +51,12 @@ writes nothing; `copies` is the only writer of the copies lever, a constant in
 the player build. The kill route adds `unique` (the same calls on
 DropUniqueItems) and `pool kill` (the kill route's own reads of all six lists,
 refused while a roll's entries are on one).
+
+Mod live procedure 6 adds `killgate [0|1]` (`test_killgate_research_only`): a lever
+that opens LoadDrops' type-45 gate once per kill inside the game's own call, research
+build only, installed inline by its SDK name and refused on a hook that is not the
+inline detour; it writes only chances[45], re-enters only through the trampoline, never
+names DropUniqueItems and rolls no die.
 """
 import re
 import sys
@@ -128,6 +134,10 @@ class Mark1ProbeContract(unittest.TestCase):
 
     def body(self, signature):
         return strip_comments(function_body(self.plugin, signature))
+
+    def killgate_ops(self):
+        ops = self.code[self.code.index("struct M1pKillgateOps {"):]
+        return ops[:ops.index("\n};")]
 
     # ---- research build only ----------------------------------------------------
 
@@ -217,7 +227,9 @@ class Mark1ProbeContract(unittest.TestCase):
         self.assertNotIn('"gml_Script_', self.code)
 
         install = self.body("static void M1pInstall()")
-        self.assertEqual(self.code.count("HookOneScript("), 1, "one install site, in M1pInstall")
+        # Two install sites: M1pInstall's rows, and killgate's LoadDrops (its own test below).
+        self.assertEqual(self.code.count("HookOneScript("), 2, "two install sites, M1pInstall and M1pKillgateInstall")
+        self.assertEqual(self.body("static void M1pKillgateInstall()").count("HookOneScript("), 1)
         self.assertIn("HookOneScript(t.shortName, t.hookId, t.detour, &t.orig, &native)", install)
         # Counted only with the inline detour; a table-only install is failed.
         self.assertIn("native ? M1pNs::HookState::Detoured : M1pNs::HookState::Failed", install)
@@ -507,10 +519,14 @@ class Mark1ProbeContract(unittest.TestCase):
 
     def test_research_only_game_state_is_written_only_inside_the_levers(self):
         write = self.body("static bool M1pWriteTarget(CInstance* player, const M1pNs::Target& t, const M1pNs::Value& v)")
+        # The one other writer is killgate's chances[45] write (its own test below), reached
+        # only through the core's Killgate::Around.
+        killgate = self.killgate_ops()
         for name in MEMBER_WRITES:
             self.assertIn('"' + name + '"', write)                               # positive control
-            self.assertEqual(self.code.count('"' + name + '"'), write.count('"' + name + '"'),
-                             name + " is called outside M1pWriteTarget")
+            self.assertEqual(self.code.count('"' + name + '"'),
+                             write.count('"' + name + '"') + killgate.count('"' + name + '"'),
+                             name + " is called outside M1pWriteTarget and killgate's WriteChance")
         for name in NEVER:
             self.assertNotIn(name, self.code)
         # M1pWriteTarget is reached from the access the core's Around drives:
@@ -559,6 +575,81 @@ class Mark1ProbeContract(unittest.TestCase):
         # An alarm is read through alarm_get and never written.
         write = self.body("static bool M1pWriteTarget(CInstance* player, const M1pNs::Target& t, const M1pNs::Value& v)")
         self.assertIn("if (M1pIsAlarm(t)) return false;", write)
+
+    # ---- killgate (Mod live procedure 6) -------------------------------------------
+
+    def test_killgate_research_only(self):
+        # No lever name - command, function or global - is left once the research blocks are
+        # stripped (comments kept: not even a mention ships), while the player build keeps
+        # LoadDrops' hook and dungeonkey's install (the negative control that the strip
+        # leaves player code).
+        player_text = strip_research_blocks(self.plugin)
+        for word in ("killgate", "Killgate", "M1pKillgate", "g_M1pLoadDropsNative", "kKillgate"):
+            self.assertNotIn(word, player_text)
+        self.assertIn("static RValue& Hook_LoadDrops(", player_text)
+        shipped_hook = strip_comments(function_body(player_text, "static RValue& Hook_LoadDrops("))
+        self.assertIn("RValue& res = g_OrigLoadDrops ? g_OrigLoadDrops(S, O, R, argc, A) : R;", shipped_hook)
+        shipped_dk = strip_comments(function_body(player_text, "static void DungeonKeyCmd(const std::string& rest)"))
+        self.assertIn('HookOneScript("LoadDrops", "fp_loaddrops", (PVOID)Hook_LoadDrops, &g_OrigLoadDrops);', shipped_dk)
+        # Not a player command; dispatched through mark1probe's own handler.
+        run = function_body(self.plugin, "static void RunCommand(const std::string& line)")
+        commands = run[run.index("kPlayerCommands = {"):]
+        commands = commands[:commands.index("};")]
+        self.assertIn('"menulayout"', commands)
+        self.assertNotIn("killgate", commands)
+        self.assertNotIn("mark1probe", commands)
+        command = self.body("static void M1pCommand(const std::string& rest)")
+        self.assertIn("case M1pNs::Form::Killgate:\n    case M1pNs::Form::KillgateSet: M1pKillgate(c); return;", command)
+        # The research build's Hook_LoadDrops: only its first call goes through the lever.
+        hook = function_body(self.plugin, "static RValue& Hook_LoadDrops(")
+        self.assertIn("#ifndef FORGEPACT_RELEASE", hook)
+        self.assertEqual(hook.count("M1pKillgateLoadDrops("), 1)
+        self.assertLess(hook.index("RValue& res = M1pKillgateLoadDrops(S, O, R, argc, A);\n#else\n"
+                                   "    RValue& res = g_OrigLoadDrops ? g_OrigLoadDrops(S, O, R, argc, A) : R;\n#endif"),
+                        hook.index("if (!g_DkOn || tip != 11) return res;"))
+        # Its install is the inline HookOneScript by the SDK name, never on top of another
+        # hook; an existing one is read (dungeonkey's records whether it went in inline, the
+        # table-only forms leave that false), and the lever refuses anything but the detour.
+        install = self.body("static void M1pKillgateInstall()")
+        self.assertIn('HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_LoadDrops), "fp_loaddrops",', install)
+        self.assertIn("(PVOID)Hook_LoadDrops, &g_OrigLoadDrops, &native);", install)
+        self.assertLess(install.index("if (g_OrigLoadDrops || g_M1pKillgateInstallFailed) return;"), install.index("HookOneScript("))
+        self.assertIn("g_M1pLoadDropsNative = ok && native;", install)
+        self.assertNotIn('"LoadDrops"', install)
+        dk = function_body(self.plugin, "static void DungeonKeyCmd(const std::string& rest)")
+        self.assertIn('#ifndef FORGEPACT_RELEASE\n        HookOneScript("LoadDrops", "fp_loaddrops", (PVOID)Hook_LoadDrops, '
+                      '&g_OrigLoadDrops, &g_M1pLoadDropsNative);\n#else', dk)
+        # Its writers: the declaration, the lever's install, and dungeonkey's install alone by address.
+        self.assertEqual(self.plugin.count("g_M1pLoadDropsNative ="), 2)
+        self.assertEqual(self.plugin.count("&g_M1pLoadDropsNative"), 1)
+        self.assertIn("M1pNs::KillgateHookOf(g_M1pKillgateInstallFailed, g_OrigLoadDrops != nullptr, g_M1pLoadDropsNative)",
+                      self.body("static M1pNs::KillgateHook M1pKillgateHook()"))
+        lever = self.body("static void M1pKillgate(const M1pNs::Command& c)")
+        self.assertLess(lever.index("M1pKillgateInstall();"), lever.index("g_M1pKillgate.Set(c.count == 1, M1pKillgateHook())"))
+        self.assertIn("if (hook != KillgateHook::Detoured)", self.header)
+        # Every decision is the core's: the adapter's one per-call entry is Killgate::Around.
+        entry = self.body("static RValue& M1pKillgateLoadDrops(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)")
+        self.assertIn("g_M1pKillgate.Around(type, hasArray, id, (int64_t)g_RuntimeFrame, ops);", entry)
+        self.assertEqual(len(re.findall(r"\.Around\(type", self.code)), 1)
+        # It never names DropUniqueItems as a call target and calls no die of its own: the
+        # re-entry is the trampoline at type 45, and the only count it reads is the shared
+        # detour's kill-calls.
+        ops = self.killgate_ops()
+        self.assertIn("A2[2] = &type;", ops)
+        self.assertIn("g_OrigLoadDrops(S, O, r2, argc, A2.data());", ops)
+        self.assertIn("uint64_t UniqueCalls() { return g_M1Drop.core.KillCalls(); }", ops)
+        self.assertEqual(ops.count('"array_set"'), 1)
+        start = self.code.index("static M1pNs::Killgate g_M1pKillgate;")
+        end = self.code.index("static void M1pKillgate(const M1pNs::Command& c)")
+        adapter = self.code[start:end] + lever
+        core = self.header[self.header.index("inline constexpr int kKillgateType"):]
+        core = core[:core.index("inline constexpr int kGridCell")]
+        for source in (adapter, core):
+            for word in ("DropUniqueItems", "CallGameScript", "irandom", "random", "rand(", "KendiZar", "MmCreateHook",
+                         "HookOneScriptTable"):
+                self.assertNotIn(word, source)
+        self.assertIn("kKillgateOpenChance", core)   # the slice is the core, not an empty string
+        self.assertIn("ops.WriteChance(vanilla);", core)
 
     def test_research_only_the_profile_scope_says_which_it_read(self):
         resolve = self.body("static bool M1pResolveScope(CInstance* player, M1pNs::Scope scope, M1pScopeRef& out, std::string& why)")

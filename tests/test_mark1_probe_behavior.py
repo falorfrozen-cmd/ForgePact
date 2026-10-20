@@ -47,6 +47,15 @@ sub-list as the Heroic roll keeps it with each piece's stand-in by
 Mark1Drops.hpp's rule, `copies`' line, and each form's parse and refusals.
 The kill route adds `unique <n>` (the same lines under its own name) and `pool
 kill` (the five lengths and each piece's kill stand-in with its counts).
+
+Mod live procedure 6 adds `killgate [0|1]`, a lever that opens LoadDrops' type-45
+gate once per kill inside the game's own call. Baseline (`test_killgate_baseline_*`):
+the lever off passes every call through with the chances array untouched and
+nothing re-entered, only the counters moving, and a hook other than the inline
+detour refuses it. Target (`test_killgate_target_*`): the game's own type-45 call
+raised and put back, the first call on a fresh array re-entered once at type 45
+and put back, later calls untouched, a throw putting the chance back and counted,
+and the stat line's exact text.
 """
 import os
 import shutil
@@ -246,6 +255,46 @@ class Mark1ProbeBehaviorTests(unittest.TestCase):
         # equal-count rule (n 0 first), that triple's count on each of [0..4], the candidates with
         # one count on all five and the class's kept triples; each distinct triple asked once.
         self.assertScenarios("pool/kill_parse", "pool/kill_lengths_standins_and_counts", "pool/kill_each_distinct_triple_asked_once")
+
+    # ---- killgate (Mod live procedure 6) -------------------------------------------
+
+    def test_killgate_baseline_lever_off_passes_every_call_through(self):
+        # The lever off: every LoadDrops call is the game's own, once, with the chances array
+        # untouched and nothing re-entered; only the counters move, type 45's vanilla chance
+        # read once per array (an id in a later frame is a new array). On and then off again
+        # is vanilla once more.
+        self.assertScenarios("killgate/baseline_off_every_call_passes_through_untouched",
+                             "killgate/baseline_off_only_the_counters_move",
+                             "killgate/baseline_off_vanilla_45_read_once_per_array",
+                             "killgate/baseline_lever_off_again_is_vanilla")
+
+    def test_killgate_baseline_a_hook_not_inline_refuses(self):
+        # A table-only, missing or refused LoadDrops hook refuses the lever with one line and
+        # nothing changed; the inline detour (the negative control) is accepted.
+        self.assertScenarios("killgate/baseline_a_hook_not_inline_refuses_nothing_changed",
+                             "killgate/baseline_hook_route_from_the_install")
+
+    def test_killgate_target_raise_and_reenter_once_per_array(self):
+        # The lever on: the game's own type-45 call on a fresh array runs with chances[45]
+        # opened and put back after; the first call of another type re-enters LoadDrops once at
+        # type 45, opened and put back; later calls on that array, a game type-45 call
+        # included, pass untouched; each new array is opened once.
+        self.assertScenarios("killgate/target_game_45_call_raised_and_put_back",
+                             "killgate/target_first_call_reenters_45_once_and_puts_back",
+                             "killgate/target_later_calls_on_a_handled_array_pass_untouched",
+                             "killgate/target_each_new_array_opened_once")
+
+    def test_killgate_target_throw_nesting_and_unreadable(self):
+        # A throw inside the opened call puts the chance back and counts threw= (the game's own
+        # call's throw passed on, the re-entry's not); a call nested in an opened one, and an
+        # array whose chance cannot be read or written, pass untouched.
+        self.assertScenarios("killgate/target_a_throw_puts_the_chance_back_and_counts_threw",
+                             "killgate/target_not_left_nested_after_a_throw",
+                             "killgate/target_a_call_nested_in_an_opened_one_passes_untouched",
+                             "killgate/target_unreadable_or_unwritable_chance_passes_through")
+
+    def test_killgate_target_stat_line_and_parse(self):
+        self.assertScenarios("killgate/stat_line", "killgate/off_reply", "killgate/parse")
 
     # ---- the lines -------------------------------------------------------------
 

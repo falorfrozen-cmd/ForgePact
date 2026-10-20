@@ -62,7 +62,10 @@ namespace ForgePact::Mark1Probe {
 // The kill route (the ordinary unique roll) adds two: `unique <n>` calls
 // DropUniqueItems by name the same way, and `pool kill` reads lootListUnique[0..5]
 // the way the kill route does and prints each piece's kill stand-in and its
-// count on each of [0..4]; `copies <k>` applies to both rolls.
+// count on each of [0..4]; `copies <k>` applies to both rolls. Mod live
+// procedure 6 adds `killgate [0|1]` (the `Killgate` class below): a lever that
+// opens LoadDrops' type-45 gate once per kill, inside the game's own call, and
+// counts what that gate gets with the lever off.
 
 // ---- the rows ----------------------------------------------------------------
 
@@ -407,7 +410,7 @@ inline std::string LeverReply(const Lever& l, int64_t from, const std::string& r
 
 enum class Form : int {
     Status, Hook, Off, Show, ShowReset, Args, Watch, Set, Scale, Move, Stat, Count, Pos, WalkHere, WalkAt, WalkScan,
-    Statlog, Statpin, Hold, Base, Spawn, Heroic, Pool, Copies, Unique, PoolKill,
+    Statlog, Statpin, Hold, Base, Spawn, Heroic, Pool, Copies, Unique, PoolKill, Killgate, KillgateSet,
 };
 
 struct Command {
@@ -415,7 +418,8 @@ struct Command {
     Lever       lever;                     // Set, Scale, Move, Stat, Hold, Statpin
     int64_t     frames = 0;                // Watch, Count, Pos, Statlog
     int         count = 0;                 // Args: calls to print; WalkScan: points; Heroic, Unique: calls; Pool:
-                                           // the sub-list (Mark1Drops' default when not given); Copies: the copies
+                                           // the sub-list (Mark1Drops' default when not given); Copies: the copies;
+                                           // KillgateSet: the lever, 0 or 1
     Scope       scope = Scope::Player;     // Watch
     bool        after = false;             // Watch: start at the row's next local-player call
     Row         afterRow = Row::CheckTalentUse;
@@ -702,6 +706,16 @@ inline bool Parse(const std::vector<std::string>& tok, Command& c, std::string& 
         c.form = Form::Copies;
         return true;
     }
+    if (head == "killgate") {
+        const std::string usage = "usage: killgate [0|1]";
+        if (n == 1) { c.form = Form::Killgate; return true; }
+        if (n != 2) { why = usage; return false; }
+        long long v = 0;
+        if (!ParseWhole(tok[1], 0, 1, v)) { why = usage + ", not " + tok[1]; return false; }
+        c.count = static_cast<int>(v);
+        c.form = Form::KillgateSet;
+        return true;
+    }
     if (head == "count") {
         if (n != 3) { why = "usage: count <object name> <frames>"; return false; }
         if (!IsName(tok[1])) { why = "an object name is 1..64 letters, digits or _, not " + tok[1]; return false; }
@@ -736,7 +750,7 @@ inline bool Parse(const std::vector<std::string>& tok, Command& c, std::string& 
     }
     why = "unknown form " + tok[0]
         + " (hook, off, show, args, watch, set, scale, hold, move, stat, statpin, statlog, count, pos, base, spawn, heroic,"
-          " unique, pool, copies or walkable)";
+          " unique, pool, copies, killgate or walkable)";
     return false;
 }
 
@@ -764,6 +778,7 @@ inline std::vector<std::string> Usage()
         "  mark1probe pool [<k>]                                lootListUnique[k] (5 by default) as the Heroic roll keeps it, each piece's stand-in",
         "  mark1probe pool kill                                 lootListUnique[0..4] as the unique roll keeps them, each piece's kill stand-in",
         "  mark1probe copies <k>                                each piece's stand-in pushed k times (1..400) per roll, Heroic and unique",
+        "  mark1probe killgate [0|1]                            open LoadDrops' type-45 gate once per kill inside the game's call; alone, its counts",
         "  mark1probe walkable here <dx> <dy> | at <x> <y> | scan <deg> <step> <count>",
         "  frames default 600, at most 3600; one lever at a time, a new one replaces it",
     };
@@ -1102,6 +1117,190 @@ inline std::string CopiesLine(int copies)
     return "mark1probe copies: each piece's stand-in is pushed " + std::to_string(copies)
         + " time(s) per roll, Heroic and unique (the player build pushes " + std::to_string(Mark1Drops::kPlayerCopies) + ")";
 }
+
+// ---- `killgate` (Mod live procedure 6) ----------------------------------------------
+//
+// The owner's route (a), 2026-10-20: a lever that opens LoadDrops' type-45 ("a unique
+// item") gate on kills, so that a kill runs the game's own DropUniqueItems call from
+// LoadDrops and the live session can read the kill route's direct call. It exists only
+// in the research build, like everything in this header, and it is off until `killgate 1`.
+//
+// It works only inside the game's own LoadDrops call (the adapter's LoadDrops detour,
+// around the trampoline), in one of two forms, at most once per chances array:
+//
+//   - raise: the game itself calls LoadDrops with type 45 on an array not handled yet;
+//     chances[45] is opened for that call and put back after it;
+//   - re-enter: the first game call on an array not handled yet, of any other type,
+//     runs the game's call untouched, then calls the trampoline once more at type 45
+//     with chances[45] opened, and puts the value back.
+//
+// One DropItem passes one array to all its LoadDrops calls (RDM § 13.1), so this is at
+// most one opened type-45 roll per kill. What calls DropUniqueItems is LoadDrops' own
+// code, and the draw, the filter and the placement are the game's: the lever never
+// calls DropUniqueItems and never rolls a die. The opened value goes back on every way
+// out, a throw included, and a call nested inside an opened one passes untouched.
+//
+// With the lever off every call passes through with nothing written and nothing
+// re-entered; the counters still move, so `c45-nonzero=` and `game45=` answer how often
+// an unlevered kill reaches type 45 at all.
+
+inline constexpr int kKillgateType = 45;                  // LoadDrops' "a unique item" (RDM § 13.1)
+inline constexpr double kKillgateOpenChance = 100000.0;   // above the gate's die (about 100 outcomes, RDM § 13.1),
+                                                          // the value `dungeonkey typemap` opens a type with
+
+// How the LoadDrops detour went in, as the lever reads it: `detoured` is the only one
+// the lever works on, since a table-only hook misses DropItem's direct call.
+enum class KillgateHook : int { None, Detoured, TableOnly, Refused };
+
+inline const char* KillgateHookText(KillgateHook h)
+{
+    switch (h) {
+    case KillgateHook::Detoured: return "detoured";
+    case KillgateHook::TableOnly: return "table-only";
+    case KillgateHook::Refused: return "refused";
+    case KillgateHook::None: break;
+    }
+    return "none";
+}
+
+// The route from what the adapter knows: whether its own install was tried and failed,
+// whether a LoadDrops hook exists, and whether that hook's install put the inline detour in.
+inline KillgateHook KillgateHookOf(bool installFailed, bool installed, bool native)
+{
+    if (installed) return native ? KillgateHook::Detoured : KillgateHook::TableOnly;
+    return installFailed ? KillgateHook::Refused : KillgateHook::None;
+}
+
+struct KillgateCounts {
+    uint64_t loaddrops = 0;      // every call the detour sees
+    uint64_t arrays = 0;         // distinct chances arrays
+    uint64_t c45Nonzero = 0;     // of those, the ones whose vanilla chances[45] is not 0
+    double   c45Max = 0;         // the largest vanilla chances[45] read
+    uint64_t game45 = 0;         // the game's own type-45 calls
+    uint64_t raised = 0;         // game type-45 calls run with the chance opened
+    uint64_t reentered = 0;      // type-45 re-entries
+    uint64_t uniqueDuring = 0;   // the shared DropUniqueItems detour's calls inside opened calls
+    uint64_t threw = 0;          // opened calls that threw
+};
+
+class Killgate {
+public:
+    bool On() const { return on_; }
+    const KillgateCounts& Counts() const { return counts_; }
+
+    // `killgate 0|1`. Refused, with nothing changed, unless the hook is the inline detour.
+    std::string Set(bool on, KillgateHook hook)
+    {
+        if (hook != KillgateHook::Detoured)
+            return std::string("mark1probe killgate: refused - the LoadDrops hook is ") + KillgateHookText(hook)
+                + ", and only the inline detour sees DropItem's direct call; the lever stays "
+                + (on_ ? "on" : "off") + ", nothing changed";
+        on_ = on;
+        return on ? "mark1probe killgate: lever on - the first LoadDrops call of each kill opens type 45 once, inside the game's own call"
+                  : "mark1probe killgate: lever off - every LoadDrops call is the game's own (still counted)";
+    }
+
+    std::string StatLine(KillgateHook hook) const
+    {
+        const KillgateCounts& c = counts_;
+        return std::string("mark1probe killgate: lever=") + (on_ ? "on" : "off") + " hook=" + KillgateHookText(hook)
+            + " loaddrops=" + std::to_string(c.loaddrops) + " arrays=" + std::to_string(c.arrays)
+            + " c45-nonzero=" + std::to_string(c.c45Nonzero) + " c45-max=" + NumberText(c.c45Max)
+            + " game45=" + std::to_string(c.game45) + " raised=" + std::to_string(c.raised)
+            + " reentered=" + std::to_string(c.reentered) + " unique-during=" + std::to_string(c.uniqueDuring)
+            + " threw=" + std::to_string(c.threw);
+    }
+
+    // One LoadDrops call the detour sees. `type` is its drop type; `hasArray` and `arrayId`
+    // name its chances array (the identity of the array value, within `frame`). The ops:
+    //   bool ReadChance(double&)  chances[45] as it is now
+    //   bool WriteChance(double)  chances[45] := v
+    //   void CallGame()           the game's own call, its own arguments, through the trampoline
+    //   void CallReentry()        the trampoline once more, the same arguments, type 45
+    //   uint64_t UniqueCalls()    the shared DropUniqueItems detour's `kill-calls=`
+    // CallGame runs exactly once on every path; a throw from it is passed on.
+    template <class Ops>
+    void Around(int type, bool hasArray, uint64_t arrayId, int64_t frame, Ops& ops)
+    {
+        ++counts_.loaddrops;
+        if (depth_ > 0) { ops.CallGame(); return; }   // inside an opened call: never a second opening
+        bool fresh = false;
+        bool readable = false;
+        double vanilla = 0;
+        if (hasArray) {
+            if (frame != frame_) { seen_.clear(); frame_ = frame; }
+            fresh = true;
+            for (uint64_t id : seen_) fresh = fresh && id != arrayId;
+            if (fresh) {
+                seen_.push_back(arrayId);
+                ++counts_.arrays;
+                readable = ops.ReadChance(vanilla) && std::isfinite(vanilla);
+                if (readable && vanilla != 0) {
+                    ++counts_.c45Nonzero;
+                    if (vanilla > counts_.c45Max) counts_.c45Max = vanilla;
+                }
+            }
+        }
+        if (type == kKillgateType) ++counts_.game45;
+        if (!on_ || !fresh || !readable) { ops.CallGame(); return; }
+
+        if (type == kKillgateType) {
+            // raise: the game's own type-45 call, with the chance opened for its length.
+            if (!ops.WriteChance(kKillgateOpenChance)) {
+                ops.WriteChance(vanilla);   // an opening not confirmed is put back before the game's call
+                ops.CallGame();
+                return;
+            }
+            ++counts_.raised;
+            Opened<Ops> opened(*this, ops, vanilla);
+            try {
+                ops.CallGame();
+            } catch (...) {
+                ++counts_.threw;
+                throw;
+            }
+            return;
+        }
+
+        // re-enter: the game's call untouched first, then type 45 once with the chance opened.
+        ops.CallGame();
+        if (!ops.WriteChance(kKillgateOpenChance)) { ops.WriteChance(vanilla); return; }
+        ++counts_.reentered;
+        Opened<Ops> opened(*this, ops, vanilla);
+        try {
+            ops.CallReentry();
+        } catch (...) {
+            ++counts_.threw;
+        }
+    }
+
+private:
+    // An opened call's scope: the nesting, `unique-during=`'s start, and the vanilla value
+    // put back on every way out.
+    template <class Ops>
+    struct Opened {
+        Killgate& gate;
+        Ops& ops;
+        double vanilla;
+        uint64_t uniqueAtStart;
+        Opened(Killgate& g, Ops& o, double v) : gate(g), ops(o), vanilla(v), uniqueAtStart(o.UniqueCalls()) { ++gate.depth_; }
+        ~Opened()
+        {
+            const uint64_t now = ops.UniqueCalls();
+            if (now > uniqueAtStart) gate.counts_.uniqueDuring += now - uniqueAtStart;
+            ops.WriteChance(vanilla);
+            --gate.depth_;
+        }
+        Opened(const Opened&) = delete;
+        Opened& operator=(const Opened&) = delete;
+    };
+
+    bool on_ = false;
+    int depth_ = 0;
+    int64_t frame_ = -1;
+    std::vector<uint64_t> seen_;   // the arrays handled this frame
+    KillgateCounts counts_;
+};
 
 // ---- `walkable` ---------------------------------------------------------------------
 
