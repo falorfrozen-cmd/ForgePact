@@ -137,6 +137,10 @@ EXPECTED_PLAYER_COMMANDS = {
     # HS Offline Tracker's sensor, `tracker 1|0|stat` (ForgePact #185;
     # test_tracker_mod_contract.py).
     "tracker",
+    # The number guard's status line, `numguard` / `numguard stat` (ForgePact
+    # #230); its research verbs are refused in the player build
+    # (test_number_guard_contract.py pins it).
+    "numguard",
 }
 
 

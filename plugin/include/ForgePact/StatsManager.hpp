@@ -2,6 +2,7 @@
 
 #include "Common.hpp"
 #include "CombatTextHook.hpp"
+#include "NumberGuard.hpp"
 #include <hs_game_sdk/reward_scope.hpp>
 
 namespace ForgePact {
@@ -85,6 +86,9 @@ public:
             if (!*hedef->orig) { Out(std::string("stat: ") + hedef->name + " kancasi kurulamadi"); return; }
         }
         *hedef->mult = c;
+        // A multiplier off vanilla can push a hit or a DPS sum past what the
+        // game's number shortener can show (#230): arm the number guard.
+        if (c != 1.0) ForgePact::NumberGuard::Arm();
         if (std::string(hedef->name) == "EnemyCalculateExperience") HeroSiege::RewardScope::SetForgePactXp(c);
         ShareXpMultiplier(*hedef, c);
         // XP carpani acilinca baloncuk metnini de duzelt (yalnizca gorsel).
@@ -147,10 +151,28 @@ public:
         }
         *e->bonus = ek;
         *e->first = kFirstPending;
+        ForgePact::NumberGuard::Arm();   // a Modifiers lever off vanilla (#230)
         char b[160];
         sprintf_s(b, "statadd %s -> +%g", e->script, ek);
         Out(b);
     }
+
+#ifndef FORGEPACT_RELEASE
+    // `numguard trace on` (#230, research build): CalculateEndDamage's hook,
+    // installed as a pass-through when no `stat damage` put it in, so the
+    // trace sees every hit as the game built it and as returned. At x1 it
+    // changes nothing. True when the hook is in.
+    bool InstallEndDamageTrace() {
+        const Entry* table = Table();
+        for (int i = 0; i < kEntryCount; ++i) {
+            const Entry& e = table[i];
+            if (std::string(e.name) != "CalculateEndDamage") continue;
+            if (!*e.orig) HookOneScript(e.name, e.hookId, e.hook, e.orig);
+            return *e.orig != nullptr;
+        }
+        return false;
+    }
+#endif
 
 private:
     StatsManager() = default;
@@ -220,6 +242,16 @@ private:
         Out(b);
     }
 
+    // The research trace's callout (#230, `numguard trace`): CalculateEndDamage's
+    // result as the game built it and as this hook returns it. Compiled out of
+    // the player build, and a no-op for every other stat.
+#ifndef FORGEPACT_RELEASE
+#define FP_STAT_TRACE(NAME, SITE, VALUE) \
+    if constexpr (std::string_view(#NAME) == "CalculateEndDamage") ForgePact::NumberGuard::TraceResult(ForgePact::NumberGuard::SITE, VALUE)
+#else
+#define FP_STAT_TRACE(NAME, SITE, VALUE) ((void)0)
+#endif
+
 #define FP_STAT_HOOK(NAME) \
     PFUNC_YYGMLScript m_Orig_##NAME{ nullptr }; \
     volatile long m_Calls_##NAME{ 0 }; \
@@ -228,8 +260,10 @@ private:
         auto& mgr = Instance(); \
         BP_DIAG_INCREMENT(mgr.m_Calls_##NAME); \
         RValue& _r = mgr.m_Orig_##NAME ? mgr.m_Orig_##NAME(S, O, R, argc, A) : R; \
+        FP_STAT_TRACE(NAME, kSiteEndDamageNative, _r); \
         const bool rewardStat = std::string_view(#NAME)=="StatMagicFind" || std::string_view(#NAME)=="EnemyCalculateExperience" || std::string_view(#NAME)=="StatExtraGold" || std::string_view(#NAME)=="StatExperienceGain"; \
         if (mgr.m_Mult_##NAME != 1.0 && !(rewardStat && HeroSiege::RewardScope::Active())) { try { _r = Scale(_r, mgr.m_Mult_##NAME); } catch (...) {} } \
+        FP_STAT_TRACE(NAME, kSiteEndDamageReturned, _r); \
         return _r; \
     }
 
@@ -257,6 +291,7 @@ private:
     // icindeki sabiti degil, tanimi geregi hesaplanan deneyimi carpiyoruz.
     FP_STAT_HOOK(EnemyCalculateExperience)
 #undef FP_STAT_HOOK
+#undef FP_STAT_TRACE
 
     // Additive hooks (`statadd`): a bonus of 0 leaves the hook a pure
     // pass-through, so vanilla behaviour is exactly preserved when it is off.

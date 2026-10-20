@@ -166,6 +166,16 @@ inline bool (*rewardScopeActive)() = nullptr;
 inline bool Install() { return false; }
 }}
 
+// The number guard (NumberGuard.hpp, #230), reduced to the surface
+// StatsManager touches: Arm() counts the levers that arm it, and the research
+// trace callout takes anything. tests/number_guard_harness.cpp runs the real one.
+namespace ForgePact { namespace NumberGuard {
+inline int armCalls = 0;
+inline void Arm() { ++armCalls; }
+enum TraceSite : int { kSiteCompress = 0, kSiteEndDamageNative, kSiteEndDamageReturned };
+template <class V> inline void TraceResult(int, const V&) {}
+}}
+
 #define BP_DIAG_INCREMENT(counter) (++(counter))
 #ifndef _MSC_VER
 #define sprintf_s(buf, ...) std::snprintf(buf, sizeof(buf), __VA_ARGS__)
@@ -187,6 +197,7 @@ static void Command(const std::string& line) { Manager().HandleStatAddCommand(li
 
 static void Print(const std::string& label, const std::string& fields) {
     std::cout << "SCENARIO " << label << " " << fields << "\n";
+    std::cout << "ARMS " << label << " " << ForgePact::NumberGuard::armCalls << "\n";
     for (const auto& l : world.log) std::cout << "LOG " << label << " :: " << l << "\n";
 }
 
@@ -205,6 +216,7 @@ static std::string Built() {
 
 static void Scenario(const std::string& label, const std::function<std::string()>& body) {
     ResetWorld();
+    ForgePact::NumberGuard::armCalls = 0;
     // StatsManager's constructor is private (a singleton): the harness takes
     // one fresh object per scenario through the class's own Instance(), then
     // resets its state by placement on a copy of a default-built image.
