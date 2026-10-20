@@ -21,7 +21,9 @@
 // the line prints is there once, in order, and each failure count reaches it
 // under its own name. art_rule/*: the pieces' art is armed by the first
 // switch-on of a session (baseline: a fresh one writes and installs nothing),
-// and the write and the ground install follow the rule.
+// and the write and the ground install follow the rule. drops_arm/*: the
+// `drops 1|0` form, and a drops switch-on arms the same art flag without
+// touching the set's switch (phase 3, Mark1Drops.hpp).
 #include <cmath>
 #include <cstdint>
 #include <iostream>
@@ -808,6 +810,52 @@ int main()
         b.SetEnabled(true);
         check("parse/bonus_reply_names_the_switch_and_the_install",
               BonusReply(b) == "mark1set: bonus=on install=waiting-for-character", BonusReply(b));
+    }
+
+    // ---- drops_arm: the drops switch arms the same art flag ------------------------
+    {
+        // `drops 1|0` parses as its own form; the refused forms still print the usage.
+        Command c;
+        std::string reason;
+        bool ok = ParseCommand(words("drops 1"), c, reason) && c.form == CommandForm::Drops && c.on
+            && ParseCommand(words("drops 0"), c, reason) && c.form == CommandForm::Drops && !c.on
+            && ParseCommand(words("bonus 1"), c, reason) && c.form == CommandForm::Bonus;
+        const std::string usage = "mark1set: " + std::string(kUsage);
+        ok = ok && why("drops") == usage && why("drops 2") == usage && why("drops on") == usage
+            && why("drops 1 1") == usage && has(std::string(kUsage), "mark1set drops 1|0");
+        check("drops_arm/parse_drops_form", ok, why("drops"));
+
+        // A drops switch-on arms the art for the session, as the set's does,
+        // without turning the set's switch on or installing anything.
+        Bonus d;
+        d.NoteDropsSwitch(true);
+        const bool armed = d.ArtArmed() && !d.Enabled() && d.InstallStateName() == "not-armed" && !d.TickNeeded()
+            && !d.ShouldInstall(true, true, false);
+        d.NoteDropsSwitch(false);
+        check("drops_arm/drops_on_arms_the_art_and_leaves_the_set_off", armed && d.ArtArmed() && !d.Enabled());
+
+        // baseline: a drops switch-off on a fresh session arms nothing.
+        Bonus f;
+        f.NoteDropsSwitch(false);
+        check("drops_arm/baseline_drops_off_arms_nothing", !f.ArtArmed());
+
+        // One flag: armed by either switch, read by the art rule and the line.
+        Bonus e;
+        e.SetEnabled(true);
+        e.SetEnabled(false);
+        e.NoteDropsSwitch(false);
+        StatFields sd;
+        d.FillStat(sd);
+        check("drops_arm/one_flag_either_switch", e.ArtArmed() && d.ArtArmed()
+              && ArtGroundInstallPending(d.ArtArmed(), 8, false) && field(StatLine(sd), "art") == "armed", StatLine(sd));
+
+        // The first stat line and the bonus reply stay byte for byte.
+        StatFields fresh;
+        Bonus g;
+        g.SetEnabled(true);
+        check("drops_arm/first_line_and_bonus_reply_unchanged",
+              startsWith(StatLine(fresh), "mark1set: bonus=off active=no install=not-armed")
+              && BonusReply(g) == "mark1set: bonus=on install=waiting-for-character", BonusReply(g));
     }
 
     std::cout << (failures ? "RESULT FAIL " + std::to_string(failures) : std::string("RESULT OK")) << std::endl;

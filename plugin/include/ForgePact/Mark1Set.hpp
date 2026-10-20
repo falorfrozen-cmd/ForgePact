@@ -32,8 +32,9 @@ namespace ForgePact::Mark1Set {
 //     character exists (the guide's Known Limitations item 8, as jumpscenery).
 //   - the `mark1set` command's forms and its `stat` line, whose automation,
 //     jump, art and movement fields the other cores' counters fill.
-//   - the pieces' art rule: armed by the session's first switch-on, and when
-//     a dressing may write our icon and the ground consumer may go in.
+//   - the pieces' art rule: armed by the session's first switch-on of the set
+//     or of the drops (Mark1Drops.hpp), and when a dressing may write our icon
+//     and the ground consumer may go in.
 //
 // It is game-independent by contract - numbers and strings, never an instance
 // or an RValue - so tests/mark1_set_harness.cpp compiles it whole. The adapter
@@ -405,7 +406,8 @@ inline std::string StatLine(const StatFields& f)
 //
 // The bag icon and the ground consumer go together, and both follow the switch:
 // the art is armed for the rest of the session by the first `mark1set bonus 1`
-// (Bonus keeps the flag; turning the switch off does not clear it). Until then
+// or `mark1set drops 1` (Bonus keeps the flag; turning a switch off does not
+// clear it). Until then
 // a piece shows its base item's own bag and ground sprites. Our runtime sprite
 // under "11" draws Error_spr on the ground unless the ground consumer sets the
 // ground item's sprite_index (RDM § 23.7), so the icon is written only where
@@ -484,7 +486,17 @@ public:
     }
     bool Enabled() const { return enabled_; }
 
-    // The art rule's sticky flag: set by the first switch-on, never cleared.
+    // The "Mark 1 drops" switch (`mark1set drops 1|0`, Mark1Drops.hpp's
+    // SetSwitch) arms the same flag on a switch-on, so a piece a roll builds
+    // shows the owner's art. It leaves the set's own switch, install and read
+    // alone.
+    void NoteDropsSwitch(bool on)
+    {
+        if (on) artArmed_ = true;
+    }
+
+    // The art rule's sticky flag: set by the first switch-on of either
+    // switch, never cleared.
     bool ArtArmed() const { return artArmed_; }
 
     // ---- the install: armed by the switch, hooked once a character exists ----
@@ -598,9 +610,9 @@ private:
 
 // ---- the `mark1set` command ----------------------------------------------------------
 
-inline constexpr std::string_view kUsage = "usage: mark1set bonus 1|0 | mark1set stat";
+inline constexpr std::string_view kUsage = "usage: mark1set bonus 1|0 | mark1set drops 1|0 | mark1set stat";
 
-enum class CommandForm : int { Stat, Bonus };
+enum class CommandForm : int { Stat, Bonus, Drops };
 
 struct Command {
     CommandForm form = CommandForm::Stat;
@@ -608,7 +620,7 @@ struct Command {
 };
 
 // The words after `mark1set`. Bare or `stat` prints the stat line;
-// `bonus 1|0` sets the switch.
+// `bonus 1|0` sets the set's switch and `drops 1|0` the drops' (Mark1Drops.hpp).
 inline bool ParseCommand(const std::vector<std::string>& args, Command& out, std::string& why)
 {
     why.clear();
@@ -616,8 +628,8 @@ inline bool ParseCommand(const std::vector<std::string>& args, Command& out, std
         out = Command{};
         return true;
     }
-    if (args.size() == 2 && args[0] == "bonus" && (args[1] == "1" || args[1] == "0")) {
-        out.form = CommandForm::Bonus;
+    if (args.size() == 2 && (args[0] == "bonus" || args[0] == "drops") && (args[1] == "1" || args[1] == "0")) {
+        out.form = args[0] == "bonus" ? CommandForm::Bonus : CommandForm::Drops;
         out.on = args[1] == "1";
         return true;
     }

@@ -26,6 +26,9 @@ never lands in `skip-no-state=`). `art_rule`: the pieces' art is armed by the
 session's first switch-on and stays armed; a dressing writes our icon only
 when armed, with both copies loaded and a ground detour not known to be
 table-only; the ground consumer is wanted only when armed, in game.
+`drops_arm`: `mark1set drops 1|0` parses, and a drops switch-on arms the same
+art flag (one flag, either switch) while the first stat line and the bonus
+reply stay byte for byte.
 """
 import os
 import re
@@ -268,6 +271,19 @@ class Mark1SetBehaviorTests(unittest.TestCase):
     def test_command_forms(self):
         self.assertScenarios("parse/accepted_forms", "parse/refused_forms_print_the_usage",
                              "parse/usage_names_every_form", "parse/bonus_reply_names_the_switch_and_the_install")
+
+    # ---- drops_arm: the drops switch arms the same art flag (phase 3) ----------
+
+    def test_drops_arm_the_drops_form_parses_and_is_in_the_usage(self):
+        self.assertScenarios("drops_arm/parse_drops_form")
+
+    def test_drops_arm_a_drops_switch_on_arms_the_art_and_leaves_the_set_off(self):
+        self.assertScenarios("drops_arm/drops_on_arms_the_art_and_leaves_the_set_off",
+                             "drops_arm/baseline_drops_off_arms_nothing",
+                             "drops_arm/one_flag_either_switch")
+
+    def test_drops_arm_the_first_line_and_the_bonus_reply_stay_byte_for_byte(self):
+        self.assertScenarios("drops_arm/first_line_and_bonus_reply_unchanged", "stat/fresh_line_exact")
 
 
 if __name__ == "__main__":
