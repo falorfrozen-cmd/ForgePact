@@ -2527,9 +2527,15 @@ A bare `mark1probe draws` prints the counters (`calls=`, `normal=`,
 `draw=`, `dropunique=`, `tiers=`, `arg7=`, `on-k=`, `off-k=`,
 `retsat-calls=`, `picks=`, `pick-builds=`, `anomalies=` and the rest).
 `mark1probe draws push <c>` is the lever: while the watch is on, each
-`DropItem` call pushes c copies of each Mark 1 kill stand-in onto each of
+`DropItem` call pushes c copies of each piece's `pool draw` candidate (SS
+first), refused classes pushing nothing, onto each of
 `lootListUnique[0..5]` and takes them off on every way out; `picks=` counts
-the draw picking one, and nothing is rewritten. `push off` stops it.
+the draw picking one, and nothing is rewritten. `push off` stops it. The
+reply to `draws push <c>` names, for each of the four pieces, either its
+stand-in with `side=ss` or `side=below-ss` (`(fallback)` when its class had
+no SS candidate) or `<piece>=refused (...)` with the reason, so s, the
+number of stand-ins pushed, is between 0 and 4 and is counted from that
+reply.
 
 **The debugger.** A control and three logpoints at `DropItem`'s own draw,
 its build and its argument-list draw, attached headless through the hub's
@@ -2580,10 +2586,17 @@ again after it, so it logs on both sides.
   uniques is not measured). Kill batches until 3 unique builds are seen or
   6 batches have passed, recording each built line and the candidates'
   counts.
-- H5: `mark1probe draws push 100`, the ceiling still at 10, then kill
-  batches until `picks=` is at least 1 or 8 batches have passed
-  (`push-sees`). 100 copies, not 400, because `DropItem` runs on every kill
-  and every breakable.
+- H5: `mark1probe draws push 100`, the ceiling still at 10. Record its
+  reply verbatim in the step as the reading `push-standins`: s, the number
+  of pieces not `refused`, each refused piece with its reason, and each
+  pushed stand-in's triple and side. `push-standins` is a step reading, not
+  a line of the capture's checks; it is what `push-sees` and the draw mode
+  are read against. When s is at least 1, kill batches until `picks=` is at
+  least 1 or 8 batches have passed (`push-sees`). When s is 0 nothing is
+  pushed, `picks=` cannot rise, and no batch is run for it: `push-sees` is
+  recorded `not-observed (not measured: no draw candidate, s=0)`, never
+  `fail`. 100 copies, not 400, because `DropItem` runs on every kill and
+  every breakable.
 - H6: `mark1probe draws push off`, `raredrop ceiling 1`, one kill batch
   (`push-off`): `picks=` unchanged, `anomalies=0`, `mark1probe pool kill`
   reading lengths 50, 61, 79, 152, 221 and `mark1probe pool` reading list 5
@@ -2600,8 +2613,13 @@ again after it, so it logs on both sides.
 `marker`, `dbg-control`, `draws-on`, `kill-control`, `kill-normal` and
 `push-off`. Research, never required and recorded as read:
 
-- `push-sees`: under the lever, `picks=` and `pick-builds=` each up by at
-  least 1, with built lines in scope `draw` naming the stand-ins.
+- `push-sees`: under the lever, with s at least 1 in `push-standins`,
+  `picks=` and `pick-builds=` each up by at least 1, with built lines in
+  scope `draw` naming the stand-ins; the pieces `push-standins` lists as
+  refused were not pushed, and the check says nothing about them. With s
+  = 0 it reads `not-observed (not measured: no draw candidate, s=0)`: the
+  lever had nothing to push, so the zero is the instrument's, not the
+  draw's.
 - `pool-draw`: what `mark1probe pool draw` lists for helmet, body, boots,
   gloves and elf, the candidates a stand-in on the draw would come from.
 - `vanilla-route`: for each natural unique, its built line's scope, k,
@@ -2624,11 +2642,17 @@ their number while `dbg-arglist` stayed flat; otherwise `arg-list`,
 `dropuniqueitems`, `outside-dropitem`, `mixed` or `not-observed`. Builds in
 scope `outside` during the window (vendor grids, tooltips) are recorded and
 are not natural uniques. `tier-k` matches when `off-k=0` and `on-k` is at
-least 1. The push route is seen when `push-sees` passed. The draw mode is
-`first-kept` when the median `reads=` of the natural `draw` builds is 10 or
-fewer and the lever's picks per `draw` build reach at least half of
-4c / (L_k + 4c) (c = 100, L_k the length of each build's list k, averaged),
-`weighed` otherwise, and `not-observed` with fewer than 3 natural `draw`
-builds. Only the first three gate the move onto the draw (`satanic-draw`,
-`matches`, `seen`); the draw mode decides only the share the player text
-may claim. Any other route value sends the move back to planning.
+least 1. The push route is seen when `push-sees` passed. When
+`push-standins` read s = 0, the push route is recorded `not-observed` with
+the reason `no draw candidate`, and the move's third gate turns on
+`pool-draw` instead of `push-sees`: whether any Mark 1 class has an entry
+the draw keeps as read is then `pool-draw`'s reading, and the move goes
+back to planning on that reading, never as a push that was not seen. The
+draw mode is `first-kept` when the median `reads=` of the natural `draw`
+builds is 10 or fewer and the lever's picks per `draw` build reach at least
+half of s*c / (L_k + s*c) (s from `push-standins`, c = 100, L_k the length
+of each build's list k, averaged), `weighed` otherwise, and `not-observed`
+with fewer than 3 natural `draw` builds or with s = 0. Only the first three
+gate the move onto the draw (`satanic-draw`, `matches`, `seen`); the draw
+mode decides only the share the player text may claim. Any other route
+value sends the move back to planning.
