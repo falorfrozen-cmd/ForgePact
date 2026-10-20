@@ -15,7 +15,8 @@ tests. This file pins what the panel owns, for the one switch
 - the row sits in the Mods tab's Items card (`itemsCard`), directly after the
   Mark 1 set's row, as its own top-level row titled "Mark 1 drops";
 - its description is short, player-facing, says the four pieces can drop from
-  vaults, ends `Off by default.` and names the set `a ForgePact item set`
+  the monsters you kill, anywhere, among the game's own items (vaults may be
+  named too), ends `Off by default.` and names the set `a ForgePact item set`
   exactly once (the Items card's classification rule);
 - it is a boolean mod for the "Enabled mods" list, and a native boolean of the
   derived behaviour oracle, entered on Mods > Items after the Mark 1 set's.
@@ -194,7 +195,7 @@ class Mark1DropsPanelRowTests(unittest.TestCase):
         self.assertIn(f'<span class="val" id="{VAL_ID}">off</span>', row)
         self.assertEqual(row_text(row)[0], TITLE)
 
-    def test_the_description_is_short_player_facing_and_names_a_forgepact_item_set(self):
+    def test_the_description_says_the_pieces_drop_from_kills_short_and_player_facing(self):
         _, text = row_text(items_row(KEY))
         self.assertLessEqual(len(text), 300, text)
         self.assertTrue(text.endswith("Off by default."), text)
@@ -202,8 +203,12 @@ class Mark1DropsPanelRowTests(unittest.TestCase):
         # The Items rule's other two phrases belong to other rows.
         self.assertNotIn(CHARM_TEXT, text)
         self.assertNotIn("forged with Mechanic:", text)
-        # What it does for the player: the four pieces can drop, from vaults.
-        for said in ("helmet", "body armor", "boots", "gloves", "drop", "vault"):
+        # What it does for the player: the four pieces can drop from the
+        # monsters you kill, anywhere, among the game's own items (the kill
+        # route, owner 2026-10-20). Vaults may be named too; they are not
+        # required.
+        for said in ("helmet", "body armor", "boots", "gloves", "drop", "monsters you kill", "anywhere",
+                     "among the game's own items"):
             self.assertIn(said, text, said)
         # No game object, counter, command or measurement: the only digit is
         # the set's own name, and "ForgePact" the one camel-cased word.
