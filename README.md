@@ -50,7 +50,7 @@ none of these diagnostic hooks or the recorder. See
 | **Loot Announcements** | Mods → Quality of Life, off by default (plugin command `lootann 1` / `lootann 0`, `lootann stat`). Offline play shows no chat line when a great item drops; online play announces it. With this on, a Heroic, Angelic or Unholy item the game drops on the ground is announced once in the in-game chat, as a red `SERVER: <your character> found <item name>` line (not the game's own online announcement). Satanic, Mythic and lower items, gold, gems, materials and relics are not announced, and neither are items you drop yourself from the bag. Checked in play on 2026-10-04: a placed Heroic and Angelic item announced, a Satanic one not, an item dropped from the bag not announced again, nothing with the switch off, and a drop from a kill announced ([details](#loot-announcements)) |
 | **Always Show Chaos Pillar Mods** | Mods → Quality of Life, off by default (plugin command `pillartips 1` / `pillartips 0`, `pillartips stat`). A Chaos Pillar shows its box of mods only while your mouse cursor is on it. With this on, every Chaos Pillar on screen shows its box without being hovered, like a strongbox in Path of Exile: the game's own box, text and colours. A pillar that leaves the screen hides it again, and a pillar you have activated stops showing its box. Mouse play only; gamepad is not supported. Checked in a game session with mouse play ([details](#always-show-chaos-pillar-mods)) |
 | **Flight Charms** | Mods → Items, three switches, all off by default (plugin command `flightcharm elf\|wings\|broom 1` / `0`, `flightcharm stat`). Three charms of ForgePact's own: **Pocket Elf** (Satanic, one cell), **Gabriel Wings** (Angelic, 2x2, 1-12% less physical and magic damage taken) and **Witch's Broomstick** (Unholy, 1x5, +10-100% movement speed), each with its own icon and a gold Flight line. While you wear one, you walk through scenery and are drawn in front of it, tree canopies included, and you walk through monsters too, though they still hit you (owner-confirmed in play, 2026-10-13); walls, zone gates, locked doors and the map's edge still stop you, though a few stone walls the game builds as scenery, such as the town church's, can be crossed (measured as scenery in a game session, not yet walked with a charm on). The game counts only one flight charm at a time. Each switch lets its charm drop from the game's own rolls (Pocket Elf among the ordinary uniques, the other two from the Angelic roll); a charm you own works either way. Offline only. Checked in three game sessions on a research build, drop rates included, plus the owner's play check for monsters ([details](#flight-charms-pocket-elf-gabriel-wings-witchs-broomstick)) |
-| **Mark 1 Set** | Mods → Items → **Mark 1 set**, off by default (plugin command `mark1set bonus 1` / `mark1set bonus 0`, `mark1set stat`). Four Heroic pieces of ForgePact's own, the Mark 1 Helmet, Body Armor, Boots and Gloves, each with its own art. With the switch on and all four worn, the skills on your Q, E, R and Y slots cast themselves whenever the game lets them, each slot outlined; your jump always goes three times as far toward your cursor, over scenery, and lands only where you can walk; in exchange you walk at half speed, and a cast still slows you as it does without the set. The pieces cannot be found in the game yet. Not yet checked in play ([details](#mark-1-set)) |
+| **Mark 1 Set** | Mods → Items → **Mark 1 set**, off by default (plugin command `mark1set bonus 1` / `mark1set bonus 0`, `mark1set stat`). Four Heroic pieces of ForgePact's own, the Mark 1 Helmet, Body Armor, Boots and Gloves, each with its own art. With the switch on and all four worn, the skills on your Q, E, R and Y slots cast themselves whenever the game lets them and take turns, so a skill with no cooldown cannot keep the others from being cast, each slot outlined; your jump always goes three times as far toward your cursor, over scenery, and lands only where you can walk (until it has learned your reach, a jump can stop short of its landing); in exchange you walk at half speed, and a cast still slows you as it does without the set. The pieces cannot be found in the game yet. Checked in play in part: the pieces, their art and the jump; the taking turns and the half walk are checked next ([details](#mark-1-set)) |
 | **Goburin's Head pity** | Mods → Quality of Life, off by default (plugin command `gambapity <1-200>` / `gambapity off`, `gambapity status`). A switch and a slider from 1 to 200. Each slot machine explosion without a head counts one, and the explosion that reaches your number drops exactly one Goburin's Head; then the count starts over. If the game drops the charm itself, the count starts over too. The count carries over between machines and between sessions, kept in `forgepact_gamba_pity.json`. Checked in play on 2026-10-06 with the number at 2: the first machine to explode dropped nothing and was counted, the second dropped one Goburin's Head, and the count started over. A head the game drops on its own has not been observed yet ([details](#goburins-head-pity)) |
 | **Extra Packs As You Approach** | Mods → Quality of Life, off by default; matters only with Monster Density above 1x. Monster Density's extra spawners are made within about 3,000 px of you, and ahead of you as you move, instead of across the whole zone at once, so the far ones cost nothing until you get there. Up close nothing changes: in Act_01_01 at 5x the spawners and monsters within 1,500 px of the player were the same, while the zone held 430 spawners instead of 1,570 and the game's own work per frame fell from 84% to 70% of a 60 fps frame ([details](#extra-packs-as-you-approach-lighter-frames-at-high-density)) |
 | **Timed skill countdown** | For a small set of timed skills measured and tested in-game, plus most other skills with both a duration and a real cooldown, covered by rule and untested: draws how much of the cast is left over its skill-bar slot, in one of four looks (arc / bar / number / fade), disappearing at zero. A few skills are left out where a measurement showed the timer on the skill's own object is not the skill's duration. Companion skills (turrets, totems, hydra) are not covered. A few skills whose duration is a buff on you, measured in-game, are covered too, and other buff-only skills are not. In a fight, hits can add a little time to some skills (roughly 0.2 s each in our test) and the countdown rises slightly to match. A skill switched on as a toggle never gets a countdown. Off by default; a cast already running when you turn it on shows as full until the next cast |
@@ -1759,12 +1759,17 @@ Mark 1 is an item set of ForgePact's own: four Heroic pieces, **Mark 1
 Helmet**, **Mark 1 Body Armor**, **Mark 1 Boots** and **Mark 1 Gloves**. They
 carry no stats of their own; each shows a gold **Mark 1** line and the set's
 bonus in its tooltip. The bonus works only while the switch is on and you wear
-all four, each in its own slot.
+all four.
 
 - **Your skills cast themselves.** The skills on your skill bar's Q, E, R and
   Y slots are cast for you whenever the game would let you cast them: the game
   still checks the cooldown, the mana and every other requirement, and aims
-  each one where it aims that key press. Each of those slots is outlined, as
+  each one where it aims that key press. The skills take turns: one is pressed
+  at a time, and once it is cast the next press goes to the skill that has
+  waited longest, so a skill with no cooldown, such as Shadow Bolt, cannot keep
+  the one beside it from ever being cast. A skill that cannot be cast yet (on
+  cooldown, or short of mana) gives up its turn for a short while instead of
+  holding up the others. Each of those slots is outlined, as
   Mark A Running Toggle Skill outlines a running toggle. A toggle skill is
   switched on and left on: it is pressed only while it is off, so you cannot
   switch it off while the bonus is active. An aura slot and an empty slot are
@@ -1778,7 +1783,11 @@ all four, each in its own slot.
   and when there is none you get your normal jump. It never crosses a zone gate
   or a locked door. Your normal reach is learned from your own jumps on open
   ground, the same way Jump through scenery learns it, and shared with it;
-  until your first such jump a starting guess is used.
+  until your first such jump a starting guess is used. While that guess, or a
+  reach learned on a character who jumps farther, is longer than your own
+  jump, a jump can stop short of the spot it checked, somewhere along the way
+  that was not checked; one jump on open ground with the cursor far away
+  teaches your real reach.
 - **In exchange, you walk at half speed.** The set halves your walk through
   your movement speed, so while the bonus is on, what else reads your
   movement speed, such as the character sheet, can show the changed value
@@ -1793,15 +1802,20 @@ all four, each in its own slot.
 - **Getting the pieces.** They cannot be found in the game yet; a later
   update lets them drop.
 
-`mark1set stat` prints the switch, whether you wear the full set, the casts it
-pressed and the skips on each of the four slots, the jumps it lengthened or
-left alone and the reach it used, how many of the pieces' icons loaded, and
-how many movement-speed answers it halved.
+`mark1set stat` prints the switch, whether you wear the full set and where
+each piece was found, the casts it pressed, the skips, the casts that landed
+and the turns each of the four slots waited or gave up, the jumps it
+lengthened or left alone and the reach it used, how many of the pieces' icons
+loaded, and how many movement-speed answers it halved.
 
-The half walk and the cast slowdown were measured in a game session on a
-research build of the plugin (2026-10-19): the walk came to exactly half its
-step, and no way was found to lift the cast slowdown. The set as a whole has
-not been checked in play yet.
+The set was checked in play on a research build of the plugin (2026-10-19):
+the pieces, their art in the bag, on the ground and on the worn body armour,
+the full-set read, the outlines and the jump all worked. That session also
+showed why the skills now take turns: with every slot pressed at once, Shadow
+Bolt kept Heavenly Fire beside it from ever being cast. Taking turns, and the
+half walk while skills are being cast, are checked in the next session. An
+earlier session measured the walk at exactly half its step and found no way
+to lift the cast slowdown.
 
 ## Goburin's Head pity
 

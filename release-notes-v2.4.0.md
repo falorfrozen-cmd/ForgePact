@@ -13,13 +13,17 @@ far over scenery, at the price of walking at half speed.
   **Mark 1 Helmet**, **Mark 1 Body Armor**, **Mark 1 Boots** and **Mark 1
   Gloves**, four Heroic pieces, each with its own icon in the bag and on the
   ground and a gold **Mark 1** line in its tooltip, and no stats of their
-  own. The set's bonus works only while you wear all four, each in its own
-  slot, and the new switch (Mods → Items → **Mark 1 set**, off by default) is
-  on.
+  own. The set's bonus works only while you wear all four and the new switch
+  (Mods → Items → **Mark 1 set**, off by default) is on.
   - **Your skills cast themselves.** The skills on your Q, E, R and Y slots
     are cast for you whenever the game would let you cast them: the game still
     checks the cooldown, the mana and every other requirement, and aims each
-    one where it aims that key press. Each of those slots is outlined. A
+    one where it aims that key press. The skills take turns: one is pressed
+    at a time, and once it is cast the next press goes to the skill that has
+    waited longest, so a skill with no cooldown, such as Shadow Bolt, cannot
+    keep the one beside it from ever being cast, and a skill that cannot be
+    cast yet gives up its turn for a short while instead of holding up the
+    others. Each of those slots is outlined. A
     toggle skill is switched on and left on, so you cannot switch it off while
     the bonus is active; an aura slot and an empty slot are left alone.
   - **Your jump goes three times as far.** The universal jump always goes
@@ -29,7 +33,9 @@ far over scenery, at the price of walking at half speed.
     still past your normal reach, and when there is none you get your normal
     jump. It never crosses a zone gate or a locked door. Your normal reach is
     learned from your own jumps on open ground, shared with Jump through
-    scenery.
+    scenery; until it is learned, or while a reach learned on a character who
+    jumps farther is in use, a jump can stop short of its landing, somewhere
+    along the way that was not checked.
   - **In exchange, you walk at half speed.** The set halves your walk through
     your movement speed, so what else reads your movement speed, such as the
     character sheet, can show the changed value while the bonus is on.
@@ -40,5 +46,8 @@ far over scenery, at the price of walking at half speed.
   - **The pieces cannot be found in the game yet.** A later update lets them
     drop.
 
-  The half walk was measured in a game session on a research build of the
-  plugin; the set as a whole has not been checked in play yet.
+  The set was checked in play on a research build of the plugin: the
+  pieces, their art, the outlines and the jump worked, and that session is
+  why the skills now take turns (with every slot pressed at once, Shadow Bolt
+  kept Heavenly Fire from ever being cast). Taking turns, and the half walk
+  while skills are being cast, are checked in the next session.
