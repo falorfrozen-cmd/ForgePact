@@ -224,6 +224,32 @@ class StatAddBehaviorTests(unittest.TestCase):
         # allskills 19.6, 19.4 and 250 arm; -3 and nan are 0.
         self.assertEqual(self.arms("allskills_whole_and_capped"), 3)
 
+    def test_stat_exp_does_not_arm(self):
+        # Baseline (owner, 2026-10-20: "Irrelevant mods shouldn't arm it"): the
+        # Experience multiplier is hooked and set, and arms nothing.
+        self.assertEqual(self.fields("stat_exp_does_not_arm"), {"installed": "1"})
+        self.assertIn("stat EnemyCalculateExperience -> x2.00", self.logs("stat_exp_does_not_arm"))
+        self.assertEqual(self.arms("stat_exp_does_not_arm"), 0)
+
+    def test_stat_extragold_does_not_arm(self):
+        self.assertEqual(self.fields("stat_extragold_does_not_arm"), {"installed": "1"})
+        self.assertIn("stat StatExtraGold -> x2.00", self.logs("stat_extragold_does_not_arm"))
+        self.assertEqual(self.arms("stat_extragold_does_not_arm"), 0)
+
+    def test_stat_damage_arms(self):
+        # Target: Total Damage off vanilla arms the guard once; x1 again does not.
+        self.assertEqual(self.fields("stat_damage_arms"), {"installed": "1"})
+        self.assertIn("stat CalculateEndDamage -> x2.00", self.logs("stat_damage_arms"))
+        self.assertEqual(self.arms("stat_damage_arms"), 1)
+
+    def test_only_the_damage_and_crit_stat_entries_arm(self):
+        # The five entries that scale a shown hit each arm it; the other nine,
+        # every one of them hooked and set, arm nothing (the negative control).
+        self.assertEqual(self.fields("stat_damage_entries_arm"), {"installed": "5"})
+        self.assertEqual(self.arms("stat_damage_entries_arm"), 5)
+        self.assertEqual(self.fields("stat_other_entries_do_not_arm"), {"installed": "9"})
+        self.assertEqual(self.arms("stat_other_entries_do_not_arm"), 0)
+
     # ---- names -------------------------------------------------------------
 
     def test_faster_cast_rate_keeps_every_old_spelling(self):

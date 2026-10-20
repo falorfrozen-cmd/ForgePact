@@ -95,9 +95,10 @@ public:
 #endif
         }
         *hedef->mult = c;
-        // A multiplier off vanilla can push a hit or a DPS sum past what the
-        // game's number shortener can show (#230): arm the number guard.
-        if (c != 1.0) ForgePact::NumberGuard::Arm();
+        // A damage or crit multiplier off vanilla can push a hit or a DPS sum
+        // past what the game's number shortener can show (#230): arm the
+        // number guard. The other entries scale nothing it shows.
+        if (c != 1.0 && ArmsNumberGuard(*hedef)) ForgePact::NumberGuard::Arm();
         if (std::string(hedef->name) == "EnemyCalculateExperience") HeroSiege::RewardScope::SetForgePactXp(c);
         ShareXpMultiplier(*hedef, c);
         // XP carpani acilinca baloncuk metnini de duzelt (yalnizca gorsel).
@@ -353,6 +354,22 @@ private:
         ForgePact::CombatText::xpMultiplier = c;
     }
     static constexpr int kEntryCount = 14;
+
+    // The `stat` entries whose multiplier scales the damage and crit numbers
+    // the game's number shortener shows (#230; owner, 2026-10-20: "Irrelevant
+    // mods shouldn't arm it"). Only these arm the number guard; Magic Find,
+    // speed, gold, Experience, replenish and defense multipliers do not.
+    static constexpr int kGuardArmCount = 5;
+    static constexpr const char* kGuardArmAliases[kGuardArmCount] = {
+        "damage", "critdamage", "critchance", "spellcritdamage", "spellcritchance",
+    };
+    static bool ArmsNumberGuard(const Entry& e) {
+        if (!e.alias) return false;
+        for (const char* a : kGuardArmAliases)
+            if (std::string(e.alias) == a) return true;
+        return false;
+    }
+
     const Entry* Table() {
         static const Entry table[kEntryCount] = {
             { "StatMagicFind",        "fp_st_mf",  (void*)Hook_StatMagicFind,        &m_Orig_StatMagicFind,        &m_Calls_StatMagicFind,        &m_Mult_StatMagicFind,        "magicfind" },

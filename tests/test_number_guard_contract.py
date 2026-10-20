@@ -12,7 +12,8 @@ comment-stripped source, what a behaviour test cannot see:
 - the detour hands a substitute argument array and never writes the caller's;
 - the trace line is written before the original runs;
 - Arm() is called only by the three Modifiers handlers, after their own hook
-  is known native and their value is off vanilla, and never at load;
+  is known native and their value is off vanilla (for `stat`, only on the
+  damage and crit entries), and never at load;
 - the research verbs, the trace and its CalculateEndDamage callout stay out of
   the player build, while the status line and the first-cap line ship;
 - `numguard` is a player command dispatched from RunCommand, and NAddrAll
@@ -192,14 +193,34 @@ class NumberGuardContractTests(unittest.TestCase):
         self.assertEqual(ARM_CALL.findall(self.guard_player), [])
         self.assertEqual(len(ARM_CALL.findall(self.guard)), 1)
 
-    def test_stat_arms_after_a_multiplier_off_one_is_set(self):
+    def test_stat_arms_after_a_damage_multiplier_off_one_is_set(self):
         body = function_body(self.stats, "void HandleStatCommand(const std::string& rest)")
         self.assertEqual(body.count("ForgePact::NumberGuard::Arm();"), 1)
-        arm = body.index("if (c != 1.0) ForgePact::NumberGuard::Arm();")
+        arm = body.index("if (c != 1.0 && ArmsNumberGuard(*hedef)) ForgePact::NumberGuard::Arm();")
         self.assertLess(body.index("*hedef->mult = c;"), arm)
         # The x1-with-no-hook early return and the failed-install return come first.
         self.assertLess(body.index("c == 1.0 && !*hedef->orig"), arm)
         self.assertLess(body.index("kancasi kurulamadi"), arm)
+
+    def test_only_the_damage_and_crit_stat_entries_arm(self):
+        # Owner, 2026-10-20: "Irrelevant mods shouldn't arm it". The named
+        # predicate decides from the entry's alias, against one list.
+        predicate = function_body(self.stats, "static bool ArmsNumberGuard(const Entry& e)")
+        self.assertIn("kGuardArmAliases", predicate)
+        listed = re.search(r"kGuardArmAliases\[kGuardArmCount\]\s*=\s*\{(?P<body>.*?)\};", self.stats, re.DOTALL)
+        self.assertIsNotNone(listed)
+        aliases = re.findall(r'"(\w+)"', listed.group("body"))
+        self.assertEqual(aliases, ["damage", "critdamage", "critchance", "spellcritdamage", "spellcritchance"])
+        # Negative control: each listed alias is a real `stat` entry, and the
+        # entries left out (Experience, gold, speed and the rest) are too.
+        table = function_body(self.stats, "const Entry* Table()")
+        entries = re.findall(r'"(\w+)" \},', table)
+        self.assertEqual(len(entries), 14, entries)
+        self.assertTrue(set(aliases) < set(entries), entries)
+        for left_out in ("exp", "expgain", "magicfind", "extragold", "movespeed", "attackspeed"):
+            with self.subTest(alias=left_out):
+                self.assertIn(left_out, entries)
+                self.assertNotIn(left_out, aliases)
 
     def test_statadd_arms_only_after_the_native_check(self):
         body = function_body(self.stats, "void HandleStatAddCommand(const std::string& rest)")

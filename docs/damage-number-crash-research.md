@@ -25,8 +25,11 @@ number read `99999B`, and the game closed with `0x00000000`.
 
 The fix, `numguard` (`plugin/include/ForgePact/NumberGuard.hpp`): an inline
 detour on `num_compressSteam`, installed by name through `HookOneScript`
-once a Modifiers lever (`stat`, `statadd`, `skillslider`) is set off vanilla
-and never at vanilla. Each call still runs the game's own shortener; a value
+once a Modifiers lever that can raise a shown number is set off vanilla
+(`stat`'s damage and crit entries `damage`, `critdamage`, `critchance`,
+`spellcritdamage` and `spellcritchance`; `statadd`; `skillslider`) and never
+at vanilla. Experience, gold, Magic Find, speed, replenish and defense
+multipliers do not arm it. Each call still runs the game's own shortener; a value
 it cannot show (1e14 or more, -1e6 or less, NaN) is handed to it as the
 largest value it can show, 99,999,000,000,000 (shown `99999B`), or -999,999,
 or 0 for NaN. The damage dealt, the DPS sums and enemy health are untouched:
