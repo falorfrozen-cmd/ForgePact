@@ -72,8 +72,10 @@ struct State {
     double largest = 0.0;            // largest |value| handed in, before any cap
     int traceLines = 0;
     bool traceLimitSaid = false;
-    bool traceSeen[kSiteCount] = {};
-    double traceMax[kSiteCount] = {};
+    // Per site and per sign ([0] zero and above, [1] below zero), so a big
+    // positive cannot hide the first negative of a new decade.
+    bool traceSeen[kSiteCount][2] = {};
+    double traceMax[kSiteCount][2] = {};
 #endif
 };
 inline State state;
@@ -131,18 +133,26 @@ inline int Decade(double magnitude) {
 }
 
 // One line when a site's |value| reaches a decade above the largest it has
-// seen (its first value included), and one for every non-finite value; at
-// most kTraceLinesMax a session. Out() writes and closes out.txt before it
-// returns, so a line written before the shortener runs survives a fail-fast.
+// seen of the same sign (the first of each sign included), and one for every
+// non-finite value; at most kTraceLinesMax a session. Out() writes and closes
+// out.txt before it returns, so a line written before the shortener runs
+// survives a fail-fast. Keeping the two signs apart is what makes the last
+// line name the fatal value under `numguard off`: there the first failing
+// number ends the game, so every earlier positive was below 1e14 and every
+// earlier negative above -1e6, and a failing value of either sign is in a new
+// decade for its sign.
 inline void TraceValue(int site, double v) {
     State& s = state;
     if (!s.traceOn || site < 0 || site >= kSiteCount) return;
     bool write = !std::isfinite(v);
     if (!write) {
+        const int sign = v < 0.0 ? 1 : 0;
         const double magnitude = std::fabs(v);
-        write = !s.traceSeen[site] || Decade(magnitude) > Decade(s.traceMax[site]);
-        if (!s.traceSeen[site] || magnitude > s.traceMax[site]) s.traceMax[site] = magnitude;
-        s.traceSeen[site] = true;
+        bool& seen = s.traceSeen[site][sign];
+        double& largest = s.traceMax[site][sign];
+        write = !seen || Decade(magnitude) > Decade(largest);
+        if (!seen || magnitude > largest) largest = magnitude;
+        seen = true;
     }
     if (!write) return;
     if (s.traceLines >= kTraceLinesMax) {
