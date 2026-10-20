@@ -1314,7 +1314,9 @@ static M1dNs::DropStatFields dropsFields() {
 static const char* const kFreshDropsLine =
     "mark1set drops: drops=off install=not-armed gate=off hook=not-installed list=- heroic-calls=0 pushed-calls=0 nested=0"
     " art-wait=0 helmet=0/0 body=0/0 boots=0/0 gloves=0/0 injected=0 refused=0 anomalies=0 standin-helmet=none"
-    " standin-body=none standin-boots=none standin-gloves=none list-refused=0 unread=0";
+    " standin-body=none standin-boots=none standin-gloves=none list-refused=0 unread=0 kill-gate=off kill-hook=not-installed"
+    " kill-calls=0 kill-pushed=0 kill-nested=0 kill-helmet=0/0 kill-body=0/0 kill-boots=0/0 kill-gloves=0/0"
+    " kill-standin-helmet=none kill-standin-body=none kill-standin-boots=none kill-standin-gloves=none";
 
 static const char* const kFreshFlightLine =
     "flightcharm: switches elf=off wings=off broom=off | flight install=not-armed state=off equipped=none answered=0 excluded=0"
@@ -2630,7 +2632,8 @@ int main(int argc, char** argv) {
 #ifdef HAS_MARK1DROPSTATE
             setHeroicLayout();
             dropsSwitch(true);
-            require(lastLine("mark1set:") == "mark1set: drops=on install=installed gate=on", "the switch-on reply: " + lastLine("mark1set:"));
+            require(lastLine("mark1set:") == "mark1set: drops=on install=installed gate=pending kill-gate=pending",
+                    "the switch-on reply: " + lastLine("mark1set:"));
             require(g_Mark1.ArtArmed() && g_M1sGroundTried && mark1GroundInstalls == 1,
                     "the drops' switch-on did not arm the art and try the pieces' ground install");
             const std::string resolved = dropsStatLine();
@@ -2661,7 +2664,9 @@ int main(int argc, char** argv) {
             require(anyLineHas("mark1set drops hit:", "heroic roll -> Mark 1 Boots (stand-in 2/5/30, 1 in 2) built by the game"),
                     "the hit line does not say the game built the boots: " + lastLine("mark1set drops hit:"));
             const std::string line = dropsStatLine();
-            require(lineHas(resolved, " gate=on hook=detoured "), "the drops line before the calls: " + resolved);
+            require(lineHas(resolved, " gate=pending hook=detoured ") && lineHas(resolved, " standin-boots=pending "),
+                    "the drops line before the first call: " + resolved);
+            require(lineHas(line, " gate=on hook=detoured "), "the drops line after the calls: " + line);
             require(lineHas(line, " list=5 heroic-calls=" + std::to_string(calls) + " pushed-calls=" + std::to_string(calls) + " "),
                     "every call was not pushed for: " + line);
             require(lineHas(line, " injected=" + std::to_string(3 * calls) + " refused=0 anomalies=0 "), "the injected count: " + line);
@@ -2823,7 +2828,8 @@ int main(int argc, char** argv) {
             setHeroicLayout();
             playerResolves = false;
             dropsSwitch(true);
-            require(lastLine("mark1set:") == "mark1set: drops=on install=waiting-for-character gate=off", "the armed reply: " + lastLine("mark1set:"));
+            require(lastLine("mark1set:") == "mark1set: drops=on install=waiting-for-character gate=off kill-gate=off",
+                    "the armed reply: " + lastLine("mark1set:"));
             require(installs["DropItemHeroic"] == 0 && installs["CreateDefaultParams"] == 0 && heroicEntry == gameDropItemHeroic,
                     "something was hooked at character select");
             require(g_Mark1.ArtArmed() && !g_M1sGroundTried, "the switch-on did not arm the art, or tried its ground install without a character");
@@ -2833,9 +2839,10 @@ int main(int argc, char** argv) {
             for (int i = 0; i < 200 && installs["DropItemHeroic"] == 0; ++i) Mark1DropsTick();
             require(installs["DropItemHeroic"] == 1 && heroicEntry != gameDropItemHeroic, "the tick did not install once the player resolved");
             require(g_M1sGroundTried && mark1GroundInstalls == 1, "the install did not try the pieces' ground install first");
-            require(lineHas(dropsStatLine(), " install=installed gate=on hook=detoured "), "after the tick: " + dropsStatLine());
+            require(lineHas(dropsStatLine(), " install=installed gate=pending hook=detoured "), "after the tick: " + dropsStatLine());
             dropHeroic(monster);
             require(heroicLayoutDuringCall.back()[5] == plus(vanilla, { kHelmetHeroic, kBodyHeroic, kBootsHeroic }), "the installed hook did not push");
+            require(lineHas(dropsStatLine(), " install=installed gate=on hook=detoured "), "after the first call: " + dropsStatLine());
 #else
             require(false, "this source has no Mark 1 drop adapter");
 #endif
@@ -2846,7 +2853,8 @@ int main(int argc, char** argv) {
             setHeroicLayout();
             tableOnlyHook = "DropItemHeroic";
             dropsSwitch(true);
-            require(lastLine("mark1set:") == "mark1set: drops=off install=refused gate=refused", "the refused reply: " + lastLine("mark1set:"));
+            require(lastLine("mark1set:") == "mark1set: drops=off install=refused gate=refused kill-gate=refused",
+                    "the refused reply: " + lastLine("mark1set:"));
             require(anyLineHas("mark1set drops: refused - ", "DropItemHeroic went in TABLE-ONLY"), "the refusal line: " + lastLine("mark1set drops:"));
             dropHeroic(monster);
             require(heroicLayoutDuringCall[0] == vanillaLayout && lineHas(dropsStatLine(), " hook=TABLE-ONLY "), "a table-only hook pushed: " + dropsStatLine());
@@ -2854,7 +2862,8 @@ int main(int argc, char** argv) {
             setHeroicLayout();
             tableOnlyHook = "CreateDefaultParams";
             dropsSwitch(true);
-            require(lastLine("mark1set:") == "mark1set: drops=on install=installed gate=no-detection", "the no-detection reply: " + lastLine("mark1set:"));
+            require(lastLine("mark1set:") == "mark1set: drops=on install=installed gate=no-detection kill-gate=no-detection",
+                    "the no-detection reply: " + lastLine("mark1set:"));
             dropHeroic(monster);
             require(heroicLayoutDuringCall[0] == vanillaLayout && lineHas(dropsStatLine(), " heroic-calls=1 pushed-calls=0 "),
                     "with #74's detection not inline a call carried a push: " + dropsStatLine());
