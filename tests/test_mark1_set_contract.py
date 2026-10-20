@@ -50,7 +50,8 @@ text, comments stripped, and pins the adapter around it:
   ground-route fields come from the adapter's own state;
 - art_default: a player who never turns the switch on this session gets the
   base items' own art, bag and ground, and nothing loaded, written or
-  installed for it. The armed flag's one writer is the core's SetEnabled; the
+  installed for it. The armed flag's writers are the core's SetEnabled and,
+  for the drops' switch, NoteDropsSwitch through Mark1Drops.hpp's SetSwitch; the
   dressing, the ground install and the tick each ask the core's rule before
   anything else, and no dressing inside CreateItemNew's pass installs a hook;
 - the jump (Mark1Jump.hpp, applied here): one skillsLeap detour and one
@@ -181,6 +182,9 @@ SIGNATURES = {
     "js_install": "static std::string JumpSceneryInstall()",
     "js_held": "static std::string JumpSceneryHeldHooks()",
     "flight_install": "static std::string FlightInstall()",
+    # the drops (Mark1Drops.hpp), in their own adapter block
+    "drops_install": "static std::string Mark1DropInstall()",
+    "drops_switch": "static void Mark1DropsSwitch(bool on)",
 }
 
 SHIPPED = ("decode", "of", "entry", "final", "icon_index", "icon_path", "icons_load", "ground", "ground_install",
@@ -751,9 +755,11 @@ class Mark1SetContract(unittest.TestCase):
         self.assertIn("g_M1sGroundTried = true;", install)
         self.assertLess(install.index(pending), install.index("g_M1sGroundTried = true;"))
         self.assertLess(install.index("g_M1sGroundTried = true;"), install.index("FlightGroundIconInstall();"))
-        # Its callers: Mark 1's own install, the tick's art install and the
-        # research spawn; never a dressing (test_dressing_installs_nothing...).
-        self.assertEqual(len(re.findall(r"\bMark1GroundIconInstall\(\);", strip_comments(self.plugin))), 3)
+        # Its callers: Mark 1's own install, the tick's art install, the
+        # drops' install (Mark1Drops.hpp: no roll builds a piece before it was
+        # tried) and the research spawn; never a dressing
+        # (test_dressing_installs_nothing...).
+        self.assertEqual(len(re.findall(r"\bMark1GroundIconInstall\(\);", strip_comments(self.plugin))), 4)
 
     def test_art_fallback_the_ticks_ground_install_waits_for_a_character(self):
         ready = self.body("art_install_if_ready")
@@ -820,11 +826,18 @@ class Mark1SetContract(unittest.TestCase):
         probe = strip_comments(self.probe)
         self.assertNotIn("SetEnabled(", probe)
         self.assertNotIn("artArmed", probe)
-        # In the core, the one write that sets it is SetEnabled's, on a switch-on.
+        # In the core, the writes that set it are SetEnabled's and the drops'
+        # NoteDropsSwitch, each on a switch-on (drops arm the art, the drops
+        # workorder's default); the adapter reaches the second only through
+        # Mark1Drops.hpp's SetSwitch, from the drops' switch.
         header = self.header()
-        self.assertEqual(re.findall(r"\bartArmed_\s*=\s*true\b", header), ["artArmed_ = true"])
+        self.assertEqual(re.findall(r"\bartArmed_\s*=\s*true\b", header), ["artArmed_ = true", "artArmed_ = true"])
         self.assertIn("if (on) artArmed_ = true;", function_body(header, "void SetEnabled(bool on)"))
-        self.assertEqual(len(re.findall(r"\bartArmed_\s*=(?!=)", header)), 2)   # that write and the member's `= false`
+        self.assertIn("if (on) artArmed_ = true;", function_body(header, "void NoteDropsSwitch(bool on)"))
+        self.assertEqual(len(re.findall(r"\bartArmed_\s*=(?!=)", header)), 3)   # those two writes and the member's `= false`
+        self.assertNotIn("NoteDropsSwitch", whole)
+        self.assertEqual(re.findall(r"\bM1dNs::SetSwitch\([^;]*\);", whole), ["M1dNs::SetSwitch(g_M1Drop.core, g_Mark1, on);"])
+        self.assertIn("M1dNs::SetSwitch(g_M1Drop.core, g_Mark1, on);", self.body("drops_switch"))
 
     def test_art_default_ground_install_returns_unless_armed_before_the_flight_install(self):
         self.assertEqual(self.lines("ground_install"), [
@@ -877,11 +890,11 @@ class Mark1SetContract(unittest.TestCase):
             for install in installs:
                 with self.subTest(function=function, install=install):
                     self.assertNotIn(install, self.body(function))
-        # The ground install's three callers, none of them a dressing.
+        # The ground install's four callers, none of them a dressing.
         callers = {which: self.body(which).count("Mark1GroundIconInstall();")
-                   for which in ("install", "art_install_if_ready", "spawn")}
-        self.assertEqual(callers, {"install": 1, "art_install_if_ready": 1, "spawn": 1})
-        self.assertEqual(len(re.findall(r"\bMark1GroundIconInstall\(\);", whole)), 3)
+                   for which in ("install", "art_install_if_ready", "spawn", "drops_install")}
+        self.assertEqual(callers, {"install": 1, "art_install_if_ready": 1, "spawn": 1, "drops_install": 1})
+        self.assertEqual(len(re.findall(r"\bMark1GroundIconInstall\(\);", whole)), 4)
 
     def test_art_default_stat_icons_fields_come_from_the_flag_the_ground_count_and_the_route(self):
         fields = self.body("stat_fields")

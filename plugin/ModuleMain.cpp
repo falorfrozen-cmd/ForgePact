@@ -4803,6 +4803,9 @@ static bool Mark1ForgeEntry(const RValue& item, const RValue& definition, Custom
 // Defined with the adapter: our bag icon under "11", on CreateItemNew's
 // outermost return, before the item's hash is refreshed.
 static void Mark1DressFinal(RValue& item, M1sNs::Piece piece);
+// A drop of ours the game built, on CreateItemNew's own return: `built` of the
+// `mark1set drops:` line. Defined with the drop adapter.
+static void Mark1DropNoteBuilt(M1sNs::Piece piece);
 // ---- end of what the Custom Forge reads for the Mark 1 set ------------------
 
 static volatile LONG g_CustomForgeHashMisses = 0;
@@ -4886,6 +4889,7 @@ static bool TryApplyCustomForge(RValue* candidate, bool finalPass = false)
             if (!flightMatched && !mark1Matched && !CustomForgeMatches(entry, *candidate, definition)) continue;
             if (finalPass) SignatureNoteBuilt(entry.selector);   // #74: a game-built Headhunter / Tyrant's Crown
             if (finalPass && flightMatched) FlightDropNoteBuilt(flightRolled.charm);   // #158: a game-built flight charm drop
+            if (finalPass && mark1Matched) Mark1DropNoteBuilt(mark1Piece);   // #166: a game-built Mark 1 drop
             if (!entry.keepNative) {
                 RValue names = g_Yytk->CallBuiltin("variable_struct_get_names", { stats });
                 if (names.m_Kind == VALUE_ARRAY) {
@@ -13238,6 +13242,11 @@ static void FlightDropAngelicRemove();
 static void FlightDropAttributeHit();
 static void FlightDropBeforeCreate(RValue& record, const std::string& missing);
 static void FlightDropAfterHit();
+// Mark 1 drops (#166): the same hit's share of the Heroic roll, called from #74's machinery below
+// beside the flight charms'; defined with the Mark 1 drop adapter, near the end of the file.
+static void Mark1DropHitReset();
+static void Mark1DropAttributeHit();
+static bool Mark1DropBeforeCreate(RValue& record, const std::string& missing);
 // The shared ground-icon hook (hidden loot's one LootGroundInit detour), installed once; defined
 // after HiddenLootInstall.
 static void FlightGroundIconInstall();
@@ -14084,6 +14093,8 @@ static void SignatureBeforeCreate(int argc, RValue** A)
 #endif
     // #158: a hit that fell to a flight charm is rewritten to that charm's own definition here.
     if (which < 0 && g_FlightDrop.hitCharm >= 0) { FlightDropBeforeCreate(record, missing); return; }
+    // #166: a Heroic roll's hit that fell to a Mark 1 piece is rewritten to that piece's own definition.
+    if (which < 0 && Mark1DropBeforeCreate(record, missing)) return;
     if (which < 0) return;   // the game's own hit: its record is never touched
 #ifndef FORGEPACT_RELEASE
     if (g_SigHitShow) Out("angelic hit record: before " + (missing.empty() ? SigJson(record) : "<" + missing + ">"));
@@ -14153,6 +14164,7 @@ static void SignatureHitReset()
     g_SigHitBuiltType = -1.0; g_SigHitTypeNoted = false;
 #endif
     FlightDropHitReset();   // #158: the flight charms' share of the same hit
+    Mark1DropHitReset();    // #166: the Mark 1 pieces' share of a Heroic roll's hit
 }
 #ifndef FORGEPACT_RELEASE
 // Research build: Loot_Ground_obj by its SDK name, for `lootDelta=` and the replace mode.
@@ -14308,6 +14320,11 @@ static RValue& Hook_CreateDefaultParams(CInstance* S, CInstance* O, RValue& R, i
     // flight charm's stand-in entries.
     if (g_SigRollDepth > 0 && g_SigHitTyped && g_FlightDrop.rollPushed > 0) {
         try { FlightDropAttributeHit(); } catch (...) {}
+    }
+    // #166: the same typed hit, when a Heroic roll carries the Mark 1 pieces' stand-in entries
+    // (Mark1DropAttributeHit asks that itself).
+    if (g_SigRollDepth > 0 && g_SigHitTyped) {
+        try { Mark1DropAttributeHit(); } catch (...) {}
     }
     return r;
 }
@@ -25506,6 +25523,9 @@ static void ApRollSetRoute(ApRollRow& r, long route, const std::string& text)
     InterlockedExchange(&r.route, route);
 }
 
+// #166: whether the Mark 1 drops' hook holds DropItemHeroic; defined with the Mark 1 drop adapter.
+static bool Mark1DropHoldsHeroic();
+
 // The route rule above, in order; tgprobe's TgProbeAttach is the precedent.
 static void ApRollAttach(ApRollRow& r)
 {
@@ -25521,6 +25541,13 @@ static void ApRollAttach(ApRollRow& r)
     if (std::string_view(r.id) == "drop-unique" && g_Orig_FlightDropUnique) {
         ApRollSetRoute(r, kApRollBlocked, "blocked: the flight charms' Pocket Elf hook (Hook_FlightDropUniqueItems) already holds this script - "
             "`flightcharm stat`'s elf= and injected= are the measure");
+        return;
+    }
+    // #166: the Mark 1 drops' hook installed first holds DropItemHeroic; this row refuses rather
+    // than stack a second detour on it (Mark1DropResearchHolder is the other half of the rule).
+    if (std::string_view(r.id) == "drop-heroic" && Mark1DropHoldsHeroic()) {
+        ApRollSetRoute(r, kApRollBlocked, "blocked: the Mark 1 drops hook (Hook_Mark1DropHeroic) already holds this script - "
+            "`mark1set stat`'s drops line (heroic-calls=, injected=) is the measure");
         return;
     }
     const std::string full = "gml_Script_" + std::string(r.script);
@@ -64203,8 +64230,14 @@ static M1sNs::StatFields Mark1SetStatFields()
     return f;
 }
 
-// `mark1set bonus 1|0` (the panel's switch); bare `mark1set` or `stat` reads
-// the set afresh when a character is loaded and prints the core's line.
+// The drops' switch and their stat line (Mark1Drops.hpp), defined with the
+// drop adapter just below.
+static void Mark1DropsSwitch(bool on);
+static std::string Mark1DropStatLine();
+
+// `mark1set bonus 1|0` (the panel's switch) and `mark1set drops 1|0` (the
+// drops' switch); bare `mark1set` or `stat` reads the set afresh when a
+// character is loaded and prints the core's line, then the drops' line.
 static void Mark1SetCommand(const std::string& rest)
 {
     std::vector<std::string> args;
@@ -64212,6 +64245,7 @@ static void Mark1SetCommand(const std::string& rest)
     M1sNs::Command c;
     std::string why;
     if (!M1sNs::ParseCommand(args, c, why)) { Out(why); return; }
+    if (c.form == M1sNs::CommandForm::Drops) { Mark1DropsSwitch(c.on); return; }
     if (c.form == M1sNs::CommandForm::Bonus) {
         g_Mark1.SetEnabled(c.on);
         // In game, with a character loaded: at once. At character select (the
@@ -64227,8 +64261,526 @@ static void Mark1SetCommand(const std::string& rest)
         g_M1sBusy = false;
     }
     Out(M1sNs::StatLine(Mark1SetStatFields()));
+    Out(Mark1DropStatLine());   // the drops' own line, after the set's
 }
 // ---- end of the Mark 1 set adapter ----------------------------------------------
+
+// ---- Mark 1 set (Mark1Drops.hpp): the drop adapter --------------------------------
+// While the "Mark 1 drops" switch (`mark1set drops 1`) is on, each of the four
+// pieces joins the game's own Heroic roll, DropItemHeroic, with one entry's
+// share, on #74's machinery the way the flight charms join theirs: for the
+// length of one call, one stand-in entry per piece (a triple of the piece's own
+// class that the roll keeps, chosen from the live list by the core) goes onto
+// the sub-list that call reads; #74's typing hook types the hit, its
+// CreateDefaultParams hook is the hit, and a hit on a stand-in's whole triple
+// is the piece's at c in n + c. The piece's record is rewritten at
+// CreateItemNew's entry (SignatureRewriteParams) to its own definition, the
+// game builds that base item under the entry's class, the Mark 1 Custom Forge
+// entry dresses it, and the forge's final pass counts it built. Every decision
+// is Mark1Drops.hpp's; this block hooks, reads the list and each triple's
+// repository verdict by name outside the roll, pushes and removes. The
+// install arms like the set's (the guide's Known Limitations item 8): nothing
+// is hooked before a character exists. With the switch off the hook passes
+// every call through, counted. Game thread only.
+#include <ForgePact/Mark1Drops.hpp>
+namespace M1dNs = ForgePact::Mark1Drops;
+
+struct Mark1DropState {
+    M1dNs::Drops    core;
+    // DropItemHeroic's hook, by its SDK name, tried once a session by the install.
+    bool            hookTried = false, hookNative = false;
+    std::string     hookRoute = "not-installed";
+    unsigned long long armedFrames = 0;   // frames the tick ran while armed and not installed
+    // The current call: whether one is in progress with entries of ours, the plan the core gave
+    // it, the entries of each plan row that actually went on (fewer after a ds_list_add that threw
+    // partway), the list they went onto (its index, its handle as read, its size before), and
+    // whether the held read-back's refusal was logged since it last passed.
+    bool            rolling = false;
+    M1dNs::PushPlan plan;
+    std::vector<int> on;
+    int             pushed = 0;
+    int             index = -1;
+    RValue          sub;
+    int             before = -1;
+    bool            heldMissLogged = false;
+    std::string     listWhy;
+    // The current hit: the piece whose stand-in it was (-1 none), the coin (share in n + share),
+    // the piece it fell to (-1: the game's own stand-in), whether its record was rewritten, and
+    // the rewritten records not yet seen built, this call.
+    int             hitStandIn = -1, hitPiece = -1;
+    long long       hitN = 0, hitShare = 0;
+    bool            hitRewritten = false;
+    std::string     hitWhy;
+    int             pending[M1sNs::kPieceCount] = { 0, 0, 0, 0 };
+};
+static Mark1DropState g_M1Drop;
+static PFUNC_YYGMLScript g_Orig_Mark1DropHeroic = nullptr;
+// The copies of each piece's stand-in one call pushes: the constant 1 in the player build (one
+// entry's share); the research build's copies lever sets it.
+#ifdef FORGEPACT_RELEASE
+static constexpr int g_Mark1DropCopies = M1dNs::kPlayerCopies;
+#else
+static int g_Mark1DropCopies = M1dNs::kPlayerCopies;
+#endif
+
+// Whether a call may build a piece now (the core's ArtReady): the art not armed, nothing embedded,
+// or the ground consumer's one install tried, so a piece built on the ground never draws Error_spr.
+static bool Mark1DropArtReady()
+{
+    return M1dNs::ArtReady(g_Mark1.ArtArmed(), (int)ForgePact::Mark1Icons::kIconCount, g_M1sGroundTried);
+}
+
+// The call's third argument, the sub-list index, as the core reads it.
+static M1dNs::ArgKind Mark1DropArgOf(int argc, RValue** A, double& value)
+{
+    value = 0.0;
+    if (argc < 3 || !A || !A[2]) return M1dNs::ArgKind::Absent;
+    const RValue& v = *A[2];
+    if (v.m_Kind == VALUE_UNDEFINED || v.m_Kind == VALUE_UNSET) return M1dNs::ArgKind::Undefined;
+    if (v.m_Kind != VALUE_REAL && v.m_Kind != VALUE_INT32 && v.m_Kind != VALUE_INT64) return M1dNs::ArgKind::Other;
+    try { value = v.ToDouble(); } catch (...) { return M1dNs::ArgKind::Other; }
+    return M1dNs::ArgKind::Number;
+}
+
+// lootListUnique[index] off the first Controller_obj, by name: the element's handle, its id and
+// its size. False with `why` when the variable is not an array, has no such element, or the
+// element is not a live ds_list.
+static bool Mark1DropReadList(int index, RValue& sub, double& id, int& size, std::string& why)
+{
+    RValue instance;
+    if (!SignatureController(instance, why)) return false;
+    try {
+        const RValue outer = g_Yytk->CallBuiltin("variable_instance_get", { instance, RValue(g_SigListName) });
+        if (outer.m_Kind != VALUE_ARRAY) { why = "Controller_obj." + g_SigListName + " is not an array"; return false; }
+        const int len = (int)g_Yytk->CallBuiltin("array_length", { outer }).ToDouble();
+        if (index < 0 || index >= len) { why = "Controller_obj." + g_SigListName + " has " + std::to_string(len) + " elements"; return false; }
+        sub = g_Yytk->CallBuiltin("array_get", { outer, RValue((double)index) });
+        std::string step;
+        if (!SigListHandle(sub, id, step)) { why = "Controller_obj." + g_SigListName + "[" + std::to_string(index) + "] is not a ds_list (" + step + ")"; return false; }
+        size = (int)g_Yytk->CallBuiltin("ds_list_size", { sub }).ToDouble();
+    } catch (...) { why = "reading Controller_obj." + g_SigListName + " threw"; return false; }
+    return true;
+}
+
+// The repository's verdict on a triple, by name: its definition's itemBaseInfoStruct rarity
+// ("27") and whether it is flagged hidden ("40") - the reads FlightDropUniquePasses makes. False
+// when either cannot be read. Called outside a roll's scope only.
+static bool Mark1DropVerdict(const M1dNs::Triple& key, int& rarity, bool& hidden)
+{
+    try {
+        const RValue def = g_Yytk->CallGameScript(HeroSiege::Scripts::gml_Script_GetUniqueRepoStruct,
+                                                  { RValue((double)key.t), RValue((double)key.sub), RValue((double)key.b) });
+        if (def.m_Kind != VALUE_OBJECT) return false;
+        const RValue info = g_Yytk->CallBuiltin("variable_struct_get", { def, RValue("itemBaseInfoStruct") });
+        double r = -1.0;
+        if (!TryStructNumber(info, "27", r)) return false;
+        const RValue f40 = g_Yytk->CallBuiltin("variable_struct_get", { info, RValue("40") });
+        hidden = false;
+        try { hidden = f40.m_Kind != VALUE_UNDEFINED && f40.m_Kind != VALUE_UNSET && f40.ToBoolean(); } catch (...) { hidden = false; }
+        rarity = (int)r;
+        return true;
+    } catch (...) { return false; }
+}
+
+// Every entry of a sub-list as the core reads it: a three-number array, or anything else.
+static std::vector<M1dNs::ListEntry> Mark1DropEntries(const RValue& sub, int size)
+{
+    std::vector<M1dNs::ListEntry> list;
+    list.reserve(size > 0 ? (size_t)size : 0);
+    for (int e = 0; e < size; ++e) {
+        M1dNs::ListEntry le;
+        double t[3] = { 0.0, 0.0, 0.0 };
+        if (SigEntry(sub, e, t)) { le.triple = true; le.t = t[0]; le.sub = t[1]; le.b = t[2]; }
+        list.push_back(le);
+    }
+    return list;
+}
+
+// The stand-ins of one sub-list, resolved again (the core's ResolveStandIns) and cached by its id
+// and length; every verdict is read outside the roll's scope.
+static void Mark1DropResolve(int index, const RValue& sub, double id, int size)
+{
+    FlightDropOutsideRoll outside;
+    const M1dNs::Resolution r = M1dNs::ResolveStandIns(index, Mark1DropEntries(sub, size), Mark1DropVerdict);
+    g_M1Drop.core.Cache().Store((uint64_t)id, r);
+}
+
+// Whether the list ends with exactly this call's entries: its size before, plus each plan row's
+// stand-in on[e] times, in plan order (the order they were pushed).
+static bool Mark1DropTailHolds(int& len)
+{
+    const Mark1DropState& d = g_M1Drop;
+    len = -1;
+    try {
+        if (!g_Yytk->CallBuiltin("ds_exists", { d.sub, RValue(2.0) }).ToBoolean()) return false;
+        len = (int)g_Yytk->CallBuiltin("ds_list_size", { d.sub }).ToDouble();
+    } catch (...) { return false; }
+    int at = d.before;
+    for (size_t e = 0; e < d.plan.entries.size() && e < d.on.size(); ++e) {
+        const M1dNs::Triple& k = d.plan.entries[e].triple;
+        for (int n = 0; n < d.on[e]; ++n) {
+            double t[3] = { 0.0, 0.0, 0.0 };
+            if (!SigEntry(d.sub, at++, t) || t[0] != (double)k.t || t[1] != (double)k.sub || t[2] != (double)k.b) return false;
+        }
+    }
+    return at == len;
+}
+
+// The held read-back, #74's: the variable read again by name off the first Controller_obj, the
+// element pushed onto must be the same ds_list and hold the push (size and tail).
+static bool Mark1DropHeldReadBack(std::string& seen)
+{
+    const Mark1DropState& d = g_M1Drop;
+    seen = "nothing";
+    RValue sub;
+    double want = -1.0, got = -1.0;
+    int size = -1;
+    std::string why;
+    if (!SigListHandle(d.sub, want, why)) { seen = "the list pushed onto: " + why; return false; }
+    if (!Mark1DropReadList(d.index, sub, got, size, why)) { seen = why; return false; }
+    if (got != want) { seen = "another value at [" + std::to_string(d.index) + "]"; return false; }
+    int len = -1;
+    if (!Mark1DropTailHolds(len)) { seen = "[" + std::to_string(d.index) + "] with " + std::to_string(len) + " entries"; return false; }
+    return true;
+}
+
+static void Mark1DropClearRoll()
+{
+    Mark1DropState& d = g_M1Drop;
+    d.plan = M1dNs::PushPlan{};
+    d.on.clear();
+    d.pushed = 0;
+    d.index = -1;
+    d.sub = RValue();
+    d.before = -1;
+}
+
+// Takes this call's entries off the list again - one ds_list_delete of the last entry per entry
+// that went on (on[], so a partial push comes off too), only while the tail still holds exactly
+// them - else leaves the list as found, says so and counts it (`anomalies=`). Never throws.
+static void Mark1DropRemove()
+{
+    Mark1DropState& d = g_M1Drop;
+    if (d.pushed <= 0) { Mark1DropClearRoll(); return; }
+    int len = -1;
+    bool tail = false;
+    try {
+        tail = Mark1DropTailHolds(len);
+        if (tail) {
+            for (int n = 0; n < d.pushed; ++n)
+                g_Yytk->CallBuiltin("ds_list_delete", { d.sub, RValue((double)(len - 1 - n)) });
+            len = (int)g_Yytk->CallBuiltin("ds_list_size", { d.sub }).ToDouble();
+            if (len == d.before) { Mark1DropClearRoll(); return; }
+        }
+    } catch (...) {}
+    d.core.NoteAnomaly();
+    Out("mark1set drops: " + g_SigListName + "[" + std::to_string(d.index) + "] "
+        + (tail ? "kept entries after removal - size " + std::to_string(len) + ", expected " + std::to_string(d.before)
+                : "changed during the roll, left as found (size " + std::to_string(d.before) + " + " + std::to_string(d.pushed)
+                  + " pushed, now " + std::to_string(len) + ")"));
+    Mark1DropClearRoll();
+}
+
+// Before the call, outside the roll's scope: the sub-list it reads, its stand-ins resolved again
+// when its id or length changed, and the core's plan pushed onto it (copies g_Mark1DropCopies per
+// piece that has a stand-in and is not latched off), then the held read-back. A push it does not
+// show comes off again, is logged once per change and counted, and the call carries nothing.
+static void Mark1DropPush(int index)
+{
+    Mark1DropState& d = g_M1Drop;
+    Mark1DropClearRoll();
+    RValue sub;
+    double id = -1.0;
+    int size = -1;
+    std::string why;
+    if (!Mark1DropReadList(index, sub, id, size, why)) {
+        d.core.NoteListUnreadable(index);
+        d.listWhy = why;
+        return;
+    }
+    d.listWhy.clear();
+    if (d.core.Cache().Stale(index, (uint64_t)id, size)) Mark1DropResolve(index, sub, id, size);
+    const M1dNs::Resolution* r = d.core.Cache().Find(index);
+    if (!r) return;
+    const M1dNs::PushPlan plan = d.core.PlanFor(*r, g_Mark1DropCopies);
+    if (plan.entries.empty()) return;
+    d.plan = plan;
+    d.on.assign(plan.entries.size(), 0);
+    d.index = index;
+    d.sub = sub;
+    d.before = size;
+    bool threw = false;
+    for (size_t e = 0; e < plan.entries.size() && !threw; ++e) {
+        const M1dNs::PushEntry& p = plan.entries[e];
+        for (int n = 0; n < p.copies && !threw; ++n) {
+            try {
+                RValue entry = g_Yytk->CallBuiltin("array_create", { RValue(3.0), RValue(0.0) });
+                g_Yytk->CallBuiltin("array_set", { entry, RValue(0.0), RValue((double)p.triple.t) });
+                g_Yytk->CallBuiltin("array_set", { entry, RValue(1.0), RValue((double)p.triple.sub) });
+                g_Yytk->CallBuiltin("array_set", { entry, RValue(2.0), RValue((double)p.triple.b) });
+                g_Yytk->CallBuiltin("ds_list_add", { d.sub, entry });
+                ++d.on[e];
+                ++d.pushed;
+            } catch (...) { threw = true; }
+        }
+    }
+    std::string seen;
+    if (!threw && Mark1DropHeldReadBack(seen)) {
+        d.heldMissLogged = false;
+        d.core.NotePushed(d.plan);
+        return;
+    }
+    // A throw mid-push or a push a fresh read does not show: the entries that did go on come off
+    // again, so the roll never meets a partial push; the refusal counts once.
+    const int pushed = d.pushed;
+    Mark1DropRemove();
+    d.core.NoteAnomaly();
+    if (threw) { Out("mark1set drops: pushing a stand-in threw - this roll carries no piece"); return; }
+    if (!d.heldMissLogged) {
+        d.heldMissLogged = true;
+        Out("mark1set drops: push not visible through Controller_obj." + g_SigListName + " (a fresh read holds " + seen + ", expected "
+            + std::to_string(pushed) + " pushed) - taken off again; rolls carry no piece until a push reads back");
+    }
+}
+
+// Before each original call (SignatureHitReset): no hit of ours.
+static void Mark1DropHitReset()
+{
+    Mark1DropState& d = g_M1Drop;
+    d.hitStandIn = -1;
+    d.hitPiece = -1;
+    d.hitN = 0;
+    d.hitShare = 0;
+    d.hitRewritten = false;
+    d.hitWhy.clear();
+    for (int i = 0; i < M1sNs::kPieceCount; ++i) d.pending[i] = 0;
+}
+
+// A typed hit inside a call that carries our entries (Hook_CreateDefaultParams, after the game's
+// CreateDefaultParams returned and #74's own attribution): when its whole entry is a pushed
+// stand-in's, the core's AttributeHit decides it, c in n + c, and ours goes to the rewrite point;
+// anything else is the game's own.
+static void Mark1DropAttributeHit()
+{
+    Mark1DropState& d = g_M1Drop;
+    if (!d.rolling || d.pushed <= 0 || g_SigRollDepth <= 0 || !g_SigHitTyped || g_SigHitItem >= 0 || d.hitStandIn >= 0) return;
+    for (const M1dNs::PushEntry& e : d.plan.entries) {
+        if (g_SigHitType != (double)e.triple.t || g_SigLastSub != (double)e.triple.sub || g_SigLastB != (double)e.triple.b) continue;
+        d.hitStandIn = static_cast<int>(e.piece);
+        d.hitN = e.n;
+        d.hitShare = e.copies;
+        const double u = std::uniform_real_distribution<double>(0.0, 1.0)(TyRng());
+        M1sNs::Piece piece = M1sNs::Piece::Helmet;
+        if (!M1dNs::AttributeHit(d.plan, g_SigHitType, g_SigLastSub, g_SigLastB, u, piece)) return;
+        d.hitPiece = static_cast<int>(piece);
+        d.core.NoteOurs(piece);
+        return;
+    }
+}
+
+// A refused rewrite: one line with the reason and the record as it was left, `refused=` counted,
+// and the piece latched off for the session (the core's NoteRewriteRefused), as #74's.
+static void Mark1DropRefuse(int i, const std::string& record)
+{
+    Mark1DropState& d = g_M1Drop;
+    if (i < 0 || i >= M1sNs::kPieceCount) return;
+    const M1sNs::Piece p = static_cast<M1sNs::Piece>(i);
+    const bool first = !d.core.Latched(p);
+    d.core.NoteRewriteRefused(p);
+    const std::string name(M1sNs::RowOf(p).name);
+    Out("mark1set drops: " + name + " refused (" + d.hitWhy + "), the record left vanilla: " + record
+        + (first ? "; " + name + " stays off for this session (rewrite refused)" : std::string()));
+}
+
+// The rewrite point (SignatureBeforeCreate, CreateItemNew's entry): on a hit that fell to a piece,
+// the record becomes the piece's own definition (the core's RewriteFor: a its seed, b its base,
+// c 0, j 0), read back by #74's SignatureRewriteParams, which puts every field back on a refusal.
+// True when the hit was a piece's (rewritten or refused); false leaves the record to #74.
+static bool Mark1DropBeforeCreate(RValue& record, const std::string& missing)
+{
+    Mark1DropState& d = g_M1Drop;
+    const int i = d.hitPiece;
+    if (i < 0 || i >= M1sNs::kPieceCount) return false;
+    std::string why = missing;
+    bool ok = false;
+    if (why.empty()) {
+        const M1dNs::RewriteTarget t = M1dNs::RewriteFor(static_cast<M1sNs::Piece>(i));
+        const SignatureItem item{ "Mark 1 piece", -1, t.itemType, (double)t.a, (double)t.b, nullptr };
+        ok = SignatureRewriteParams(record, item, why);
+    }
+    d.hitRewritten = ok;
+    if (ok) { ++d.pending[i]; return true; }
+    d.hitWhy = why;
+    Mark1DropRefuse(i, missing.empty() ? SigJson(record) : "<" + missing + ">");
+    return true;
+}
+
+// From the Custom Forge's final pass (TryApplyCustomForge on CreateItemNew's own return): a piece
+// was built. It counts as built by the game (`<key>=<ours>/<built>`) only while that piece's
+// rewritten record is pending, i.e. inside the call that rewrote it.
+static void Mark1DropNoteBuilt(M1sNs::Piece piece)
+{
+    const int i = static_cast<int>(piece);
+    if (i < 0 || i >= M1sNs::kPieceCount || g_M1Drop.pending[i] <= 0) return;
+    --g_M1Drop.pending[i];
+    g_M1Drop.core.NoteBuilt(piece);
+}
+
+// After a call returned with a hit: one `mark1set drops hit:` line when the hit fell to a piece,
+// saying whether the game built it; quiet otherwise. Ours with no CreateItemNew call at the
+// rewrite point is a refusal, as #74's.
+static void Mark1DropAfterHit()
+{
+    Mark1DropState& d = g_M1Drop;
+    const int i = d.hitPiece;
+    if (i >= 0 && i < M1sNs::kPieceCount) {
+        const M1sNs::Piece p = static_cast<M1sNs::Piece>(i);
+        std::string standIn = "?";
+        for (const M1dNs::PushEntry& e : d.plan.entries)
+            if (e.piece == p) standIn = std::to_string(e.triple.t) + "/" + std::to_string(e.triple.sub) + "/" + std::to_string(e.triple.b);
+        const std::string who = std::string(M1sNs::RowOf(p).name) + " (stand-in " + standIn + ", " + std::to_string(d.hitShare)
+            + " in " + std::to_string(d.hitN + d.hitShare) + ")";
+        if (!g_SigHitAtPoint) {
+            d.hitWhy = "CreateItemNew did not run for it during the roll";
+            Mark1DropRefuse(i, "<no record seen>");
+        }
+        std::string outcome;
+        if (!d.hitRewritten) outcome = who + " refused (" + d.hitWhy + "), the game placed its own stand-in";
+        else if (d.pending[i] == 0) outcome = who + " built by the game";
+        else outcome = who + " handed to the game, not seen built during the roll";
+        Out("mark1set drops hit: heroic roll -> " + outcome);
+    }
+    for (int k = 0; k < M1sNs::kPieceCount; ++k) d.pending[k] = 0;
+}
+
+// The call's push and removal, on every way out, a throw from the game's roll included.
+struct Mark1DropInjectGuard {
+    explicit Mark1DropInjectGuard(int index) { g_M1Drop.rolling = true; try { Mark1DropPush(index); } catch (...) {} }
+    ~Mark1DropInjectGuard() { try { Mark1DropRemove(); } catch (...) {} g_M1Drop.rolling = false; }
+    Mark1DropInjectGuard(const Mark1DropInjectGuard&) = delete;
+    Mark1DropInjectGuard& operator=(const Mark1DropInjectGuard&) = delete;
+};
+
+// DropItemHeroic, by its SDK name (Mark1DropInstall). Every call is counted (`heroic-calls=`, the
+// instrument's own control); the core's BeginCall decides the rest before anything is read: the
+// switch off, #74's detection not all inline, a roll already in progress (the Angelic roll's or
+// this one's), the art not ready, or a third argument that names no sub-list, and it is the
+// game's own call untouched. Otherwise, for the length of the call: the push (outside the roll's
+// scope), then #74's roll-in-progress and hit reset, so the call's GetUniqueRepoStruct read types
+// the hit, its CreateDefaultParams call is the hit, and its CreateItemNew entry is the rewrite
+// point; #74's counters are put back after it (FlightUniqueCounterScope), so `sigdrop status`
+// reads as before.
+static RValue& Hook_Mark1DropHeroic(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    if (!g_Orig_Mark1DropHeroic) return R;
+    double value = 0.0;
+    const M1dNs::ArgKind kind = Mark1DropArgOf(argc, A, value);
+    int index = M1dNs::kListRefused;
+    const M1dNs::CallAction action = g_M1Drop.core.BeginCall(g_SigDetectNative, g_SigRollDepth, Mark1DropArtReady(), kind, value, index);
+    if (action != M1dNs::CallAction::Resolve) return g_Orig_Mark1DropHeroic(S, O, R, argc, A);
+    Mark1DropInjectGuard inject(index);
+    SignatureRollScope roll;
+    FlightUniqueCounterScope counters;
+    SignatureHitReset();
+    RValue& r = g_Orig_Mark1DropHeroic(S, O, R, argc, A);
+    if (g_SigHitSeen) {
+        g_SigHitSeen = false;
+        try { Mark1DropAfterHit(); } catch (...) {}
+    }
+    return r;
+}
+
+#ifndef FORGEPACT_RELEASE
+// The research build's other holder of DropItemHeroic: angelicprobe's drop-heroic row. Whichever
+// comes second refuses (ApRollAttach asks the other way round, through Mark1DropHoldsHeroic).
+static std::string Mark1DropResearchHolder()
+{
+    for (const ApRollRow& r : g_ApRollRows)
+        if (std::string_view(r.id) == "drop-heroic" && r.tramp != nullptr) return "angelicprobe's drop-heroic row";
+    return "";
+}
+
+static bool Mark1DropHoldsHeroic() { return g_Orig_Mark1DropHeroic != nullptr; }
+#endif
+
+// The one install path, through Mark1DropInstallIfReady: "" when the hook is in, detoured,
+// otherwise why the drops stay off. The pieces' ground icon goes in first when it is pending (no
+// call builds a piece before it was tried), then #74's detection (the typing, the hit and the
+// rewrite point), then the hook on DropItemHeroic, refused unless its inline detour went in: the
+// game's compiled calls pass a table-only hook by. A hook that went in stays in.
+static std::string Mark1DropInstall()
+{
+    Mark1DropState& d = g_M1Drop;
+#ifndef FORGEPACT_RELEASE
+    if (!g_Orig_Mark1DropHeroic) {
+        const std::string holder = Mark1DropResearchHolder();
+        if (!holder.empty()) {
+            d.hookRoute = "held-by-angelicprobe";
+            return holder + " holds DropItemHeroic (a script takes one inline detour; a second install would be table-only"
+                   " and blind); the drops stay off. Relaunch without it to use mark1set drops.";
+        }
+    }
+#endif
+    Mark1GroundIconInstall();
+    InstallSignatureAngelicHooks();
+    if (!d.hookTried) {
+        d.hookTried = true;
+        bool native = false;
+        const bool ok = HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_DropItemHeroic), "fp_mark1_dheroic",
+                                      (PVOID)Hook_Mark1DropHeroic, &g_Orig_Mark1DropHeroic, &native);
+        d.hookNative = ok && native;
+        d.hookRoute = !ok ? "not-found" : native ? "detoured" : "TABLE-ONLY";
+    }
+    if (d.hookRoute == "not-found") return "DropItemHeroic was not found by name (see the hook line above)";
+    if (!d.hookNative)
+        return "DropItemHeroic went in " + d.hookRoute + " (no inline detour): the game's own calls would pass it by";
+    return "";
+}
+
+// Installs when the core says so (Mark1Drops.hpp's ShouldInstall): the switch on, the hook not
+// in, setup done, the local player resolved and, from the tick, no try of its own yet. Before a
+// character exists it installs nothing. A refusal prints its one line and the core turns the
+// switch off.
+static void Mark1DropInstallIfReady(bool fromTick)
+{
+    Mark1DropState& d = g_M1Drop;
+    const bool havePlayer = d.core.ShouldInstall(g_Setup, true, fromTick) && Mark1PlayerResolves();
+    if (!d.core.ShouldInstall(g_Setup, havePlayer, fromTick)) return;
+    const std::string why = Mark1DropInstall();
+    d.core.NoteInstall(why.empty(), fromTick);
+    if (!why.empty()) Out("mark1set drops: refused - " + why);
+}
+
+// The per-frame tick, from FrameCallback beside the set's: returns at once unless the drops are
+// armed and not installed; then looks for the local player every kInstallPollFrames frames.
+static void Mark1DropsTick()
+{
+    Mark1DropState& d = g_M1Drop;
+    if (!d.core.TickNeeded()) return;
+    if (M1dNs::Drops::LooksForPlayer(d.armedFrames++)) Mark1DropInstallIfReady(true);
+}
+
+// `mark1set drops 1|0` (the panel's "Mark 1 drops" switch): the core's SetSwitch, which also arms
+// the pieces' art on a switch-on; in game with a character, the install at once; at character
+// select armed only, and the tick installs later. Off only stops the pushes (the hook stays in
+// and passes every call through).
+static void Mark1DropsSwitch(bool on)
+{
+    M1dNs::SetSwitch(g_M1Drop.core, g_Mark1, on);
+    if (on && !g_M1Drop.core.Installed()) Mark1DropInstallIfReady(false);
+    Out(M1dNs::DropsReply(g_M1Drop.core, g_SigDetectNative));
+}
+
+// `mark1set stat`'s second line: every field the core's FillStat, and `hook=` the DropItemHeroic
+// route this adapter got.
+static std::string Mark1DropStatLine()
+{
+    M1dNs::DropStatFields f;
+    g_M1Drop.core.FillStat(f, g_SigDetectNative);
+    f.hook = g_M1Drop.hookRoute;
+    return M1dNs::DropStatLine(f);
+}
+// ---- end of the Mark 1 drop adapter ----------------------------------------------
 
 #ifndef FORGEPACT_RELEASE
 // ---- mark1probe: the Mark 1 set's phase 1 instrument (ForgePact #166) ----
@@ -65287,6 +65839,77 @@ static void M1pSpawn(const M1pNs::Command& c)
     }
 }
 
+// ---- the drops' forms: heroic, pool, copies ------------------------------------------
+
+// `mark1probe heroic <n>`: DropItemHeroic by its SDK name with the local player as self and its
+// position as the first two arguments (charmprobe heroic's call shape, whose helpers it reads the
+// player and the ground with), n times. One line per call - what it placed, read off the newest
+// Loot_Ground_obj, and whether that is a piece (Mark1PieceOf, by its own fields) - then the
+// core's summary. While the drops are on, each call goes through their hook like the game's own.
+static void M1pHeroic(const M1pNs::Command& c)
+{
+    RValue player;
+    CInstance* self = nullptr;
+    double x = 0, y = 0;
+    std::string why;
+    if (!FcpPlayer(player, self, x, y, why)) { Out("mark1probe heroic: refused - " + why + " (load a character first)"); return; }
+    double ground = -1;
+    const RValue index = g_Yytk->CallBuiltin("asset_get_index", {
+        RValue(std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Loot_Ground_obj))) });
+    if (!ApNumber(index, ground) || ground < 0) { Out("mark1probe heroic: refused - Loot_Ground_obj not resolved"); return; }
+    M1pNs::HeroicTally tally;
+    for (int i = 1; i <= c.count; ++i) {
+        M1pNs::HeroicCall r;
+        const double before = FcpNewestGround(ground, nullptr);
+        RValue res;
+        AurieStatus st = AURIE_EXTERNAL_ERROR;
+        try { st = g_Yytk->CallGameScriptEx(res, HeroSiege::Scripts::gml_Script_DropItemHeroic, self, self, { RValue(x), RValue(y) }); }
+        catch (...) { r.why = "DropItemHeroic threw"; tally.Add(r); Out(M1pNs::HeroicCallLine(i, r)); continue; }
+        if (!AurieSuccess(st)) { r.why = "DropItemHeroic st=" + std::to_string((int)st); tally.Add(r); Out(M1pNs::HeroicCallLine(i, r)); continue; }
+        RValue newest;
+        if (FcpNewestGround(ground, &newest) <= before) { r.why = "returned " + Describe(res); tally.Add(r); Out(M1pNs::HeroicCallLine(i, r)); continue; }
+        r.placed = true;
+        RValue item, info, def, v;
+        try { item = g_Yytk->CallBuiltin("variable_instance_get", { newest, RValue(std::string(HeroSiege::Player::kGroundItemInstanceField)) }); }
+        catch (...) {}
+        FcpMember(item, "itemInfoStruct", info);
+        FcpMember(item, "itemDefinitionStruct", def);
+        double n = 0;
+        if (FcpMember(item, "itemType", v) && FcpNumber(v, n)) r.t = n;
+        if (FcpMember(def, "b", v) && FcpNumber(v, n)) r.b = n;
+        if (FcpMember(def, "c", v) && FcpNumber(v, n)) r.c = n;
+        if (FcpMember(info, "27", v) && FcpNumber(v, n)) r.rarity = n;
+        if (FcpMember(info, "28", v) && v.m_Kind == VALUE_STRING) r.name = v.ToString();
+        r.isPiece = Mark1PieceOf(item, r.piece);
+        tally.Add(r);
+        Out(M1pNs::HeroicCallLine(i, r));
+    }
+    Out(tally.Line());
+}
+
+// `mark1probe pool [<k>]`: lootListUnique[k] read through the drop adapter's own reads
+// (Mark1DropReadList, Mark1DropEntries, and each distinct triple's Mark1DropVerdict outside a
+// roll), then the core's summary: what the Heroic roll keeps of it and each piece's stand-in.
+// Writes nothing.
+static void M1pPool(const M1pNs::Command& c)
+{
+    RValue sub;
+    double id = -1.0;
+    int size = -1;
+    std::string why;
+    if (!Mark1DropReadList(c.count, sub, id, size, why)) { Out("mark1probe pool: refused - " + why); return; }
+    FlightDropOutsideRoll outside;
+    const M1pNs::PoolSummary s = M1pNs::Pool(c.count, Mark1DropEntries(sub, size), Mark1DropVerdict);
+    for (const std::string& l : M1pNs::PoolLines(s)) Out(l);
+}
+
+// `mark1probe copies <k>`: the copies each piece's stand-in is pushed with per Heroic roll.
+static void M1pCopies(const M1pNs::Command& c)
+{
+    g_Mark1DropCopies = c.count;
+    Out(M1pNs::CopiesLine(g_Mark1DropCopies));
+}
+
 // ---- walkable ----------------------------------------------------------------------
 
 // A builtin's answer as the core reads it: the kind's name, and its value
@@ -65555,6 +66178,9 @@ static void M1pCommand(const std::string& rest)
     case M1pNs::Form::Statlog: M1pStatlog(c); return;
     case M1pNs::Form::Base: M1pBase(c); return;
     case M1pNs::Form::Spawn: M1pSpawn(c); return;
+    case M1pNs::Form::Heroic: M1pHeroic(c); return;
+    case M1pNs::Form::Pool: M1pPool(c); return;
+    case M1pNs::Form::Copies: M1pCopies(c); return;
     case M1pNs::Form::Count: M1pCount(c.object, c.frames); return;
     case M1pNs::Form::Pos: M1pPos(c.frames); return;
     case M1pNs::Form::WalkHere:
@@ -67343,6 +67969,9 @@ void FrameCallback(FWFrame& FrameContext)
     // while armed, the install once a character exists; then the local player
     // refreshed. The set is read inside the hooked cast gate, at the point of use.
     if (g_Setup) Mark1SetTick();
+    // Mark 1 drops: returns at once unless armed and not installed; then the
+    // install once a character exists. The rest happens inside the hooked roll.
+    if (g_Setup) Mark1DropsTick();
 
     // Goburin's Head pity, toggled by `gambapity <count>`: the gamba machines'
     // sprites, once a frame, and each explosion's decision at its deadline

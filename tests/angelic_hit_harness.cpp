@@ -54,6 +54,13 @@
 // independent by contract, so it compiles here whole.
 #include <ForgePact/FlightCharms.hpp>
 namespace FcNs = ForgePact::FlightCharms;
+// The Mark 1 drops' decision core (#166) and the set's, which it arms the art of: game-independent
+// by the same contract. The pieces' icon table is not compiled in; its count is all the drop
+// adapter reads of it (the art-ready test), so a stand-in with icons embedded takes its place.
+#include <ForgePact/Mark1Drops.hpp>
+namespace M1sNs = ForgePact::Mark1Set;
+namespace M1dNs = ForgePact::Mark1Drops;
+namespace ForgePact::Mark1Icons { inline constexpr size_t kIconCount = 8; }
 
 enum { VALUE_REAL, VALUE_INT32, VALUE_INT64, VALUE_OBJECT, VALUE_REF, VALUE_STRING, VALUE_UNDEFINED, VALUE_UNSET, VALUE_ARRAY,
        VALUE_BOOL, VALUE_PTR, VALUE_NULL };
@@ -115,6 +122,7 @@ inline constexpr std::string_view gml_Script_CreateDefaultParams = "gml_Script_C
 inline constexpr std::string_view gml_Script_GetUniqueRepoStruct = "gml_Script_GetUniqueRepoStruct";
 inline constexpr std::string_view gml_Script_CreateItemNew = "gml_Script_CreateItemNew";
 inline constexpr std::string_view gml_Script_DropUniqueItems = "gml_Script_DropUniqueItems";
+inline constexpr std::string_view gml_Script_DropItemHeroic = "gml_Script_DropItemHeroic";
 }
 namespace HeroSiege::Objects {
 enum class GameObject { Loot_Ground_obj = 902, Controller_obj = 984 };
@@ -580,6 +588,35 @@ static void FlightDropNoteBuilt(FcNs::Charm charm);
 static int groundIconInstalls = 0;
 static void FlightGroundIconInstall() { ++groundIconInstalls; }
 
+// The Mark 1 set's state the drop adapter (#166) reads: the set's core (whose art flag the drops'
+// switch-on arms), whether the pieces' one ground install was tried, setup, and whether the
+// local player resolves (false: character select). Mark1GroundIconInstall is the set adapter's,
+// as ModuleMain.cpp writes it: tried once a session, only while the art is armed.
+static ForgePact::Mark1Set::Bonus g_Mark1;
+static bool g_M1sGroundTried = false;
+static bool g_Setup = true;
+static bool playerResolves = true;
+static int mark1GroundInstalls = 0;
+static bool Mark1PlayerResolves() { return playerResolves; }
+static void Mark1GroundIconInstall() {
+    if (!M1sNs::ArtGroundInstallPending(g_Mark1.ArtArmed(), (int)ForgePact::Mark1Icons::kIconCount, g_M1sGroundTried)) return;
+    g_M1sGroundTried = true;
+    ++mark1GroundInstalls;
+    FlightGroundIconInstall();
+}
+#ifdef HAS_MARK1DROPSTATE
+// The Mark 1 drop adapter's state and the globals beside it, as ModuleMain.cpp declares them (the
+// copies a plain int here, as the research build's lever leaves it), and the functions #74's
+// machinery calls before they are defined.
+static Mark1DropState g_M1Drop;
+static PFUNC_YYGMLScript g_Orig_Mark1DropHeroic = nullptr;
+static int g_Mark1DropCopies = 1;
+static void Mark1DropHitReset();
+static void Mark1DropAttributeHit();
+static bool Mark1DropBeforeCreate(RValue& record, const std::string& missing);
+static void Mark1DropNoteBuilt(M1sNs::Piece piece);
+#endif
+
 // ---- the game: CreateDefaultParams, the item builder, the script table, DropItemAngelicChance ---
 // CreateDefaultParams(sub, b, c) returns the struct Live 2 measured, {"b":51.0,"j":0.0,"c":1.0}:
 // `j` the first argument, `b` the second, `c` the third, and no field a and no w. The built
@@ -693,6 +730,10 @@ static std::vector<std::vector<Triple>> listDuringCall;                 // eleme
 static std::vector<std::vector<std::vector<Triple>>> layoutDuringCall;  // every element, per original call
 static std::vector<std::vector<double>> idsDuringCall;                  // the outer array, per original call
 static RValue originalReturn;              // what the game's roll hands back: undefined, always
+// #166: where the game's own calls to DropItemHeroic land (its function, below, or a detoured hook
+// on it), and a scenario's lever that makes the Angelic roll call it once, nested, before its die.
+static PFUNC_YYGMLScript heroicEntry = nullptr;
+static bool angelicNestsHeroic = false;
 static RValue& gameAngelicChance(CInstance* self, CInstance* other, RValue&, int argc, RValue** A) {
     ++originalCalls;
     lastChanceSeen = (argc > 2 && A && A[2] && A[2]->m_Kind == VALUE_REAL) ? A[2]->number : -1;
@@ -722,6 +763,12 @@ static RValue& gameAngelicChance(CInstance* self, CInstance* other, RValue&, int
     }
     if (repoRead != RepoRead::Skip) readDefinition(self, other, picked);
     if (repoRead == RepoRead::PickedThenOther) readDefinition(self, other, kOtherRead);
+    if (angelicNestsHeroic && heroicEntry) {
+        RValue hx(640.0), hy(320.0), hr;
+        RValue* hargs[] = { &hx, &hy };
+        heroicEntry(self, other, hr, 2, hargs);
+        if (repoRead != RepoRead::Skip) readDefinition(self, other, picked);   // the roll's own read is the last again
+    }
     const bool hit = !outcomes.empty() && outcomes.front();
     if (!outcomes.empty()) outcomes.pop_front();
     if (hit) {
@@ -786,6 +833,62 @@ static RValue& gameDropUniqueItems(CInstance* self, CInstance* other, RValue&, i
 // Where the game's own calls to DropUniqueItems land: its function, or a detoured hook on it.
 static PFUNC_YYGMLScript uniqueEntry = gameDropUniqueItems;
 
+// DropItemHeroic(x, y, k), the Heroic roll (#166; hub RDM § 23.4 and the drops workorder's static
+// reading): element k of the same Controller_obj variable, k the third argument and 5 when it is
+// absent or undefined. It draws an entry and draws again until it keeps one: an entry that is not
+// an array is drawn past; a triple's definition is read through GetUniqueRepoStruct by direct call
+// (one read per draw, so the last read before the hit is the kept entry's) and kept when it is not
+// hidden and its rarity is neither 7 nor 10. Then CreateDefaultParams(sub, b, 1) once, by direct
+// call, and the placement under the entry's own type. A triple the model's repository does not
+// know is drawn past too. The draws follow pickPolicy: First walks the list from the front, Last
+// from the back, Among draws uniformly among the entries equal to one of pickTriples, and any
+// other entry uniformly when none is there.
+static int heroicCalls = 0;
+static bool heroicThrows = false;
+static std::vector<std::vector<std::vector<Triple>>> heroicLayoutDuringCall;   // every element, per call
+static std::vector<int> heroicListRead;                                         // the element each call read
+static RValue heroicReturn;
+static RValue& gameDropItemHeroic(CInstance* self, CInstance* other, RValue&, int argc, RValue** A) {
+    ++heroicCalls;
+    heroicLayoutDuringCall.push_back(layoutNow());
+    if (heroicThrows) throw std::runtime_error("the game's Heroic roll threw");
+    heroicReturn = RValue();
+    size_t k = 5;
+    if (argc > 2 && A && A[2] && A[2]->m_Kind == VALUE_REAL && A[2]->number >= 0) k = (size_t)A[2]->number;
+    heroicListRead.push_back((int)k);
+    RValue* v = listVariable();
+    if (!v || v->m_Kind != VALUE_ARRAY || v->array->size() <= k) return heroicReturn;
+    std::vector<RValue>* list = dsFind((*v->array)[k]);
+    if (!list || list->empty()) return heroicReturn;
+    std::vector<size_t> among;
+    if (pickPolicy == Pick::Among)
+        for (size_t i = 0; i < list->size(); ++i)
+            if (std::find(pickTriples.begin(), pickTriples.end(), tripleOf((*list)[i])) != pickTriples.end()) among.push_back(i);
+    for (size_t draw = 0; draw < 100000; ++draw) {
+        size_t index = 0;
+        if (pickPolicy == Pick::First) index = draw % list->size();
+        else if (pickPolicy == Pick::Last) index = list->size() - 1 - draw % list->size();
+        else if (!among.empty() && draw == 0) index = among[std::uniform_int_distribution<size_t>(0, among.size() - 1)(pickRng)];
+        else index = std::uniform_int_distribution<size_t>(0, list->size() - 1)(pickRng);
+        if ((*list)[index].m_Kind != VALUE_ARRAY) continue;
+        const Triple picked = tripleOf((*list)[index]);
+        RValue type(picked[0]), sub(picked[1]), b(picked[2]), definition;
+        RValue* readArgs[] = { &type, &sub, &b };
+        RValue& def = repoEntry(self, other, definition, 3, readArgs);
+        if (def.m_Kind != VALUE_OBJECT || !def.fields->count("itemBaseInfoStruct")) continue;
+        auto& info = obj((*def.fields)["itemBaseInfoStruct"]);
+        const double rarity = info["27"].number;
+        if (info["40"].number != 0.0 || rarity == 7.0 || rarity == 10.0) continue;
+        if (repoRead == RepoRead::PickedThenOther) readDefinition(self, other, kOtherRead);   // a read the hit cannot be typed from
+        RValue c(1.0), params;
+        RValue* args[] = { &sub, &b, &c };
+        RValue& made = cdpEntry(self, other, params, 3, args);
+        gameLootGroundCreate(picked[0], made);
+        return heroicReturn;
+    }
+    throw std::runtime_error("the model's Heroic roll kept nothing in 100000 draws");
+}
+
 // HookOneScript into a fake table: one install per name, a second call answers from the table.
 // By default every install is an inline detour (`*nativeOut = true`), so the roll's direct call
 // reaches the hook. `tableOnlyHook` names one hook whose detour fails, as HookOneScript's
@@ -830,6 +933,12 @@ static bool HookOneScript(const char* shortName, const char* /*id*/, PVOID dest,
         else gameImage.push_back(reinterpret_cast<const void*>(gameDropUniqueItems));
         return true;
     }
+    if (name == "DropItemHeroic") {
+        *origOut = gameDropItemHeroic;
+        if (native) heroicEntry = reinterpret_cast<PFUNC_YYGMLScript>(dest);
+        else gameImage.push_back(reinterpret_cast<const void*>(gameDropItemHeroic));
+        return true;
+    }
     return false;
 }
 // The production test for "this saved original is the game's own code" (HookOneScript's
@@ -867,6 +976,15 @@ static RValue& Hook_CreateItemNew(CInstance* S, CInstance* O, RValue& R, int arg
         if (FcNs::IsFlightCharm(obj(res)["itemType"].number, field(definition, "a"), field(definition, "b"),
                                 field(definition, "c"), field(definition, "j"), rolled))
             FlightDropNoteBuilt(rolled.charm);
+#endif
+#ifdef HAS_MARK1DROPNOTEBUILT
+        // The Custom Forge's Mark 1 rows (#166): a built item whose own fields are a piece's
+        // (Mark1Set.hpp's IsPiece), reported as TryApplyCustomForge's final pass does.
+        const RValue pieceDefinition = obj(res)["itemDefinitionStruct"];
+        M1sNs::Piece piece = M1sNs::Piece::Helmet;
+        if (M1sNs::IsPiece(obj(res)["itemType"].number, field(pieceDefinition, "a"), field(pieceDefinition, "b"),
+                           field(pieceDefinition, "c"), field(pieceDefinition, "j"), piece))
+            Mark1DropNoteBuilt(piece);
 #endif
     }
     return res;
@@ -924,6 +1042,12 @@ static void reset() {
     uniqueEntry = gameDropUniqueItems; uniqueK = 2; uniqueCalls = 0; uniqueThrows = false; uniqueLayoutDuringCall.clear();
 #ifdef HAS_FLIGHTDROPSTATE
     g_FlightDrop = FlightDropState{}; g_Orig_FlightDropUnique = nullptr; g_FlightDropCopies = 1;
+#endif
+    g_Mark1 = ForgePact::Mark1Set::Bonus{}; g_M1sGroundTried = false; g_Setup = true; playerResolves = true; mark1GroundInstalls = 0;
+    heroicEntry = gameDropItemHeroic; angelicNestsHeroic = false;
+    heroicCalls = 0; heroicThrows = false; heroicLayoutDuringCall.clear(); heroicListRead.clear();
+#ifdef HAS_MARK1DROPSTATE
+    g_M1Drop = Mark1DropState{}; g_Orig_Mark1DropHeroic = nullptr; g_Mark1DropCopies = 1;
 #endif
 }
 static void require(bool condition, const std::string& message) {
@@ -1094,6 +1218,104 @@ static FcNs::Gate flightGate(FcNs::Charm c) {
     return FcNs::Gate::Off;
 #endif
 }
+// ---- the Mark 1 drops (#166) ---------------------------------------------------------------------
+// The Heroic roll's pool on the sub-list a scenario names (5 unless it says otherwise): the pieces'
+// classes are helmet 0, body armor 1, boots 2, gloves 4 (Mark1Set.hpp's kPieces).
+static const Triple kHelmetHeroic{ 0, 3, 10 };    // Heroic (9), listed twice: the helmet's stand-in, n 2
+static const Triple kHelmetSatanic{ 0, 3, 11 };   // Satanic (6): kept by the roll, not preferred
+static const Triple kBodyHeroic{ 1, 4, 20 };      // Heroic, once: the body armor's stand-in
+static const Triple kBootsHeroic{ 2, 5, 30 };     // Heroic, once: the boots' stand-in
+static const Triple kGlovesAngelic{ 4, 6, 40 };   // Angelic (7): the roll draws past it, so gloves have none
+static const Triple kHiddenHeroic{ 5, 0, 99 };    // Heroic but flagged hidden: never kept
+// What the Heroic roll keeps of the pool below: the piece rows' five entries and ten ordinary
+// Heroic uniques of class 5. The vanilla Angelic list's own entries (rarity 7, Lucifer's Crown and
+// Mask of the Celestial among them, class 0) are drawn past.
+static std::vector<Triple> heroicOrdinary() {
+    std::vector<Triple> v;
+    for (int i = 0; i < 10; ++i) v.push_back({ 5, 0, (double)i });
+    return v;
+}
+static std::vector<Triple> heroicPieceRows() {
+    return { kHelmetHeroic, kHelmetHeroic, kHelmetSatanic, kBodyHeroic, kBootsHeroic, kGlovesAngelic, kHiddenHeroic };
+}
+static void heroicRepo() {
+    for (const Triple& t : vanillaTriples()) repoInfo[t] = { 7.0, false };
+    for (const Triple& t : heroicOrdinary()) repoInfo[t] = { 9.0, false };
+    repoInfo[kHelmetHeroic] = { 9.0, false };
+    repoInfo[kHelmetSatanic] = { 6.0, false };
+    repoInfo[kBodyHeroic] = { 9.0, false };
+    repoInfo[kBootsHeroic] = { 9.0, false };
+    repoInfo[kGlovesAngelic] = { 7.0, false };
+    repoInfo[kHiddenHeroic] = { 9.0, true };
+}
+// lootListUnique: elements 0..4 otherElements(), element 5 the vanilla Angelic list plus the
+// ordinary Heroic uniques, and the piece rows on element `k` (5 by default) with ordinary Heroic
+// uniques beside them there too.
+static void setHeroicLayout(size_t k = 5, bool pieceRows = true) {
+    heroicRepo();
+    dsLists.clear(); nextDsId = 40;
+    std::vector<std::vector<Triple>> elements = otherElements();
+    elements.push_back(plus(vanillaTriples(), {}));
+    for (const Triple& t : heroicOrdinary()) elements[5].push_back(t);
+    if (k != 5) for (const Triple& t : heroicOrdinary()) elements[k].push_back(t);
+    if (pieceRows) for (const Triple& t : heroicPieceRows()) elements[k].push_back(t);
+    for (const auto& e : elements) for (const Triple& t : e) if (!repoInfo.count(t)) repoInfo[t] = { 3.0, false };
+    std::vector<RValue> ids;
+    for (const auto& e : elements) ids.push_back(dsHandle(dsCreate(entriesOf(e))));
+    controllerVars[kModelListName] = makeArray(std::move(ids));
+    vanilla = elements[5];
+    vanillaIds = idsNow();
+    vanillaLayout = layoutNow();
+}
+// One call of the Heroic roll, through wherever the game's calls land: x, y, and a third argument
+// absent (charmprobe heroic's call shape), undefined, or the number `k`.
+enum class HeroicArg { Absent, Undefined, Number };
+static void dropHeroic(CInstance& self, HeroicArg third = HeroicArg::Absent, double k = 0.0) {
+    static RValue a0, a1, a2, result;
+    a0 = RValue(self.x); a1 = RValue(self.y);
+    a2 = third == HeroicArg::Number ? RValue(k) : RValue();
+    RValue* args[] = { &a0, &a1, &a2 };
+    heroicEntry(&self, &self, result, third == HeroicArg::Absent ? 2 : 3, args);
+}
+// The built items that are a piece (by their own fields), and of which piece (-1: any).
+static int countPieceBuilds(int piece) {
+    int n = 0;
+    for (const auto& b : builds) {
+        M1sNs::Piece p = M1sNs::Piece::Helmet;
+        if (M1sNs::IsPiece(b.t, b.a, b.b, b.c, b.j, p) && (piece < 0 || (int)p == piece)) ++n;
+    }
+    return n;
+}
+static std::string dropsStatLine() {
+#ifdef HAS_MARK1DROPSTATLINE
+    return Mark1DropStatLine();
+#else
+    return std::string();
+#endif
+}
+static bool dropsSwitch(bool on) {
+#ifdef HAS_MARK1DROPSSWITCH
+    Mark1DropsSwitch(on);
+    return true;
+#else
+    (void)on;
+    return false;
+#endif
+}
+static bool lineHas(const std::string& line, const std::string& part) { return line.find(part) != std::string::npos; }
+#ifdef HAS_MARK1DROPSTATE
+// Every field of the drops' line, as the core fills it.
+static M1dNs::DropStatFields dropsFields() {
+    M1dNs::DropStatFields f;
+    g_M1Drop.core.FillStat(f, g_SigDetectNative);
+    return f;
+}
+#endif
+static const char* const kFreshDropsLine =
+    "mark1set drops: drops=off install=not-armed gate=off hook=not-installed list=- heroic-calls=0 pushed-calls=0 nested=0"
+    " art-wait=0 helmet=0/0 body=0/0 boots=0/0 gloves=0/0 injected=0 refused=0 anomalies=0 standin-helmet=none"
+    " standin-body=none standin-boots=none standin-gloves=none list-refused=0 unread=0";
+
 static const char* const kFreshFlightLine =
     "flightcharm: switches elf=off wings=off broom=off | flight install=not-armed state=off equipped=none answered=0 excluded=0"
     " outside-room=0 depth=0 | icons=not-loaded ground=0 | guard kept=0 failed=0 | drops gate=off elf=0/0 wings=0/0 broom=0/0"
@@ -2356,6 +2578,324 @@ int main(int argc, char** argv) {
             require(layoutNow() == vanillaLayout && g_FlightDrop.anomalies == 1, "the next roll left the sub-lists changed");
 #else
             require(false, "this source has no flight drop switch");
+#endif
+        // ---- the Mark 1 drops (#166): baseline, holds against the source before the drop adapter ----
+        } else if (test == "mark1_heroic_untouched_installs_nothing") {
+            // The drops switch never touched: the Heroic roll is the game's own, nothing is hooked
+            // and the plugin calls nothing.
+            setHeroicLayout();
+            pickPolicy = Pick::First;
+            for (int i = 0; i < 5; ++i) dropHeroic(monster);
+            require(installs["DropItemHeroic"] == 0 && heroicEntry == gameDropItemHeroic, "DropItemHeroic was hooked with no switch on");
+            require(builtinCalls == 0, "with no switch on the plugin called the runtime");
+            require(heroicCalls == 5, "the game's Heroic roll did not run once per call");
+            for (const auto& seen : heroicLayoutDuringCall) require(seen == vanillaLayout, "the Heroic roll saw lists that are not the game's own");
+            require(builds.size() == 5 && countPieceBuilds(-1) == 0, "a roll with no switch on built a piece");
+            require(builds[0].t == 5 && builds[0].b == 0 && builds[0].j == 0 && builds[0].c == 1.0,
+                    "the Heroic roll did not build the first entry it keeps, the game's own");
+            require(linesStartingWith("mark1set") == 0, "a drops line was logged with no switch on");
+            const std::string line = dropsStatLine();
+            require(line.empty() || line == kFreshDropsLine, "the drops line moved with no switch on: " + line);
+        } else if (test == "mark1_heroic_switch_off_is_vanilla") {
+            // On (the hook goes in, detoured) and off again: the hook stays and passes every call
+            // through, counted - the list each call reads and what it builds are the game's own.
+#ifdef HAS_MARK1DROPSTATE
+            setHeroicLayout();
+            require(dropsSwitch(true), "this source has no drops switch");
+            dropsSwitch(false);
+            pickPolicy = Pick::Among; pickTriples = { kBootsHeroic, kHelmetHeroic };
+            for (int i = 0; i < 40; ++i) dropHeroic(monster);
+            require(installs["DropItemHeroic"] == 1 && heroicEntry != gameDropItemHeroic, "the switch-on did not hook DropItemHeroic, detoured");
+            for (const auto& seen : heroicLayoutDuringCall) require(seen == vanillaLayout, "switched off, the Heroic roll saw a changed list");
+            require(layoutNow() == vanillaLayout, "switched off, the lists are not the game's own after the rolls");
+            require(builds.size() == 40 && countPieceBuilds(-1) == 0, "switched off, a piece was built");
+            for (const auto& b : builds) require(b.c == 1.0 && b.a == kLootGroundSeed, "switched off, a record was rewritten");
+            const std::string line = dropsStatLine();
+            require(lineHas(line, "mark1set drops: drops=off install=installed gate=off hook=detoured "), "the drops line: " + line);
+            require(lineHas(line, " heroic-calls=40 pushed-calls=0 nested=0 art-wait=0 helmet=0/0 body=0/0 boots=0/0 gloves=0/0"
+                                  " injected=0 refused=0 anomalies=0 "), "switched off, the counters moved: " + line);
+            require(linesStartingWith("mark1set drops hit:") == 0, "switched off, a hit was taken for a piece");
+#else
+            require(false, "this source has no Mark 1 drop adapter");
+#endif
+        // ---- the Mark 1 drops (#166): target, every scenario fails against the source before them ----
+        } else if (test == "mark1_heroic_stat_line_fresh") {
+            require(!dropsStatLine().empty(), "this source has no Mark 1 drop adapter");
+            require(dropsStatLine() == kFreshDropsLine, "the fresh drops line is not the core's: " + dropsStatLine());
+        } else if (test == "mark1_heroic_hit_builds_the_piece") {
+            // A hit on a pushed stand-in's whole triple is the piece's at c in n + c (boots: 1 in 2);
+            // the game builds the piece from the rewritten record - its class, seed and base, c 0,
+            // j 0 - and the forge's final pass counts it built; a stand-in hit lost on the coin is
+            // the game's own stand-in, its record untouched.
+#ifdef HAS_MARK1DROPSTATE
+            setHeroicLayout();
+            dropsSwitch(true);
+            require(lastLine("mark1set:") == "mark1set: drops=on install=installed gate=on", "the switch-on reply: " + lastLine("mark1set:"));
+            require(g_Mark1.ArtArmed() && g_M1sGroundTried && mark1GroundInstalls == 1,
+                    "the drops' switch-on did not arm the art and try the pieces' ground install");
+            const std::string resolved = dropsStatLine();
+            const std::vector<Triple> carried = plus(vanilla, { kHelmetHeroic, kBodyHeroic, kBootsHeroic });
+            pickPolicy = Pick::Among; pickTriples = { kBootsHeroic };
+            int calls = 0, lost = 0;
+            while (calls < 200 && (dropsFields().pieces[2].ours == 0 || lost == 0)) {
+                const size_t before = builds.size();
+                dropHeroic(monster);
+                ++calls;
+                require(builds.size() == before + 1, "a call did not build one item");
+                if (builds.back().a != 777502.0) ++lost;   // every pick is a boots stand-in: ours or lost on the coin
+            }
+            require(heroicCalls == calls, "the game's Heroic roll did not run once per call");
+            for (const auto& seen : heroicLayoutDuringCall) {
+                require(seen[5] == carried, "a call's list did not carry the three stand-ins once, after the game's own entries");
+                for (size_t k = 0; k < 5; ++k) require(seen[k] == vanillaLayout[k], "the push reached another sub-list");
+            }
+            require(layoutNow() == vanillaLayout, "after the calls the lists are not the game's own");
+            const M1dNs::DropStatFields f = dropsFields();
+            require(f.pieces[2].ours >= 1 && lost >= 1, "200 calls gave no piece, or no lost coin");
+            require((int)f.pieces[2].ours == countPieceBuilds(2) && f.pieces[2].built == f.pieces[2].ours && countPieceBuilds(-1) == countPieceBuilds(2),
+                    "the boots taken were not each built once, and counted built");
+            for (const auto& b : builds) {
+                if (b.a == 777502.0) require(b.t == 2 && b.b == 0 && b.c == 0 && b.j == 0, "a piece was not built from Mark 1 Boots' own definition");
+                else require(b.t == 2 && b.j == 5 && b.b == 30 && b.c == 1.0 && b.a == kLootGroundSeed, "a lost coin did not build the game's own stand-in");
+            }
+            require(anyLineHas("mark1set drops hit:", "heroic roll -> Mark 1 Boots (stand-in 2/5/30, 1 in 2) built by the game"),
+                    "the hit line does not say the game built the boots: " + lastLine("mark1set drops hit:"));
+            const std::string line = dropsStatLine();
+            require(lineHas(resolved, " gate=on hook=detoured "), "the drops line before the calls: " + resolved);
+            require(lineHas(line, " list=5 heroic-calls=" + std::to_string(calls) + " pushed-calls=" + std::to_string(calls) + " "),
+                    "every call was not pushed for: " + line);
+            require(lineHas(line, " injected=" + std::to_string(3 * calls) + " refused=0 anomalies=0 "), "the injected count: " + line);
+            require(lineHas(line, " standin-helmet=3:10@9x2 standin-body=4:20@9x1 standin-boots=5:30@9x1 standin-gloves=none "),
+                    "the stand-ins are not the core's: " + line);
+            require(g_SigRollDepth == 0 && !g_M1Drop.rolling, "the roll state stayed raised");
+#else
+            require(false, "this source has no Mark 1 drop adapter");
+#endif
+        } else if (test == "mark1_heroic_coin_one_in_n_plus_c") {
+            // The helmet's stand-in is listed twice (n 2): one copy makes a helmet-stand-in hit the
+            // piece's 1 in 3, two copies 2 in 4; every hit not ours is the game's own stand-in.
+#ifdef HAS_MARK1DROPSTATE
+            setHeroicLayout();
+            dropsSwitch(true);
+            pickPolicy = Pick::Among; pickTriples = { kHelmetHeroic };
+            for (int i = 0; i < 3000; ++i) dropHeroic(monster);
+            const long long ours = (long long)dropsFields().pieces[0].ours;
+            require(ours >= 850 && ours <= 1150, "a helmet stand-in pick was not ours about 1 in 3: " + std::to_string(ours));
+            require(builds.size() == 3000 && countPieceBuilds(0) == ours && (long long)dropsFields().pieces[0].built == ours,
+                    "the game did not build a helmet for every pick that was ours");
+            for (const auto& b : builds)
+                if (b.a != 777500.0) require(b.t == 0 && b.j == 3 && b.b == 10 && b.c == 1.0, "a pick not ours was not the game's own stand-in");
+                else require(b.t == 0 && b.b == 7 && b.c == 0 && b.j == 0, "a helmet was not built at its base 7");
+            require(anyLineHas("mark1set drops hit:", "Mark 1 Helmet (stand-in 0/3/10, 1 in 3) built by the game"), "the hit line's odds");
+            g_Mark1DropCopies = 2;
+            for (int i = 0; i < 3000; ++i) dropHeroic(monster);
+            const long long ours2 = (long long)dropsFields().pieces[0].ours - ours;
+            require(ours2 >= 1350 && ours2 <= 1650, "with two copies a pick was not ours about 2 in 4: " + std::to_string(ours2));
+            require(heroicLayoutDuringCall.back()[5] == plus(vanilla, { kHelmetHeroic, kHelmetHeroic, kBodyHeroic, kBodyHeroic, kBootsHeroic, kBootsHeroic }),
+                    "two copies did not push each stand-in twice, in plan order");
+            require(layoutNow() == vanillaLayout, "the copies were not all taken off again");
+            require(anyLineHas("mark1set drops hit:", "Mark 1 Helmet (stand-in 0/3/10, 2 in 4) built by the game"), "the hit line's odds at two copies");
+#else
+            require(false, "this source has no Mark 1 drop adapter");
+#endif
+        } else if (test == "mark1_heroic_list_index_from_the_argument") {
+            // The third argument names the sub-list: a whole number 0..5 is that list, absent or
+            // undefined is 5, anything else is refused and counted, and nothing is pushed for it.
+#ifdef HAS_MARK1DROPSTATE
+            setHeroicLayout(2);
+            dropsSwitch(true);
+            pickPolicy = Pick::Among; pickTriples = { kBootsHeroic };
+            dropHeroic(monster, HeroicArg::Number, 2.0);
+            require(heroicListRead.back() == 2, "the model did not read element 2");
+            require(heroicLayoutDuringCall[0][2] == plus(vanillaLayout[2], { kHelmetHeroic, kBodyHeroic, kBootsHeroic }),
+                    "lootListUnique[2] did not carry the stand-ins during the call");
+            require(heroicLayoutDuringCall[0][5] == vanillaLayout[5], "the push for list 2 went onto lootListUnique[5]");
+            require(lineHas(dropsStatLine(), " list=2 "), "list= does not name 2: " + dropsStatLine());
+            pickPolicy = Pick::First;
+            dropHeroic(monster, HeroicArg::Undefined);
+            dropHeroic(monster);
+            require(heroicLayoutDuringCall[1] == vanillaLayout && heroicLayoutDuringCall[2] == vanillaLayout,
+                    "list 5, which holds no piece class the roll keeps here, carried a push");
+            const std::string five = dropsStatLine();
+            require(lineHas(five, " gate=not-resolved ") && lineHas(five, " list=5 ") && lineHas(five, " pushed-calls=1 "),
+                    "an undefined or absent argument did not read list 5: " + five);
+            require(lineHas(five, " standin-helmet=none standin-body=none standin-boots=none standin-gloves=none "),
+                    "list 5's stand-ins: " + five);
+            dropHeroic(monster, HeroicArg::Number, 2.5);
+            dropHeroic(monster, HeroicArg::Number, 7.0);
+            require(heroicLayoutDuringCall[3] == vanillaLayout && heroicLayoutDuringCall[4] == vanillaLayout, "a refused argument carried a push");
+            require(lineHas(dropsStatLine(), " list-refused=2 "), "the refused arguments were not counted: " + dropsStatLine());
+            require(layoutNow() == vanillaLayout, "the lists are not the game's own after the calls");
+#else
+            require(false, "this source has no Mark 1 drop adapter");
+#endif
+        } else if (test == "mark1_heroic_nested_in_the_angelic_roll_passes_through") {
+            // A Heroic call inside the Angelic roll (a roll already in progress) is the game's own,
+            // counted `nested=`; the same hook pushes for a call outside any roll.
+#ifdef HAS_MARK1DROPSTATE
+            setHeroicLayout();
+            dropsSwitch(true);
+            angelicNestsHeroic = true;
+            pickPolicy = Pick::First;
+            roll(monster, { false });
+            require(heroicCalls == 1 && heroicLayoutDuringCall[0] == vanillaLayout, "the nested call saw a pushed list");
+            require(countPieceBuilds(-1) == 0, "the nested call built a piece");
+            require(lineHas(dropsStatLine(), " heroic-calls=1 pushed-calls=0 nested=1 "), "the nested call was not counted: " + dropsStatLine());
+            angelicNestsHeroic = false;
+            dropHeroic(monster);
+            require(heroicLayoutDuringCall[1][5] == plus(vanilla, { kHelmetHeroic, kBodyHeroic, kBootsHeroic }),
+                    "a call outside any roll did not carry the stand-ins");
+            require(g_SigRollDepth == 0 && layoutNow() == vanillaLayout, "the roll state or the list was left changed");
+#else
+            require(false, "this source has no Mark 1 drop adapter");
+#endif
+        } else if (test == "mark1_heroic_throw_leaves_the_list_as_found") {
+            // The game's roll throws: the throw reaches the caller, and the entries come off first.
+#ifdef HAS_MARK1DROPSTATE
+            setHeroicLayout();
+            dropsSwitch(true);
+            heroicThrows = true;
+            bool threw = false;
+            try { dropHeroic(monster); } catch (const std::exception&) { threw = true; }
+            require(threw, "the game's throw did not reach the caller");
+            require(heroicLayoutDuringCall[0][5] == plus(vanilla, { kHelmetHeroic, kBodyHeroic, kBootsHeroic }), "the call did not carry the stand-ins");
+            require(layoutNow() == vanillaLayout, "after the throw the list kept stand-in entries");
+            require(g_SigRollDepth == 0 && !g_M1Drop.rolling, "the roll state stayed raised after the throw");
+            require(lineHas(dropsStatLine(), " injected=3 refused=0 anomalies=0 "), "the throw was counted wrong: " + dropsStatLine());
+            heroicThrows = false;
+            dropHeroic(monster);
+            require(heroicLayoutDuringCall[1][5] == plus(vanilla, { kHelmetHeroic, kBodyHeroic, kBootsHeroic }) && layoutNow() == vanillaLayout,
+                    "the next call did not push and remove as before");
+#else
+            require(false, "this source has no Mark 1 drop adapter");
+#endif
+        } else if (test == "mark1_heroic_class_with_no_standin") {
+            // Gloves have no kept triple on the list: the other three are pushed and gloves read
+            // none. A list with no piece class kept at all pushes nothing and the gate reads
+            // not-resolved, re-resolved when the list changed.
+#ifdef HAS_MARK1DROPSTATE
+            setHeroicLayout();
+            dropsSwitch(true);
+            dropHeroic(monster);
+            require(heroicLayoutDuringCall[0][5] == plus(vanilla, { kHelmetHeroic, kBodyHeroic, kBootsHeroic }), "the push was not the three stand-ins");
+            const std::string line = dropsStatLine();
+            require(lineHas(line, " standin-gloves=none ") && lineHas(line, " injected=3 ") && lineHas(line, " gate=on "),
+                    "gloves with no stand-in: " + line);
+            setHeroicLayout(5, false);
+            dropHeroic(monster);
+            require(heroicLayoutDuringCall[1] == vanillaLayout, "a list with no stand-in carried a push");
+            const std::string none = dropsStatLine();
+            require(lineHas(none, " gate=not-resolved ") && lineHas(none, " pushed-calls=1 ") && lineHas(none, " injected=3 "),
+                    "a list with no stand-in: " + none);
+            require(lineHas(none, " standin-helmet=none standin-body=none standin-boots=none standin-gloves=none "), "the changed list was not resolved again: " + none);
+#else
+            require(false, "this source has no Mark 1 drop adapter");
+#endif
+        } else if (test == "mark1_heroic_74s_counters_unchanged") {
+            // #74's counters belong to the Angelic roll: a Heroic call's typed and untyped hits
+            // leave `sigdrop status` as it was; an untyped hit is never a piece.
+#ifdef HAS_MARK1DROPSTATE
+            setHeroicLayout();
+            dropsSwitch(true);
+            const std::string sig = sigdropStatusLine();
+            const long untyped = g_SigUntyped;
+            pickPolicy = Pick::Among; pickTriples = { kBootsHeroic };
+            for (int i = 0; i < 100; ++i) dropHeroic(monster);
+            const long long typedOurs = (long long)dropsFields().pieces[2].ours;
+            require(typedOurs >= 1, "100 typed boots picks gave no piece");
+            repoRead = RepoRead::PickedThenOther;
+            for (int i = 0; i < 20; ++i) dropHeroic(monster);
+            require((long long)dropsFields().pieces[2].ours == typedOurs, "an untyped hit was taken for a piece");
+            for (size_t i = 100; i < builds.size(); ++i) require(builds[i].c == 1.0 && builds[i].a == kLootGroundSeed, "an untyped hit was rewritten");
+            const std::string after = sigdropStatusLine();
+            require(after.substr(0, after.find(" cdpCalls=")) == sig.substr(0, sig.find(" cdpCalls=")), "`sigdrop status` moved: " + after);
+            require(g_SigUntyped == untyped, "the untyped hits reached #74's untyped=");
+#ifdef HAS_FLIGHTDROPSTATE
+            require(g_FlightDrop.injected == 0 && g_FlightDrop.anomalies == 0, "the flight charms' counters moved");
+#endif
+#else
+            require(false, "this source has no Mark 1 drop adapter");
+#endif
+        } else if (test == "mark1_heroic_installs_with_a_character") {
+            // At character select the switch only arms (nothing hooked, the art's ground install
+            // waiting); the tick installs once the local player resolves.
+#ifdef HAS_MARK1DROPSTATE
+            setHeroicLayout();
+            playerResolves = false;
+            dropsSwitch(true);
+            require(lastLine("mark1set:") == "mark1set: drops=on install=waiting-for-character gate=off", "the armed reply: " + lastLine("mark1set:"));
+            require(installs["DropItemHeroic"] == 0 && installs["CreateDefaultParams"] == 0 && heroicEntry == gameDropItemHeroic,
+                    "something was hooked at character select");
+            require(g_Mark1.ArtArmed() && !g_M1sGroundTried, "the switch-on did not arm the art, or tried its ground install without a character");
+            for (int i = 0; i < 200; ++i) Mark1DropsTick();
+            require(installs["DropItemHeroic"] == 0, "the tick installed before the local player resolved");
+            playerResolves = true;
+            for (int i = 0; i < 200 && installs["DropItemHeroic"] == 0; ++i) Mark1DropsTick();
+            require(installs["DropItemHeroic"] == 1 && heroicEntry != gameDropItemHeroic, "the tick did not install once the player resolved");
+            require(g_M1sGroundTried && mark1GroundInstalls == 1, "the install did not try the pieces' ground install first");
+            require(lineHas(dropsStatLine(), " install=installed gate=on hook=detoured "), "after the tick: " + dropsStatLine());
+            dropHeroic(monster);
+            require(heroicLayoutDuringCall.back()[5] == plus(vanilla, { kHelmetHeroic, kBodyHeroic, kBootsHeroic }), "the installed hook did not push");
+#else
+            require(false, "this source has no Mark 1 drop adapter");
+#endif
+        } else if (test == "mark1_heroic_table_only_and_no_detection_refuse") {
+            // A table-only DropItemHeroic hook refuses the install and turns the switch off; #74's
+            // detection short of four inline detours keeps the gate at no-detection, pushing nothing.
+#ifdef HAS_MARK1DROPSTATE
+            setHeroicLayout();
+            tableOnlyHook = "DropItemHeroic";
+            dropsSwitch(true);
+            require(lastLine("mark1set:") == "mark1set: drops=off install=refused gate=refused", "the refused reply: " + lastLine("mark1set:"));
+            require(anyLineHas("mark1set drops: refused - ", "DropItemHeroic went in TABLE-ONLY"), "the refusal line: " + lastLine("mark1set drops:"));
+            dropHeroic(monster);
+            require(heroicLayoutDuringCall[0] == vanillaLayout && lineHas(dropsStatLine(), " hook=TABLE-ONLY "), "a table-only hook pushed: " + dropsStatLine());
+            reset();
+            setHeroicLayout();
+            tableOnlyHook = "CreateDefaultParams";
+            dropsSwitch(true);
+            require(lastLine("mark1set:") == "mark1set: drops=on install=installed gate=no-detection", "the no-detection reply: " + lastLine("mark1set:"));
+            dropHeroic(monster);
+            require(heroicLayoutDuringCall[0] == vanillaLayout && lineHas(dropsStatLine(), " heroic-calls=1 pushed-calls=0 "),
+                    "with #74's detection not inline a call carried a push: " + dropsStatLine());
+#else
+            require(false, "this source has no Mark 1 drop adapter");
+#endif
+        } else if (test == "mark1_heroic_refused_rewrite_latches") {
+            // A rewrite that does not read back is refused: the record is put back (the game builds
+            // its own stand-in), `refused=` counts it, and that piece is latched off for the session.
+#ifdef HAS_MARK1DROPSTATE
+            setHeroicLayout();
+            dropsSwitch(true);
+            frozenField = "a";
+            pickPolicy = Pick::Among; pickTriples = { kBootsHeroic };
+            for (int i = 0; i < 200 && dropsFields().refused == 0; ++i) dropHeroic(monster);
+            require(dropsFields().refused == 1, "no rewrite was refused");
+            require(anyLineHas("mark1set drops: ", "Mark 1 Boots refused (field a did not read back)")
+                    && anyLineHas("mark1set drops: ", "Mark 1 Boots stays off for this session (rewrite refused)"), "the refusal line");
+            require(countPieceBuilds(-1) == 0, "a refused rewrite built a piece");
+            require(builds.back().t == 2 && builds.back().j == 5 && builds.back().b == 30 && builds.back().c == 1.0, "the refused record was not put back");
+            dropHeroic(monster);
+            require(heroicLayoutDuringCall.back()[5] == plus(vanilla, { kHelmetHeroic, kBodyHeroic }), "the latched boots were pushed again");
+            require(lineHas(dropsStatLine(), " boots=1/0 ") && lineHas(dropsStatLine(), " refused=1 "), "the latch's counts: " + dropsStatLine());
+#else
+            require(false, "this source has no Mark 1 drop adapter");
+#endif
+        } else if (test == "mark1_heroic_art_not_ready_pushes_nothing") {
+            // While the art is armed with icons embedded and the ground consumer's one install was
+            // not tried, a call pushes nothing (`art-wait=`): no piece is built to draw Error_spr.
+#ifdef HAS_MARK1DROPSTATE
+            setHeroicLayout();
+            dropsSwitch(true);
+            g_M1sGroundTried = false;
+            dropHeroic(monster);
+            require(heroicLayoutDuringCall[0] == vanillaLayout, "a call that is not art-ready carried a push");
+            require(lineHas(dropsStatLine(), " pushed-calls=0 nested=0 art-wait=1 "), "the art wait was not counted: " + dropsStatLine());
+            g_M1sGroundTried = true;
+            dropHeroic(monster);
+            require(heroicLayoutDuringCall[1][5] == plus(vanilla, { kHelmetHeroic, kBodyHeroic, kBootsHeroic }), "an art-ready call did not push");
+#else
+            require(false, "this source has no Mark 1 drop adapter");
 #endif
         } else return 2;
         std::cout << "PASS " << test << '\n';

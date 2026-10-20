@@ -59,6 +59,16 @@ repository's rarity is below 7 and the entry is not hidden), and the
 repository's rarity and hidden flag for the triples a scenario names. The
 baseline holds against the source before #158 too; every target scenario
 fails there (no `FlightDropSwitch`).
+`test_mark1_heroic_baseline` and `test_mark1_heroic_target` are the Mark 1 drops
+(#166), on the same machinery: the model adds `DropItemHeroic`, the Heroic roll
+(element k of the same variable, k its third argument and 5 when that is absent
+or undefined, drawn again until it keeps an entry that is not hidden and is
+rated neither 7 nor 10, one `GetUniqueRepoStruct` read per draw, then
+`CreateDefaultParams` once and the placement under the entry's type), and the
+Mark 1 set's art state the drops arm. The baseline holds against the source
+before the drop adapter too (no switch: the roll is the game's own and nothing
+is hooked); the switch-off scenario and every target scenario fail there (no
+`Mark1DropState`). Every #74 and flight scenario stays as it was.
 Each production name's presence is announced as `#define HAS_<NAME>`, so the
 harness compiles against any of these sources.
 """
@@ -83,6 +93,7 @@ PRODUCTION_TYPES = (
     'static constexpr SignatureItem kSignatureItems[]',
     'struct SignatureStandIn {',
     'struct FlightDropState {',                  # #158: the flight charms' drop adapter's state
+    'struct Mark1DropState {',                   # #166: the Mark 1 drop adapter's state
 )
 
 # Inserted at `// PRODUCTION_FUNCTIONS`, callees before callers.
@@ -158,6 +169,31 @@ PRODUCTION = (
     'static void FlightDropSwitch(',
     'static void FlightDropFillStat(',
     'static std::string FlightDropTraceLine(',
+    # #166: the Mark 1 drop adapter (Mark1Drops.hpp's core compiles in whole), after everything it calls.
+    'static bool Mark1DropArtReady(',
+    'static M1dNs::ArgKind Mark1DropArgOf(',
+    'static bool Mark1DropReadList(',
+    'static bool Mark1DropVerdict(',
+    'static std::vector<M1dNs::ListEntry> Mark1DropEntries(',
+    'static void Mark1DropResolve(',
+    'static bool Mark1DropTailHolds(',
+    'static bool Mark1DropHeldReadBack(',
+    'static void Mark1DropClearRoll(',
+    'static void Mark1DropRemove(',
+    'static void Mark1DropPush(',
+    'static void Mark1DropHitReset(',
+    'static void Mark1DropAttributeHit(',
+    'static void Mark1DropRefuse(',
+    'static bool Mark1DropBeforeCreate(',
+    'static void Mark1DropNoteBuilt(',
+    'static void Mark1DropAfterHit(',
+    'struct Mark1DropInjectGuard {',
+    'static RValue& Hook_Mark1DropHeroic(',
+    'static std::string Mark1DropInstall(',
+    'static void Mark1DropInstallIfReady(',
+    'static void Mark1DropsTick(',
+    'static void Mark1DropsSwitch(',
+    'static std::string Mark1DropStatLine(',
 )
 
 # The plugin's own pool build, appended to the functions under another name: the harness's
@@ -392,6 +428,30 @@ class AngelicHitBehaviorTests(unittest.TestCase):
         # unique roll's sub-lists, and the refused push counts one anomaly, not an injection.
         # Fails against 9b12f86, which left a partial push on the lists as found.
         self.run_scenarios(('flight_partial_push_angelic_removes_its_entries', 'flight_partial_push_unique_removes_its_entries'))
+
+    def test_mark1_heroic_baseline(self):
+        # #166, the Mark 1 drops: with the switch never touched the Heroic roll is the game's own
+        # and the plugin calls nothing (holds against the source before the drop adapter too);
+        # switched on and off again, the hook stays in and passes every call through, counted,
+        # the list each call reads and what it builds the game's own.
+        self.run_scenarios(('mark1_heroic_untouched_installs_nothing', 'mark1_heroic_switch_off_is_vanilla'))
+
+    def test_mark1_heroic_target(self):
+        # #166: each piece's stand-in (a triple of its class the roll keeps, Heroic preferred) joins
+        # the sub-list the call reads for its length, typed, coined (c in n + c) and rewritten to the
+        # piece's own seed and base, built by the game once per hit and counted built; the third
+        # argument names the list; a nested call, a throw, a class with no stand-in, a refused
+        # rewrite, a table-only hook, #74's detection not inline and an art not ready each keep the
+        # game's own roll as it is; #74's `sigdrop status` does not move; nothing installs before a
+        # character exists; the fresh `mark1set drops:` line is the core's, byte for byte.
+        self.run_scenarios((
+            'mark1_heroic_stat_line_fresh', 'mark1_heroic_hit_builds_the_piece', 'mark1_heroic_coin_one_in_n_plus_c',
+            'mark1_heroic_list_index_from_the_argument', 'mark1_heroic_nested_in_the_angelic_roll_passes_through',
+            'mark1_heroic_throw_leaves_the_list_as_found', 'mark1_heroic_class_with_no_standin',
+            'mark1_heroic_74s_counters_unchanged', 'mark1_heroic_installs_with_a_character',
+            'mark1_heroic_table_only_and_no_detection_refuse', 'mark1_heroic_refused_rewrite_latches',
+            'mark1_heroic_art_not_ready_pushes_nothing',
+        ))
 
 
 if __name__ == '__main__':

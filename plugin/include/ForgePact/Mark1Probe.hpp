@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <charconv>
 #include <cmath>
 #include <cstdint>
@@ -11,6 +12,7 @@
 #include <utility>
 #include <vector>
 
+#include <ForgePact/Mark1Drops.hpp>
 #include <ForgePact/Mark1Set.hpp>
 
 namespace ForgePact::Mark1Probe {
@@ -51,6 +53,12 @@ namespace ForgePact::Mark1Probe {
 // The set itself (phase 2's set adapter) adds `spawn`: the Mark 1 pieces, built
 // from Mark1Set.hpp's table through the game's loader and placed at the
 // player, so the live session has pieces to wear.
+//
+// The drops (phase 3, Mark1Drops.hpp) add three forms for their live session:
+// `heroic <n>` calls the Heroic roll by name and tallies what it placed, the
+// pieces among it by their own fields; `pool [<k>]` reads one sub-list the
+// way the drops do and prints what the roll keeps of it and each piece's
+// stand-in; `copies <k>` sets the copies each piece's stand-in is pushed with.
 
 // ---- the rows ----------------------------------------------------------------
 
@@ -279,6 +287,7 @@ inline constexpr int kStatlogMaxLines = 1200;     // one statlog's printed lines
 inline constexpr int kScanMaxCount = 64;          // `walkable scan` points
 inline constexpr long long kMaxItemClass = 19;    // hs_game_sdk/item_type.hpp's highest class
 inline constexpr long long kMaxBase = 9999;
+inline constexpr long long kMaxHeroicCalls = 20;  // `heroic <n>`: calls of the Heroic roll per command
 
 // set: write `value` into `target` before each local-player call of `row`,
 //      and restore what was there after the original returns (or throws).
@@ -393,14 +402,15 @@ inline std::string LeverReply(const Lever& l, int64_t from, const std::string& r
 
 enum class Form : int {
     Status, Hook, Off, Show, ShowReset, Args, Watch, Set, Scale, Move, Stat, Count, Pos, WalkHere, WalkAt, WalkScan,
-    Statlog, Statpin, Hold, Base, Spawn,
+    Statlog, Statpin, Hold, Base, Spawn, Heroic, Pool, Copies,
 };
 
 struct Command {
     Form        form = Form::Status;
     Lever       lever;                     // Set, Scale, Move, Stat, Hold, Statpin
     int64_t     frames = 0;                // Watch, Count, Pos, Statlog
-    int         count = 0;                 // Args: calls to print; WalkScan: points
+    int         count = 0;                 // Args: calls to print; WalkScan: points; Heroic: calls; Pool: the
+                                           // sub-list (Mark1Drops' default when not given); Copies: the copies
     Scope       scope = Scope::Player;     // Watch
     bool        after = false;             // Watch: start at the row's next local-player call
     Row         afterRow = Row::CheckTalentUse;
@@ -650,6 +660,33 @@ inline bool Parse(const std::vector<std::string>& tok, Command& c, std::string& 
         c.form = Form::Spawn;
         return true;
     }
+    if (head == "heroic") {
+        const std::string usage = "usage: heroic <n>, n a whole number 1.." + std::to_string(kMaxHeroicCalls);
+        if (n != 2) { why = usage; return false; }
+        long long v = 0;
+        if (!ParseWhole(tok[1], 1, kMaxHeroicCalls, v)) { why = usage + ", not " + tok[1]; return false; }
+        c.count = static_cast<int>(v);
+        c.form = Form::Heroic;
+        return true;
+    }
+    if (head == "pool") {
+        const std::string usage = "usage: pool [<k>], k a sub-list 0.." + std::to_string(Mark1Drops::kListCount - 1);
+        if (n != 1 && n != 2) { why = usage; return false; }
+        long long v = Mark1Drops::kHeroicDefaultListIndex;
+        if (n == 2 && !ParseWhole(tok[1], 0, Mark1Drops::kListCount - 1, v)) { why = usage + ", not " + tok[1]; return false; }
+        c.count = static_cast<int>(v);
+        c.form = Form::Pool;
+        return true;
+    }
+    if (head == "copies") {
+        const std::string usage = "usage: copies <k>, k a whole number 1.." + std::to_string(Mark1Drops::kMaxCopies);
+        if (n != 2) { why = usage; return false; }
+        long long v = 0;
+        if (!ParseWhole(tok[1], 1, Mark1Drops::kMaxCopies, v)) { why = usage + ", not " + tok[1]; return false; }
+        c.count = static_cast<int>(v);
+        c.form = Form::Copies;
+        return true;
+    }
     if (head == "count") {
         if (n != 3) { why = "usage: count <object name> <frames>"; return false; }
         if (!IsName(tok[1])) { why = "an object name is 1..64 letters, digits or _, not " + tok[1]; return false; }
@@ -683,7 +720,8 @@ inline bool Parse(const std::vector<std::string>& tok, Command& c, std::string& 
         return true;
     }
     why = "unknown form " + tok[0]
-        + " (hook, off, show, args, watch, set, scale, hold, move, stat, statpin, statlog, count, pos, base, spawn or walkable)";
+        + " (hook, off, show, args, watch, set, scale, hold, move, stat, statpin, statlog, count, pos, base, spawn, heroic,"
+          " pool, copies or walkable)";
     return false;
 }
 
@@ -706,6 +744,9 @@ inline std::vector<std::string> Usage()
         "  mark1probe pos <frames>                              the cursor, each moving call's dx dy, moves outside the rows, mode, ms",
         "  mark1probe base <class> <b>                          build a scratch item of that class and base (never placed)",
         "  mark1probe spawn <helmet|body|boots|gloves|set>      build Mark 1 pieces through the loader and place them at the player",
+        "  mark1probe heroic <n>                                call DropItemHeroic n times (1..20) at the player; rarities and pieces",
+        "  mark1probe pool [<k>]                                lootListUnique[k] (5 by default) as the Heroic roll keeps it, each piece's stand-in",
+        "  mark1probe copies <k>                                each piece's stand-in pushed k times (1..400) per Heroic roll",
         "  mark1probe walkable here <dx> <dy> | at <x> <y> | scan <deg> <step> <count>",
         "  frames default 600, at most 3600; one lever at a time, a new one replaces it",
     };
@@ -823,6 +864,159 @@ inline std::string SpawnLine(const SpawnResult& r)
     out += " t=" + num(r.t) + " b=" + num(r.b) + " a=" + num(r.a) + " dressed=" + (r.dressed ? "yes" : "no");
     if (r.ground) return out + " ground=" + *r.ground;
     return out + " ground=none why=" + (r.why.empty() ? std::string("?") : r.why);
+}
+
+// ---- `heroic` ----------------------------------------------------------------------
+// DropItemHeroic called by name with the local player as self and its position
+// as the first two arguments (charmprobe heroic's measured call shape), n times;
+// what each call placed is read off the newest ground item. A piece is
+// recognised by its own fields (the adapter's Mark1PieceOf, Mark1Set.hpp's
+// IsPiece), never by its name.
+
+// What one call gave: nothing placed (`why` says what the adapter saw), or the
+// placed item's class, base, c, rarity (info key 27), name (info key 28) and
+// whether it is a piece.
+struct HeroicCall {
+    bool                   placed = false;
+    std::string            why;
+    std::optional<double>  t, b, c, rarity;
+    std::string            name;
+    bool                   isPiece = false;
+    Mark1Set::Piece        piece = Mark1Set::Piece::Helmet;
+};
+
+inline std::string HeroicCallLine(int k, const HeroicCall& r)
+{
+    auto num = [](const std::optional<double>& v) { return v ? NumberText(*v) : std::string("?"); };
+    std::string out = "mark1probe heroic #" + std::to_string(k) + ": ";
+    if (!r.placed) return out + "nothing placed (" + (r.why.empty() ? std::string("?") : r.why) + ")";
+    out += "placed t=" + num(r.t) + " b=" + num(r.b) + " c=" + num(r.c) + " rarity=" + num(r.rarity)
+        + " name=" + (r.name.empty() ? std::string("none") : "\"" + r.name + "\"");
+    out += " piece=" + (r.isPiece ? std::string(Mark1Set::RowOf(r.piece).key) : std::string("none"));
+    return out;
+}
+
+// The summary after the calls: `calls=`, `placed=`, the rarity histogram
+// (`rarity=<r>:<count>,...`, rising, `-` when none was read), the placed items
+// whose rarity could not be read, and the pieces among what was placed.
+class HeroicTally {
+public:
+    void Add(const HeroicCall& r)
+    {
+        ++calls_;
+        if (!r.placed) return;
+        ++placed_;
+        long long whole = 0;
+        if (r.rarity && Mark1Set::AsWhole(*r.rarity, whole)) ++rarities_[whole];
+        else ++rarityUnread_;
+        if (r.isPiece) ++pieces_[static_cast<size_t>(r.piece)];
+    }
+    int Calls() const { return calls_; }
+    int Placed() const { return placed_; }
+    int Pieces(Mark1Set::Piece p) const { return pieces_[static_cast<size_t>(p)]; }
+    std::string Line() const
+    {
+        std::string rarity;
+        for (const auto& [r, count] : rarities_) rarity += (rarity.empty() ? "" : ",") + std::to_string(r) + ":" + std::to_string(count);
+        std::string pieces;
+        for (const Mark1Set::PieceRow& row : Mark1Set::kPieces)
+            pieces += (pieces.empty() ? "" : ",") + std::string(row.key) + ":" + std::to_string(pieces_[static_cast<size_t>(row.piece)]);
+        return "mark1probe heroic: calls=" + std::to_string(calls_) + " placed=" + std::to_string(placed_) + " rarity="
+            + (rarity.empty() ? std::string("-") : rarity) + " rarity-unread=" + std::to_string(rarityUnread_) + " pieces=" + pieces
+            + " self=player";
+    }
+
+private:
+    int calls_ = 0;
+    int placed_ = 0;
+    int rarityUnread_ = 0;
+    std::map<long long, int> rarities_;
+    std::array<int, Mark1Set::kPieceCount> pieces_{};
+};
+
+// ---- `pool` ------------------------------------------------------------------------
+// One sub-list read the way the drops read it (Mark1Drops.hpp's ListEntry, and
+// each distinct triple's repository verdict once, by name, outside a roll):
+// its length, what the Heroic roll keeps of it (`droppable=`, T_H, the entries
+// whose triple it keeps, repeats counted), by rarity, the entries it draws past
+// (refused rarities, hidden, unread, not a triple), and per piece class the
+// core's stand-in and its class's kept triples and entries.
+struct PoolSummary {
+    int                     index = Mark1Drops::kHeroicDefaultListIndex;
+    int                     length = 0;
+    int                     droppable = 0;
+    int                     hidden = 0;
+    int                     unread = 0;   // entries whose triple's verdict could not be read
+    int                     other = 0;    // entries that are not a triple of whole numbers
+    std::map<int, int>      kept;         // rarity -> entries kept
+    std::map<int, int>      refused;      // rarity -> entries drawn past (7, 10)
+    Mark1Drops::Resolution  resolution;
+};
+
+inline PoolSummary Pool(int index, const std::vector<Mark1Drops::ListEntry>& list, const Mark1Drops::VerdictFn& verdict)
+{
+    PoolSummary s;
+    s.index = index;
+    s.length = static_cast<int>(list.size());
+    struct Seen { bool read = false; int rarity = 0; bool hidden = false; };
+    std::map<Mark1Drops::Triple, Seen> verdicts;
+    // Each distinct triple is asked once; the stand-in rule below asks the same memo.
+    auto ask = [&](const Mark1Drops::Triple& k, int& rarity, bool& hidden) {
+        auto it = verdicts.find(k);
+        if (it == verdicts.end()) {
+            Seen v;
+            v.read = verdict && verdict(k, v.rarity, v.hidden);
+            it = verdicts.emplace(k, v).first;
+        }
+        rarity = it->second.rarity;
+        hidden = it->second.hidden;
+        return it->second.read;
+    };
+    for (const Mark1Drops::ListEntry& e : list) {
+        Mark1Drops::Triple k;
+        if (!e.triple || !Mark1Set::AsWhole(e.t, k.t) || !Mark1Set::AsWhole(e.sub, k.sub) || !Mark1Set::AsWhole(e.b, k.b)) {
+            ++s.other;
+            continue;
+        }
+        int rarity = 0;
+        bool hidden = false;
+        if (!ask(k, rarity, hidden)) { ++s.unread; continue; }
+        if (hidden) { ++s.hidden; continue; }
+        if (!Mark1Drops::HeroicKeeps(rarity, hidden)) { ++s.refused[rarity]; continue; }
+        ++s.droppable;
+        ++s.kept[rarity];
+    }
+    s.resolution = Mark1Drops::ResolveStandIns(index, list, ask);
+    return s;
+}
+
+inline std::vector<std::string> PoolLines(const PoolSummary& s)
+{
+    auto histogram = [](const std::map<int, int>& m) {
+        std::string out;
+        for (const auto& [r, count] : m) out += (out.empty() ? "" : ",") + std::to_string(r) + ":" + std::to_string(count);
+        return out.empty() ? std::string("-") : out;
+    };
+    std::vector<std::string> lines;
+    lines.push_back("mark1probe pool: list=" + std::to_string(s.index) + " length=" + std::to_string(s.length) + " droppable="
+                    + std::to_string(s.droppable) + " kept=" + histogram(s.kept) + " refused=" + histogram(s.refused) + " hidden="
+                    + std::to_string(s.hidden) + " unread=" + std::to_string(s.unread) + " other=" + std::to_string(s.other));
+    for (const Mark1Set::PieceRow& row : Mark1Set::kPieces) {
+        const size_t i = static_cast<size_t>(row.piece);
+        lines.push_back("mark1probe pool: " + std::string(row.key) + " class=" + std::to_string(row.itemType) + " standin="
+                        + Mark1Drops::StandInText(s.resolution.standIns[i]) + " kept-triples="
+                        + std::to_string(s.resolution.kept[i].keptTriples) + " kept-entries="
+                        + std::to_string(s.resolution.kept[i].keptEntries));
+    }
+    return lines;
+}
+
+// ---- `copies` ----------------------------------------------------------------------
+
+inline std::string CopiesLine(int copies)
+{
+    return "mark1probe copies: each piece's stand-in is pushed " + std::to_string(copies)
+        + " time(s) per Heroic roll (the player build pushes " + std::to_string(Mark1Drops::kPlayerCopies) + ")";
 }
 
 // ---- `walkable` ---------------------------------------------------------------------

@@ -39,12 +39,20 @@
 // The Mark 1 set's adapter (labels spawn/*): `spawn`'s pieces by word, each
 // piece's definition and loader key from Mark1Set.hpp's own row, the form's
 // parse, and its line placed, refused at the ground and not built.
+//
+// The drops' forms (labels heroic/*, pool/*, copies/*): `heroic`'s per-call
+// line and its summary (rarities rising, the pieces by their own recognition),
+// `pool`'s summary of one sub-list as the Heroic roll keeps it - its rarity
+// histograms, the entries it draws past by why, and each piece's stand-in by
+// Mark1Drops.hpp's rule, each distinct triple's verdict asked once - and each
+// form's parse and refusals.
 #include <cmath>
 #include <cstdint>
 #include <iostream>
 #include <map>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -1067,6 +1075,92 @@ int main()
               SpawnLine(placed) + " | " + SpawnLine(refused) + " | " + SpawnLine(unbuilt));
     }
 
+    // ---- heroic, pool, copies (the drops' forms) ------------------------------------
+    {
+        const Command h = parsed("heroic 10");
+        const Command h20 = parsed("HEROIC 20");
+        check("heroic/parse", h.form == Form::Heroic && h.count == 10 && h20.form == Form::Heroic && h20.count == 20);
+        HeroicCall piece;
+        piece.placed = true;
+        piece.t = 2;
+        piece.b = 0;
+        piece.c = 0;
+        piece.rarity = 9;
+        piece.name = "Mark 1 Boots";
+        piece.isPiece = true;
+        piece.piece = ForgePact::Mark1Set::Piece::Boots;
+        HeroicCall other = piece;
+        other.t = 5;
+        other.b = 12;
+        other.c = 1;
+        other.rarity = 6;
+        other.name = "Some Unique";
+        other.isPiece = false;
+        HeroicCall unread = other;
+        unread.rarity.reset();
+        HeroicCall nothing;
+        nothing.why = "returned undefined";
+        check("heroic/call_lines_placed_and_nothing",
+              HeroicCallLine(3, piece) == "mark1probe heroic #3: placed t=2 b=0 c=0 rarity=9 name=\"Mark 1 Boots\" piece=boots"
+                  && HeroicCallLine(4, other) == "mark1probe heroic #4: placed t=5 b=12 c=1 rarity=6 name=\"Some Unique\" piece=none"
+                  && HeroicCallLine(5, nothing) == "mark1probe heroic #5: nothing placed (returned undefined)",
+              HeroicCallLine(3, piece) + " | " + HeroicCallLine(4, other) + " | " + HeroicCallLine(5, nothing));
+        HeroicTally tally;
+        for (const HeroicCall& r : { piece, other, other, nothing, unread, piece })
+            tally.Add(r);
+        check("heroic/summary_rarities_rising_and_pieces_by_recognition",
+              tally.Line() == "mark1probe heroic: calls=6 placed=5 rarity=6:2,9:2 rarity-unread=1 pieces=helmet:0,body:0,boots:2,gloves:0 self=player"
+                  && tally.Calls() == 6 && tally.Placed() == 5 && tally.Pieces(ForgePact::Mark1Set::Piece::Boots) == 2,
+              tally.Line());
+        check("heroic/a_fresh_summary_reads_none",
+              HeroicTally().Line() == "mark1probe heroic: calls=0 placed=0 rarity=- rarity-unread=0 pieces=helmet:0,body:0,boots:0,gloves:0 self=player",
+              HeroicTally().Line());
+    }
+    {
+        namespace D = ForgePact::Mark1Drops;
+        const Command bare = parsed("pool");
+        const Command two = parsed("pool 2");
+        const Command copies = parsed("copies 200");
+        check("pool/parse_default_five_and_a_named_list",
+              bare.form == Form::Pool && bare.count == 5 && two.form == Form::Pool && two.count == 2
+                  && copies.form == Form::Copies && copies.count == 200 && parsed("copies 1").count == 1);
+        auto e = [](double t, double sub, double b) { D::ListEntry x; x.triple = true; x.t = t; x.sub = sub; x.b = b; return x; };
+        // Helmets: 0/3/10 Heroic twice, 0/3/11 Satanic; 0/0/85 Angelic (drawn past). Body
+        // armor: 1/4/20 Heroic. Boots: 2/5/31 hidden. Gloves: 4/6/40 unread. Three uniques of
+        // class 5, Heroic, Heroic and Unholy, and one entry that is not a triple.
+        std::vector<D::ListEntry> list = { e(0, 3, 10), e(0, 3, 10), e(0, 3, 11), e(0, 0, 85), e(1, 4, 20), e(2, 5, 31),
+                                           e(4, 6, 40), e(5, 0, 1), e(5, 0, 2), e(5, 0, 3), D::ListEntry{} };
+        std::map<std::tuple<long long, long long, long long>, int> asked;
+        auto verdict = [&](const D::Triple& k, int& rarity, bool& hidden) {
+            ++asked[{ k.t, k.sub, k.b }];
+            hidden = false;
+            if (k.t == 4) return false;
+            if (k.t == 0) rarity = k.b == 10 ? 9 : k.b == 11 ? 6 : 7;
+            else if (k.t == 1) rarity = 9;
+            else if (k.t == 2) { rarity = 9; hidden = true; }
+            else rarity = k.b == 3 ? 10 : 9;
+            return true;
+        };
+        const PoolSummary s = Pool(5, list, verdict);
+        const std::vector<std::string> lines = PoolLines(s);
+        bool once = true;
+        for (const auto& [k, n] : asked) once = once && n == 1;
+        check("pool/summary_droppable_histograms_and_what_is_drawn_past",
+              lines.size() == 5
+                  && lines[0] == "mark1probe pool: list=5 length=11 droppable=6 kept=6:1,9:5 refused=7:1,10:1 hidden=1 unread=1 other=1",
+              lines.empty() ? std::string("no lines") : lines[0]);
+        check("pool/each_piece_standin_by_the_drops_rule",
+              lines.size() == 5
+                  && lines[1] == "mark1probe pool: helmet class=0 standin=3:10@9x2 kept-triples=2 kept-entries=3"
+                  && lines[2] == "mark1probe pool: body class=1 standin=4:20@9x1 kept-triples=1 kept-entries=1"
+                  && lines[3] == "mark1probe pool: boots class=2 standin=none kept-triples=0 kept-entries=0"
+                  && lines[4] == "mark1probe pool: gloves class=4 standin=none kept-triples=0 kept-entries=0",
+              lines.size() == 5 ? lines[1] + " | " + lines[3] + " | " + lines[4] : std::string("not five lines"));
+        check("pool/each_distinct_triple_asked_once", once && asked.size() == 9, std::to_string(asked.size()));
+        check("copies/line", CopiesLine(200) == "mark1probe copies: each piece's stand-in is pushed 200 time(s) per Heroic roll (the player build pushes 1)",
+              CopiesLine(200));
+    }
+
     // ---- walkable -------------------------------------------------------------
     {
         WalkPoint w;
@@ -1284,7 +1378,17 @@ int main()
     }
     {
         const std::vector<std::pair<std::string, std::string>> refused = {
-            { "bogus", "unknown form bogus (hook, off, show, args, watch, set, scale, hold, move, stat, statpin, statlog, count, pos, base, spawn or walkable)" },
+            { "bogus", "unknown form bogus (hook, off, show, args, watch, set, scale, hold, move, stat, statpin, statlog, count, pos, base, spawn, heroic, pool, copies or walkable)" },
+            { "heroic", "usage: heroic <n>, n a whole number 1..20" },
+            { "heroic 0", "usage: heroic <n>, n a whole number 1..20, not 0" },
+            { "heroic 21", "usage: heroic <n>, n a whole number 1..20, not 21" },
+            { "heroic 5 5", "usage: heroic <n>, n a whole number 1..20" },
+            { "pool 6", "usage: pool [<k>], k a sub-list 0..5, not 6" },
+            { "pool x", "usage: pool [<k>], k a sub-list 0..5, not x" },
+            { "pool 1 2", "usage: pool [<k>], k a sub-list 0..5" },
+            { "copies", "usage: copies <k>, k a whole number 1..400" },
+            { "copies 0", "usage: copies <k>, k a whole number 1..400, not 0" },
+            { "copies 401", "usage: copies <k>, k a whole number 1..400, not 401" },
             { "statlog 64", "usage: statlog <id> <frames>" },
             { "statlog 1000 60", "stat id must be a whole number 0..999, not 1000" },
             { "statlog 64 0", "frames must be a whole number 1..3600, not 0" },
@@ -1371,7 +1475,7 @@ int main()
         const std::vector<std::string> usage = Usage();
         bool every = true;
         for (const char* f : { "hook", "off", "show", "args", "watch", "set", "scale", "hold", "move", "stat", "statpin", "statlog",
-                               "count", "pos", "base", "spawn", "walkable" }) {
+                               "count", "pos", "base", "spawn", "heroic", "pool", "copies", "walkable" }) {
             bool found = false;
             for (const std::string& l : usage) found = found || l.find(std::string("mark1probe ") + f) != std::string::npos;
             every = every && found;

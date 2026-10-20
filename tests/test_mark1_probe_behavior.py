@@ -39,6 +39,11 @@ row hooked; `base`'s key, definition and line; and every lever reply's
 The Mark 1 set's adapter adds `spawn`: the pieces one word places, each
 piece's definition from Mark1Set.hpp's own row, the form's parse and refusals,
 and its line (placed, refused at the ground, not built).
+
+The drops (phase 3) add `heroic <n>`, `pool [<k>]` and `copies <k>` for their
+live session: `heroic`'s per-call line and summary, `pool`'s summary of one
+sub-list as the Heroic roll keeps it with each piece's stand-in by
+Mark1Drops.hpp's rule, `copies`' line, and each form's parse and refusals.
 """
 import os
 import shutil
@@ -196,6 +201,26 @@ class Mark1ProbeBehaviorTests(unittest.TestCase):
         # piece - placed, refused at the ground, or not built.
         self.assertScenarios("spawn/pieces_by_word", "spawn/definition_is_the_rows_seed_and_base", "spawn/parse",
                              "spawn/line_placed_refused_and_not_built")
+
+    # ---- the drops' forms (Mark1Drops.hpp's live session) -------------------------
+
+    def test_heroic_call_lines_summary_and_parse(self):
+        # `heroic <n>`: one line per call (placed with its class, base, c, rarity, name and
+        # whether it is a piece, or nothing placed and why), then the summary: rarities rising,
+        # the unread ones apart, and the pieces by their own recognition, never by name.
+        self.assertScenarios("heroic/parse", "heroic/call_lines_placed_and_nothing",
+                             "heroic/summary_rarities_rising_and_pieces_by_recognition", "heroic/a_fresh_summary_reads_none")
+
+    def test_pool_summary_standins_and_parse(self):
+        # `pool [<k>]`: 5 by default; T_H (`droppable=`) counts the entries the Heroic roll keeps,
+        # repeats included, by rarity, apart from those it draws past (rated 7 or 10, hidden,
+        # unread, not a triple); each piece's stand-in is Mark1Drops.hpp's rule (Heroic preferred,
+        # none for a class with no kept triple), and each distinct triple is asked about once.
+        self.assertScenarios("pool/parse_default_five_and_a_named_list", "pool/summary_droppable_histograms_and_what_is_drawn_past",
+                             "pool/each_piece_standin_by_the_drops_rule", "pool/each_distinct_triple_asked_once")
+
+    def test_copies_line(self):
+        self.assertScenario("copies/line")
 
     # ---- the lines -------------------------------------------------------------
 

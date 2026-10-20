@@ -42,6 +42,13 @@ their SDK constants, the pieces' ground icon installed first the way the
 set's own install puts it in, and nothing written by the probe itself; and
 `M1pScriptHolder`, the probe's own hold on a script, which the set's install
 asks before it hooks CheckTalentUse.
+
+The drops (phase 3) add `heroic`, `pool` and `copies`, research build only like
+the rest: `heroic` calls DropItemHeroic by its SDK constant with the local
+player as self (charmprobe heroic's call shape) and recognises a piece through
+the shipped Mark1PieceOf; `pool` reads through the drop adapter's own reads and
+writes nothing; `copies` is the only writer of the copies lever, a constant in
+the player build.
 """
 import re
 import sys
@@ -274,10 +281,12 @@ class Mark1ProbeContract(unittest.TestCase):
     def test_research_only_base_builds_through_the_loader_by_its_sdk_constant_and_places_nothing(self):
         base = self.body("static void M1pBase(const M1pNs::Command& c)")
         spawn = self.body("static void M1pSpawn(const M1pNs::Command& c)")
-        # base's one game-script call; spawn's two are the only others.
+        # base's one game-script call; spawn's two and heroic's one are the only others.
+        heroic = self.body("static void M1pHeroic(const M1pNs::Command& c)")
         self.assertEqual(base.count("CallGameScriptEx("), 1)
         self.assertEqual(spawn.count("CallGameScriptEx("), 2)
-        self.assertEqual(self.code.count("CallGameScriptEx("), 3)
+        self.assertEqual(heroic.count("CallGameScriptEx("), 1)
+        self.assertEqual(self.code.count("CallGameScriptEx("), 4)
         self.assertIn("g_Yytk->CallGameScriptEx(item, HeroSiege::Scripts::gml_Script_InitItemFromJson, g, g,", base)
         self.assertIn('g_Yytk->CallBuiltinEx(parsed, "json_parse", g, g, { RValue(M1pNs::BaseJson(c.base)) });', base)
         self.assertIn("M1pNs::BaseKey(ms, c.itemClass)", base)
@@ -315,6 +324,40 @@ class Mark1ProbeContract(unittest.TestCase):
         self.assertIn("M1pNs::SpawnLine(r)", spawn)
         command = self.body("static void M1pCommand(const std::string& rest)")
         self.assertIn("case M1pNs::Form::Spawn: M1pSpawn(c); return;", command)
+
+    def test_research_only_the_drops_forms_call_the_roll_by_name_and_read_through_the_drop_adapter(self):
+        # `heroic`: DropItemHeroic by its SDK constant with the local player as self and its x, y
+        # (charmprobe heroic's call shape), what it placed read off the newest ground item, a
+        # piece recognised by the shipped Mark1PieceOf, and the core's lines.
+        heroic = self.body("static void M1pHeroic(const M1pNs::Command& c)")
+        self.assertIn("FcpPlayer(player, self, x, y, why)", heroic)
+        self.assertIn("g_Yytk->CallGameScriptEx(res, HeroSiege::Scripts::gml_Script_DropItemHeroic, self, self, { RValue(x), RValue(y) });",
+                      heroic)
+        self.assertIn("FcpNewestGround(ground, &newest)", heroic)
+        self.assertIn("r.isPiece = Mark1PieceOf(item, r.piece);", heroic)
+        self.assertIn("M1pNs::HeroicCallLine(i, r)", heroic)
+        self.assertIn("Out(tally.Line());", heroic)
+        self.assertNotIn('"gml_Script_', heroic)
+        # `pool`: the drop adapter's own reads (the list by name, every entry, each distinct
+        # triple's repository verdict outside a roll), the core's summary; nothing written.
+        pool = self.body("static void M1pPool(const M1pNs::Command& c)")
+        self.assertIn("Mark1DropReadList(c.count, sub, id, size, why)", pool)
+        self.assertIn("FlightDropOutsideRoll outside;", pool)
+        self.assertIn("M1pNs::Pool(c.count, Mark1DropEntries(sub, size), Mark1DropVerdict)", pool)
+        self.assertIn("M1pNs::PoolLines(s)", pool)
+        for name in MEMBER_WRITES + ("CallGameScript",):
+            self.assertNotIn(name, pool)
+        # `copies`: the research build's copies lever, a plain int there and a constexpr 1 in the
+        # player build (so the player build has no writer of it).
+        copies = self.body("static void M1pCopies(const M1pNs::Command& c)")
+        self.assertIn("g_Mark1DropCopies = c.count;", copies)
+        self.assertEqual(self.code.count("g_Mark1DropCopies ="), 1)
+        self.assertIn("#ifdef FORGEPACT_RELEASE\nstatic constexpr int g_Mark1DropCopies = M1dNs::kPlayerCopies;\n#else\n"
+                      "static int g_Mark1DropCopies = M1dNs::kPlayerCopies;\n#endif", self.plugin)
+        command = self.body("static void M1pCommand(const std::string& rest)")
+        for case in ("case M1pNs::Form::Heroic: M1pHeroic(c); return;", "case M1pNs::Form::Pool: M1pPool(c); return;",
+                     "case M1pNs::Form::Copies: M1pCopies(c); return;"):
+            self.assertIn(case, command)
 
     def test_research_only_the_probes_own_hold_is_named_for_the_set(self):
         holder = self.body("static std::string M1pScriptHolder(std::string_view runtimeName)")
