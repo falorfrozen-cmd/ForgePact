@@ -44,6 +44,13 @@ template<size_t Capacity=262144, size_t MaxBanks=16> class Router {
     std::array<Api,MaxBanks> m_Api{};
     std::array<std::bitset<Capacity>,MaxBanks> m_Live{};
     std::array<size_t,MaxBanks> m_Used{};
+    // A full native pool does not refuse cheaply. Every free moves its cursor
+    // back, and the next refusal scans from there to the end of the table. So
+    // once a pool refuses, it is asked again only after a free has given it
+    // room; the native first-fit then finds that record. Live (#232, 2026-10-20),
+    // asking full pools on every allocation froze the game for 4-12 s at a time.
+    std::array<bool,MaxBanks> m_Full{};
+    std::array<size_t,MaxBanks> m_FreedSinceFull{};
     std::atomic<size_t> m_Count{0}, m_Failures{0}, m_Invalid{0}, m_OverflowLive{0};
     std::recursive_mutex m_Mutation;
     std::function<bool(Api&)> m_Grow;
@@ -52,7 +59,7 @@ template<size_t Capacity=262144, size_t MaxBanks=16> class Router {
         const auto n=m_Count.load(); if(n>=MaxBanks) return false;
         Api api;
         try {if(!m_Grow || !m_Grow(api) || !api.Complete()) return false;} catch(...) {return false;}
-        m_Api[n]=api; m_Used[n]=0; m_Live[n].reset();
+        m_Api[n]=api; m_Used[n]=0; m_Live[n].reset(); m_Full[n]=false; m_FreedSinceFull[n]=0;
         m_Count.store(n+1,std::memory_order_release); return true;
     }
     bool Split(double h,size_t& bank,size_t& local) {
@@ -76,10 +83,11 @@ public:
         std::lock_guard lock(m_Mutation);
         for(size_t b=0;;++b) {
             if(b==m_Count.load() && !AddBank()) {++m_Failures;return -1;}
-            // Full banks return -1 cheaply; native frees rewind their own cursor.
+            if(m_Full[b] && m_FreedSinceFull[b]==0) continue;
             const double local=m_Api[b].alloc(value);
-            if(local==-1) continue;
+            if(local==-1) {m_Full[b]=true;m_FreedSinceFull[b]=0;continue;}
             if(!std::isfinite(local) || local<0 || local>=Capacity || std::floor(local)!=local) {++m_Failures;return -1;}
+            if(m_Full[b]) --m_FreedSinceFull[b];
             if(b) {
                 const auto slot=static_cast<size_t>(local);
                 if(m_Live[b].test(slot)) {++m_Failures;return -1;}
@@ -97,7 +105,11 @@ public:
     double Free(double h) {
         std::lock_guard lock(m_Mutation);size_t b,i;if(!Split(h,b,i)) return 0;
         const double result=m_Api[b].free(double(i));
-        if(b && m_Live[b].test(i)) {m_Live[b].reset(i);--m_Used[b];--m_OverflowLive;}
+        // Bank zero's occupancy is unknown, so any free there may open a
+        // record; a stale one costs a single refused scan that re-marks it full.
+        const bool opened=b ? m_Live[b].test(i) : true;
+        if(b && opened) {m_Live[b].reset(i);--m_Used[b];--m_OverflowLive;}
+        if(opened && m_Full[b]) ++m_FreedSinceFull[b];
         return result;
     }
     double CheckMemory(double begin,double count) {
@@ -115,6 +127,7 @@ public:
             for(size_t i=0;i<Capacity;++i)if(m_Live[b].test(i))m_Api[b].free(double(i));
             m_Live[b].reset();m_Used[b]=0;
         }
+        m_Full.fill(false);m_FreedSinceFull.fill(0);   // probe every pool again
         m_OverflowLive.store(0);return result;
     }
     size_t Headroom() {
