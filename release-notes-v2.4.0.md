@@ -6,9 +6,10 @@ A new item set of ForgePact's own, **Mark 1**: four Satanic pieces, like the
 game's own set pieces, that, worn together with the new **Mark 1 set** switch
 on (off by default), cast the skills on your Q, E, R and Y slots for you and
 send your jump three times as far over scenery, at the price of walking at
-half speed. A second switch, **Mark 1 drops** (also off by default), lets the
-pieces drop from the monsters you kill anywhere, like the game's own set
-items, and from vaults.
+half speed. A second switch, **Mark 1 drops** (also off by default), adds the
+pieces to the game's own roll for a unique item, the one a kill's drop can
+run, and to the Heroic roll a vault runs. No piece has dropped from a kill in
+testing yet: see "Finding the pieces" below.
 
 ## New
 
@@ -49,14 +50,17 @@ items, and from vaults.
     built on.
   - **Finding the pieces.** Switch on **Mark 1 drops** (Mods → Items, off by
     default; it works with or without the set's own switch). The pieces then
-    drop from the monsters you kill anywhere, among the game's own items, the
-    way the game's own set items such as White Mage's Sacred set and Zealot's
-    Prophecy do, each about as likely as any single unique the game can drop
-    from a kill. They also drop from the game's own Heroic roll, the one that
-    runs when you open a vault from your bag, each about as likely as any
-    single Heroic unique that roll can give you. The rates have not been
-    measured yet. A dropped piece shows its own art. With the switch off,
-    kills and vaults drop exactly what they always did.
+    join the game's own roll for a unique item, the roll a kill's drop runs
+    when it gives a unique, each about as likely as any single unique that
+    roll can give you. A kill has not dropped a piece in testing yet, though:
+    in a 30-minute test of killing monsters, elites and Treasure Gobblers and
+    opening chests in Act 1 on Hell, no kill ran that roll at all, so whether
+    ordinary kills ever drop the pieces is not known yet. The pieces also
+    join the game's own Heroic roll, the one that runs when you open a vault
+    from your bag, each about as likely as any single Heroic unique that roll
+    can give you. No rate has been measured. A dropped piece shows its own
+    art. With the switch off, kills and vaults drop exactly what they always
+    did.
 
   The set was checked in play on a research build of the plugin: the
   pieces, their art, the outlines and the jump worked, and in that session,
@@ -66,8 +70,9 @@ items, and from vaults.
   seconds with no key pressed, Shadow Bolt was cast 31 times, Heavenly Fire 30
   and Healing Zone 3. It also measured the walk at half speed with the set on,
   and a cast's slowdown on top of that: while a cast slows you, you walk at
-  about a third of your normal speed. A toggle skill on the bar, and the
-  pieces dropping from kills and vaults, have not been checked in play yet.
+  about a third of your normal speed. A toggle skill on the bar, and a piece
+  dropping from a vault, have not been checked in play yet; a piece dropping
+  from a kill was looked for and not seen, as above.
 
 ## Fixed
 
