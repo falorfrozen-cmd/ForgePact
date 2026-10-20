@@ -441,10 +441,14 @@ class Mark1DropsContract(unittest.TestCase):
         self.assertEqual(self.whole.count('"fp_flight_duniq"'), 1)
         self.assertNotIn("gml_Script_DropUniqueItems", self.code)
         self.assertNotIn("Hook_FlightDropUniqueItems", self.code)
-        # Its callers: the definition, Pocket Elf's switch-on and the drops' install.
-        self.assertEqual(len(re.findall(r"\bFlightDropInstallUnique\(\)", self.whole)), 3)
+        # Its callers: the definition, Pocket Elf's switch-on, the drops' install, and the research
+        # build's `mark1probe draws` install (#166 uniques), which ships in no player build.
+        self.assertEqual(len(re.findall(r"\bFlightDropInstallUnique\(\)", self.whole)), 4)
         self.assertIn("FlightDropInstallUnique();", self.body("flight_switch"))
         self.assertIn("FlightDropInstallUnique();", self.body("install"))
+        self.assertIn("FlightDropInstallUnique();", strip_comments(function_body(self.plugin, "static void M1pDrawsInstall()")))
+        self.assertNotIn("static void M1pDrawsInstall()", strip_research_blocks(self.whole))
+        self.assertEqual(len(re.findall(r"\bFlightDropInstallUnique\(\)", strip_comments(strip_research_blocks(self.whole)))), 3)
         # Once a session, whichever comes first; Pocket Elf's refusal is printed only with its switch on.
         shared = self.body("shared_install")
         self.assertIn("const bool elf = d.switches[(int)FcNs::Charm::Elf];", shared)

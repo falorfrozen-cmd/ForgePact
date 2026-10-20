@@ -5090,6 +5090,29 @@ static void ForgeHashStats()
 // outermost return. Defined with charmprobe, below; returns at once while no
 // rule is set.
 static void FcpDressBuilt(RValue& item);
+// `mark1probe draws` (ForgePact #166, Mod live procedure 7, research build only): the
+// watch's call-outs, defined with mark1probe below. Each returns at once while the watch
+// is off: every item built (here, CreateItemNew's outermost return), each
+// GetUniqueRepoStruct read and CreateDefaultParams call (#74's detours), each
+// LoadSatanicDropTier answer (raredrop's one detour), #74's Angelic roll's scope, and the
+// question angelicprobe's drop-item row and gambaprobe's DropItem row ask before they
+// take DropItem's slot.
+static void M1pDrawsNoteBuilt(const RValue& result, int argc, RValue** args);
+static void M1pDrawsNoteRead(int argc, RValue** A);
+static void M1pDrawsNotePick(int argc, RValue** A);
+static void M1pDrawsNoteTier(const RValue& result);
+static bool M1pDrawsEnterAngelic();
+static void M1pDrawsLeaveRoll();
+static bool M1pDrawsHoldsDropItem();
+// A nested roll's scope for the watch, closed on every way out; `entered` is what the
+// watch's enter answered (false while it is off).
+struct M1pDrawsRollGuard {
+    explicit M1pDrawsRollGuard(bool entered) : on(entered) {}
+    ~M1pDrawsRollGuard() { if (on) M1pDrawsLeaveRoll(); }
+    const bool on;
+    M1pDrawsRollGuard(const M1pDrawsRollGuard&) = delete;
+    M1pDrawsRollGuard& operator=(const M1pDrawsRollGuard&) = delete;
+};
 #endif
 
 static void CustomForgePostProcess(RValue& result, int argc, RValue** args, bool finalPass)
@@ -5097,6 +5120,9 @@ static void CustomForgePostProcess(RValue& result, int argc, RValue** args, bool
     PERF_SCOPE(g_PerfForge);
 #ifndef FORGEPACT_RELEASE
     if (finalPass) FcpDressBuilt(result);
+#endif
+#ifndef FORGEPACT_RELEASE
+    if (finalPass) M1pDrawsNoteBuilt(result, argc, args);   // `mark1probe draws`: the item, before any forge entry dresses it
 #endif
     if (TryApplyCustomForge(&result, finalPass)) return;
     // Some constructors mutate an argument and return undefined. Scan only a
@@ -14327,6 +14353,9 @@ static RValue& Hook_CreateDefaultParams(CInstance* S, CInstance* O, RValue& R, i
         }
 #endif
     }
+#ifndef FORGEPACT_RELEASE
+    M1pDrawsNotePick(argc, A);   // `mark1probe draws`: the pick, in whichever scope it is made
+#endif
     RValue& r = g_Orig_CreateDefaultParams ? g_Orig_CreateDefaultParams(S, O, R, argc, A) : R;
     if (g_SigRollDepth > 0 && g_SigHitTyped && g_SigRollPushed > 0) {
         try { SignatureAttributeHit(); } catch (...) {}
@@ -14350,6 +14379,9 @@ static RValue& Hook_CreateDefaultParams(CInstance* S, CInstance* O, RValue& R, i
 // that follows can be typed (Hook_CreateDefaultParams).  Outside a roll it does nothing else.
 static RValue& Hook_GetUniqueRepoStruct(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
+#ifndef FORGEPACT_RELEASE
+    M1pDrawsNoteRead(argc, A);   // `mark1probe draws`: the read, in whichever scope it is made
+#endif
     if (g_SigRollDepth > 0) {
         try {
             double t = 0.0, s = 0.0, b = 0.0;
@@ -24579,7 +24611,9 @@ static RValue& HookGpvRate(CInstance* S, CInstance* O, RValue& R, int argc, RVal
     return r;
 }
 
-static RValue& HookSatanicTier(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+// raredrop satanic's lift: the monster level LoadSatanicDropTier is handed, raised and capped
+// at the top bracket, and otherwise the game's own call.
+static RValue& SatanicTierLift(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
     if (g_SatanicMult > 1.0 && argc >= 1 && A && A[0] && A[0]->m_Kind == VALUE_REAL) {
         try {
@@ -24598,6 +24632,35 @@ static RValue& HookSatanicTier(CInstance* S, CInstance* O, RValue& R, int argc, 
         } catch (...) {}
     }
     return g_OrigSatTier ? g_OrigSatTier(S, O, R, argc, A) : R;
+}
+
+// LoadSatanicDropTier's one detour (ForgePact #166): raredrop satanic's lift, and in the
+// research build the tier the Mark 1 research watch records for the DropItem call in progress.
+static RValue& HookSatanicTier(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    RValue& r = SatanicTierLift(S, O, R, argc, A);
+#ifndef FORGEPACT_RELEASE
+    M1pDrawsNoteTier(r);
+#endif
+    return r;
+}
+
+// The one install of that detour, by the SDK name, from whichever comes first: `raredrop
+// satanic` above 1, or the Mark 1 research watch's switch-on in the research build. A second install would
+// be table-only and blind, so neither has one of its own. It reads the route back, once.
+static bool g_SatTierTried = false;
+static std::string g_SatTierRoute = "not-installed";   // `detoured`, `TABLE-ONLY` or `not-found` once tried
+
+static bool InstallSatanicTierHook()
+{
+    if (!g_SatTierTried && !g_OrigSatTier) {
+        g_SatTierTried = true;
+        bool native = false;
+        const bool ok = HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_LoadSatanicDropTier), "fp_sattier",
+                                      (PVOID)HookSatanicTier, &g_OrigSatTier, &native);
+        g_SatTierRoute = !ok ? "not-found" : native ? "detoured" : "TABLE-ONLY";
+    }
+    return g_OrigSatTier != nullptr;
 }
 
 // Write over code bytes.  Used only for the angelic gate; everything else in
@@ -24777,6 +24840,8 @@ static RValue& HookAngelicChance(CInstance* S, CInstance* O, RValue& R, int argc
     // counted as inside it. The guard lowers it again on every way out.
     ApRollNoteChance(S, argc, A);
     ApRollChanceDepthScope apChanceDepth;
+    // `mark1probe draws`: the Angelic roll's scope, over every original call below.
+    M1pDrawsRollGuard m1pDrawsAngelic(M1pDrawsEnterAngelic());
     // Research lever `angelicprobe hit chance <n>`: the roll's chance argument, only when it
     // arrives as a real, so the game's own die is below it and a hit can be seen in a session.
     if (g_AngHitChance >= 0.0 && argc > 2 && A && A[2] && A[2]->m_Kind == VALUE_REAL) *A[2] = RValue(g_AngHitChance);
@@ -25623,6 +25688,13 @@ static void ApRollAttach(ApRollRow& r)
             "`mark1set stat`'s drops line (heroic-calls=, injected=) is the measure");
         return;
     }
+    // #166: `mark1probe draws`, on first, is spliced into DropManager's DropItem slot; this row
+    // refuses rather than share it (the watch refuses the other way round, naming this row).
+    if (std::string_view(r.id) == "drop-item" && M1pDrawsHoldsDropItem()) {
+        ApRollSetRoute(r, kApRollBlocked, "blocked: `mark1probe draws` holds DropItem's slot (spliced into Hook_DropItem's saved original) - "
+            "its calls= is the measure");
+        return;
+    }
     const std::string full = "gml_Script_" + std::string(r.script);
     PVOID p = nullptr;
     const AurieStatus st = g_Yytk->GetNamedRoutinePointer(full.c_str(), &p);
@@ -26255,9 +26327,7 @@ static void RareDropCmd(const std::string& rest)
     }
 
     if (what == "satanic") {
-        if (mult > 1.0 && !g_OrigSatTier
-            && !HookOneScript("LoadSatanicDropTier", "fp_sattier",
-                              (PVOID)HookSatanicTier, &g_OrigSatTier)) {
+        if (mult > 1.0 && !InstallSatanicTierHook()) {
             Out("raredrop: could not hook LoadSatanicDropTier");
             return;
         }
@@ -52127,6 +52197,13 @@ static void GpInstallScripts(HMODULE mainMod)
             Out(GpScriptRowLine(t, t.status));
             continue;
         }
+        // #166: `mark1probe draws`, on first, is spliced into DropManager's DropItem slot; the row
+        // refuses rather than splice behind it (the watch refuses the other way round, naming it).
+        if (&t == &g_GpScriptRows[kGpScript_DropItem] && M1pDrawsHoldsDropItem()) {
+            t.status = "held by `mark1probe draws` (spliced into Hook_DropItem's saved original); not hooked";
+            Out(GpScriptRowLine(t, t.status));
+            continue;
+        }
         t.tried = true;
         std::string holder;
         if (t.holder) holder = GpInstallScriptHolder(t.holder, signatureTried);
@@ -65198,6 +65275,10 @@ static std::string Mark1DropStatLine()
 // the `effect`, `pst` array and `builtin` watch scopes, `pos`'s modal step
 // and frame time, and `base`, a scratch item of one class and base built by
 // InitItemFromJson and never placed.
+//
+// Mod live procedure 7 adds `draws` (a watch on DropItem's own unique draw, spliced into
+// DropManager's DropItem detour, with LoadSatanicDropTier's one detour shared with
+// raredrop), its lever `draws push`, and `pool draw` (the "draws" section below).
 // tests/test_mark1_probe_contract.py pins this adapter.
 #include <ForgePact/Mark1Probe.hpp>
 namespace M1pNs = ForgePact::Mark1Probe;
@@ -66297,11 +66378,12 @@ static void M1pPool(const M1pNs::Command& c)
 // `mark1probe pool kill`: lootListUnique[0..5] read through the kill route's own reads
 // (Mark1KillReadLists, Mark1DropEntries, and each distinct triple's Mark1DropVerdict outside a
 // roll), then the core's kill stand-in rule: per piece class its stand-in and that triple's count
-// on each of [0..4]. Refused while a roll's entries are on a list, so the counts are the game's
-// own. Writes nothing.
+// on each of [0..4]. Refused while a roll's entries are on a list (`draws push`'s too), so the
+// counts are the game's own. Writes nothing.
+static bool M1pDrawsPushing();
 static void M1pPoolKill(const M1pNs::Command&)
 {
-    if (g_M1Drop.pushed > 0 || g_M1Drop.killPushed > 0 || g_FlightDrop.rollPushed > 0 || g_SigRollPushed > 0) {
+    if (g_M1Drop.pushed > 0 || g_M1Drop.killPushed > 0 || g_FlightDrop.rollPushed > 0 || g_SigRollPushed > 0 || M1pDrawsPushing()) {
         Out("mark1probe pool: refused - a roll's entries are on the lists; try again after it");
         return;
     }
@@ -66420,6 +66502,432 @@ static void M1pKillgate(const M1pNs::Command& c)
         Out(g_M1pKillgate.Set(c.count == 1, M1pKillgateHook()));
     }
     Out(g_M1pKillgate.StatLine(M1pKillgateHook()));
+}
+
+// ---- draws (Mod live procedure 7) --------------------------------------------------
+//
+// The watch on DropItem's own unique draw, its lever and `pool draw`. Every decision and
+// every line is the core's (M1pNs::Draws, DrawPushBook, PoolDraw); this supplies the calls
+// and the reads, each through a detour that already exists:
+//
+//   - DropItem: spliced into DropManager's saved original (gambaprobe's held-original splice,
+//     GpDropItemHolder), so each original call Hook_DropItem makes - a dropmult copy too - is
+//     one watch call. Never a second hook on DropItem; refused while angelicprobe's drop-item
+//     row or gambaprobe's DropItem row holds the slot, and both refuse once this holds it.
+//   - the nested rolls: the shared DropUniqueItems detour's and Mark 1's Heroic hook's saved
+//     originals spliced the same way (the game's own roll runs inside the scope), and #74's
+//     Angelic roll through its research-only guard in HookAngelicChance;
+//   - LoadSatanicDropTier: raredrop's one detour (InstallSatanicTierHook), whose research
+//     call-out records the tier; ReturnRandomSatanic: a count-only hook by its SDK name;
+//   - the reads, the picks and the builds: research call-outs in #74's GetUniqueRepoStruct and
+//     CreateDefaultParams detours and in the Custom Forge's final pass on CreateItemNew, all
+//     three installed through InstallSignatureAngelicHooks when they are not in yet.
+//
+// The lever's push and removal are the core's DrawPushBook on the six lists read by name
+// (Mark1KillReadLists), with the drop adapter's own add, delete and tail check; the stand-ins
+// are `pool kill`'s (ResolveKillStandIns), resolved again whenever a list's id or length
+// changes. Nothing is rewritten, and with the watch off every spliced call is the original's.
+
+static M1pNs::Draws g_M1pDraws;
+static M1pNs::DrawPushBook g_M1pDrawsBook;
+static M1dNs::KillStandInCache g_M1pDrawsStandIns;
+static int g_M1pDrawsBusy = 0;                                  // the probe's own reads: never counted
+static PFUNC_YYGMLScript g_M1pDrawsDropItemOrig = nullptr;      // what DropManager's slot held: the trampoline
+static PFUNC_YYGMLScript g_M1pDrawsUniqueOrig = nullptr;        // what the shared DropUniqueItems detour's held
+static PFUNC_YYGMLScript g_M1pDrawsHeroicOrig = nullptr;        // what Mark 1's Heroic hook's held
+static PFUNC_YYGMLScript g_M1pRetsatOrig = nullptr;
+static bool g_M1pRetsatTried = false;
+static std::string g_M1pRetsatRoute = "not-installed";
+static bool g_M1pDrawsPushMissLogged = false;
+
+struct M1pDrawsBusyScope {
+    M1pDrawsBusyScope() { ++g_M1pDrawsBusy; }
+    ~M1pDrawsBusyScope() { --g_M1pDrawsBusy; }
+    M1pDrawsBusyScope(const M1pDrawsBusyScope&) = delete;
+    M1pDrawsBusyScope& operator=(const M1pDrawsBusyScope&) = delete;
+};
+
+static bool M1pDrawsHoldsDropItem() { return g_M1pDrawsDropItemOrig != nullptr; }
+static bool M1pDrawsPushing() { return g_M1pDrawsBook.Pushed() > 0; }
+static bool M1pDrawsEnterAngelic() { return g_M1pDrawsBusy == 0 && g_M1pDraws.EnterRoll(M1pNs::DrawScope::Angelic); }
+static void M1pDrawsLeaveRoll() { g_M1pDraws.LeaveRoll(); }
+
+// Splices `detour` into a holder's saved original, once: the holder's own code then calls the
+// probe, which calls what the slot held. Only a trampoline is spliced (GpHolderIsNative): a
+// table-only holder's saved original is the game's function, which the game's compiled calls
+// pass by.
+static bool M1pDrawsSplice(PFUNC_YYGMLScript* slot, PFUNC_YYGMLScript& saved, PFUNC_YYGMLScript detour)
+{
+    if (saved) return true;
+    std::string why;
+    if (!slot || !GpHolderIsNative((const void*)*slot, why)) return false;
+    saved = *slot;
+    *slot = detour;
+    return true;
+}
+
+// DropItem's route as the status lines name it.
+static std::string M1pDrawsDropItemRoute()
+{
+    if (g_M1pDrawsDropItemOrig) return M1pNs::kDrawRouteDetoured;
+    if (g_ApRollRows[kApRowDropItem].tramp) return "held-by-angelicprobe";
+    if (g_GpScriptRows[kGpScript_DropItem].orig) return "held-by-gambaprobe";
+    PFUNC_YYGMLScript* slot = GpDropItemHolder();
+    std::string why;
+    return slot && *slot && !GpHolderIsNative((const void*)*slot, why) ? "TABLE-ONLY" : "not-installed";
+}
+
+static M1pNs::DrawRoutes M1pDrawsRoutes()
+{
+    M1pNs::DrawRoutes r;
+    r.dropitem = M1pDrawsDropItemRoute();
+    r.sattier = g_SatTierRoute;
+    r.retsat = g_M1pRetsatRoute;
+    return r;
+}
+
+static RValue& M1pDrawsRollCall(M1pNs::DrawScope scope, PFUNC_YYGMLScript orig, CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    if (!orig) return R;
+    M1pDrawsRollGuard scoped(g_M1pDrawsBusy == 0 && g_M1pDraws.EnterRoll(scope));
+    return orig(S, O, R, argc, A);
+}
+
+// The shared DropUniqueItems detour's and Mark 1's Heroic hook's saved originals, spliced:
+// the game's own roll runs inside the watch's scope.
+static RValue& M1pDrawsUnique(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    return M1pDrawsRollCall(M1pNs::DrawScope::DropUnique, g_M1pDrawsUniqueOrig, S, O, R, argc, A);
+}
+
+static RValue& M1pDrawsHeroic(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    return M1pDrawsRollCall(M1pNs::DrawScope::Heroic, g_M1pDrawsHeroicOrig, S, O, R, argc, A);
+}
+
+// Mark 1's Heroic hook goes in only when its drops switch on, so the splice is tried at
+// `draws on`, at every status read and at each DropItem call the watch counts.
+static void M1pDrawsSpliceHeroic()
+{
+    if (!g_M1pDrawsHeroicOrig && g_Orig_Mark1DropHeroic) M1pDrawsSplice(&g_Orig_Mark1DropHeroic, g_M1pDrawsHeroicOrig, M1pDrawsHeroic);
+}
+
+// ReturnRandomSatanic, by its SDK name: counted while the watch is on, nothing else.
+static RValue& M1pDrawsRetsat(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    g_M1pDraws.NoteRetsat();
+    return g_M1pRetsatOrig ? g_M1pRetsatOrig(S, O, R, argc, A) : R;
+}
+
+// ---- the call-outs ----
+
+static bool M1pDrawsArg(int argc, RValue** A, int i, double& v)
+{
+    return argc > i && A && A[i] && SigNumber(*A[i], v);
+}
+
+static void M1pDrawsNoteRead(int argc, RValue** A)
+{
+    if (!g_M1pDraws.On() || g_M1pDrawsBusy) return;
+    double t = 0.0, sub = 0.0, b = 0.0;
+    bool ok = false;
+    try { ok = M1pDrawsArg(argc, A, 0, t) && M1pDrawsArg(argc, A, 1, sub) && M1pDrawsArg(argc, A, 2, b); } catch (...) { ok = false; }
+    g_M1pDraws.NoteRead(ok, t, sub, b);
+}
+
+static void M1pDrawsNotePick(int argc, RValue** A)
+{
+    if (!g_M1pDraws.On() || g_M1pDrawsBusy) return;
+    double sub = 0.0, b = 0.0;
+    bool ok = false;
+    try { ok = M1pDrawsArg(argc, A, 0, sub) && M1pDrawsArg(argc, A, 1, b); } catch (...) { ok = false; }
+    g_M1pDraws.NotePick(ok, sub, b);
+}
+
+static void M1pDrawsNoteTier(const RValue& result)
+{
+    if (!g_M1pDraws.On()) return;
+    double v = 0.0;
+    bool ok = false;
+    try { ok = SigNumber(result, v); } catch (...) { ok = false; }
+    g_M1pDraws.NoteTier(ok, v);
+}
+
+// The six lists' own counts of every triple on them, cached by every list's id and length;
+// while the lever's entries are on, each list is read up to its size before them.
+static M1dNs::KillListKeys g_M1pDrawsCountKeys{};
+static bool g_M1pDrawsCountHave = false;
+static std::map<M1dNs::Triple, M1pNs::DrawListCounts> g_M1pDrawsCounts;
+
+static std::optional<M1pNs::DrawListCounts> M1pDrawsListCounts(const M1dNs::Triple& key)
+{
+    RValue subs[M1dNs::kListCount];
+    M1dNs::KillListKeys keys{};
+    std::string why;
+    if (!Mark1KillReadLists(subs, keys, why)) return std::nullopt;
+    if (g_M1pDrawsBook.Pushed() > 0)
+        for (int k = 0; k < M1dNs::kListCount; ++k) keys[(size_t)k].length = g_M1pDrawsBook.Before(k);
+    bool stale = !g_M1pDrawsCountHave;
+    for (int k = 0; k < M1dNs::kListCount && !stale; ++k)
+        stale = keys[(size_t)k].id != g_M1pDrawsCountKeys[(size_t)k].id || keys[(size_t)k].length != g_M1pDrawsCountKeys[(size_t)k].length;
+    if (stale) {
+        g_M1pDrawsCounts.clear();
+        for (int k = 0; k < M1dNs::kListCount; ++k) {
+            for (const M1dNs::ListEntry& e : Mark1DropEntries(subs[k], keys[(size_t)k].length)) {
+                M1dNs::Triple t;
+                if (!e.triple || !M1sNs::AsWhole(e.t, t.t) || !M1sNs::AsWhole(e.sub, t.sub) || !M1sNs::AsWhole(e.b, t.b)) continue;
+                ++g_M1pDrawsCounts[t][(size_t)k];
+            }
+        }
+        g_M1pDrawsCountKeys = keys;
+        g_M1pDrawsCountHave = true;
+    }
+    const auto it = g_M1pDrawsCounts.find(key);
+    return it == g_M1pDrawsCounts.end() ? M1pNs::DrawListCounts{} : it->second;
+}
+
+// The Custom Forge's final pass (CreateItemNew's outermost return): the item built - the
+// returned struct, else the first argument the constructor filled - read by name, classed by
+// the core, its triple's counts read when the core names one, and the core's line printed.
+static void M1pDrawsNoteBuilt(const RValue& result, int argc, RValue** args)
+{
+    if (!g_M1pDraws.On() || g_M1pDrawsBusy || g_TruthDepth != 0) return;
+    M1pNs::DrawBuilt built;
+    try {
+        RValue def;
+        const RValue* item = FcpMember(result, "itemDefinitionStruct", def) ? &result : nullptr;
+        for (int i = 0; !item && args && i < argc && i < 8; ++i)
+            if (args[i] && FcpMember(*args[i], "itemDefinitionStruct", def)) item = args[i];
+        if (item) {
+            RValue info, v;
+            FcpMember(*item, "itemInfoStruct", info);
+            double n = 0;
+            if (FcpMember(*item, "itemType", v) && FcpNumber(v, n)) built.t = n;
+            if (FcpMember(def, "b", v) && FcpNumber(v, n)) built.b = n;
+            if (FcpMember(def, "c", v) && FcpNumber(v, n)) built.c = n;
+            if (FcpMember(info, "27", v) && FcpNumber(v, n)) built.rarity = n;
+            if (FcpMember(info, "32", v) && FcpNumber(v, n)) built.tier = n;
+            if (FcpMember(info, "28", v) && v.m_Kind == VALUE_STRING) built.name = v.ToString();
+        }
+    } catch (...) {}
+    std::optional<M1pNs::DrawListCounts> lists;
+    const M1pNs::DrawBuildQuery q = g_M1pDraws.Query(built);
+    if (q.haveTriple) {
+        try { lists = M1pDrawsListCounts(q.triple); } catch (...) { lists.reset(); }
+    }
+    const std::string line = g_M1pDraws.NoteBuilt(built, lists);
+    if (!line.empty()) Out(line);
+}
+
+// ---- the lever's push, on the six lists by name ----
+
+struct M1pDrawsListOps {
+    RValue subs[M1dNs::kListCount];
+
+    int Length(int k)
+    {
+        try { return (int)g_Yytk->CallBuiltin("ds_list_size", { subs[k] }).ToDouble(); } catch (...) { return -1; }
+    }
+    bool Add(int k, const M1dNs::Triple& t)
+    {
+        try { Mark1DropAddEntry(subs[k], t); return true; } catch (...) { return false; }
+    }
+    bool TailHolds(int k, int before, const std::vector<M1dNs::PushEntry>& entries, const std::vector<int>& on, int& len)
+    {
+        return Mark1ListTailHolds(subs[k], before, entries, on, len);
+    }
+    int DeleteLast(int k, int len, int n)
+    {
+        try { return Mark1DropDeleteLast(subs[k], len, n); } catch (...) { return -1; }
+    }
+};
+static M1pDrawsListOps g_M1pDrawsOps;   // the lists the call in progress pushed onto
+
+// `pool kill`'s stand-ins over the six lists, resolved again when a list changed; every verdict
+// read outside a roll's scope and never counted as a read.
+static const M1dNs::KillResolution* M1pDrawsStandIns(RValue subs[], const M1dNs::KillListKeys& keys)
+{
+    if (g_M1pDrawsStandIns.Stale(keys)) {
+        M1pDrawsBusyScope busy;
+        FlightDropOutsideRoll outside;
+        M1dNs::KillLists lists;
+        for (int k = 0; k < M1dNs::kListCount; ++k) lists[(size_t)k] = Mark1DropEntries(subs[k], keys[(size_t)k].length);
+        g_M1pDrawsStandIns.Store(keys, M1dNs::ResolveKillStandIns(lists, Mark1DropVerdict));
+    }
+    return g_M1pDrawsStandIns.Find();
+}
+
+static void M1pDrawsPush()
+{
+    RValue subs[M1dNs::kListCount];
+    M1dNs::KillListKeys keys{};
+    std::string why;
+    if (!Mark1KillReadLists(subs, keys, why)) return;
+    const M1dNs::KillResolution* r = M1pDrawsStandIns(subs, keys);
+    if (!r) return;
+    for (int k = 0; k < M1dNs::kListCount; ++k) g_M1pDrawsOps.subs[k] = subs[k];
+    std::vector<std::string> lines;
+    const M1pNs::DrawPushResult result = g_M1pDrawsBook.Push(M1pNs::DrawPushPlan(*r, g_M1pDraws.Push()), g_M1pDrawsOps, lines);
+    for (const std::string& l : lines) { g_M1pDraws.NoteAnomaly(); Out(l); }
+    if (result == M1pNs::DrawPushResult::Held) {
+        g_M1pDraws.NotePushed(g_M1pDrawsBook.Entries());
+        g_M1pDrawsPushMissLogged = false;
+        return;
+    }
+    if (result == M1pNs::DrawPushResult::None) return;
+    g_M1pDraws.NoteAnomaly();
+    if (!g_M1pDrawsPushMissLogged) {
+        g_M1pDrawsPushMissLogged = true;
+        Out(M1pNs::DrawPushRefusedLine(result));
+    }
+}
+
+static void M1pDrawsRemove()
+{
+    for (const std::string& l : g_M1pDrawsBook.Remove(g_M1pDrawsOps)) { g_M1pDraws.NoteAnomaly(); Out(l); }
+    for (RValue& s : g_M1pDrawsOps.subs) s = RValue();
+}
+
+static bool M1pDrawsElfOn() { return g_FlightDrop.switches[(int)FcNs::Charm::Elf]; }
+
+// One DropItem call: the watch's scope, and the lever's push for the outermost call, taken off
+// again on every way out, a throw from the game's DropItem included.
+struct M1pDrawsCall {
+    bool counted = false;
+    bool pushed = false;
+    M1pDrawsCall(int argc, RValue** A)
+    {
+        M1pNs::DrawArg7 arg7 = M1pNs::DrawArg7::Undefined;
+        try {
+            if (argc > 7 && A && A[7] && A[7]->m_Kind != VALUE_UNDEFINED && A[7]->m_Kind != VALUE_UNSET) {
+                double id = -1.0;
+                std::string why;
+                arg7 = SigListHandle(*A[7], id, why) ? M1pNs::DrawArg7::List : M1pNs::DrawArg7::Other;
+            }
+        } catch (...) { arg7 = M1pNs::DrawArg7::Other; }
+        counted = g_M1pDraws.BeginCall(argc, arg7);
+        if (!counted || !g_M1pDraws.ShouldPush(g_M1Drop.core.Enabled(), M1pDrawsElfOn())) return;
+        pushed = true;
+        try { M1pDrawsPush(); } catch (...) {}
+    }
+    ~M1pDrawsCall()
+    {
+        if (pushed) { try { M1pDrawsRemove(); } catch (...) {} }
+        if (counted) g_M1pDraws.EndCall();
+    }
+    M1pDrawsCall(const M1pDrawsCall&) = delete;
+    M1pDrawsCall& operator=(const M1pDrawsCall&) = delete;
+};
+
+// DropManager's DropItem slot, spliced: Hook_DropItem calls this, and this calls the
+// trampoline. With the watch off it is the trampoline's call and nothing else.
+static RValue& M1pDrawsDropItem(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    if (!g_M1pDrawsDropItemOrig) return R;
+    if (!g_M1pDraws.On()) return g_M1pDrawsDropItemOrig(S, O, R, argc, A);
+    M1pDrawsSpliceHeroic();
+    M1pDrawsCall call(argc, A);
+    return g_M1pDrawsDropItemOrig(S, O, R, argc, A);
+}
+
+// `draws on`'s installs, each once: DropItem's splice first (unless a probe row holds the slot;
+// then nothing else goes in and the core refuses), #74's three detection hooks when one is
+// missing, the shared DropUniqueItems detour (FlightDropInstallUnique) and its splice,
+// LoadSatanicDropTier's one detour, ReturnRandomSatanic's count-only hook, and the Heroic splice.
+static void M1pDrawsInstall()
+{
+    if (!g_M1pDrawsDropItemOrig && !g_ApRollRows[kApRowDropItem].tramp && !g_GpScriptRows[kGpScript_DropItem].orig) {
+        PFUNC_YYGMLScript* slot = GpDropItemHolder();
+        if (slot && !*slot) ForgePact::DropManager::Instance().InstallHooks();   // at x1 a pass-through, as gambaprobe installs it
+        M1pDrawsSplice(slot, g_M1pDrawsDropItemOrig, M1pDrawsDropItem);
+    }
+    if (!g_M1pDrawsDropItemOrig) return;
+    if (!g_Orig_GetUniqueRepoStruct || !g_Orig_CreateDefaultParams || !g_Orig_CreateItemNew) InstallSignatureAngelicHooks();
+    FlightDropInstallUnique();
+    if (FlightDropUniqueRoute() == M1pNs::kDrawRouteDetoured) M1pDrawsSplice(&g_Orig_FlightDropUnique, g_M1pDrawsUniqueOrig, M1pDrawsUnique);
+    InstallSatanicTierHook();
+    if (!g_M1pRetsatTried) {
+        g_M1pRetsatTried = true;
+        bool native = false;
+        const bool ok = HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_ReturnRandomSatanic), "fp_m1p_retsat",
+                                      (PVOID)M1pDrawsRetsat, &g_M1pRetsatOrig, &native);
+        g_M1pRetsatRoute = !ok ? "not-found" : native ? "detoured" : "TABLE-ONLY";
+    }
+    M1pDrawsSpliceHeroic();
+}
+
+static void M1pDraws(const M1pNs::Command& c)
+{
+    if (c.form == M1pNs::Form::DrawsSet) {
+        if (c.count == 1) M1pDrawsInstall();
+        Out(g_M1pDraws.SetOn(c.count == 1, M1pDrawsRoutes()));
+        if (c.count == 1 && g_M1pDraws.On() && !g_M1pDrawsUniqueOrig)
+            Out("mark1probe draws: DropUniqueItems is " + FlightDropUniqueRoute()
+                + " - a unique it builds is classed by the scope around it, not as dropunique");
+        return;
+    }
+    M1pDrawsSpliceHeroic();
+    Out(g_M1pDraws.StatusLine(M1pDrawsRoutes()));
+}
+
+// `draws push <c>|off`: the lever, refused by the core while Mark 1 drops or Pocket Elf is on;
+// on, the stand-ins it will push are resolved now, outside any call, and printed.
+static void M1pDrawsPushCommand(const M1pNs::Command& c)
+{
+    Out(g_M1pDraws.SetPush(c.count, g_M1Drop.core.Enabled(), M1pDrawsElfOn()));
+    if (g_M1pDraws.Push() <= 0 || c.count <= 0) return;
+    RValue subs[M1dNs::kListCount];
+    M1dNs::KillListKeys keys{};
+    std::string why;
+    if (!Mark1KillReadLists(subs, keys, why)) { Out("mark1probe draws push: the lists are not readable now (" + why + ")"); return; }
+    const M1dNs::KillResolution* r = M1pDrawsStandIns(subs, keys);
+    std::string standIns;
+    for (const M1sNs::PieceRow& row : M1sNs::kPieces)
+        standIns += " " + std::string(row.key) + "=" + (r ? M1dNs::StandInText(r->standIns[(size_t)row.piece]) : std::string("none"));
+    Out("mark1probe draws push: stand-ins" + standIns + (g_M1pDraws.On() ? std::string() : std::string(" (the watch is off: `draws on` to push)")));
+}
+
+// `mark1probe pool draw`: the six lists read through the kill route's own reads, each distinct
+// triple of the five classes read by name outside a roll (rarity, tier, fields 40 and 41), then
+// the core's candidates and lines. Refused while a roll's entries are on a list. Writes nothing.
+static bool M1pDrawVerdict(const M1dNs::Triple& key, M1pNs::DrawVerdict& out)
+{
+    try {
+        const RValue def = g_Yytk->CallGameScript(HeroSiege::Scripts::gml_Script_GetUniqueRepoStruct,
+                                                  { RValue((double)key.t), RValue((double)key.sub), RValue((double)key.b) });
+        if (def.m_Kind != VALUE_OBJECT) return false;
+        const RValue info = g_Yytk->CallBuiltin("variable_struct_get", { def, RValue("itemBaseInfoStruct") });
+        double r = -1.0, tier = -1.0;
+        if (!TryStructNumber(info, "27", r)) return false;
+        out.rarity = (int)r;
+        out.tier = TryStructNumber(info, "32", tier) ? (int)tier : -1;
+        auto flag = [&](const char* name) {
+            try {
+                const RValue f = g_Yytk->CallBuiltin("variable_struct_get", { info, RValue(name) });
+                return f.m_Kind != VALUE_UNDEFINED && f.m_Kind != VALUE_UNSET && f.ToBoolean();
+            } catch (...) { return false; }
+        };
+        out.f40 = flag("40");
+        out.f41 = flag("41");
+        return true;
+    } catch (...) { return false; }
+}
+
+static void M1pPoolDraw(const M1pNs::Command&)
+{
+    if (g_M1Drop.pushed > 0 || g_M1Drop.killPushed > 0 || g_FlightDrop.rollPushed > 0 || g_SigRollPushed > 0 || M1pDrawsPushing()) {
+        Out("mark1probe pool draw: refused - a roll's entries are on the lists; try again after it");
+        return;
+    }
+    RValue subs[M1dNs::kListCount];
+    M1dNs::KillListKeys keys{};
+    std::string why;
+    if (!Mark1KillReadLists(subs, keys, why)) { Out("mark1probe pool draw: refused - " + why); return; }
+    M1pDrawsBusyScope busy;
+    FlightDropOutsideRoll outside;
+    M1dNs::KillLists lists;
+    for (int k = 0; k < M1dNs::kListCount; ++k) lists[(size_t)k] = Mark1DropEntries(subs[k], keys[(size_t)k].length);
+    for (const std::string& l : M1pNs::PoolDrawLines(M1pNs::PoolDraw(lists, M1pDrawVerdict))) Out(l);
 }
 
 // ---- walkable ----------------------------------------------------------------------
@@ -66697,6 +67205,10 @@ static void M1pCommand(const std::string& rest)
     case M1pNs::Form::Copies: M1pCopies(c); return;
     case M1pNs::Form::Killgate:
     case M1pNs::Form::KillgateSet: M1pKillgate(c); return;
+    case M1pNs::Form::Draws:
+    case M1pNs::Form::DrawsSet: M1pDraws(c); return;
+    case M1pNs::Form::DrawsPush: M1pDrawsPushCommand(c); return;
+    case M1pNs::Form::PoolDraw: M1pPoolDraw(c); return;
     case M1pNs::Form::Count: M1pCount(c.object, c.frames); return;
     case M1pNs::Form::Pos: M1pPos(c.frames); return;
     case M1pNs::Form::WalkHere:

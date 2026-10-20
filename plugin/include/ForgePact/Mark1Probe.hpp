@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <functional>
 #include <map>
 #include <optional>
 #include <string>
@@ -65,7 +66,13 @@ namespace ForgePact::Mark1Probe {
 // count on each of [0..4]; `copies <k>` applies to both rolls. Mod live
 // procedure 6 adds `killgate [0|1]` (the `Killgate` class below): a lever that
 // opens LoadDrops' type-45 gate once per kill, inside the game's own call, and
-// counts what that gate gets with the lever off.
+// counts what that gate gets with the lever off. Mod live procedure 7 adds
+// `draws` (the `Draws` class below): a watch on DropItem's own unique draw that
+// classes every build by the scope it was built in and records each call's
+// LoadSatanicDropTier answer; `draws push <c>`, a lever that puts the Mark 1
+// kill stand-ins on all six lists for the length of each DropItem call and
+// counts the draw's picks of them; and `pool draw`, the candidates the draw
+// keeps per class.
 
 // ---- the rows ----------------------------------------------------------------
 
@@ -411,6 +418,7 @@ inline std::string LeverReply(const Lever& l, int64_t from, const std::string& r
 enum class Form : int {
     Status, Hook, Off, Show, ShowReset, Args, Watch, Set, Scale, Move, Stat, Count, Pos, WalkHere, WalkAt, WalkScan,
     Statlog, Statpin, Hold, Base, Spawn, Heroic, Pool, Copies, Unique, PoolKill, Killgate, KillgateSet,
+    Draws, DrawsSet, DrawsPush, PoolDraw,
 };
 
 struct Command {
@@ -419,7 +427,8 @@ struct Command {
     int64_t     frames = 0;                // Watch, Count, Pos, Statlog
     int         count = 0;                 // Args: calls to print; WalkScan: points; Heroic, Unique: calls; Pool:
                                            // the sub-list (Mark1Drops' default when not given); Copies: the copies;
-                                           // KillgateSet: the lever, 0 or 1
+                                           // KillgateSet: the lever, 0 or 1; DrawsSet: the watch,
+                                           // 0 or 1; DrawsPush: the copies, 0 for off
     Scope       scope = Scope::Player;     // Watch
     bool        after = false;             // Watch: start at the row's next local-player call
     Row         afterRow = Row::CheckTalentUse;
@@ -688,9 +697,10 @@ inline bool Parse(const std::vector<std::string>& tok, Command& c, std::string& 
         return true;
     }
     if (head == "pool") {
-        const std::string usage = "usage: pool [<k>|kill], k a sub-list 0.." + std::to_string(Mark1Drops::kListCount - 1);
+        const std::string usage = "usage: pool [<k>|kill|draw], k a sub-list 0.." + std::to_string(Mark1Drops::kListCount - 1);
         if (n != 1 && n != 2) { why = usage; return false; }
         if (n == 2 && SameWord(tok[1], "kill")) { c.form = Form::PoolKill; return true; }
+        if (n == 2 && SameWord(tok[1], "draw")) { c.form = Form::PoolDraw; return true; }
         long long v = Mark1Drops::kHeroicDefaultListIndex;
         if (n == 2 && !ParseWhole(tok[1], 0, Mark1Drops::kListCount - 1, v)) { why = usage + ", not " + tok[1]; return false; }
         c.count = static_cast<int>(v);
@@ -715,6 +725,27 @@ inline bool Parse(const std::vector<std::string>& tok, Command& c, std::string& 
         c.count = static_cast<int>(v);
         c.form = Form::KillgateSet;
         return true;
+    }
+    if (head == "draws") {
+        const char* usage = "usage: draws [on|off|push <c>|push off]";
+        if (n == 1) { c.form = Form::Draws; return true; }
+        const std::string word = LowerText(tok[1]);
+        if (n == 2 && (word == "on" || word == "off")) {
+            c.count = word == "on" ? 1 : 0;
+            c.form = Form::DrawsSet;
+            return true;
+        }
+        if (n == 3 && word == "push") {
+            c.form = Form::DrawsPush;
+            if (SameWord(tok[2], "off")) { c.count = 0; return true; }
+            const std::string pushUsage = "usage: draws push <c>|off, c a whole number 1.." + std::to_string(Mark1Drops::kMaxCopies);
+            long long v = 0;
+            if (!ParseWhole(tok[2], 1, Mark1Drops::kMaxCopies, v)) { why = pushUsage + ", not " + tok[2]; return false; }
+            c.count = static_cast<int>(v);
+            return true;
+        }
+        why = usage;
+        return false;
     }
     if (head == "count") {
         if (n != 3) { why = "usage: count <object name> <frames>"; return false; }
@@ -750,7 +781,7 @@ inline bool Parse(const std::vector<std::string>& tok, Command& c, std::string& 
     }
     why = "unknown form " + tok[0]
         + " (hook, off, show, args, watch, set, scale, hold, move, stat, statpin, statlog, count, pos, base, spawn, heroic,"
-          " unique, pool, copies, killgate or walkable)";
+          " unique, pool, copies, killgate, draws or walkable)";
     return false;
 }
 
@@ -779,6 +810,9 @@ inline std::vector<std::string> Usage()
         "  mark1probe pool kill                                 lootListUnique[0..4] as the unique roll keeps them, each piece's kill stand-in",
         "  mark1probe copies <k>                                each piece's stand-in pushed k times (1..400) per roll, Heroic and unique",
         "  mark1probe killgate [0|1]                            open LoadDrops' type-45 gate once per kill inside the game's call; alone, its counts",
+        "  mark1probe draws [on|off]                            watch DropItem's own unique draw: each build's scope, the call's tier; alone, its counts",
+        "  mark1probe draws push <c>|off                        push each Mark 1 kill stand-in c times (1..400) onto lootListUnique[0..5] per DropItem call",
+        "  mark1probe pool draw                                 per class (helmet, body, boots, gloves, elf) the candidates DropItem's draw keeps",
         "  mark1probe walkable here <dx> <dy> | at <x> <y> | scan <deg> <step> <count>",
         "  frames default 600, at most 3600; one lever at a time, a new one replaces it",
     };
@@ -1301,6 +1335,579 @@ private:
     std::vector<uint64_t> seen_;   // the arrays handled this frame
     KillgateCounts counts_;
 };
+
+// ---- `draws` (Mod live procedure 7) --------------------------------------------------
+//
+// A static reading (hub RDM § 13.12) has DropItem draw a unique itself: from
+// Controller_obj.lootListUnique[k], k being what LoadSatanicDropTier answered in the same
+// call, with one GetUniqueRepoStruct read of the entry and one CreateDefaultParams call
+// before the build. Whether a kill's unique really comes from there is not established,
+// and this watch is the instrument that asks it. Research build only, like everything in
+// this header, and off until `draws on`.
+//
+// While it is on, every item the Custom Forge's final pass sees built is counted
+// (`builds=`, `normal=` for the normal repository's, c 0) and every unique (c 1) is
+// classed by the innermost scope it was built in: `draw` inside a DropItem call and
+// outside every nested roll, `dropunique` inside the shared DropUniqueItems detour,
+// `angelic` inside #74's Angelic roll, `heroic` inside Mark 1's Heroic hook, `outside`
+// with none of them in progress. Each unique gets one `built` line (200 a session): its
+// scope, the tier its DropItem call drew (`k=`), its triple's count on each of the six
+// lists (`lists=`, the lever's entries left out) and the repository reads its scope made
+// since the scope's last build (`reads=`). `on-k=` and `off-k=` count the `draw` builds
+// of a game triple listed on list k at least once, or not at all.
+//
+// `draws push <c>` (the lever): for the length of each outermost DropItem call, c copies
+// of each Mark 1 kill stand-in on each of lootListUnique[0..5]. A `draw`-scope
+// CreateDefaultParams call whose pair is a pushed stand-in's, typed by the scope's latest
+// read, is a pick (`picks=`); one built is a `pick-builds=`. Nothing is rewritten, the
+// adapter takes the copies off again on every way out (the tail rule, `anomalies=`
+// otherwise), and the lever refuses while Mark 1 drops or Pocket Elf is switched on,
+// since both push onto the same lists.
+
+inline constexpr int kDrawListCount = Mark1Drops::kListCount;   // lootListUnique[0..5]
+inline constexpr int kDrawTierCount = 6;                         // LoadSatanicDropTier answers 0..5 (static reading)
+inline constexpr int kDrawBuiltLineCap = 200;                    // `built` lines a session; the counters go on
+
+enum class DrawScope : int { Draw, DropUnique, Angelic, Heroic, Outside };
+inline constexpr int kDrawScopeCount = 5;
+
+inline const char* DrawScopeText(DrawScope s)
+{
+    switch (s) {
+    case DrawScope::Draw: return "draw";
+    case DrawScope::DropUnique: return "dropunique";
+    case DrawScope::Angelic: return "angelic";
+    case DrawScope::Heroic: return "heroic";
+    case DrawScope::Outside: break;
+    }
+    return "outside";
+}
+
+// DropItem's argument 7 (counting from 0), the list its second draw reads: absent or
+// undefined, a live ds_list, or anything else.
+enum class DrawArg7 : int { Undefined, List, Other };
+
+// What the adapter's installs left, as the lines name it: DropItem's route (`detoured`,
+// `TABLE-ONLY`, `not-installed` or `held-by-<row>`), LoadSatanicDropTier's one detour and
+// ReturnRandomSatanic's count-only hook (`detoured`, `TABLE-ONLY`, `not-found`, or
+// `not-installed` before the first `draws on`).
+struct DrawRoutes {
+    std::string dropitem = "not-installed";
+    std::string sattier = "not-installed";
+    std::string retsat = "not-installed";
+};
+
+inline constexpr const char* kDrawRouteDetoured = "detoured";
+
+// One item the forge's final pass saw built: its class (`itemType`), its definition's b
+// and c, and its info keys 27 (rarity), 32 (tier) and 28 (name); unset when unread.
+struct DrawBuilt {
+    std::optional<double> t, b, c, rarity, tier;
+    std::string name;
+};
+
+struct DrawCounts {
+    uint64_t calls = 0;                                // DropItem calls
+    int      argcMin = 0, argcMax = 0;                 // over those calls
+    std::array<uint64_t, 3> arg7{};                    // by DrawArg7
+    std::array<uint64_t, kDrawTierCount> tiers{};      // LoadSatanicDropTier's answers
+    uint64_t tierUnread = 0;                           // answers that were not a whole 0..5
+    uint64_t reads = 0;                                // GetUniqueRepoStruct reads
+    uint64_t builds = 0;                               // every item built
+    uint64_t normal = 0;                               // of those, c 0
+    std::array<uint64_t, kDrawScopeCount> scopes{};    // the uniques (c 1), by DrawScope
+    uint64_t onK = 0, offK = 0;
+    uint64_t retsatCalls = 0;
+    uint64_t picks = 0, pickBuilds = 0;
+    uint64_t anomalies = 0;
+};
+
+// What the adapter reads for one build before NoteBuilt: whether it is a unique (c 1),
+// and the triple its scope's latest typed pick names when the build's class and b agree
+// with that pick (then `lists=` is that triple's counts).
+struct DrawBuildQuery {
+    bool unique = false;
+    bool haveTriple = false;
+    Mark1Drops::Triple triple;
+};
+
+using DrawListCounts = std::array<int, kDrawListCount>;
+
+// The lever's plan: c copies of each Mark 1 kill stand-in `pool kill` resolves, each onto
+// every one of [0..5]. Copies below 1 push nothing, above 400 push 400.
+inline std::vector<Mark1Drops::PushEntry> DrawPushPlan(const Mark1Drops::KillResolution& r, int copies)
+{
+    return Mark1Drops::PlanKillPush(r, copies, std::array<bool, Mark1Set::kPieceCount>{}).entries;
+}
+
+// How a push went: nothing planned or a list unreadable (`None`), on every list and read
+// back (`Held`), or taken off again because an add threw (`Threw`) or a list's tail did not
+// show it (`NotHeld`).
+enum class DrawPushResult : int { None, Held, Threw, NotHeld };
+
+// The lever's entries for one call: the plan, the entries of each plan row that actually
+// went onto each list (fewer after an add that threw), and each list's size before.
+// The ops, the adapter's on the six lists by name:
+//   int  Length(int k)                    the list's size, -1 when it cannot be read
+//   bool Add(int k, const Triple&)        one fresh entry at the end; false when it threw
+//   bool TailHolds(int k, int before, const std::vector<PushEntry>&, const std::vector<int>& on, int& len)
+//                                         the list ends with exactly these entries; len its size
+//   int  DeleteLast(int k, int len, int n) n entries off the end, then the size (-1 on a throw)
+class DrawPushBook {
+public:
+    int Pushed() const { return pushed_; }
+    const std::vector<Mark1Drops::PushEntry>& Entries() const { return entries_; }
+    // List k's size before this call's entries went on, -1 with none on.
+    int Before(int k) const { return k >= 0 && k < kDrawListCount ? before_[static_cast<size_t>(k)] : -1; }
+
+    // A push that comes off again appends Remove's lines to `lines`.
+    template <class Ops>
+    DrawPushResult Push(const std::vector<Mark1Drops::PushEntry>& plan, Ops& ops, std::vector<std::string>& lines)
+    {
+        Clear();
+        if (plan.empty()) return DrawPushResult::None;
+        for (int k = 0; k < kDrawListCount; ++k) {
+            before_[static_cast<size_t>(k)] = ops.Length(k);
+            if (before_[static_cast<size_t>(k)] < 0) { Clear(); return DrawPushResult::None; }
+        }
+        entries_ = plan;
+        for (std::vector<int>& on : on_) on.assign(plan.size(), 0);
+        bool threw = false;
+        for (int k = 0; k < kDrawListCount && !threw; ++k) {
+            for (size_t e = 0; e < plan.size() && !threw; ++e) {
+                for (int n = 0; n < plan[e].copies && !threw; ++n) {
+                    if (!ops.Add(k, plan[e].triple)) { threw = true; break; }
+                    ++on_[static_cast<size_t>(k)][e];
+                    ++pushed_;
+                }
+            }
+        }
+        bool held = !threw;
+        for (int k = 0; k < kDrawListCount && held; ++k) {
+            int len = -1;
+            held = ops.TailHolds(k, before_[static_cast<size_t>(k)], entries_, on_[static_cast<size_t>(k)], len);
+        }
+        if (held) return DrawPushResult::Held;
+        for (std::string& l : Remove(ops)) lines.push_back(std::move(l));
+        return threw ? DrawPushResult::Threw : DrawPushResult::NotHeld;
+    }
+
+    // Takes this call's entries off every list they went onto, only while that list's tail
+    // still holds exactly them; otherwise the list is left as found. One line per list left
+    // as found (the adapter counts each as an anomaly).
+    template <class Ops>
+    std::vector<std::string> Remove(Ops& ops)
+    {
+        std::vector<std::string> lines;
+        for (int k = 0; k < kDrawListCount && pushed_ > 0; ++k) {
+            int perList = 0;
+            for (int n : on_[static_cast<size_t>(k)]) perList += n;
+            if (perList <= 0) continue;
+            const int before = before_[static_cast<size_t>(k)];
+            int len = -1;
+            const bool tail = ops.TailHolds(k, before, entries_, on_[static_cast<size_t>(k)], len);
+            if (tail) {
+                len = ops.DeleteLast(k, len, perList);
+                if (len == before) continue;
+            }
+            lines.push_back("mark1probe draws push: lootListUnique[" + std::to_string(k) + "] "
+                            + (tail ? "kept entries after removal - size " + std::to_string(len) + ", expected " + std::to_string(before)
+                                    : "changed during the call, left as found (size " + std::to_string(before) + " + "
+                                      + std::to_string(perList) + " pushed, now " + std::to_string(len) + ")"));
+        }
+        Clear();
+        return lines;
+    }
+
+private:
+    void Clear()
+    {
+        entries_.clear();
+        for (std::vector<int>& on : on_) on.clear();
+        before_.fill(-1);
+        pushed_ = 0;
+    }
+
+    std::vector<Mark1Drops::PushEntry> entries_;
+    std::array<std::vector<int>, kDrawListCount> on_{};
+    std::array<int, kDrawListCount> before_{ -1, -1, -1, -1, -1, -1 };
+    int pushed_ = 0;
+};
+
+// The line for a push that came off again, once per change (the adapter logs it once).
+inline std::string DrawPushRefusedLine(DrawPushResult r)
+{
+    return r == DrawPushResult::Threw
+        ? std::string("mark1probe draws push: an add threw - taken off again; this call carries no stand-in")
+        : std::string("mark1probe draws push: not visible on every list's tail - taken off again; calls carry no stand-in until a push reads back");
+}
+
+class Draws {
+public:
+    bool On() const { return on_; }
+    int Push() const { return push_; }
+    const DrawCounts& Counts() const { return counts_; }
+
+    // `draws on|off`. On needs DropItem's route to be the inline detour: only that one sees
+    // the game's compiled calls, and a watch that cannot see them would count zeros.
+    std::string SetOn(bool on, const DrawRoutes& r)
+    {
+        if (on && r.dropitem != kDrawRouteDetoured)
+            return "mark1probe draws: refused - dropitem=" + r.dropitem + " sattier=" + r.sattier + " retsat=" + r.retsat
+                + " (only DropManager's inline DropItem detour sees the game's calls, and a probe holding its slot is named);"
+                  " the watch stays " + std::string(on_ ? "on" : "off");
+        on_ = on;
+        if (on) return "mark1probe draws: watch=on" + RoutesText(r);
+        return "mark1probe draws: watch=off" + RoutesText(r) + " - counting and the push stopped; the hooks stay";
+    }
+
+    // `draws push <c>|off`; c 0 is off. A push on is refused while either feature that pushes
+    // onto the same lists is switched on.
+    std::string SetPush(int copies, bool mark1On, bool elfOn)
+    {
+        if (copies > 0 && (mark1On || elfOn))
+            return std::string("mark1probe draws push: refused - ")
+                + (mark1On ? "Mark 1 drops are switched on (their push shares these lists)" : "Pocket Elf is switched on (its push shares these lists)")
+                + "; the lever stays " + PushText();
+        if (copies > Mark1Drops::kMaxCopies) copies = Mark1Drops::kMaxCopies;
+        push_ = copies < 1 ? 0 : copies;
+        if (push_ == 0) return "mark1probe draws push: off - nothing is pushed";
+        return "mark1probe draws push: c=" + std::to_string(push_) + " - while the watch is on, each DropItem call pushes "
+            + std::to_string(push_) + " copies of each Mark 1 kill stand-in onto each of lootListUnique[0..5]; nothing is rewritten";
+    }
+
+    std::string StatusLine(const DrawRoutes& r) const
+    {
+        const DrawCounts& c = counts_;
+        auto n = [](uint64_t v) { return std::to_string(v); };
+        std::string tiers;
+        for (int k = 0; k < kDrawTierCount; ++k) tiers += (k ? "," : "") + n(c.tiers[static_cast<size_t>(k)]);
+        std::string out = std::string("mark1probe draws: watch=") + (on_ ? "on" : "off") + RoutesText(r) + " calls=" + n(c.calls)
+            + " argc=" + (c.calls ? std::to_string(c.argcMin) + ".." + std::to_string(c.argcMax) : std::string("-"))
+            + " arg7=undefined:" + n(c.arg7[0]) + ",list:" + n(c.arg7[1]) + ",other:" + n(c.arg7[2]) + " tiers=" + tiers
+            + " tier-unread=" + n(c.tierUnread) + " reads=" + n(c.reads) + " builds=" + n(c.builds) + " normal=" + n(c.normal);
+        for (int s = 0; s < kDrawScopeCount; ++s)
+            out += std::string(" ") + DrawScopeText(static_cast<DrawScope>(s)) + "=" + n(c.scopes[static_cast<size_t>(s)]);
+        out += " on-k=" + n(c.onK) + " off-k=" + n(c.offK) + " retsat-calls=" + n(c.retsatCalls) + " push=" + PushText()
+            + " picks=" + n(c.picks) + " pick-builds=" + n(c.pickBuilds) + " anomalies=" + n(c.anomalies);
+        return out;
+    }
+
+    // One DropItem call, before the game's: counted only while the watch is on, and then a
+    // `draw` scope until EndCall. True when it was counted; the adapter calls EndCall then.
+    bool BeginCall(int argc, DrawArg7 arg7)
+    {
+        if (!on_) return false;
+        if (counts_.calls == 0 || argc < counts_.argcMin) counts_.argcMin = argc;
+        if (counts_.calls == 0 || argc > counts_.argcMax) counts_.argcMax = argc;
+        ++counts_.calls;
+        ++counts_.arg7[static_cast<size_t>(arg7)];
+        frames_.push_back(Frame{ DrawScope::Draw });
+        return true;
+    }
+
+    // Whether this call pushes: the watch and the lever on, neither pushing feature switched
+    // on, and the outermost DropItem call (a nested one rides on the outer one's entries).
+    bool ShouldPush(bool mark1On, bool elfOn) const
+    {
+        return on_ && push_ > 0 && !mark1On && !elfOn && DrawFrames() == 1 && pushed_.empty();
+    }
+
+    // The entries the adapter's push put on, read back: the picks are typed against them.
+    void NotePushed(const std::vector<Mark1Drops::PushEntry>& entries)
+    {
+        pushed_.clear();
+        for (const Mark1Drops::PushEntry& e : entries) pushed_.push_back(e.triple);
+    }
+    void NoteAnomaly() { ++counts_.anomalies; }
+    bool Pushing() const { return !pushed_.empty(); }
+
+    // The end of a call BeginCall counted: its scope closes (and any nested one left open
+    // with it), and the outermost call's pushed entries are gone.
+    void EndCall()
+    {
+        while (!frames_.empty()) {
+            const bool draw = frames_.back().kind == DrawScope::Draw;
+            frames_.pop_back();
+            if (draw) break;
+        }
+        if (DrawFrames() == 0) pushed_.clear();
+    }
+
+    // A nested roll's scope (the shared DropUniqueItems detour, #74's Angelic roll, Mark 1's
+    // Heroic hook), only while the watch is on. True when entered; LeaveRoll closes it.
+    bool EnterRoll(DrawScope s)
+    {
+        if (!on_ || s == DrawScope::Draw || s == DrawScope::Outside) return false;
+        frames_.push_back(Frame{ s });
+        return true;
+    }
+    void LeaveRoll()
+    {
+        if (!frames_.empty() && frames_.back().kind != DrawScope::Draw) frames_.pop_back();
+    }
+
+    DrawScope Current() const { return frames_.empty() ? DrawScope::Outside : frames_.back().kind; }
+
+    // LoadSatanicDropTier's answer: counted, and the innermost DropItem call's k.
+    void NoteTier(bool numeric, double v)
+    {
+        if (!on_) return;
+        long long k = -1;
+        const bool whole = numeric && Mark1Set::AsWhole(v, k) && k >= 0 && k < kDrawTierCount;
+        if (whole) ++counts_.tiers[static_cast<size_t>(k)];
+        else ++counts_.tierUnread;
+        for (auto it = frames_.rbegin(); it != frames_.rend(); ++it) {
+            if (it->kind != DrawScope::Draw) continue;
+            it->k = whole ? static_cast<int>(k) : -1;
+            break;
+        }
+    }
+
+    // A GetUniqueRepoStruct read of (type, sub, b): counted, and the current scope's latest.
+    void NoteRead(bool numeric, double t, double sub, double b)
+    {
+        if (!on_) return;
+        ++counts_.reads;
+        Frame& f = Top();
+        ++f.reads;
+        f.haveRead = numeric && Mark1Set::AsWhole(t, f.read.t) && Mark1Set::AsWhole(sub, f.read.sub) && Mark1Set::AsWhole(b, f.read.b);
+    }
+
+    // A CreateDefaultParams call of (sub, b): the current scope's pick, typed when the scope's
+    // latest read names the same pair; in `draw`, a typed pick of a pushed stand-in counts.
+    void NotePick(bool numeric, double sub, double b)
+    {
+        if (!on_) return;
+        Frame& f = Top();
+        long long s = 0, bb = 0;
+        f.havePick = numeric && f.haveRead && Mark1Set::AsWhole(sub, s) && Mark1Set::AsWhole(b, bb) && s == f.read.sub && bb == f.read.b;
+        f.pick = f.read;
+        f.pickPushed = false;
+        if (!f.havePick || f.kind != DrawScope::Draw) return;
+        for (const Mark1Drops::Triple& p : pushed_) {
+            if (!(p == f.pick)) continue;
+            f.pickPushed = true;
+            ++counts_.picks;
+            break;
+        }
+    }
+
+    // What to read for one build: whether it is a unique, and the triple its scope picked.
+    DrawBuildQuery Query(const DrawBuilt& item) const
+    {
+        DrawBuildQuery q;
+        long long c = -1, t = -1, b = -1;
+        q.unique = item.c && Mark1Set::AsWhole(*item.c, c) && c == 1;
+        const Frame& f = TopConst();
+        if (q.unique && f.havePick && item.t && item.b && Mark1Set::AsWhole(*item.t, t) && Mark1Set::AsWhole(*item.b, b)
+            && t == f.pick.t && b == f.pick.b) {
+            q.haveTriple = true;
+            q.triple = f.pick;
+        }
+        return q;
+    }
+
+    // One item built, with the triple's counts when Query named one and the adapter read
+    // them. Returns the `built` line for a unique while under the cap, else "".
+    std::string NoteBuilt(const DrawBuilt& item, const std::optional<DrawListCounts>& lists)
+    {
+        if (!on_) return {};
+        ++counts_.builds;
+        long long c = -1;
+        const bool whole = item.c && Mark1Set::AsWhole(*item.c, c);
+        if (whole && c == 0) ++counts_.normal;
+        if (!whole || c != 1) return {};
+        const DrawBuildQuery q = Query(item);
+        const DrawScope scope = Current();
+        ++counts_.scopes[static_cast<size_t>(scope)];
+        Frame& f = Top();
+        const int k = DrawK();
+        if (scope == DrawScope::Draw && q.haveTriple) {
+            if (f.pickPushed) ++counts_.pickBuilds;
+            else if (lists && k >= 0) ++((*lists)[static_cast<size_t>(k)] >= 1 ? counts_.onK : counts_.offK);
+        }
+        std::string line;
+        if (lines_ < kDrawBuiltLineCap) {
+            ++lines_;
+            auto num = [](const std::optional<double>& v) { return v ? NumberText(*v) : std::string("?"); };
+            std::string counts = "-";
+            if (q.haveTriple && lists) {
+                counts.clear();
+                for (int i = 0; i < kDrawListCount; ++i) counts += (i ? "," : "") + std::to_string((*lists)[static_cast<size_t>(i)]);
+            }
+            line = "mark1probe draws built: \"" + (item.name.empty() ? std::string("?") : item.name) + "\" t=" + num(item.t)
+                + " b=" + num(item.b) + " rarity=" + num(item.rarity) + " tier=" + num(item.tier) + " scope=" + DrawScopeText(scope)
+                + " k=" + (k >= 0 ? std::to_string(k) : std::string("-")) + " lists=" + counts + " reads=" + std::to_string(f.reads);
+        }
+        f.reads = 0;
+        f.havePick = false;
+        f.pickPushed = false;
+        return line;
+    }
+
+    void NoteRetsat()
+    {
+        if (on_) ++counts_.retsatCalls;
+    }
+
+private:
+    struct Frame {
+        DrawScope          kind = DrawScope::Outside;
+        int                k = -1;          // Draw: the tier LoadSatanicDropTier answered in this call
+        int                reads = 0;       // reads in this scope since its last build
+        bool               haveRead = false;
+        Mark1Drops::Triple read;            // the latest read
+        bool               havePick = false;
+        Mark1Drops::Triple pick;            // the latest typed pick
+        bool               pickPushed = false;
+    };
+
+    static std::string RoutesText(const DrawRoutes& r)
+    {
+        return " dropitem=" + r.dropitem + " sattier=" + r.sattier + " retsat=" + r.retsat;
+    }
+    std::string PushText() const { return push_ > 0 ? std::to_string(push_) : std::string("off"); }
+    int DrawFrames() const
+    {
+        int n = 0;
+        for (const Frame& f : frames_) n += f.kind == DrawScope::Draw ? 1 : 0;
+        return n;
+    }
+    // The innermost DropItem call's tier, -1 with none in progress or none read.
+    int DrawK() const
+    {
+        for (auto it = frames_.rbegin(); it != frames_.rend(); ++it)
+            if (it->kind == DrawScope::Draw) return it->k;
+        return -1;
+    }
+    Frame& Top() { return frames_.empty() ? outside_ : frames_.back(); }
+    const Frame& TopConst() const { return frames_.empty() ? outside_ : frames_.back(); }
+
+    bool on_ = false;
+    int push_ = 0;
+    int lines_ = 0;
+    std::vector<Frame> frames_;
+    Frame outside_;
+    std::vector<Mark1Drops::Triple> pushed_;
+    DrawCounts counts_;
+};
+
+// ---- `pool draw` ---------------------------------------------------------------------
+//
+// The candidates DropItem's draw keeps, per class (helmet 0, body 1, boots 2, gloves 4, and
+// Pocket Elf's class 10): the distinct triples of the class on any of [0..5] whose
+// definition reads rarity 6 (the draw's Satanic branch) with fields 40 and 41 clear (a set
+// one sends the draw back, static reading), each read by name outside a roll. `ss=` counts
+// the tier-5 ones. Per tier side (SS, and below SS) the best is the smallest largest count
+// over the six lists (0 everywhere first), then the lowest (sub, b): the stand-in rule's
+// order. Writes nothing.
+
+inline constexpr int kDrawRarity = 6;     // the Satanic rarity the draw keeps (static reading)
+inline constexpr int kDrawSsTier = 5;     // info key 32's SS tier
+inline constexpr int kElfItemType = 10;   // Pocket Elf's class (FlightCharms.hpp)
+
+// One triple's repository verdict as the draw reads it: rarity (27), tier (32), and fields
+// 40 and 41. False when it could not be read.
+struct DrawVerdict {
+    int  rarity = 0;
+    int  tier = -1;
+    bool f40 = false;
+    bool f41 = false;
+};
+using DrawVerdictFn = std::function<bool(const Mark1Drops::Triple& key, DrawVerdict& out)>;
+
+struct DrawCandidate {
+    Mark1Drops::Triple triple;
+    int                rarity = 0;
+    int                tier = -1;
+    DrawListCounts     counts{};
+};
+
+struct PoolDrawClass {
+    std::string                  key;
+    int                          itemType = 0;
+    int                          candidates = 0;
+    int                          ss = 0;
+    std::optional<DrawCandidate> bestSs, bestOther;
+};
+
+// The five classes, in the line's order: the Mark 1 pieces' own rows, then Pocket Elf.
+inline std::vector<std::pair<std::string, int>> PoolDrawClasses()
+{
+    std::vector<std::pair<std::string, int>> out;
+    for (const Mark1Set::PieceRow& row : Mark1Set::kPieces) out.emplace_back(std::string(row.key), row.itemType);
+    out.emplace_back("elf", kElfItemType);
+    return out;
+}
+
+// Whether `a` is the better stand-in: the smaller largest count, then the lower (sub, b).
+inline bool DrawBetter(const DrawCandidate& a, const DrawCandidate& b)
+{
+    int ma = 0, mb = 0;
+    for (int n : a.counts) ma = n > ma ? n : ma;
+    for (int n : b.counts) mb = n > mb ? n : mb;
+    if (ma != mb) return ma < mb;
+    if (a.triple.sub != b.triple.sub) return a.triple.sub < b.triple.sub;
+    return a.triple.b < b.triple.b;
+}
+
+inline std::vector<PoolDrawClass> PoolDraw(const Mark1Drops::KillLists& lists, const DrawVerdictFn& verdict)
+{
+    const std::vector<std::pair<std::string, int>> classes = PoolDrawClasses();
+    std::map<Mark1Drops::Triple, DrawListCounts> counts;   // ordered by (type, sub, b)
+    for (int k = 0; k < kDrawListCount; ++k) {
+        for (const Mark1Drops::ListEntry& e : lists[static_cast<size_t>(k)]) {
+            Mark1Drops::Triple key;
+            if (!e.triple || !Mark1Set::AsWhole(e.t, key.t) || !Mark1Set::AsWhole(e.sub, key.sub) || !Mark1Set::AsWhole(e.b, key.b)) continue;
+            bool wanted = false;
+            for (const auto& c : classes) wanted = wanted || c.second == key.t;
+            if (wanted) ++counts[key][static_cast<size_t>(k)];
+        }
+    }
+    std::vector<PoolDrawClass> out;
+    for (const auto& [name, type] : classes) {
+        PoolDrawClass pc;
+        pc.key = name;
+        pc.itemType = type;
+        out.push_back(pc);
+    }
+    for (const auto& [key, c] : counts) {
+        DrawVerdict v;
+        if (!verdict || !verdict(key, v)) continue;
+        if (v.rarity != kDrawRarity || v.f40 || v.f41) continue;
+        for (PoolDrawClass& pc : out) {
+            if (pc.itemType != key.t) continue;
+            ++pc.candidates;
+            const DrawCandidate cand{ key, v.rarity, v.tier, c };
+            const bool ss = v.tier == kDrawSsTier;
+            if (ss) ++pc.ss;
+            std::optional<DrawCandidate>& best = ss ? pc.bestSs : pc.bestOther;
+            if (!best || DrawBetter(cand, *best)) best = cand;
+        }
+    }
+    return out;
+}
+
+// `best-ss=<sub>:<b>@<rarity>/<tier>x<n0>,...,<n5>`, or none.
+inline std::string DrawCandidateText(const std::optional<DrawCandidate>& c)
+{
+    if (!c) return "none";
+    std::string counts;
+    for (int k = 0; k < kDrawListCount; ++k) counts += (k ? "," : "") + std::to_string(c->counts[static_cast<size_t>(k)]);
+    return std::to_string(c->triple.sub) + ":" + std::to_string(c->triple.b) + "@" + std::to_string(c->rarity) + "/"
+        + std::to_string(c->tier) + "x" + counts;
+}
+
+inline std::vector<std::string> PoolDrawLines(const std::vector<PoolDrawClass>& classes)
+{
+    std::vector<std::string> lines;
+    for (const PoolDrawClass& pc : classes)
+        lines.push_back("mark1probe pool draw: " + pc.key + " class=" + std::to_string(pc.itemType) + " candidates="
+                        + std::to_string(pc.candidates) + " ss=" + std::to_string(pc.ss) + " best-ss=" + DrawCandidateText(pc.bestSs)
+                        + " best-other=" + DrawCandidateText(pc.bestOther));
+    return lines;
+}
 
 // ---- `walkable` ---------------------------------------------------------------------
 

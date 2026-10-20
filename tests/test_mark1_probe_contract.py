@@ -57,6 +57,15 @@ that opens LoadDrops' type-45 gate once per kill inside the game's own call, res
 build only, installed inline by its SDK name and refused on a hook that is not the
 inline detour; it writes only chances[45], re-enters only through the trampoline, never
 names DropUniqueItems and rolls no die.
+
+Mod live procedure 7 adds `draws`, `draws push` and `pool draw`
+(`test_draws_research_only`): research build only, their call-outs inside research
+blocks of the detours that already exist, DropItem's slot spliced from DropManager's
+saved original and never hooked a second time, refused while angelicprobe's drop-item
+row or gambaprobe's DropItem row holds it, and the lever writing only through the drop
+adapter's add and delete. `test_satanic_tier_one_detour`: LoadSatanicDropTier has one
+HookOneScript in the source, raredrop's HookSatanicTier, installed by one function that
+reads the route back and that raredrop satanic and the watch both call.
 """
 import re
 import sys
@@ -227,9 +236,12 @@ class Mark1ProbeContract(unittest.TestCase):
         self.assertNotIn('"gml_Script_', self.code)
 
         install = self.body("static void M1pInstall()")
-        # Two install sites: M1pInstall's rows, and killgate's LoadDrops (its own test below).
-        self.assertEqual(self.code.count("HookOneScript("), 2, "two install sites, M1pInstall and M1pKillgateInstall")
+        # Three install sites: M1pInstall's rows, killgate's LoadDrops and the draws watch's
+        # count-only ReturnRandomSatanic (each pinned by its own test below).
+        self.assertEqual(self.code.count("HookOneScript("), 3,
+                         "three install sites, M1pInstall, M1pKillgateInstall and M1pDrawsInstall")
         self.assertEqual(self.body("static void M1pKillgateInstall()").count("HookOneScript("), 1)
+        self.assertEqual(self.body("static void M1pDrawsInstall()").count("HookOneScript("), 1)
         self.assertIn("HookOneScript(t.shortName, t.hookId, t.detour, &t.orig, &native)", install)
         # Counted only with the inline detour; a table-only install is failed.
         self.assertIn("native ? M1pNs::HookState::Detoured : M1pNs::HookState::Failed", install)
@@ -527,7 +539,14 @@ class Mark1ProbeContract(unittest.TestCase):
             self.assertEqual(self.code.count('"' + name + '"'),
                              write.count('"' + name + '"') + killgate.count('"' + name + '"'),
                              name + " is called outside M1pWriteTarget and killgate's WriteChance")
+        # The one game-script call outside `base` and `spawn` is `pool draw`'s repository read,
+        # GetUniqueRepoStruct by its SDK constant in M1pDrawVerdict (test_draws_research_only).
+        verdict = self.body("static bool M1pDrawVerdict(const M1dNs::Triple& key, M1pNs::DrawVerdict& out)")
+        self.assertIn("g_Yytk->CallGameScript(HeroSiege::Scripts::gml_Script_GetUniqueRepoStruct,", verdict)
         for name in NEVER:
+            if name == "CallGameScript(":
+                self.assertEqual(self.code.count(name), verdict.count(name), name + " is called outside M1pDrawVerdict")
+                continue
             self.assertNotIn(name, self.code)
         # M1pWriteTarget is reached from the access the core's Around drives:
         # Write (set and scale, and their restore) and SetPosition (move).
@@ -650,6 +669,138 @@ class Mark1ProbeContract(unittest.TestCase):
                 self.assertNotIn(word, source)
         self.assertIn("kKillgateOpenChance", core)   # the slice is the core, not an empty string
         self.assertIn("ops.WriteChance(vanilla);", core)
+
+    # ---- draws (Mod live procedure 7) ----------------------------------------------
+
+    def test_draws_research_only(self):
+        # Nothing of the watch, its lever or `pool draw` is left once the research blocks are
+        # stripped (comments kept: not even a mention ships), while the player build keeps the
+        # functions the call-outs sit in (the negative control that the strip leaves player code).
+        player_text = strip_research_blocks(self.plugin)
+        for word in ("M1pDraws", "M1pPoolDraw", "M1pDrawVerdict", "DrawPushBook", "draws push", "pool draw"):
+            self.assertNotIn(word, player_text)
+        callouts = (
+            ("static RValue& Hook_GetUniqueRepoStruct(", "M1pDrawsNoteRead(argc, A);"),
+            ("static RValue& Hook_CreateDefaultParams(", "M1pDrawsNotePick(argc, A);"),
+            ("static RValue& HookSatanicTier(", "M1pDrawsNoteTier(r);"),
+            ("static RValue& HookAngelicChance(", "M1pDrawsRollGuard m1pDrawsAngelic(M1pDrawsEnterAngelic());"),
+            ("static void CustomForgePostProcess(", "if (finalPass) M1pDrawsNoteBuilt(result, argc, args);"),
+            ("static void ApRollAttach(ApRollRow& r)", 'std::string_view(r.id) == "drop-item" && M1pDrawsHoldsDropItem()'),
+            ("static void GpInstallScripts(HMODULE mainMod)", "&t == &g_GpScriptRows[kGpScript_DropItem] && M1pDrawsHoldsDropItem()"),
+        )
+        for signature, call in callouts:
+            with self.subTest(function=signature):
+                full = strip_comments(function_body(self.plugin, signature))
+                self.assertEqual(full.count(call), 1, call)
+                if signature not in player_text:
+                    continue   # the whole function is research build only (angelicprobe's, gambaprobe's)
+                at = full.index(call)
+                self.assertGreater(full.rfind("#ifndef FORGEPACT_RELEASE", 0, at), full.rfind("#endif", 0, at),
+                                   "the call-out sits inside a research block")
+        for signature in ("static RValue& Hook_GetUniqueRepoStruct(", "static RValue& Hook_CreateDefaultParams(",
+                          "static RValue& HookSatanicTier(", "static void CustomForgePostProcess("):
+            self.assertNotIn("M1p", function_body(player_text, signature))
+        # The tier's call-out reads what LoadSatanicDropTier answered, after the lift's call.
+        tier = strip_comments(function_body(self.plugin, "static RValue& HookSatanicTier("))
+        self.assertLess(tier.index("RValue& r = SatanicTierLift(S, O, R, argc, A);"), tier.index("M1pDrawsNoteTier(r);"))
+        # The CreateDefaultParams call-out sees the pick before the game's call; the read is the
+        # first thing GetUniqueRepoStruct's detour does.
+        cdp = strip_comments(function_body(self.plugin, "static RValue& Hook_CreateDefaultParams("))
+        self.assertLess(cdp.index("M1pDrawsNotePick(argc, A);"), cdp.index("g_Orig_CreateDefaultParams(S, O, R, argc, A)"))
+        # DropManager.hpp is untouched by the watch: its one DropItem detour is spliced from here.
+        drop_manager = (ROOT / "plugin" / "include" / "ForgePact" / "DropManager.hpp").read_text(encoding="utf-8")
+        self.assertNotIn("M1p", drop_manager)
+        self.assertNotIn("mark1probe", drop_manager)
+        # Never a second hook on DropItem: the watch splices DropManager's saved original
+        # (GpDropItemHolder, gambaprobe's splice), a trampoline only, and refuses while
+        # angelicprobe's drop-item row or gambaprobe's DropItem row holds the slot.
+        install = self.body("static void M1pDrawsInstall()")
+        self.assertIn("!g_ApRollRows[kApRowDropItem].tramp && !g_GpScriptRows[kGpScript_DropItem].orig", install)
+        self.assertIn("PFUNC_YYGMLScript* slot = GpDropItemHolder();", install)
+        self.assertIn("M1pDrawsSplice(slot, g_M1pDrawsDropItemOrig, M1pDrawsDropItem);", install)
+        self.assertLess(install.index("M1pDrawsSplice(slot,"), install.index("if (!g_M1pDrawsDropItemOrig) return;"))
+        self.assertLess(install.index("if (!g_M1pDrawsDropItemOrig) return;"), install.index("FlightDropInstallUnique();"))
+        self.assertIn("M1pDrawsSplice(&g_Orig_FlightDropUnique, g_M1pDrawsUniqueOrig, M1pDrawsUnique);", install)
+        self.assertIn("InstallSatanicTierHook();", install)
+        self.assertIn('HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_ReturnRandomSatanic), "fp_m1p_retsat",', install)
+        splice = self.body("static bool M1pDrawsSplice(PFUNC_YYGMLScript* slot, PFUNC_YYGMLScript& saved, PFUNC_YYGMLScript detour)")
+        self.assertIn("if (!slot || !GpHolderIsNative((const void*)*slot, why)) return false;", splice)
+        self.assertLess(splice.index("saved = *slot;"), splice.index("*slot = detour;"))
+        for name in ("gml_Script_DropItem", "gml_Script_DropUniqueItems", "gml_Script_DropItemHeroic",
+                     "gml_Script_LoadSatanicDropTier", "gml_Script_GetUniqueRepoStruct", "gml_Script_CreateDefaultParams"):
+            self.assertIsNone(re.search(r"HookOneScript\([^;]*" + name, self.code), name + " is hooked a second time")
+        route = self.body("static std::string M1pDrawsDropItemRoute()")
+        for held in ('"held-by-angelicprobe"', '"held-by-gambaprobe"', '"TABLE-ONLY"', '"not-installed"'):
+            self.assertIn(held, route)
+        self.assertIn("if (on && r.dropitem != kDrawRouteDetoured)", self.header)
+        # With the watch off the spliced DropItem is the trampoline's call and nothing else.
+        dropitem = self.body("static RValue& M1pDrawsDropItem(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)")
+        self.assertIn("if (!g_M1pDraws.On()) return g_M1pDrawsDropItemOrig(S, O, R, argc, A);", dropitem)
+        self.assertEqual(dropitem.count("g_M1pDrawsDropItemOrig(S, O, R, argc, A)"), 2)
+        # The lever writes only through the drop adapter's own add and delete, from the core's
+        # book, and refuses while Mark 1 drops or Pocket Elf is switched on.
+        ops = self.code[self.code.index("struct M1pDrawsListOps {"):]
+        ops = ops[:ops.index("\n};")]
+        self.assertIn("Mark1DropAddEntry(subs[k], t);", ops)
+        self.assertIn("Mark1DropDeleteLast(subs[k], len, n);", ops)
+        self.assertIn("Mark1ListTailHolds(subs[k], before, entries, on, len);", ops)
+        self.assertEqual(self.code.count("Mark1DropAddEntry("), 1)
+        self.assertEqual(self.code.count("Mark1DropDeleteLast("), 1)
+        self.assertIn("g_M1pDrawsBook.Push(M1pNs::DrawPushPlan(*r, g_M1pDraws.Push()), g_M1pDrawsOps, lines)",
+                      self.body("static void M1pDrawsPush()"))
+        call = self.code[self.code.index("struct M1pDrawsCall {"):]
+        call = call[:call.index("\n};")]
+        self.assertIn("g_M1pDraws.ShouldPush(g_M1Drop.core.Enabled(), M1pDrawsElfOn())", call)
+        self.assertLess(call.index("if (pushed) { try { M1pDrawsRemove(); } catch (...) {} }"), call.index("if (counted) g_M1pDraws.EndCall();"))
+        self.assertIn("g_M1pDraws.SetPush(c.count, g_M1Drop.core.Enabled(), M1pDrawsElfOn())",
+                      self.body("static void M1pDrawsPushCommand(const M1pNs::Command& c)"))
+        self.assertIn("if (copies > 0 && (mark1On || elfOn))", self.header)
+        # `pool draw` reads GetUniqueRepoStruct by its SDK constant outside a roll and is
+        # refused, as `pool kill` is, while a roll's entries are on a list.
+        pool = self.body("static void M1pPoolDraw(const M1pNs::Command&)")
+        self.assertIn("FlightDropOutsideRoll outside;", pool)
+        self.assertIn("M1pDrawsPushing()", pool)
+        self.assertIn("M1pDrawsPushing()", self.body("static void M1pPoolKill(const M1pNs::Command&)"))
+        # Dispatched through mark1probe's own handler, and not a player command.
+        command = self.body("static void M1pCommand(const std::string& rest)")
+        self.assertIn("case M1pNs::Form::Draws:\n    case M1pNs::Form::DrawsSet: M1pDraws(c); return;", command)
+        self.assertIn("case M1pNs::Form::DrawsPush: M1pDrawsPushCommand(c); return;", command)
+        self.assertIn("case M1pNs::Form::PoolDraw: M1pPoolDraw(c); return;", command)
+        run = function_body(self.plugin, "static void RunCommand(const std::string& line)")
+        commands = run[run.index("kPlayerCommands = {"):]
+        commands = commands[:commands.index("};")]
+        self.assertNotIn('"draws"', commands)
+
+    def test_satanic_tier_one_detour(self):
+        # LoadSatanicDropTier has one detour in the whole source, raredrop's HookSatanicTier,
+        # installed by one function that reads the route back (the five-argument HookOneScript)
+        # and that raredrop satanic and the draws watch both call.
+        whole = strip_comments(self.plugin)
+        installs = re.findall(r"HookOneScript(?:Table)?\([^;]*LoadSatanicDropTier[^;]*;", whole)
+        self.assertEqual(len(installs), 1, installs)
+        self.assertIn('HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_LoadSatanicDropTier), "fp_sattier",', installs[0])
+        self.assertIn("(PVOID)HookSatanicTier, &g_OrigSatTier, &native);", installs[0])
+        self.assertNotIn('"LoadSatanicDropTier"', re.sub(r"static const char\* kNames\[\] = \{.*?\};", "", whole, flags=re.S))
+        self.assertEqual(whole.count("&g_OrigSatTier"), 1)
+        for other in ("MmCreateHook", "InstallScriptHook"):
+            self.assertIsNone(re.search(other + r"\([^;]*SatanicTier", whole))
+        install = strip_comments(function_body(self.plugin, "static bool InstallSatanicTierHook()"))
+        self.assertIn('g_SatTierRoute = !ok ? "not-found" : native ? "detoured" : "TABLE-ONLY";', install)
+        self.assertLess(install.index("if (!g_SatTierTried && !g_OrigSatTier) {"), install.index("HookOneScript("))
+        # Reached from both: raredrop satanic (player code) and the watch (research only).
+        raredrop = strip_comments(function_body(self.plugin, "static void RareDropCmd(const std::string& rest)"))
+        self.assertIn("if (mult > 1.0 && !InstallSatanicTierHook()) {", raredrop)
+        self.assertIn("InstallSatanicTierHook();", self.body("static void M1pDrawsInstall()"))
+        self.assertEqual(len(re.findall(r"\bInstallSatanicTierHook\(\)", whole)), 3)   # the definition and the two callers
+        self.assertIn("InstallSatanicTierHook()", strip_comments(function_body(strip_research_blocks(self.plugin),
+                                                                                 "static void RareDropCmd(const std::string& rest)")))
+        # raredrop's lift is as it was, inside the one detour; the watch's route is read from it.
+        lift = strip_comments(function_body(self.plugin, "static RValue& SatanicTierLift("))
+        for step in ("double lifted = level * g_SatanicMult;", "if (lifted > kSatanicTopBracket) lifted = kSatanicTopBracket;",
+                     "args[0] = &liftedRV;", "BP_DIAG_INCREMENT(g_SatTierHits);",
+                     "return g_OrigSatTier ? g_OrigSatTier(S, O, R, argc, A) : R;"):
+            self.assertIn(step, lift)
+        self.assertIn("r.sattier = g_SatTierRoute;", self.body("static M1pNs::DrawRoutes M1pDrawsRoutes()"))
 
     def test_research_only_the_profile_scope_says_which_it_read(self):
         resolve = self.body("static bool M1pResolveScope(CInstance* player, M1pNs::Scope scope, M1pScopeRef& out, std::string& why)")

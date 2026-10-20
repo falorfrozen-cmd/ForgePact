@@ -56,6 +56,15 @@ detour refuses it. Target (`test_killgate_target_*`): the game's own type-45 cal
 raised and put back, the first call on a fresh array re-entered once at type 45
 and put back, later calls untouched, a throw putting the chance back and counted,
 and the stat line's exact text.
+
+Mod live procedure 7 adds `draws [on|off]`, a watch on DropItem's own unique draw,
+`draws push <c>|off`, its lever, and `pool draw`. Baseline (`test_draws_baseline_*`):
+the watch off counts nothing and takes no DropItem call, the lever pushes nothing, and
+a DropItem route other than the inline detour refuses the watch. Target
+(`test_draws_target_*`): each scope classes a build by the innermost one open; k,
+on-k and off-k follow the recorded tier; the lever pushes c onto each of [0..5] and
+takes exactly that off; the picks and pick-builds; the status and built lines exact.
+`test_pool_draw_*`: the candidate rule and the line.
 """
 import os
 import shutil
@@ -295,6 +304,64 @@ class Mark1ProbeBehaviorTests(unittest.TestCase):
 
     def test_killgate_target_stat_line_and_parse(self):
         self.assertScenarios("killgate/stat_line", "killgate/off_reply", "killgate/parse")
+
+    # ---- draws (Mod live procedure 7) ----------------------------------------------
+
+    def test_draws_baseline_watch_off_counts_nothing_and_takes_no_call(self):
+        # The watch off: no DropItem call is taken (the adapter then calls the game's own
+        # DropItem as it is), no scope opens, no tier, read, pick, build or ReturnRandomSatanic
+        # call is counted, and the status line is the fresh one, exactly.
+        self.assertScenarios("draws/baseline_off_nothing_counted", "draws/baseline_off_status_line_exact")
+
+    def test_draws_baseline_the_push_does_nothing_with_the_watch_off(self):
+        # The lever set while the watch is off pushes nothing; a push with nothing planned or a
+        # list that cannot be read writes nothing.
+        self.assertScenarios("draws/baseline_off_the_lever_pushes_nothing",
+                             "draws/baseline_push_with_nothing_planned_or_a_list_unread_writes_nothing")
+
+    def test_draws_baseline_a_route_not_inline_refuses_the_watch(self):
+        # Only DropManager's inline DropItem detour sees the game's calls: a table-only route or
+        # a probe holding the slot refuses the watch, named, and it stays off.
+        self.assertScenarios("draws/baseline_a_route_not_inline_refuses_the_watch")
+
+    def test_draws_target_each_scope_classes_a_build(self):
+        # draw inside a DropItem call; dropunique, angelic and heroic inside a nested roll, the
+        # innermost one winning; outside with none; normal= for c 0; a nested DropItem is its
+        # own draw scope, and ending the outer call closes a roll left open.
+        self.assertScenarios("draws/target_each_scope_classes_a_build", "draws/target_nested_call_and_a_roll_left_open")
+
+    def test_draws_target_k_on_k_and_off_k_follow_the_tier(self):
+        # k is the tier the call's LoadSatanicDropTier answered (`-` when unread or outside a
+        # call); on-k and off-k count the typed draw builds listed on list k or not; an untyped
+        # pick has no lists and counts on neither.
+        self.assertScenarios("draws/target_k_on_k_and_off_k_follow_the_tier", "draws/target_query_names_the_picked_triple")
+
+    def test_draws_target_the_lever_pushes_c_on_each_list_and_takes_exactly_that_off(self):
+        # c copies of each kill stand-in on each of [0..5] for the outermost call only, read back
+        # on every tail, and exactly that taken off; a list the game changed is left as found and
+        # named, an add that throws takes the partial push off again.
+        self.assertScenarios("draws/target_push_plan_c_of_each_stand_in",
+                             "draws/target_push_onto_each_list_and_exactly_that_off",
+                             "draws/target_a_list_changed_during_the_call_is_left_as_found",
+                             "draws/target_an_add_that_throws_comes_off_again")
+
+    def test_draws_target_picks_and_pick_builds(self):
+        # A typed draw-scope pick of a pushed stand-in counts picks= and, built, pick-builds=,
+        # never on-k; the same pair picked inside a nested roll is no draw pick.
+        self.assertScenarios("draws/target_picks_and_pick_builds_of_a_pushed_stand_in")
+
+    def test_draws_target_lines_refusals_and_parse(self):
+        self.assertScenarios("draws/target_built_lines_exact", "draws/target_status_line_and_off_reply",
+                             "draws/target_push_refused_while_mark1_or_pocket_elf_is_on",
+                             "draws/target_built_lines_capped_counters_not", "draws/parse")
+
+    # ---- pool draw ----------------------------------------------------------------
+
+    def test_pool_draw_candidate_rule_and_lines(self):
+        # Per class (the four pieces and Pocket Elf's class 10): the distinct triples on any of
+        # [0..5] reading rarity 6 with fields 40 and 41 clear, each asked once; ss= the tier-5
+        # ones; the best per tier side by the smallest largest count, then the lowest (sub, b).
+        self.assertScenarios("pool/draw_candidate_rule", "pool/draw_lines_exact", "pool/draw_classes_are_the_pieces_and_pocket_elf")
 
     # ---- the lines -------------------------------------------------------------
 

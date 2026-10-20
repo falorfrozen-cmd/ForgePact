@@ -979,12 +979,17 @@ class FlightCharmsDropContract(unittest.TestCase):
         # (Said whenever the elf's switch comes on, since the Mark 1 drops may have tried it first.)
         self.assertIn("if (elf && !d.uniqueNative)", install)
         self.assertIn("FcNs::RefusedLine(", install)
-        # One HookOneScript in the whole adapter, and two callers of the installer: the elf's
-        # switch-on and the Mark 1 drops' install (#166), which share the one detour.
+        # One HookOneScript in the whole adapter, and three callers of the installer: the elf's
+        # switch-on, the Mark 1 drops' install (#166), which share the one detour, and the
+        # research build's `mark1probe draws` install (#166 uniques), in no player build.
         self.assertEqual(self.code.count("HookOneScript("), 1)
-        self.assertEqual(self.all_code.count("FlightDropInstallUnique()"), 3,
-                         "the definition, the switch-on and the Mark 1 drops' install")
+        self.assertEqual(self.all_code.count("FlightDropInstallUnique()"), 4,
+                         "the definition, the switch-on, the Mark 1 drops' install and the draws watch's install")
         self.assertIn("FlightDropInstallUnique();", strip_comments(function_body(self.plugin, "static std::string Mark1DropInstall()")))
+        self.assertIn("FlightDropInstallUnique();", strip_comments(function_body(self.plugin, "static void M1pDrawsInstall()")))
+        self.assertNotIn("static void M1pDrawsInstall()", strip_research_blocks(self.plugin))
+        self.assertEqual(self.shipped.count("FlightDropInstallUnique()"), 3,
+                         "the player build keeps the definition, the switch-on and the Mark 1 drops' install")
         switch = self.body("switch")
         self.assertIn("if (on) {", switch)
         self.assertLess(switch.index("if (on) {"), switch.index("FlightDropInstallUnique();"))
