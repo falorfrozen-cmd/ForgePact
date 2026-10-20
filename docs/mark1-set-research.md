@@ -2445,3 +2445,190 @@ never run the roll the kill route hooks: that is a product finding for the
 owner and a Known Limitations entry, never a reason to ship the lever.
 `filter-shown` is read against `filter-control` as Mod live procedure 5
 says.
+
+## Phase 4: the unique draw inside DropItem
+
+Mod live procedure 6's second attempt (2026-10-20) found that a vanilla kill
+does not drop its uniques through `DropUniqueItems`: four natural uniques
+dropped from kills in Hell while that roll's debugger logpoint and the shared
+detour's `kill-calls=` both stayed flat, their controls logged in the same
+session, and drop type 45's chance read 0 on every one of 1831 `LoadDrops`
+arrays. With the `killgate` lever open the same kills did run the roll and
+dropped Mark 1 pieces, so the stand-in, the hit and the rewrite work there;
+vanilla kills just never reach it. The owner chose to find the roll a kill's
+unique really comes from, Ghidra first and then one live session with the
+owner playing at normal fps, and to move both Mark 1's and Pocket Elf's kill
+routes onto it. Phase 4 is that research. The move waits on its result.
+
+### Phase 4 static reading
+
+Read on 2026-10-20 through the hub's ghidra MCP (`LoadSatanicDropTier`,
+`ReturnRandomSatanic`) and, because `DropItem` is too large to decompile and
+has no body in the MCP, headless byte scans and a call list of `DropItem`
+on the same build. The shared facts are in the hub's
+`docs/RUNTIME_DATA_MODELS.md` § 13.12, with pointers from § 13.1 and § 23.4;
+this is the part phase 4 builds on, in short. No decompiled or disassembled
+text is quoted here.
+
+- **`DropItem` draws a unique itself.** Besides calling `LoadDrops`, whose
+  type 45 is the only direct caller of `DropUniqueItems`, it takes
+  `Controller_obj.lootListUnique[k]`, with k the 0-to-5 answer of
+  `LoadSatanicDropTier` (monster-level brackets with random step-ups, only
+  ever called from `DropItem`), draws a random index, looks the triple up in
+  `GetUniqueRepoStruct` and builds the item with `CreateDefaultParams` and
+  the placement. **Static reading.**
+- **Re-draws.** A definition with field 40 or 41 set sends it back to draw
+  again, in a loop whose counter starts at 500. The rarity then takes one of
+  four branches (6, 9, 7 or 10, other); in the Satanic branch a tier-5 entry
+  meets one more test. **Static reading.** Whether each branch keeps the
+  entry, and whether the loop keeps the first entry it accepts or weighs the
+  accepted ones by a computed value, is **not established**; a large local
+  lowered inside the loop hints at a weighing. That decides the share a
+  stand-in can claim, so the live session measures it (`draw-reads`, and the
+  lever's pick rate, below).
+- **A second draw** reads a ds_list passed as `DropItem`'s argument 7, when
+  one is passed; whether a kill passes one was not read. **Static reading.**
+- **`ReturnRandomSatanic`** draws from a unique sub-list until an entry
+  matches what it was asked for. No direct call site was found, which is not
+  observed rather than none. **Static reading.**
+- The byte scan's positive control was `CreateDefaultParams` with 177 direct
+  sites in the same run, and the MCP's empty callers and xrefs count as not
+  observed.
+
+So the kill's own unique most likely comes from `DropItem`'s draw on
+`lootListUnique[k]`. Live 3's flat `DropUniqueItems` fits that, but it is an
+inference until Mod live procedure 7 sees each natural unique built inside
+that draw.
+
+### Mod live procedure 7
+
+One research session on the research build that carries `mark1probe draws`
+(the watch and its lever) and `mark1probe pool draw`. The capture is the
+uniques workorder's live capture 1,
+`forgepact-166-mark1-set-uniques-live-1.md`, kept with the hub's workorder
+files and not tracked. It asks which code builds a vanilla kill's unique, and
+it checks that the watch's stand-ins can be drawn there, before any player
+code moves.
+
+**The watch** (research build only). `mark1probe draws on` installs nothing
+new on `DropItem`: it scopes each build from research-only call-outs inside
+DropManager's one `DropItem` detour. It shares raredrop's one
+`LoadSatanicDropTier` detour to record each call's k, counts
+`ReturnRandomSatanic` through a count-only hook by name, and makes sure the
+shared `DropUniqueItems` detour is in. It answers `mark1probe draws:
+watch=on dropitem=detoured sattier=detoured retsat=detoured` when all three
+went in inline. Each unique build is classed by its innermost scope: `draw`
+(inside a `DropItem` call and outside every nested roll), `dropunique`,
+`angelic`, `heroic`, or `outside` (no `DropItem` call in progress). Each
+gets one `mark1probe draws built:` line with its name, triple, rarity,
+tier, scope, the call's k, the triple's count on each of the six lists, and
+`reads=`, the `GetUniqueRepoStruct` reads in its scope since the last build.
+A bare `mark1probe draws` prints the counters (`calls=`, `normal=`,
+`draw=`, `dropunique=`, `tiers=`, `arg7=`, `on-k=`, `off-k=`,
+`retsat-calls=`, `picks=`, `pick-builds=`, `anomalies=` and the rest).
+`mark1probe draws push <c>` is the lever: while the watch is on, each
+`DropItem` call pushes c copies of each Mark 1 kill stand-in onto each of
+`lootListUnique[0..5]` and takes them off on every way out; `picks=` counts
+the draw picking one, and nothing is rewritten. `push off` stops it.
+
+**The debugger.** A control and three logpoints at `DropItem`'s own draw,
+its build and its argument-list draw, attached headless through the hub's
+x64dbg MCP under the session's lease, after the control. The control is the
+talent-check entry Mod live procedure 6 used (`dbg-control`, about once a
+frame). The three candidates are `dbg-draw`, `dbg-draw-build` and
+`dbg-arglist`. Each logpoint is checked against its expected bytes before
+it is set; its address is a research finding kept in the hub's workorder
+context, never here. A candidate that logs more than 200 lines in one batch
+is disabled and recorded `hot` with its count. The control is disabled
+during the owner's window, so the game runs at normal fps, and enabled
+again after it, so it logs on both sides.
+
+**Setup:**
+
+- **Build:** the research build (`plugin_build\build.bat dev`) at the
+  ForgePact commit that adds the watch; its SHA-256 is recorded in the
+  capture (`dll-hash`), and the owner is asked before it is installed. The
+  game build must be the one this reading was made on, or the logpoints do
+  not apply.
+- **Character:** save slot 14, "Sorak", saves backed up first and restored
+  at the end. Every Mark 1 and flight switch stays off.
+- **Control:** `ping` answers `pong (YYTK 4.0.1)`, and a bare `mark1probe`
+  answers `mark1probe: research build` with its rows line (`control`).
+- **Cases:** ordinary packs in Hell, Outskirts of Inoya; one elite or
+  Treasure Gobbler if one is on screen; and the owner's own play, bosses
+  only if he meets one. The operator teleports and casts its own kills, and
+  nothing is placed on or near the waypoint.
+
+**Steps:**
+
+- H1: the control, then `mark1probe draws on` (`draws-on`). `playerwarp`
+  to a free point at least 400 px from the waypoint, checked with
+  `mark1probe walkable here` (`marker`).
+- H2: attach and set the four logpoints, the control first
+  (`dbg-control`).
+- H3: `mark1probe draws`, `mark1probe unique 10`, `mark1probe draws`
+  (`kill-control`): at least 8 placed, `dropunique=` up by the number
+  placed, and `draw=`, `calls=`, `dbg-draw` and `dbg-draw-build` up by 0.
+  The by-name calls are the `dropunique` scope's positive control and the
+  `draw` scope's negative one.
+- H4: waypoint to Outskirts of Inoya and one operator kill batch
+  (`kill-normal`): `calls=` and `normal=` each up by at least 1. Record
+  `tiers=`, `arg7=`, `reads=`, the built lines and the three candidates'
+  counts.
+- H4b: `raredrop ceiling 10`, the player feature that divides the game's
+  own rare-roll ceiling (one value inside the game's own call; its effect on
+  uniques is not measured). Kill batches until 3 unique builds are seen or
+  6 batches have passed, recording each built line and the candidates'
+  counts.
+- H5: `mark1probe draws push 100`, the ceiling still at 10, then kill
+  batches until `picks=` is at least 1 or 8 batches have passed
+  (`push-sees`). 100 copies, not 400, because `DropItem` runs on every kill
+  and every breakable.
+- H6: `mark1probe draws push off`, `raredrop ceiling 1`, one kill batch
+  (`push-off`): `picks=` unchanged, `anomalies=0`, `mark1probe pool kill`
+  reading lengths 50, 61, 79, 152, 221 and `mark1probe pool` reading list 5
+  at 380. Then `mark1probe pool draw` (`pool-draw`).
+- H7: read every counter and candidate count, disable `dbg-control`, and
+  hand over to the owner: about 10 minutes in Hell at normal fps with every
+  Mark 1 and flight switch off, naming each unique as it drops.
+- H8: on each report and at the end, read `mark1probe draws`, the new built
+  lines, `mark1set stat` (`kill-calls=`) and the candidates' counts; then
+  enable `dbg-control` again and wait until it logs.
+- H9: detach, stop the game, inspect and restore the saves.
+
+**Checks.** Session validity, all required: `dll-hash`, `control`,
+`marker`, `dbg-control`, `draws-on`, `kill-control`, `kill-normal` and
+`push-off`. Research, never required and recorded as read:
+
+- `push-sees`: under the lever, `picks=` and `pick-builds=` each up by at
+  least 1, with built lines in scope `draw` naming the stand-ins.
+- `pool-draw`: what `mark1probe pool draw` lists for helmet, body, boots,
+  gloves and elf, the candidates a stand-in on the draw would come from.
+- `vanilla-route`: for each natural unique, its built line's scope, k,
+  lists and reads, and the window's rises of `dropunique=`, `kill-calls=`
+  and `retsat-calls=`.
+- `tier-k`: `on-k=` and `off-k=` over H4, H4b and the window, whether each
+  natural `draw` build's triple sits on list k.
+- `draw-reads`: the `reads=` of the natural `draw` builds, set against the
+  lever's picks per `draw` build, which together say whether the draw keeps
+  the first entry it accepts or weighs them.
+- `arg7`: how often a kill passes a list in argument 7 (`arg7=`).
+- `retsat`: whether `ReturnRandomSatanic` runs on a kill (`retsat-calls=`).
+- `dbg-draw`, `dbg-draw-build` and `dbg-arglist`: the three logpoints'
+  counts over each window, the instrument independent of our own hooks.
+
+**What the result decides.** The session's decision records four values.
+The route is `satanic-draw` when every unique the owner reports has a built
+line of the same name in scope `draw` and `dbg-draw-build` rose by at least
+their number while `dbg-arglist` stayed flat; otherwise `arg-list`,
+`dropuniqueitems`, `outside-dropitem`, `mixed` or `not-observed`. Builds in
+scope `outside` during the window (vendor grids, tooltips) are recorded and
+are not natural uniques. `tier-k` matches when `off-k=0` and `on-k` is at
+least 1. The push route is seen when `push-sees` passed. The draw mode is
+`first-kept` when the median `reads=` of the natural `draw` builds is 10 or
+fewer and the lever's picks per `draw` build reach at least half of
+4c / (L_k + 4c) (c = 100, L_k the length of each build's list k, averaged),
+`weighed` otherwise, and `not-observed` with fewer than 3 natural `draw`
+builds. Only the first three gate the move onto the draw (`satanic-draw`,
+`matches`, `seen`); the draw mode decides only the share the player text
+may claim. Any other route value sends the move back to planning.

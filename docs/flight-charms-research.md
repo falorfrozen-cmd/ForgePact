@@ -1344,6 +1344,20 @@ build's `flightprobe copies <k>` pushes k entries per charm instead of one, so
 a live session sees hits; `sigdrop status` is unchanged and the flight
 counters print on `flightcharm stat`.
 
+Pocket Elf's kill route is on `DropUniqueItems`, and ordinary kills do not
+run that roll. A kill reaches it only through `LoadDrops`' drop type 45,
+whose chance read 0 on every array of a Mark 1 drops session in Hell, while
+four natural uniques dropped from kills with `DropUniqueItems` never
+entered. The static reading puts a kill's ordinary uniques in `DropItem`'s
+own draw on `lootListUnique[k]` instead, with k from `LoadSatanicDropTier`
+(the hub's `docs/RUNTIME_DATA_MODELS.md` § 13.12). So with `flightcharm
+elf 1`, Pocket Elf drops when something calls that roll (the research
+build's `flightprobe unique`, for one), and, as far as is read and measured,
+an ordinary kill does not drop it. The Mark 1 research's
+[Phase 4](mark1-set-research.md#phase-4-the-unique-draw-inside-dropitem)
+measures that draw; moving Pocket Elf's kill route onto it, with Mark 1's,
+waits on that result.
+
 ### Hooks
 
 Everything is resolved by name, and every script hook goes through
