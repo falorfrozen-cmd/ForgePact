@@ -19,6 +19,18 @@ n counted with repeats, resolved again when the list changes); the coin c /
 `kPieces` (`coin`); the gate and install words; the art-ready test
 (`art_ready`); and the fresh `mark1set drops:` line with its named fields
 (`fresh_line`).
+
+The kill route (`kill` in the name, the owner's 2026-10-20 route): the pieces
+also join the ordinary unique roll (`DropUniqueItems`, which a kill's drop
+runs), pushed onto each of lists 0 to 4. Its stand-in is a triple of the
+piece's class the ordinary roll keeps (rarity below 7, not hidden) whose count
+is the same on all five lists, count 0 preferred, then the smaller count, ties
+by the lowest sub and b; the coin is c / (n + c) with that common count; the
+stand-ins are resolved again when any of the six lists changed; a nested call
+passes; the art-ready rule is the Heroic roll's; and the line gains the
+`kill-` fields. `pending` in the name (Live 1's `drops-on` fail): with the
+switch on and installed, each roll's gate and stand-in fields read `pending`
+until that roll's first resolving call.
 """
 import os
 import re
@@ -201,6 +213,67 @@ class Mark1DropsBehaviorTests(unittest.TestCase):
 
     def test_reply_names_the_switch_the_install_and_the_gate(self):
         self.assertScenarios("stat/reply_names_the_switch_the_install_and_the_gate", "stat/reply_installed_and_refused")
+
+    # ---- kill: the ordinary unique roll --------------------------------------------
+
+    def test_kill_baseline_the_switch_off_pushes_nothing_and_only_counts_the_call(self):
+        self.assertScenarios("kill/baseline_switch_off_passes_and_only_counts_the_call")
+
+    def test_kill_the_ordinary_rolls_filter(self):
+        self.assertScenarios("kill/the_ordinary_rolls_filter", "kill/standin_a_heroic_triple_never_stands_in")
+        header = HEADER.read_text(encoding="utf-8")
+        self.assertRegex(header, r"inline constexpr int kOrdinaryRarityBelow\s*=\s*7\s*;")
+
+    def test_kill_standin_equal_count_rule(self):
+        self.assertScenarios("kill/standin_equal_count_rule", "kill/standin_unequal_counts_never_qualify",
+                             "kill/standin_lengths_of_all_six_lists", "kill/standin_each_distinct_triple_asked_once")
+
+    def test_kill_standin_count_zero_then_smaller_count_then_lowest_sub_and_b(self):
+        self.assertScenarios("kill/standin_smaller_n_then_count_zero_preferred", "kill/standin_equal_count_rule")
+
+    def test_kill_standin_unreadable_verdicts_are_counted_never_chosen(self):
+        self.assertScenarios("kill/standin_unreadable_counted_and_never_a_stand_in")
+
+    def test_kill_push_onto_each_of_the_five_lists(self):
+        self.assertScenarios("kill/push_onto_each_of_the_five_lists", "kill/push_copies_bounded_and_latched_left_out")
+        header = HEADER.read_text(encoding="utf-8")
+        self.assertRegex(header, r"inline constexpr int kKillLists\[kKillListCount\]\s*=\s*\{\s*0,\s*1,\s*2,\s*3,\s*4\s*\}\s*;")
+
+    def test_kill_coin_is_c_over_n_plus_c_with_the_common_count(self):
+        self.assertScenarios("kill/coin_is_c_over_n_plus_c_with_the_common_count")
+
+    def test_kill_resolves_again_when_any_list_changes(self):
+        self.assertScenarios("kill/cache_resolves_again_when_any_list_changes")
+
+    def test_kill_nested_call_passes_and_is_counted(self):
+        self.assertScenarios("kill/nested_passes_and_is_counted", "kill/no_detection_passes")
+
+    def test_kill_art_ready_applies_as_on_the_heroic_roll(self):
+        self.assertScenarios("kill/art_ready_applies_as_on_the_heroic_roll")
+
+    def test_kill_gate_not_resolved_and_latches(self):
+        self.assertScenarios("kill/not_resolved_when_no_stand_in_or_unreadable",
+                             "kill/refused_rewrite_latches_the_piece_on_both_rolls")
+
+    def test_kill_stat_fields(self):
+        self.assertScenarios("kill/stat_fields_filled", "stat/fresh_line_exact", "stat/named_fields_in_order")
+
+    # ---- pending: each roll before its first resolving call ---------------------------
+
+    def test_pending_both_gates_and_stand_ins_until_the_first_roll(self):
+        self.assertScenarios("pending/both_gates_and_stand_ins_pending_until_the_first_roll")
+
+    def test_pending_each_roll_resolves_on_its_own(self):
+        self.assertScenarios("pending/heroic_resolves_to_on_and_the_kill_route_stays_pending",
+                             "pending/kill_resolves_to_on_and_a_class_with_none_reads_none")
+
+    def test_pending_a_roll_resolved_with_none_for_a_class_reads_none(self):
+        self.assertScenarios("pending/a_roll_resolved_with_none_for_a_class_reads_none")
+
+    def test_pending_never_while_off_waiting_no_detection_refused_or_unreadable(self):
+        self.assertScenarios("pending/not_pending_while_off_waiting_no_detection_or_refused",
+                             "pending/unreadable_before_the_first_roll_is_not_resolved",
+                             "pending/switched_off_after_a_roll_reads_off")
 
 
 if __name__ == "__main__":

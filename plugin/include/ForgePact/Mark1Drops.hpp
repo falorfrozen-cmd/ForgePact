@@ -39,6 +39,15 @@ namespace ForgePact::Mark1Drops {
 // placement takes the item's class from the entry, so a stand-in shares the
 // piece's class.
 //
+// The kill route (the owner's 2026-10-20 route, "The kill route" below) joins
+// the pieces to the game's ordinary unique roll (`DropUniqueItems`, which a
+// kill's drop runs) the same way, through the one detour Pocket Elf already
+// holds on that roll: a stand-in of the piece's class that roll keeps, pushed
+// onto each of the five sub-lists it reads, and the same coin and rewrite.
+// Both rolls share the switch, the install, the art-ready rule, the latches
+// and the `injected=`, `refused=`, `anomalies=` and `art-wait=` counters; each
+// has its own gate, stand-ins and tallies.
+//
 // This header decides; it never touches the game. Numbers and strings only,
 // never an instance or an RValue (the Mark1Set.hpp contract), so
 // tests/mark1_drops_harness.cpp compiles it whole. The adapter in ModuleMain.cpp
@@ -306,20 +315,26 @@ inline bool CoinOurs(long long n, long long c, double u)
     return u < CoinShare(n, c);
 }
 
-// A typed hit during a call that pushed `plan`: the piece when its whole
+// A typed hit among the entries a call pushed: the piece when its whole
 // triple is a pushed stand-in's and the coin falls ours; otherwise the hit
 // stays the game's own. Nothing pushed attributes nothing.
-inline bool AttributeHit(const PushPlan& plan, double t, double sub, double b, double u, Piece& out)
+inline bool AttributeHitAmong(const std::vector<PushEntry>& entries, double t, double sub, double b, double u, Piece& out)
 {
     Triple k;
     if (!Mark1Set::AsWhole(t, k.t) || !Mark1Set::AsWhole(sub, k.sub) || !Mark1Set::AsWhole(b, k.b)) return false;
-    for (const PushEntry& e : plan.entries) {
+    for (const PushEntry& e : entries) {
         if (!(e.triple == k)) continue;
         if (!CoinOurs(e.n, e.copies, u)) return false;
         out = e.piece;
         return true;
     }
     return false;
+}
+
+// A typed hit during a Heroic roll that pushed `plan`.
+inline bool AttributeHit(const PushPlan& plan, double t, double sub, double b, double u, Piece& out)
+{
+    return AttributeHitAmong(plan.entries, t, sub, b, u, out);
 }
 
 // What the piece's hit is rewritten to through SignatureRewriteParams: its own
@@ -338,6 +353,184 @@ inline RewriteTarget RewriteFor(Piece p)
     return RewriteTarget{ r.itemType, r.seed, r.baseB, 0, 0 };
 }
 
+// ---- the kill route: the ordinary unique roll ---------------------------------------
+//
+// A kill reaches the ordinary unique roll (`DropUniqueItems`, through DropItem
+// and LoadDrops: RDM § 13.1 and § 23.4, static readings). That roll picks one
+// of lootListUnique[0..4] by a zone value, draws one entry, and keeps it only
+// when its rarity is below 7 and it is not flagged hidden; a refused draw
+// drops nothing. The Heroic roll's stand-ins (Heroic, 9) are refused there,
+// so the kill route has stand-ins of its own, Satanic or below; the rewrite
+// still makes a hit the piece. The roll cannot say which of the five lists it
+// drew (RDM § 23.8), so a piece's entries go onto all five, and a stand-in
+// qualifies only when the five hold it equally often: then the coin c / (n + c)
+// is exact whichever list the call read (Pocket Elf's rule, FlightCharms.hpp).
+
+// Which roll a hit or a built piece came from: its tallies are its own.
+enum class Roll : int { Heroic, Kill };
+
+// The sub-lists the ordinary roll reads (static reading; the model's
+// UNIQUE_SUB_LISTS). The kill route pushes onto each of them.
+inline constexpr int kKillListCount = 5;
+inline constexpr int kKillLists[kKillListCount] = { 0, 1, 2, 3, 4 };
+// The ordinary roll keeps an entry whose rarity is below this (static
+// reading; the model's ORDINARY_RARITY_BELOW).
+inline constexpr int kOrdinaryRarityBelow = 7;
+
+// Whether the ordinary roll keeps the entry its one draw read: not hidden, and
+// a rarity below 7.
+inline bool OrdinaryKeeps(int rarity, bool hidden)
+{
+    if (hidden) return false;
+    return rarity < kOrdinaryRarityBelow;
+}
+
+// All six sub-lists, [0] to [5], as the adapter read them. The candidates
+// come from any of them; the counts that decide come from [0..4].
+using KillLists = std::array<std::vector<ListEntry>, kListCount>;
+
+struct KillResolution {
+    std::array<int, kListCount>         lengths{};  // each list's entries, every kind
+    int                                 unread = 0; // distinct triples of a piece class whose verdict could not be read
+    std::array<StandIn, kPieceCount>    standIns{}; // n is the count on each of [0..4]
+    // Per class: the distinct triples the ordinary roll keeps, and their
+    // entries on [0..4] (repeats counted).
+    std::array<ClassTally, kPieceCount> kept{};
+    // Per class: of those, how many have the same count on all five.
+    std::array<int, kPieceCount>        qualifying{};
+    // Per class: the chosen stand-in's count on each of [0..4].
+    std::array<std::array<int, kKillListCount>, kPieceCount> counts{};
+
+    bool AnyResolved() const
+    {
+        for (const StandIn& s : standIns)
+            if (s.resolved) return true;
+        return false;
+    }
+};
+
+// The kill route's stand-in rule. For each piece's class: the distinct triples
+// of that class on any of [0..5], each verdict asked once; a triple qualifies
+// when the ordinary roll keeps it and its count n is the same on each of
+// [0..4]. The smallest n wins (n 0 first: then every hit on it is the
+// piece's), ties by the lowest (sub, b). A class with none has no kill
+// stand-in: that piece does not drop on kills, the others still do, and the
+// Heroic route is untouched.
+inline KillResolution ResolveKillStandIns(const KillLists& lists, const VerdictFn& verdict)
+{
+    KillResolution r;
+    std::map<Triple, std::array<int, kKillListCount>> counts;  // ordered by (type, sub, b)
+    for (int k = 0; k < kListCount; ++k) {
+        const std::vector<ListEntry>& list = lists[static_cast<size_t>(k)];
+        r.lengths[static_cast<size_t>(k)] = static_cast<int>(list.size());
+        for (const ListEntry& e : list) {
+            if (!e.triple) continue;
+            Triple key;
+            Piece p = Piece::Helmet;
+            if (!Mark1Set::AsWhole(e.t, key.t) || !Mark1Set::AsWhole(e.sub, key.sub) || !Mark1Set::AsWhole(e.b, key.b)) continue;
+            if (!PieceOfClass(key.t, p)) continue;
+            std::array<int, kKillListCount>& c = counts[key];  // zeros when new
+            if (k < kKillListCount) ++c[static_cast<size_t>(k)];
+        }
+    }
+    for (const auto& [key, c] : counts) {
+        Piece p = Piece::Helmet;
+        PieceOfClass(key.t, p);
+        int rarity = 0;
+        bool hidden = false;
+        if (!verdict || !verdict(key, rarity, hidden)) {
+            ++r.unread;
+            continue;
+        }
+        if (!OrdinaryKeeps(rarity, hidden)) continue;
+        const size_t i = static_cast<size_t>(p);
+        ++r.kept[i].keptTriples;
+        bool equal = true;
+        for (int n : c) {
+            r.kept[i].keptEntries += n;
+            if (n != c[0]) equal = false;
+        }
+        if (!equal) continue;
+        ++r.qualifying[i];
+        StandIn& s = r.standIns[i];
+        if (!s.resolved || c[0] < s.n) {
+            s.resolved = true;
+            s.triple = key;
+            s.rarity = rarity;
+            s.n = c[0];
+            r.counts[i] = c;
+        }
+    }
+    return r;
+}
+
+// One list's identity as the adapter read it: its array and its length.
+struct ListKey {
+    uint64_t id = 0;
+    int      length = 0;
+};
+using KillListKeys = std::array<ListKey, kListCount>;
+
+// The kill route's stand-ins, resolved again when any of [0..5] changed:
+// another array (its id) or another length.
+class KillStandInCache {
+public:
+    bool Stale(const KillListKeys& keys) const
+    {
+        if (!have_) return true;
+        for (size_t k = 0; k < keys.size(); ++k)
+            if (keys[k].id != keys_[k].id || keys[k].length != keys_[k].length) return true;
+        return false;
+    }
+    void Store(const KillListKeys& keys, const KillResolution& r)
+    {
+        have_ = true;
+        keys_ = keys;
+        resolution_ = r;
+    }
+    const KillResolution* Find() const { return have_ ? &resolution_ : nullptr; }
+
+private:
+    bool           have_ = false;
+    KillListKeys   keys_{};
+    KillResolution resolution_;
+};
+
+// What one kill-route call pushes: `copies` entries per piece that has a kill
+// stand-in and is not latched off, onto each of kKillLists. Copies below 1
+// push nothing; above kMaxCopies push kMaxCopies.
+struct KillPushPlan {
+    std::vector<PushEntry> entries;  // each one goes onto every list in kKillLists
+
+    int PerListCount() const
+    {
+        int total = 0;
+        for (const PushEntry& e : entries) total += e.copies;
+        return total;
+    }
+    int EntryCount() const { return PerListCount() * kKillListCount; }
+};
+
+inline KillPushPlan PlanKillPush(const KillResolution& r, int copies, const std::array<bool, kPieceCount>& latched)
+{
+    KillPushPlan plan;
+    if (copies < 1) return plan;
+    if (copies > kMaxCopies) copies = kMaxCopies;
+    for (int i = 0; i < kPieceCount; ++i) {
+        const StandIn& s = r.standIns[static_cast<size_t>(i)];
+        if (!s.resolved || latched[static_cast<size_t>(i)]) continue;
+        plan.entries.push_back(PushEntry{ kPieces[i].piece, s.triple, s.n, copies });
+    }
+    return plan;
+}
+
+// A typed hit during an ordinary roll that pushed `plan`: n is the common
+// count, so the coin is c / (n + c) whichever list was drawn.
+inline bool AttributeHit(const KillPushPlan& plan, double t, double sub, double b, double u, Piece& out)
+{
+    return AttributeHitAmong(plan.entries, t, sub, b, u, out);
+}
+
 // ---- the art: no roll builds a piece before the ground install was tried --------
 //
 // A piece built on the ground while the shared LootGroundInit route is still
@@ -352,8 +545,12 @@ inline bool ArtReady(bool armed, int iconsEmbedded, bool groundTried)
 
 // ---- the gate ---------------------------------------------------------------------
 
-// The ` gate=` field, as the flight charms' is.
-enum class Gate : int { Off, On, Refused, NotResolved, NoDetection };
+// The ` gate=` and ` kill-gate=` fields, as the flight charms' is. Pending:
+// the switch is on and installed, and that roll has not had its first
+// resolving call yet. Each roll reads the lists it resolves from at its own
+// call (the Heroic roll from its own sub-list argument), so there is nothing
+// to resolve at switch-on (Live 1's `drops-on`).
+enum class Gate : int { Off, On, Refused, NotResolved, NoDetection, Pending };
 
 inline constexpr std::string_view GateName(Gate g)
 {
@@ -363,6 +560,7 @@ inline constexpr std::string_view GateName(Gate g)
     case Gate::Refused:     return "refused";
     case Gate::NotResolved: return "not-resolved";
     case Gate::NoDetection: return "no-detection";
+    case Gate::Pending:     return "pending";
     }
     return "?";
 }
@@ -387,8 +585,10 @@ struct DropTally {
 };
 
 // Every field of the line. A default DropStatFields prints the fresh
-// session's line; Drops::FillStat fills it but the hook route, which the
-// adapter sets.
+// session's line; Drops::FillStat fills it but the two hook routes, which the
+// adapter sets. `art-wait=`, `injected=`, `refused=` and `anomalies=` count
+// both rolls; the rest are the Heroic roll's, and the `kill-` ones the kill
+// route's.
 struct DropStatFields {
     bool        drops = false;
     std::string install = "not-armed";
@@ -406,6 +606,14 @@ struct DropStatFields {
     std::array<StandIn, kPieceCount> standIns{};
     uint64_t    listRefused = 0;         // calls whose third argument named no sub-list
     int         unread = 0;              // the last resolution's unreadable verdicts
+    // The kill route.
+    Gate        killGate = Gate::Off;
+    std::string killHook = "not-installed";  // the shared DropUniqueItems detour's route
+    uint64_t    killCalls = 0;               // every call the detour saw, switch on or off
+    uint64_t    killPushedCalls = 0;
+    uint64_t    killNested = 0;
+    DropTally   killPieces[kPieceCount];
+    std::array<StandIn, kPieceCount> killStandIns{};
 };
 
 // A piece's stand-in as the line prints it: `<sub>:<b>@<rarity>x<n>`, or none.
@@ -414,6 +622,12 @@ inline std::string StandInText(const StandIn& s)
     if (!s.resolved) return "none";
     return std::to_string(s.triple.sub) + ":" + std::to_string(s.triple.b) + "@" + std::to_string(s.rarity)
         + "x" + std::to_string(s.n);
+}
+
+// A stand-in field: `pending` while its roll's gate is, else StandInText.
+inline std::string StandInField(Gate g, const StandIn& s)
+{
+    return g == Gate::Pending ? std::string("pending") : StandInText(s);
 }
 
 // `mark1set stat`'s second line, after the set's own. It begins
@@ -435,9 +649,20 @@ inline std::string DropStatLine(const DropStatFields& f)
     s += " refused=" + std::to_string(f.refused);
     s += " anomalies=" + std::to_string(f.anomalies);
     for (int i = 0; i < kPieceCount; ++i)
-        s += " standin-" + std::string(kPieces[i].key) + "=" + StandInText(f.standIns[static_cast<size_t>(i)]);
+        s += " standin-" + std::string(kPieces[i].key) + "=" + StandInField(f.gate, f.standIns[static_cast<size_t>(i)]);
     s += " list-refused=" + std::to_string(f.listRefused);
     s += " unread=" + std::to_string(f.unread);
+    s += " kill-gate=" + std::string(GateName(f.killGate));
+    s += " kill-hook=" + f.killHook;
+    s += " kill-calls=" + std::to_string(f.killCalls);
+    s += " kill-pushed=" + std::to_string(f.killPushedCalls);
+    s += " kill-nested=" + std::to_string(f.killNested);
+    for (int i = 0; i < kPieceCount; ++i)
+        s += " kill-" + std::string(kPieces[i].key) + "=" + std::to_string(f.killPieces[i].ours) + "/"
+            + std::to_string(f.killPieces[i].built);
+    for (int i = 0; i < kPieceCount; ++i)
+        s += " kill-standin-" + std::string(kPieces[i].key) + "="
+            + StandInField(f.killGate, f.killStandIns[static_cast<size_t>(i)]);
     return s;
 }
 
@@ -483,16 +708,13 @@ public:
         return enabled_ ? "waiting-for-character" : "not-armed";
     }
 
-    // The ` gate=` field. `detectionNative`: #74's detection
-    // (InstallSignatureAngelicHooks) is all four inline.
-    Gate GateNow(bool detectionNative) const
-    {
-        if (refused_) return Gate::Refused;
-        if (!enabled_ || !installed_) return Gate::Off;
-        if (!detectionNative) return Gate::NoDetection;
-        if (listState_ == ListState::NoneResolved || listState_ == ListState::Unreadable) return Gate::NotResolved;
-        return Gate::On;
-    }
+    // The ` gate=` field (the Heroic roll). `detectionNative`: #74's detection
+    // (InstallSignatureAngelicHooks) is all four inline. `pending` until the
+    // roll's first resolving call.
+    Gate GateNow(bool detectionNative) const { return GateOf(listState_, detectionNative); }
+    // The ` kill-gate=` field (the ordinary roll), the same words; both rolls
+    // attribute their hits through #74's detection.
+    Gate KillGateNow(bool detectionNative) const { return GateOf(killState_, detectionNative); }
 
     // ---- per call: counted, then decided before the list is read -------------
     // `rollDepth` is g_SigRollDepth; `artReady` is ArtReady(...). On Resolve,
@@ -548,12 +770,62 @@ public:
         ++pushedCalls_;
         injected_ += static_cast<uint64_t>(p.EntryCount());
     }
-    // A removal that did not find the list as it pushed it.
+    // A removal that did not find the list as it pushed it (either roll).
     void NoteAnomaly() { ++anomalies_; }
 
-    void NoteOurs(Piece p) { ++tally_[static_cast<size_t>(p)].ours; }
-    void NoteBuilt(Piece p) { ++tally_[static_cast<size_t>(p)].built; }
-    // A refused rewrite latches that piece off for the session, as #74 does.
+    // ---- the kill route, per call ---------------------------------------------
+    // Every call the shared DropUniqueItems detour sees is counted
+    // (` kill-calls=`, switch on or off). `rollDepth` is g_SigRollDepth;
+    // `uniqueDepth` the shared detour's own depth (a unique roll already in
+    // progress). Either above 0 is nested: the game's own roll, counted. The
+    // art-ready rule is the Heroic roll's.
+    CallAction BeginKillCall(bool detectionNative, int rollDepth, int uniqueDepth, bool artReady)
+    {
+        ++killCalls_;
+        if (!enabled_ || !installed_) return CallAction::PassOff;
+        if (!detectionNative) return CallAction::PassGate;
+        if (rollDepth > 0 || uniqueDepth > 0) {
+            ++killNested_;
+            return CallAction::PassNested;
+        }
+        if (!artReady) {
+            ++artWait_;
+            return CallAction::PassArtWait;
+        }
+        return CallAction::Resolve;
+    }
+
+    KillStandInCache&       KillCache() { return killCache_; }
+    const KillStandInCache& KillCache() const { return killCache_; }
+
+    // The lists could not be read: nothing pushed, the kill gate reads
+    // not-resolved.
+    void NoteKillListsUnreadable() { killState_ = ListState::Unreadable; }
+
+    // The plan for a kill-route call whose lists resolved to `r`; it records
+    // the resolution the line prints.
+    KillPushPlan PlanKillFor(const KillResolution& r, int copies)
+    {
+        lastKillStandIns_ = r.standIns;
+        killState_ = r.AnyResolved() ? ListState::Resolved : ListState::NoneResolved;
+        return PlanKillPush(r, copies, latched_);
+    }
+
+    // The plan's entries went onto each of the five lists and were held
+    // read-back.
+    void NoteKillPushed(const KillPushPlan& p)
+    {
+        if (p.entries.empty()) return;
+        ++killPushedCalls_;
+        injected_ += static_cast<uint64_t>(p.EntryCount());
+    }
+
+    // A stand-in hit that became the piece, and the Custom Forge's final pass
+    // counting it built, on the roll it came from.
+    void NoteOurs(Piece p, Roll roll = Roll::Heroic) { ++TallyOf(roll)[static_cast<size_t>(p)].ours; }
+    void NoteBuilt(Piece p, Roll roll = Roll::Heroic) { ++TallyOf(roll)[static_cast<size_t>(p)].built; }
+    // A refused rewrite latches that piece off for the session on both rolls,
+    // as #74 does: the rewrite is the same on either.
     void NoteRewriteRefused(Piece p)
     {
         ++rewriteRefused_;
@@ -563,8 +835,10 @@ public:
 
     uint64_t HeroicCalls() const { return heroicCalls_; }
     uint64_t PushedCalls() const { return pushedCalls_; }
+    uint64_t KillCalls() const { return killCalls_; }
+    uint64_t KillPushedCalls() const { return killPushedCalls_; }
 
-    // Every field but `hook=`, which the adapter sets.
+    // Every field but `hook=` and `kill-hook=`, which the adapter sets.
     void FillStat(DropStatFields& f, bool detectionNative) const
     {
         f.drops = enabled_;
@@ -582,10 +856,28 @@ public:
         f.standIns = lastStandIns_;
         f.listRefused = listRefused_;
         f.unread = lastUnread_;
+        f.killGate = KillGateNow(detectionNative);
+        f.killCalls = killCalls_;
+        f.killPushedCalls = killPushedCalls_;
+        f.killNested = killNested_;
+        for (int i = 0; i < kPieceCount; ++i) f.killPieces[i] = killTally_[static_cast<size_t>(i)];
+        f.killStandIns = lastKillStandIns_;
     }
 
 private:
+    // Unknown: the roll has had no resolving call yet (the gate reads pending).
     enum class ListState : int { Unknown, Resolved, NoneResolved, Unreadable };
+
+    Gate GateOf(ListState state, bool detectionNative) const
+    {
+        if (refused_) return Gate::Refused;
+        if (!enabled_ || !installed_) return Gate::Off;
+        if (!detectionNative) return Gate::NoDetection;
+        if (state == ListState::Unknown) return Gate::Pending;
+        if (state == ListState::NoneResolved || state == ListState::Unreadable) return Gate::NotResolved;
+        return Gate::On;
+    }
+    std::array<DropTally, kPieceCount>& TallyOf(Roll roll) { return roll == Roll::Kill ? killTally_ : tally_; }
 
     bool         enabled_ = false;
     bool         installed_ = false;
@@ -606,6 +898,14 @@ private:
     uint64_t     injected_ = 0;
     uint64_t     rewriteRefused_ = 0;
     uint64_t     anomalies_ = 0;
+    // The kill route.
+    ListState    killState_ = ListState::Unknown;
+    std::array<StandIn, kPieceCount>   lastKillStandIns_{};
+    std::array<DropTally, kPieceCount> killTally_{};
+    KillStandInCache killCache_;
+    uint64_t     killCalls_ = 0;
+    uint64_t     killPushedCalls_ = 0;
+    uint64_t     killNested_ = 0;
 };
 
 // `mark1set drops 1|0`: the drops switch, and on a switch-on the pieces' art,
@@ -621,7 +921,8 @@ inline void SetSwitch(Drops& drops, Mark1Set::Bonus& set, bool on)
 inline std::string DropsReply(const Drops& d, bool detectionNative)
 {
     return "mark1set: drops=" + std::string(d.Enabled() ? "on" : "off") + " install=" + std::string(d.InstallStateName())
-        + " gate=" + std::string(GateName(d.GateNow(detectionNative)));
+        + " gate=" + std::string(GateName(d.GateNow(detectionNative)))
+        + " kill-gate=" + std::string(GateName(d.KillGateNow(detectionNative)));
 }
 
 } // namespace ForgePact::Mark1Drops

@@ -14,7 +14,14 @@
 // (standin/*); the coin c / (n + c), the attribution and the rewrite target
 // per piece from Mark1Set.hpp's kPieces (coin/*); the gate and install words
 // (gate/*); the art-ready test (art_ready/*); the `mark1set drops:` line,
-// fresh and filled, and the reply (stat/*).
+// fresh and filled, and the reply (stat/*). The kill route on the ordinary
+// unique roll (kill/*): its switch-off baseline, the ordinary roll's filter,
+// the equal-count stand-in rule over the six lists (count 0 preferred, then
+// the smaller count, ties by the lowest sub and b, a class with none), the
+// push onto each of [0..4], the coin with the common count, the cache over
+// all six lists, nested calls, the art-ready rule and the line's kill fields.
+// Each roll's gate and stand-ins read `pending` until that roll's first
+// resolving call (pending/*, Live 1's `drops-on`).
 #include <cmath>
 #include <cstdint>
 #include <iostream>
@@ -130,6 +137,46 @@ static std::vector<ListEntry> fullList(FakeRepo& repo)
     repo.add(4, 0, 5, 9);    // gloves
     repo.add(10, 0, 47, 7);  // a charm the roll refuses (Angelic)
     return { entry(0, 3, 17), entry(10, 0, 47), entry(1, 2, 40), entry(2, 1, 8), notATriple(), entry(4, 0, 5) };
+}
+
+// The six sub-lists as the kill route reads them, among a charm on every list
+// (never asked about) and an entry that is not a triple:
+//   helmet: (0,3,17) Satanic on [5] only, n 0; (0,1,2) Satanic once on each of [0..4], n 1;
+//   body:   (1,2,40) Satanic once on each of [0..4], n 1; (1,0,1) twice on [0], once elsewhere: unequal;
+//   boots:  (2,1,8) Heroic on [5], refused by the ordinary roll; (2,4,4) and (2,4,6) rarity 5, twice on
+//           each of [0..4], n 2: a tie, the lowest (sub, b) wins;
+//   gloves: (4,0,5) Heroic and (4,0,6) hidden, both on [5]: none.
+static KillLists killLists(FakeRepo& repo)
+{
+    repo.add(0, 3, 17, 6);
+    repo.add(0, 1, 2, 6);
+    repo.add(1, 2, 40, 6);
+    repo.add(1, 0, 1, 6);
+    repo.add(2, 1, 8, 9);
+    repo.add(2, 4, 4, 5);
+    repo.add(2, 4, 6, 5);
+    repo.add(4, 0, 5, 9);
+    repo.add(4, 0, 6, 6, true);
+    repo.add(10, 0, 47, 6);
+    KillLists lists;
+    for (int k = 0; k < kKillListCount; ++k) {
+        std::vector<ListEntry>& l = lists[static_cast<size_t>(k)];
+        l = { entry(10, 0, 47), entry(0, 1, 2), entry(1, 2, 40), entry(1, 0, 1), entry(2, 4, 4), entry(2, 4, 4),
+              entry(2, 4, 6), entry(2, 4, 6), notATriple() };
+        if (k == 0) l.push_back(entry(1, 0, 1));
+    }
+    lists[5] = { entry(0, 3, 17), entry(2, 1, 8), entry(4, 0, 5), entry(4, 0, 6), entry(10, 0, 47) };
+    return lists;
+}
+
+static KillListKeys keysOf(const KillLists& lists)
+{
+    KillListKeys keys{};
+    for (size_t k = 0; k < keys.size(); ++k) {
+        keys[k].id = 100 + k;
+        keys[k].length = static_cast<int>(lists[k].size());
+    }
+    return keys;
 }
 
 static Drops installedOn()
@@ -366,13 +413,14 @@ int main()
         r.SetEnabled(true);
         ok = ok && !r.ShouldInstall(true, true, true) && r.ShouldInstall(true, true, false);
         r.NoteInstall(true, false);
-        ok = ok && r.InstallStateName() == "installed" && r.GateNow(true) == Gate::On;
+        // Installed, and no roll resolved yet: pending (Live 1's `drops-on`).
+        ok = ok && r.InstallStateName() == "installed" && r.GateNow(true) == Gate::Pending;
         check("gate/refused_turns_the_switch_off_and_a_later_install_clears_it", ok);
 
         Drops i = installedOn();
         int k = 0;
         ok = i.GateNow(false) == Gate::NoDetection && i.BeginCall(false, 0, true, ArgKind::Undefined, 0, k) == CallAction::PassGate
-            && i.GateNow(true) == Gate::On;
+            && i.GateNow(true) == Gate::Pending;
         check("gate/no_detection_passes", ok);
 
         // A roll already in progress passes and is counted.
@@ -443,7 +491,9 @@ int main()
             "mark1set drops: drops=off install=not-armed gate=off hook=not-installed list=- heroic-calls=0"
             " pushed-calls=0 nested=0 art-wait=0 helmet=0/0 body=0/0 boots=0/0 gloves=0/0 injected=0 refused=0"
             " anomalies=0 standin-helmet=none standin-body=none standin-boots=none standin-gloves=none"
-            " list-refused=0 unread=0";
+            " list-refused=0 unread=0 kill-gate=off kill-hook=not-installed kill-calls=0 kill-pushed=0 kill-nested=0"
+            " kill-helmet=0/0 kill-body=0/0 kill-boots=0/0 kill-gloves=0/0 kill-standin-helmet=none"
+            " kill-standin-body=none kill-standin-boots=none kill-standin-gloves=none";
         check("stat/fresh_line_exact", fresh == expected, fresh);
         check("stat/fresh_line_begins_mark1set_drops", startsWith(fresh, "mark1set drops: drops=off"));
         Drops fd;
@@ -455,7 +505,10 @@ int main()
         const std::vector<std::string> names = fieldNames(fresh);
         const std::vector<std::string> order = { "drops", "install", "gate", "hook", "list", "heroic-calls", "pushed-calls",
             "nested", "art-wait", "helmet", "body", "boots", "gloves", "injected", "refused", "anomalies",
-            "standin-helmet", "standin-body", "standin-boots", "standin-gloves", "list-refused", "unread" };
+            "standin-helmet", "standin-body", "standin-boots", "standin-gloves", "list-refused", "unread",
+            "kill-gate", "kill-hook", "kill-calls", "kill-pushed", "kill-nested", "kill-helmet", "kill-body",
+            "kill-boots", "kill-gloves", "kill-standin-helmet", "kill-standin-body", "kill-standin-boots",
+            "kill-standin-gloves" };
         check("stat/named_fields_in_order", names == order);
 
         // Filled: a session that pushed, hit, built and refused.
@@ -488,18 +541,318 @@ int main()
         Drops r;
         r.SetEnabled(true);
         check("stat/reply_names_the_switch_the_install_and_the_gate",
-              DropsReply(r, true) == "mark1set: drops=on install=waiting-for-character gate=off", DropsReply(r, true));
+              DropsReply(r, true) == "mark1set: drops=on install=waiting-for-character gate=off kill-gate=off",
+              DropsReply(r, true));
         Drops ri = installedOn();
         Drops rf;
         rf.SetEnabled(true);
         rf.NoteInstall(false, false);
         check("stat/reply_installed_and_refused",
-              DropsReply(ri, true) == "mark1set: drops=on install=installed gate=on"
-              && DropsReply(ri, false) == "mark1set: drops=on install=installed gate=no-detection"
-              && DropsReply(rf, true) == "mark1set: drops=off install=refused gate=refused", DropsReply(rf, true));
+              DropsReply(ri, true) == "mark1set: drops=on install=installed gate=pending kill-gate=pending"
+              && DropsReply(ri, false) == "mark1set: drops=on install=installed gate=no-detection kill-gate=no-detection"
+              && DropsReply(rf, true) == "mark1set: drops=off install=refused gate=refused kill-gate=refused",
+              DropsReply(ri, true) + " | " + DropsReply(rf, true));
         check("stat/gate_names", GateName(Gate::Off) == "off" && GateName(Gate::On) == "on"
               && GateName(Gate::Refused) == "refused" && GateName(Gate::NotResolved) == "not-resolved"
-              && GateName(Gate::NoDetection) == "no-detection");
+              && GateName(Gate::NoDetection) == "no-detection" && GateName(Gate::Pending) == "pending");
+    }
+
+    // ---- kill: the ordinary unique roll -------------------------------------------------
+    {
+        // Baseline: the switch off is the game's own roll; the call is counted.
+        Drops d;
+        const CallAction a = d.BeginKillCall(true, 0, 0, true);
+        DropStatFields f;
+        d.FillStat(f, true);
+        Drops off = installedOn();
+        off.SetEnabled(false);
+        const CallAction b = off.BeginKillCall(true, 0, 0, true);
+        check("kill/baseline_switch_off_passes_and_only_counts_the_call",
+              a == CallAction::PassOff && b == CallAction::PassOff && off.Installed() && f.killCalls == 1
+              && f.killPushedCalls == 0 && f.killNested == 0 && f.artWait == 0 && f.injected == 0
+              && f.heroicCalls == 0 && off.KillCalls() == 1 && off.KillPushedCalls() == 0, DropStatLine(f));
+
+        // The ordinary roll's filter: below 7 and not hidden.
+        bool ok = kOrdinaryRarityBelow == 7 && OrdinaryKeeps(6, false) && OrdinaryKeeps(0, false) && OrdinaryKeeps(2, false)
+            && !OrdinaryKeeps(7, false) && !OrdinaryKeeps(9, false) && !OrdinaryKeeps(10, false) && !OrdinaryKeeps(6, true);
+        check("kill/the_ordinary_rolls_filter", ok);
+
+        // The equal-count rule over the six lists.
+        FakeRepo repo;
+        const KillLists lists = killLists(repo);
+        const KillResolution r = ResolveKillStandIns(lists, repo.fn());
+        ok = isTriple(r.standIns[0], 0, 3, 17) && r.standIns[0].n == 0 && r.standIns[0].rarity == 6
+            && isTriple(r.standIns[1], 1, 2, 40) && r.standIns[1].n == 1
+            && isTriple(r.standIns[2], 2, 4, 4) && r.standIns[2].n == 2 && r.standIns[2].rarity == 5
+            && !r.standIns[3].resolved && r.AnyResolved() && r.unread == 0;
+        check("kill/standin_equal_count_rule", ok,
+              StandInText(r.standIns[0]) + " " + StandInText(r.standIns[1]) + " " + StandInText(r.standIns[2]));
+        ok = r.kept[0].keptTriples == 2 && r.qualifying[0] == 2 && r.kept[0].keptEntries == 5
+            && r.kept[1].keptTriples == 2 && r.qualifying[1] == 1 && r.kept[1].keptEntries == 11
+            && r.kept[2].keptTriples == 2 && r.qualifying[2] == 2 && r.kept[3].keptTriples == 0 && r.qualifying[3] == 0;
+        for (int k = 0; k < kKillListCount; ++k)
+            if (r.counts[0][static_cast<size_t>(k)] != 0 || r.counts[1][static_cast<size_t>(k)] != 1
+                || r.counts[2][static_cast<size_t>(k)] != 2) ok = false;
+        check("kill/standin_unequal_counts_never_qualify", ok);
+        ok = r.lengths[0] == 10 && r.lengths[1] == 9 && r.lengths[4] == 9 && r.lengths[5] == 5;
+        check("kill/standin_lengths_of_all_six_lists", ok);
+        // Each distinct triple of a piece class asked once, the charm never.
+        ok = repo.calls == 9;
+        for (const Triple& t : repo.asked)
+            if (t.t == 10) ok = false;
+        check("kill/standin_each_distinct_triple_asked_once", ok, std::to_string(repo.calls));
+
+        // The smaller n wins over a lower (sub, b); n 0 over anything.
+        FakeRepo s;
+        s.add(1, 0, 0, 6);
+        s.add(1, 9, 9, 6);
+        KillLists sl;
+        for (int k = 0; k < kKillListCount; ++k)
+            sl[static_cast<size_t>(k)] = { entry(1, 0, 0), entry(1, 0, 0), entry(1, 9, 9) };
+        const KillResolution rs = ResolveKillStandIns(sl, s.fn());
+        s.add(1, 5, 5, 6);
+        sl[5] = { entry(1, 5, 5) };
+        const KillResolution rz = ResolveKillStandIns(sl, s.fn());
+        check("kill/standin_smaller_n_then_count_zero_preferred", isTriple(rs.standIns[1], 1, 9, 9) && rs.standIns[1].n == 1
+              && isTriple(rz.standIns[1], 1, 5, 5) && rz.standIns[1].n == 0 && rz.qualifying[1] == 3);
+
+        // The Heroic roll's stand-ins are refused here: a class with only those has none.
+        FakeRepo h;
+        h.add(4, 0, 5, 9);
+        KillLists hl;
+        hl[5] = { entry(4, 0, 5) };
+        for (int k = 0; k < kKillListCount; ++k) hl[static_cast<size_t>(k)] = { entry(4, 0, 5) };
+        const KillResolution rh = ResolveKillStandIns(hl, h.fn());
+        check("kill/standin_a_heroic_triple_never_stands_in", !rh.AnyResolved() && rh.kept[3].keptTriples == 0);
+
+        // An unreadable verdict is counted and never a stand-in.
+        FakeRepo u;
+        u.add(0, 5, 5, 6);
+        KillLists ul;
+        ul[5] = { entry(0, 1, 1), entry(0, 5, 5), entry(0, 0.5, 1) };
+        const KillResolution ru = ResolveKillStandIns(ul, u.fn());
+        const KillResolution rnull = ResolveKillStandIns(ul, VerdictFn{});
+        check("kill/standin_unreadable_counted_and_never_a_stand_in", ru.unread == 1 && isTriple(ru.standIns[0], 0, 5, 5)
+              && ru.standIns[0].n == 0 && u.calls == 2 && rnull.unread == 2 && !rnull.AnyResolved());
+
+        // The push: each resolved piece's copies onto every one of [0..4].
+        bool lists04 = kKillListCount == 5;
+        for (int k = 0; k < kKillListCount; ++k)
+            if (kKillLists[k] != k) lists04 = false;
+        const KillPushPlan p1 = PlanKillPush(r, kPlayerCopies, kNoLatch);
+        ok = lists04 && p1.entries.size() == 3 && p1.PerListCount() == 3 && p1.EntryCount() == 15;
+        for (const PushEntry& e : p1.entries)
+            if (e.piece == Piece::Gloves || e.copies != 1) ok = false;
+        ok = ok && p1.entries[0].n == 0 && p1.entries[1].n == 1 && p1.entries[2].n == 2;
+        check("kill/push_onto_each_of_the_five_lists", ok, std::to_string(p1.EntryCount()));
+        std::array<bool, kPieceCount> latch{};
+        latch[1] = true;
+        const KillPushPlan p2 = PlanKillPush(r, 2, latch);
+        ok = p2.entries.size() == 2 && p2.EntryCount() == 20 && PlanKillPush(r, 0, kNoLatch).entries.empty()
+            && PlanKillPush(r, -1, kNoLatch).EntryCount() == 0 && PlanKillPush(r, 1000, kNoLatch).entries[0].copies == kMaxCopies;
+        for (const PushEntry& e : p2.entries)
+            if (e.piece == Piece::Body || e.copies != 2) ok = false;
+        check("kill/push_copies_bounded_and_latched_left_out", ok);
+
+        // The coin c / (n + c), n the common count.
+        Piece p = Piece::Helmet;
+        ok = AttributeHit(p1, 0, 3, 17, 0.999, p) && p == Piece::Helmet          // n 0: every hit
+            && AttributeHit(p1, 1, 2, 40, 0.4999, p) && p == Piece::Body          // n 1: half
+            && !AttributeHit(p1, 1, 2, 40, 0.5, p)
+            && AttributeHit(p1, 2, 4, 4, 0.33, p) && p == Piece::Boots           // n 2: a third
+            && !AttributeHit(p1, 2, 4, 4, 0.34, p)
+            && !AttributeHit(p1, 0, 1, 2, 0.0, p)                                 // on the lists, not the stand-in
+            && !AttributeHit(p1, 2, 1, 8, 0.0, p)                                 // the Heroic roll's stand-in
+            && !AttributeHit(p1, 4, 0, 5, 0.0, p) && !AttributeHit(KillPushPlan{}, 0, 3, 17, 0.0, p);
+        check("kill/coin_is_c_over_n_plus_c_with_the_common_count", ok);
+
+        // Resolved again when any of [0..5]'s id or length changed.
+        KillStandInCache cache;
+        const KillListKeys keys = keysOf(lists);
+        ok = cache.Stale(keys) && cache.Find() == nullptr;
+        cache.Store(keys, r);
+        ok = ok && !cache.Stale(keys) && cache.Find() != nullptr && cache.Find()->standIns[0].triple.b == 17;
+        for (size_t k = 0; k < keys.size(); ++k) {
+            KillListKeys id = keys;
+            ++id[k].id;
+            KillListKeys len = keys;
+            ++len[k].length;
+            if (!cache.Stale(id) || !cache.Stale(len)) ok = false;
+        }
+        check("kill/cache_resolves_again_when_any_list_changes", ok);
+
+        // A call nested in a roll in progress passes, counted: #74's or the
+        // shared detour's own.
+        Drops n = installedOn();
+        ok = n.BeginKillCall(true, 1, 0, true) == CallAction::PassNested
+            && n.BeginKillCall(true, 0, 1, true) == CallAction::PassNested
+            && n.BeginKillCall(true, 0, 0, true) == CallAction::Resolve;
+        DropStatFields fn;
+        n.FillStat(fn, true);
+        check("kill/nested_passes_and_is_counted", ok && fn.killNested == 2 && fn.killCalls == 3 && fn.nested == 0
+              && fn.heroicCalls == 0, DropStatLine(fn));
+
+        // #74's detection not inline: the game's own roll.
+        Drops g = installedOn();
+        check("kill/no_detection_passes", g.BeginKillCall(false, 0, 0, true) == CallAction::PassGate
+              && g.KillGateNow(false) == Gate::NoDetection);
+
+        // The art-ready rule is the Heroic roll's; `art-wait=` counts both.
+        Drops w = installedOn();
+        int k = 0;
+        const CallAction wa = w.BeginKillCall(true, 0, 0, ArtReady(true, 8, false));
+        const CallAction wb = w.BeginKillCall(true, 0, 0, ArtReady(true, 8, true));
+        const CallAction wc = w.BeginCall(true, 0, ArtReady(true, 8, false), ArgKind::Undefined, 0, k);
+        DropStatFields fw;
+        w.FillStat(fw, true);
+        check("kill/art_ready_applies_as_on_the_heroic_roll", wa == CallAction::PassArtWait && wb == CallAction::Resolve
+              && wc == CallAction::PassArtWait && fw.artWait == 2 && fw.killPushedCalls == 0, DropStatLine(fw));
+
+        // not-resolved: no kill stand-in for any piece, or the lists unreadable.
+        FakeRepo none;
+        none.add(10, 0, 47, 6);
+        KillLists nl;
+        for (int i = 0; i < kKillListCount; ++i) nl[static_cast<size_t>(i)] = { entry(10, 0, 47) };
+        Drops nr = installedOn();
+        const KillPushPlan pn = nr.PlanKillFor(ResolveKillStandIns(nl, none.fn()), kPlayerCopies);
+        nr.NoteKillPushed(pn);
+        ok = pn.entries.empty() && nr.KillGateNow(true) == Gate::NotResolved && nr.KillPushedCalls() == 0;
+        FakeRepo all;
+        const KillPushPlan pa = nr.PlanKillFor(ResolveKillStandIns(killLists(all), all.fn()), kPlayerCopies);
+        nr.NoteKillPushed(pa);
+        ok = ok && nr.KillGateNow(true) == Gate::On && nr.KillPushedCalls() == 1 && nr.GateNow(true) == Gate::Pending;
+        nr.NoteKillListsUnreadable();
+        ok = ok && nr.KillGateNow(true) == Gate::NotResolved;
+        check("kill/not_resolved_when_no_stand_in_or_unreadable", ok);
+
+        // A refused rewrite latches the piece off on both rolls.
+        Drops l = installedOn();
+        l.NoteRewriteRefused(Piece::Boots);
+        const KillPushPlan pl = l.PlanKillFor(r, kPlayerCopies);
+        ok = pl.entries.size() == 2;
+        for (const PushEntry& e : pl.entries)
+            if (e.piece == Piece::Boots) ok = false;
+        check("kill/refused_rewrite_latches_the_piece_on_both_rolls", ok);
+
+        // The stat line's kill fields, filled: the tallies by roll, the push
+        // counted in `injected=`, and the stand-ins.
+        Drops t = installedOn();
+        t.BeginKillCall(true, 0, 0, true);
+        const KillPushPlan pt = t.PlanKillFor(r, kPlayerCopies);
+        t.NoteKillPushed(pt);
+        t.NoteOurs(Piece::Helmet, Roll::Kill);
+        t.NoteBuilt(Piece::Helmet, Roll::Kill);
+        t.NoteOurs(Piece::Boots, Roll::Kill);
+        t.NoteOurs(Piece::Body);
+        DropStatFields ft;
+        t.FillStat(ft, true);
+        ft.hook = "both";
+        ft.killHook = "detoured";
+        const std::string line = DropStatLine(ft);
+        ok = field(line, "kill-gate") == "on" && field(line, "kill-hook") == "detoured" && field(line, "kill-calls") == "1"
+            && field(line, "kill-pushed") == "1" && field(line, "kill-nested") == "0" && field(line, "kill-helmet") == "1/1"
+            && field(line, "kill-boots") == "1/0" && field(line, "kill-body") == "0/0" && field(line, "body") == "1/0"
+            && field(line, "helmet") == "0/0" && field(line, "injected") == "15" && field(line, "pushed-calls") == "0"
+            && field(line, "kill-standin-helmet") == "3:17@6x0" && field(line, "kill-standin-body") == "2:40@6x1"
+            && field(line, "kill-standin-boots") == "4:4@5x2" && field(line, "kill-standin-gloves") == "none"
+            && field(line, "gate") == "pending" && field(line, "heroic-calls") == "0";
+        check("kill/stat_fields_filled", ok, line);
+    }
+
+    // ---- pending: each roll's gate and stand-ins before its first resolving call ----
+    {
+        // Switched on and installed: both rolls pending, every stand-in field pending.
+        Drops d = installedOn();
+        DropStatFields f;
+        d.FillStat(f, true);
+        std::string line = DropStatLine(f);
+        bool ok = field(line, "gate") == "pending" && field(line, "kill-gate") == "pending";
+        for (const PieceRow& row : M1s::kPieces)
+            if (field(line, "standin-" + std::string(row.key)) != "pending"
+                || field(line, "kill-standin-" + std::string(row.key)) != "pending") ok = false;
+        check("pending/both_gates_and_stand_ins_pending_until_the_first_roll", ok
+              && DropsReply(d, true) == "mark1set: drops=on install=installed gate=pending kill-gate=pending", line);
+
+        // The Heroic roll resolves first: on, with its stand-ins; the kill route stays pending.
+        FakeRepo hr;
+        const auto hlist = fullList(hr);
+        const PushPlan ph = d.PlanFor(ResolveStandIns(5, hlist, hr.fn()), kPlayerCopies);
+        d.NotePushed(ph);
+        DropStatFields fh;
+        d.FillStat(fh, true);
+        line = DropStatLine(fh);
+        ok = field(line, "gate") == "on" && field(line, "standin-helmet") == "3:17@9x1"
+            && field(line, "standin-gloves") == "0:5@9x1" && field(line, "kill-gate") == "pending"
+            && field(line, "kill-standin-helmet") == "pending" && field(line, "kill-standin-gloves") == "pending";
+        check("pending/heroic_resolves_to_on_and_the_kill_route_stays_pending", ok, line);
+
+        // Then the kill route: on, with its stand-ins; a class with none reads none.
+        FakeRepo kr;
+        const KillPushPlan pk = d.PlanKillFor(ResolveKillStandIns(killLists(kr), kr.fn()), kPlayerCopies);
+        d.NoteKillPushed(pk);
+        DropStatFields fk;
+        d.FillStat(fk, true);
+        line = DropStatLine(fk);
+        ok = field(line, "kill-gate") == "on" && field(line, "kill-standin-helmet") == "3:17@6x0"
+            && field(line, "kill-standin-gloves") == "none" && field(line, "gate") == "on"
+            && DropsReply(d, true) == "mark1set: drops=on install=installed gate=on kill-gate=on";
+        check("pending/kill_resolves_to_on_and_a_class_with_none_reads_none", ok, line);
+
+        // The kill route first, on its own, and a Heroic class with none.
+        Drops k = installedOn();
+        FakeRepo kr2;
+        k.PlanKillFor(ResolveKillStandIns(killLists(kr2), kr2.fn()), kPlayerCopies);
+        FakeRepo c;
+        c.add(0, 3, 17, 9);
+        k.PlanFor(ResolveStandIns(5, { entry(0, 3, 17) }, c.fn()), kPlayerCopies);
+        DropStatFields fc;
+        k.FillStat(fc, true);
+        line = DropStatLine(fc);
+        ok = field(line, "gate") == "on" && field(line, "standin-helmet") == "3:17@9x1" && field(line, "standin-body") == "none"
+            && field(line, "standin-gloves") == "none" && field(line, "kill-gate") == "on";
+        check("pending/a_roll_resolved_with_none_for_a_class_reads_none", ok, line);
+
+        // Not pending without the switch, the install or the detection: the
+        // fresh session's line, the armed reply, no-detection and refused.
+        Drops fresh;
+        Drops waiting;
+        waiting.SetEnabled(true);
+        Drops nodet = installedOn();
+        Drops refused;
+        refused.SetEnabled(true);
+        refused.NoteInstall(false, false);
+        DropStatFields fw;
+        waiting.FillStat(fw, true);
+        DropStatFields fnd;
+        nodet.FillStat(fnd, false);
+        DropStatFields fr;
+        refused.FillStat(fr, true);
+        ok = fresh.GateNow(true) == Gate::Off && fresh.KillGateNow(true) == Gate::Off
+            && field(DropStatLine(fw), "standin-helmet") == "none" && field(DropStatLine(fw), "kill-standin-helmet") == "none"
+            && field(DropStatLine(fw), "kill-gate") == "off"
+            && field(DropStatLine(fnd), "gate") == "no-detection" && field(DropStatLine(fnd), "standin-body") == "none"
+            && field(DropStatLine(fnd), "kill-standin-body") == "none"
+            && field(DropStatLine(fr), "kill-gate") == "refused" && field(DropStatLine(fr), "kill-standin-boots") == "none";
+        check("pending/not_pending_while_off_waiting_no_detection_or_refused", ok);
+
+        // A list that could not be read before any roll resolved: not-resolved, not pending.
+        Drops u = installedOn();
+        u.NoteListUnreadable(5);
+        u.NoteKillListsUnreadable();
+        DropStatFields fu;
+        u.FillStat(fu, true);
+        line = DropStatLine(fu);
+        ok = field(line, "gate") == "not-resolved" && field(line, "kill-gate") == "not-resolved"
+            && field(line, "standin-helmet") == "none" && field(line, "kill-standin-helmet") == "none";
+        check("pending/unreadable_before_the_first_roll_is_not_resolved", ok, line);
+
+        // Switched off after a roll resolved: off, and the stand-ins as last resolved.
+        d.SetEnabled(false);
+        DropStatFields fo;
+        d.FillStat(fo, true);
+        line = DropStatLine(fo);
+        check("pending/switched_off_after_a_roll_reads_off", field(line, "gate") == "off" && field(line, "kill-gate") == "off"
+              && field(line, "standin-helmet") == "3:17@9x1" && field(line, "kill-standin-helmet") == "3:17@6x0", line);
     }
 
     std::cout << (failures ? "RESULT FAIL " + std::to_string(failures) : std::string("RESULT OK")) << std::endl;
