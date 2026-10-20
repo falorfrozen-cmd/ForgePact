@@ -29,12 +29,15 @@
 //
 // num_compressSteam runs through a method value (num_compressFunc binds it)
 // and has no direct call site, so only the inline detour at the function
-// sees it. A table-only or failed install is not armed and says so once.
+// sees it. A table-only or failed install is not armed and says so once per
+// route result: a table-only hook caps only the calls that go through the
+// script table, which the game's method-value calls do not.
 //
 // Arming: Arm() is called only by a Modifiers lever set off vanilla
 // (StatsManager's `stat` and `statadd`, SkillSlidersMod's `skillslider`) and,
 // in the research build, by `numguard trace on`. With every lever at vanilla
-// nothing is hooked. The detour goes in at most once a session.
+// nothing is hooked. A native or table-only install is kept for the session;
+// a failed one (no resolve) is tried again at the next arming.
 //
 // Included by StatsManager.hpp and SkillSlidersMod.hpp. It includes nothing
 // that pulls in the Windows headers and stays portable C++, because
@@ -58,9 +61,11 @@ inline constexpr int kTraceLinesMax = 400;
 // The whole state, so the harness can start each scenario from a fresh one.
 struct State {
     PFUNC_YYGMLScript original = nullptr;
-    bool installTried = false;
     int route = kRouteNone;
-    // Both builds: how many numbers were capped, and the first one.
+    // Both builds: how many calls the detour saw (so "it never ran" reads
+    // differently from "nothing needed capping"), how many numbers were
+    // capped, and the first one.
+    uint64_t calls = 0;
     uint64_t clamped = 0;
     bool haveFirst = false;
     double first = 0.0;
@@ -68,7 +73,6 @@ struct State {
 #ifndef FORGEPACT_RELEASE
     bool forcedOff = false;          // `numguard off`: every value passes, for the session
     bool traceOn = false;
-    uint64_t calls = 0;
     double largest = 0.0;            // largest |value| handed in, before any cap
     int traceLines = 0;
     bool traceLimitSaid = false;
@@ -81,9 +85,10 @@ struct State {
 inline State state;
 
 #ifndef FORGEPACT_RELEASE
-// StatsManager's CalculateEndDamage install for the trace. This header comes
-// before that class, so ModuleMain's `numguard` dispatch hands it in.
-inline bool (*installEndDamageTrace)() = nullptr;
+// StatsManager's CalculateEndDamage install for the trace; it returns the
+// route HookOneScript took (a Route value). This header comes before that
+// class, so ModuleMain's `numguard` dispatch hands it in.
+inline int (*installEndDamageTrace)() = nullptr;
 #endif
 
 inline const char* RouteName(int route) {
@@ -177,9 +182,7 @@ inline RValue& Hook(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
     RValue** use = A;
     bool capped = false;
     double handed = 0.0;
-#ifndef FORGEPACT_RELEASE
     ++s.calls;
-#endif
     if (A && argc > 0 && IsNumber(A[0])) {
         bool read = false;
         try { handed = A[0]->ToDouble(); read = true; } catch (...) {}
@@ -221,19 +224,25 @@ inline RValue& Hook(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 }
 
 // True when the detour is in and native. The one HookOneScript call for
-// num_compressSteam in the plugin, hook id `fp_numguard`, tried at most once
-// a session; the route it took is kept for the status line.
+// num_compressSteam in the plugin, hook id `fp_numguard`. A native or
+// table-only result is kept for the session (HookOneScript saves the original
+// on its first install only); a failed one saved nothing and is tried again
+// at the next arming. The "not capped" line is written once per route result,
+// not once per attempt.
 inline bool Install() {
     State& s = state;
-    if (!s.installTried) {
-        s.installTried = true;
+    if (s.route == kRouteNone || s.route == kRouteFailed) {
         bool native = false;
         const bool ok = HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_num_compressSteam),
             "fp_numguard", (void*)Hook, &s.original, &native);
-        s.route = (!ok || !s.original) ? kRouteFailed : (native ? kRouteNative : kRouteTableOnly);
-        if (s.route != kRouteNative)
-            Out(std::string("numguard: num_compressSteam hook is ") + RouteName(s.route)
-                + " - numbers past the display limit are not capped");
+        const int route = (!ok || !s.original) ? kRouteFailed : (native ? kRouteNative : kRouteTableOnly);
+        const bool changed = route != s.route;
+        s.route = route;
+        if (changed && route == kRouteTableOnly)
+            Out("numguard: num_compressSteam hook is table-only - only calls through the script table are capped;"
+                " the game's calls through its method value are not");
+        else if (changed && route == kRouteFailed)
+            Out("numguard: num_compressSteam hook is failed - numbers past the display limit are not capped");
     }
     return s.route == kRouteNative;
 }
@@ -245,10 +254,11 @@ inline std::string StatusLine() {
     const State& s = state;
     std::string line = std::string("numguard: ") + (s.route == kRouteNative ? "armed" : "not armed")
         + " route=" + RouteName(s.route) + " clamped=" + std::to_string(s.clamped)
-        + " first=" + (s.haveFirst ? Num(s.first) : std::string("-"));
+        + " first=" + (s.haveFirst ? Num(s.first) : std::string("-"))
+        + " calls=" + std::to_string(s.calls);
 #ifndef FORGEPACT_RELEASE
     line += std::string(" forced=") + (s.forcedOff ? "off" : "auto") + " trace=" + (s.traceOn ? "on" : "off")
-        + " calls=" + std::to_string(s.calls) + " largest=" + Num(s.largest);
+        + " largest=" + Num(s.largest);
 #endif
     return line;
 }
@@ -281,9 +291,11 @@ inline void HandleCommand(const std::string& rest) {
         if (v == "on" || v == "1") {
             s.traceOn = true;
             Arm();
-            const bool damage = installEndDamageTrace && installEndDamageTrace();
+            // The route CalculateEndDamage's hook took: a table-only hook is
+            // in, but blind to the game's direct calls.
+            const int damage = installEndDamageTrace ? installEndDamageTrace() : kRouteFailed;
             Out(std::string("numguard trace -> on (num_compressSteam hook ") + RouteName(s.route)
-                + ", CalculateEndDamage " + (damage ? "hooked" : "not hooked") + ")");
+                + ", CalculateEndDamage " + RouteName(damage) + ")");
             return;
         }
         if (v == "off" || v == "0") {

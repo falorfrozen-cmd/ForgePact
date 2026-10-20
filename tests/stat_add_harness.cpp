@@ -167,11 +167,13 @@ inline bool Install() { return false; }
 }}
 
 // The number guard (NumberGuard.hpp, #230), reduced to the surface
-// StatsManager touches: Arm() counts the levers that arm it, and the research
-// trace callout takes anything. tests/number_guard_harness.cpp runs the real one.
+// StatsManager touches: Arm() counts the levers that arm it, the research
+// trace callout takes anything, and the routes name CalculateEndDamage's hook
+// for the trace. tests/number_guard_harness.cpp runs the real one.
 namespace ForgePact { namespace NumberGuard {
 inline int armCalls = 0;
 inline void Arm() { ++armCalls; }
+enum Route : int { kRouteNone = 0, kRouteNative, kRouteTableOnly, kRouteFailed };
 enum TraceSite : int { kSiteCompress = 0, kSiteEndDamageNative, kSiteEndDamageReturned };
 template <class V> inline void TraceResult(int, const V&) {}
 }}

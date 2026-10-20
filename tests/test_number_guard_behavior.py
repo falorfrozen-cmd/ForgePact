@@ -18,6 +18,10 @@ Scenario names (criterion 3 of the workorder):
   target/arms_from_levers_once, target/table_only_install_not_armed,
   target/first_cap_logged_once, research/forced_off_passes_through,
   research/trace_line_before_original, research/trace_negative_after_positive
+
+Added by the guard polish (before Live 2):
+  target/failed_install_retried_on_next_arm, target/calls_counted_in_player_build,
+  research/trace_reply_names_end_damage_route
 """
 import os
 import shutil
@@ -31,6 +35,8 @@ SDK_INCLUDE = ROOT.parent / "hs-game-sdk/cpp/include"
 LARGEST = "99999000000000"
 SMALLEST = "-999999"
 NOT_CAPPED = "numguard: num_compressSteam hook is {route} - numbers past the display limit are not capped"
+TABLE_ONLY = ("numguard: num_compressSteam hook is table-only - only calls through the script table are capped;"
+              " the game's calls through its method value are not")
 FORCED_OFF = "numguard: forced off - every number reaches the shortener as given, still counted and traced"
 FORCED_AUTO = "numguard: forced auto - a number past the display limit is capped while armed"
 
@@ -243,17 +249,58 @@ class NumberGuardBehaviorTests(unittest.TestCase):
                 self.assertEqual(out.fields("target/table_only_install_not_armed"),
                                  {"shown": "FAILFAST", "failfast": "1", "installs": "1"})
                 logs = out.logs("target/table_only_install_not_armed")
-                self.assertEqual(logs.count(NOT_CAPPED.format(route="table-only")), 1, logs)
-                self.assertTrue(logs[-1].startswith("numguard: not armed route=table-only clamped=0 first=-"), logs)
+                self.assertEqual(logs.count(TABLE_ONLY), 1, logs)
+                self.assertEqual([l for l in logs if l.startswith("numguard: num_compressSteam hook is ")],
+                                 [TABLE_ONLY], logs)
+                self.assertTrue(logs[-1].startswith("numguard: not armed route=table-only clamped=0 first=- calls=0"),
+                                logs)
                 self.assertEqual([l for l in logs if l.startswith("numguard: capped ")], [])
 
     def test_target_failed_install_not_armed(self):
         for name, out in self.builds:
             with self.subTest(build=name):
-                self.assertEqual(out.fields("target/failed_install_not_armed"), {"installs": "1"})
+                # Two armings, two attempts (a failed install is retried),
+                # one "not capped" line (once per route result).
+                self.assertEqual(out.fields("target/failed_install_not_armed"), {"installs": "2"})
                 logs = out.logs("target/failed_install_not_armed")
                 self.assertEqual(logs.count(NOT_CAPPED.format(route="failed")), 1, logs)
-                self.assertTrue(logs[-1].startswith("numguard: not armed route=failed clamped=0 first=-"), logs)
+                self.assertTrue(logs[-1].startswith("numguard: not armed route=failed clamped=0 first=- calls=0"), logs)
+
+    def test_target_failed_install_retried_on_next_arm(self):
+        # target/failed_install_retried_on_next_arm: a route that came up
+        # failed is tried again at the next arming (the first guard kept a
+        # failed first resolve for the whole session and never armed); the
+        # "not capped" line is written once per route result, not per
+        # attempt; a native route is kept and never reinstalled.
+        for name, out in self.builds:
+            with self.subTest(build=name):
+                self.assertEqual(out.fields("target/failed_install_retried_on_next_arm"), {
+                    "failed": "2", "retried": "3", "after": "3", "shown": "99999B", "failfast": "0",
+                    "armed": "yes",
+                })
+                logs = out.logs("target/failed_install_retried_on_next_arm")
+                self.assertEqual(logs.count(NOT_CAPPED.format(route="failed")), 1, logs)
+                self.assertEqual([l for l in logs if l.startswith("numguard: num_compressSteam hook is ")],
+                                 [NOT_CAPPED.format(route="failed")], logs)
+                self.assertTrue(logs[-1].startswith(
+                    "numguard: armed route=native clamped=1 first=200000000000000 calls=1"), logs)
+
+    def test_target_calls_counted_in_player_build(self):
+        # target/calls_counted_in_player_build: the player build counts the
+        # calls the detour saw too, so `calls=0` (it never ran) and `calls=2
+        # clamped=0` (nothing needed capping) read differently. Exactly one
+        # `calls=` field, after `first=`, in each build.
+        self.assertEqual(self.player.fields("target/calls_counted_in_player_build"), {"failfast": "0"})
+        self.assertEqual(self.player.logs("target/calls_counted_in_player_build")[-1],
+                         "numguard: armed route=native clamped=1 first=200000000000000 calls=2")
+        self.assertEqual(self.research.logs("target/calls_counted_in_player_build")[-1],
+                         "numguard: armed route=native clamped=1 first=200000000000000 calls=2"
+                         " forced=auto trace=off largest=200000000000000")
+        for name, out in self.builds:
+            with self.subTest(build=name):
+                status = out.logs("target/calls_counted_in_player_build")[-1]
+                self.assertEqual(status.count(" calls="), 1, status)
+                self.assertLess(status.index(" first="), status.index(" calls="), status)
 
     def test_target_first_cap_logged_once(self):
         for name, out in self.builds:
@@ -263,15 +310,15 @@ class NumberGuardBehaviorTests(unittest.TestCase):
                 self.assertEqual([l for l in logs if l.startswith("numguard: capped ")],
                                  [f'numguard: capped 200000000000000 -> {LARGEST} (shown "99999B")'])
         self.assertEqual(self.player.logs("target/first_cap_logged_once")[-1],
-                         "numguard: armed route=native clamped=3 first=200000000000000")
+                         "numguard: armed route=native clamped=3 first=200000000000000 calls=4")
         self.assertEqual(self.research.logs("target/first_cap_logged_once")[-1],
-                         "numguard: armed route=native clamped=3 first=200000000000000"
-                         " forced=auto trace=off calls=4 largest=3e+15")
+                         "numguard: armed route=native clamped=3 first=200000000000000 calls=4"
+                         " forced=auto trace=off largest=3e+15")
 
     # ---- the command -------------------------------------------------------
 
     def test_player_build_answers_status_and_names_the_research_verbs(self):
-        status = "numguard: not armed route=none clamped=0 first=-"
+        status = "numguard: not armed route=none clamped=0 first=- calls=0"
         self.assertEqual(self.player.logs("target/command_surface"), [
             status, status,
             "numguard: off is available in the research build only",
@@ -281,10 +328,10 @@ class NumberGuardBehaviorTests(unittest.TestCase):
         self.assertEqual(self.player.fields("target/command_surface"), {"installs": "0", "enddamage": "0"})
 
     def test_research_build_status_and_verbs(self):
-        status = "numguard: not armed route=none clamped=0 first=- forced=auto trace=off calls=0 largest=0"
+        status = "numguard: not armed route=none clamped=0 first=- calls=0 forced=auto trace=off largest=0"
         logs = self.research.logs("target/command_surface")
         self.assertEqual(logs[:3], [status, status, FORCED_OFF])
-        self.assertIn("numguard trace -> on (num_compressSteam hook native, CalculateEndDamage hooked)", logs)
+        self.assertIn("numguard trace -> on (num_compressSteam hook native, CalculateEndDamage native)", logs)
         self.assertEqual(logs[-1], FORCED_AUTO)
         self.assertEqual(self.research.fields("target/command_surface"), {"installs": "1", "enddamage": "1"})
 
@@ -298,8 +345,8 @@ class NumberGuardBehaviorTests(unittest.TestCase):
         self.assertIn(FORCED_OFF, logs)
         statuses = [l for l in logs if l.startswith("numguard: armed ")]
         self.assertEqual(statuses, [
-            "numguard: armed route=native clamped=0 first=- forced=off trace=off calls=1 largest=200000000000000",
-            "numguard: armed route=native clamped=1 first=200000000000000 forced=auto trace=off calls=2"
+            "numguard: armed route=native clamped=0 first=- calls=1 forced=off trace=off largest=200000000000000",
+            "numguard: armed route=native clamped=1 first=200000000000000 calls=2 forced=auto trace=off"
             " largest=200000000000000",
         ])
 
@@ -328,7 +375,7 @@ class NumberGuardBehaviorTests(unittest.TestCase):
         ])
         self.assertIn("numguard trace -> off (7 lines written)", logs)
         self.assertEqual(logs[-1], "numguard: armed route=native clamped=1 first=200000000000000"
-                                   " forced=auto trace=off calls=6 largest=200000000000000")
+                                   " calls=6 forced=auto trace=off largest=200000000000000")
 
     def test_research_trace_negative_after_positive(self):
         # research/trace_negative_after_positive: with the cap forced off, a
@@ -347,6 +394,21 @@ class NumberGuardBehaviorTests(unittest.TestCase):
         ])
         fatal = logs.index("GAME num_compressSteam -2000000000")
         self.assertEqual(logs[fatal - 1], "numguard trace: num_compressSteam -2000000000", logs)
+
+    def test_research_trace_reply_names_end_damage_route(self):
+        # research/trace_reply_names_end_damage_route: `numguard trace on`
+        # names the route CalculateEndDamage's hook took (the first guard said
+        # only "hooked", which a table-only hook, blind to the game's direct
+        # calls, also satisfied) - whether the trace installed it or `stat
+        # damage` did first.
+        self.assertIn("research/trace_reply_names_end_damage_route", self.research.labels())
+        self.assertEqual(self.research.fields("research/trace_reply_names_end_damage_route"), {
+            "fresh": "table-only", "freshinstalls": "1", "prior": "table-only", "priorinstalls": "1",
+            "failed": "failed", "native": "native",
+        })
+        logs = self.research.logs("research/trace_reply_names_end_damage_route")
+        self.assertIn("numguard trace -> on (num_compressSteam hook native, CalculateEndDamage native)", logs)
+        self.assertFalse([l for l in logs if "hooked" in l], logs)
 
     def test_research_trace_stops_at_400_lines(self):
         self.assertEqual(self.research.fields("research/trace_limit"), {"lines": "400", "limit": "1"})

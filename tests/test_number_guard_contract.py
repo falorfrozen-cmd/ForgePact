@@ -130,12 +130,21 @@ class NumberGuardContractTests(unittest.TestCase):
         self.assertIn('"fp_numguard"', site)
         self.assertIn("&native", site)
 
-    def test_install_is_tried_once_and_only_native_arms(self):
+    def test_install_keeps_a_route_retries_a_failure_and_only_native_arms(self):
+        # A native or table-only result is kept for the session (HookOneScript
+        # saves the original on its first install only); a failed one saved
+        # nothing and is tried again at the next arming. The first guard's
+        # sticky `installTried` kept a failed first resolve for the session.
         install = function_body(self.guard, "inline bool Install()")
-        self.assertIn("if (!s.installTried)", install)
-        self.assertIn("s.installTried = true;", install)
+        self.assertIn("if (s.route == kRouteNone || s.route == kRouteFailed)", install)
+        self.assertNotIn("installTried", self.guard)
         self.assertIn("return s.route == kRouteNative;", install)
+        # One line per route result, not per attempt.
+        self.assertIn("const bool changed = route != s.route;", install)
         self.assertIn("numbers past the display limit are not capped", install)
+        # Table-only says what is and is not capped.
+        self.assertIn("only calls through the script table are capped", install)
+        self.assertIn("the game's calls through its method value are not", install)
         status = function_body(self.guard, "inline std::string StatusLine()")
         self.assertIn('(s.route == kRouteNative ? "armed" : "not armed")', status)
 
@@ -211,11 +220,18 @@ class NumberGuardContractTests(unittest.TestCase):
     # ---- the player build ------------------------------------------------------
 
     def test_research_surfaces_stay_out_of_the_player_build(self):
-        for word in ("forcedOff", "traceOn", "TraceValue", "TraceResult", "installEndDamageTrace", "calls"):
+        for word in ("forcedOff", "traceOn", "TraceValue", "TraceResult", "installEndDamageTrace", "largest"):
             with self.subTest(word=word):
                 self.assertNotIn(word, self.guard_player)
                 self.assertIn(word, self.guard)
         self.assertIn("is available in the research build only", self.guard_player)
+        # Both builds count calls, so a player's report tells "the detour
+        # never ran" from "nothing needed capping": one `calls=`, after `first=`.
+        self.assertIn("++s.calls;", function_body(self.guard_player, "inline RValue& Hook("))
+        status = function_body(self.guard_player, "inline std::string StatusLine()")
+        self.assertEqual(status.count('" calls="'), 1, status)
+        self.assertLess(status.index('" first="'), status.index('" calls="'))
+        self.assertEqual(function_body(self.guard, "inline std::string StatusLine()").count("calls="), 1)
         # StatsManager's trace callout and install are research-only too.
         for word in ("TraceResult", "InstallEndDamageTrace"):
             with self.subTest(word=word):
@@ -223,6 +239,22 @@ class NumberGuardContractTests(unittest.TestCase):
                 self.assertIn(word, self.stats)
         self.assertIn("#define FP_STAT_TRACE(NAME, SITE, VALUE) ((void)0)", self.stats_player)
         self.assertNotIn("installEndDamageTrace", self.plugin_player)
+        self.assertNotIn("m_EndDamageRoute", self.stats_player)
+
+    def test_the_trace_reply_names_end_damage_route(self):
+        # The hand-in returns the route HookOneScript took, and the reply
+        # names it rather than "hooked", which a table-only hook also was.
+        self.assertIn("inline int (*installEndDamageTrace)() = nullptr;", self.guard)
+        handle = function_body(self.guard, "inline void HandleCommand(const std::string& rest)")
+        self.assertIn('", CalculateEndDamage " + RouteName(damage)', handle)
+        self.assertNotIn('"hooked"', handle)
+        install = function_body(self.stats, "int InstallEndDamageTrace()")
+        self.assertIn("&native", install)
+        self.assertIn("m_EndDamageRoute", install)
+        # `stat damage` installed first: its route is kept too.
+        stat = function_body(self.stats, "void HandleStatCommand(const std::string& rest)")
+        self.assertIn("HookOneScript(hedef->name, hedef->hookId, hedef->hook, hedef->orig, &native);", stat)
+        self.assertIn("m_EndDamageRoute = native ?", stat)
 
     # ---- ModuleMain --------------------------------------------------------------
 

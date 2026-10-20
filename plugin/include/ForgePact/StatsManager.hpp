@@ -82,8 +82,17 @@ public:
             return;
         }
         if (!*hedef->orig) {
-            HookOneScript(hedef->name, hedef->hookId, hedef->hook, hedef->orig);
+            bool native = false;
+            HookOneScript(hedef->name, hedef->hookId, hedef->hook, hedef->orig, &native);
             if (!*hedef->orig) { Out(std::string("stat: ") + hedef->name + " kancasi kurulamadi"); return; }
+#ifndef FORGEPACT_RELEASE
+            // Kept for `numguard trace on`'s reply (#230): HookOneScript
+            // reports the route on the first install only.
+            if (std::string(hedef->name) == "CalculateEndDamage")
+                m_EndDamageRoute = native ? ForgePact::NumberGuard::kRouteNative : ForgePact::NumberGuard::kRouteTableOnly;
+#else
+            (void)native;
+#endif
         }
         *hedef->mult = c;
         // A multiplier off vanilla can push a hit or a DPS sum past what the
@@ -161,21 +170,33 @@ public:
     // `numguard trace on` (#230, research build): CalculateEndDamage's hook,
     // installed as a pass-through when no `stat damage` put it in, so the
     // trace sees every hit as the game built it and as returned. At x1 it
-    // changes nothing. True when the hook is in.
-    bool InstallEndDamageTrace() {
+    // changes nothing. Returns the route the hook took (NumberGuard's Route:
+    // native, table-only, or failed when it is not in), whether this install
+    // or an earlier `stat damage` put it in.
+    int InstallEndDamageTrace() {
         const Entry* table = Table();
         for (int i = 0; i < kEntryCount; ++i) {
             const Entry& e = table[i];
             if (std::string(e.name) != "CalculateEndDamage") continue;
-            if (!*e.orig) HookOneScript(e.name, e.hookId, e.hook, e.orig);
-            return *e.orig != nullptr;
+            if (!*e.orig) {
+                bool native = false;
+                HookOneScript(e.name, e.hookId, e.hook, e.orig, &native);
+                if (*e.orig)
+                    m_EndDamageRoute = native ? ForgePact::NumberGuard::kRouteNative : ForgePact::NumberGuard::kRouteTableOnly;
+            }
+            return *e.orig ? m_EndDamageRoute : ForgePact::NumberGuard::kRouteFailed;
         }
-        return false;
+        return ForgePact::NumberGuard::kRouteFailed;
     }
 #endif
 
 private:
     StatsManager() = default;
+
+#ifndef FORGEPACT_RELEASE
+    // The route CalculateEndDamage's hook took, for `numguard trace on` (#230).
+    int m_EndDamageRoute{ ForgePact::NumberGuard::kRouteNone };
+#endif
 
     // Vanilya tabani sifir olmayan statlar icin oransal carpim.
     static RValue Scale(RValue& deger, double carpan) {

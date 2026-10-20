@@ -408,6 +408,35 @@ int main() {
         Out(status);
         return "installs=" + Installs("num_compressSteam");
     });
+    // A failed install is tried again at the next arming: two failed resolves
+    // write the "not capped" line once, the third arming installs natively,
+    // and a native route is kept for the session (a fourth arming installs
+    // nothing).
+    Scenario("target/failed_install_retried_on_next_arm", [] {
+        world.scripts["num_compressSteam"].found = false;
+        Stat("damage 11");
+        StatAdd("skillhaste 10");
+        const std::string failed = Installs("num_compressSteam");
+        world.scripts["num_compressSteam"].found = true;
+        Stat("critdamage 11");
+        const std::string retried = Installs("num_compressSteam");
+        Stat("critchance 6");
+        const std::string shown = Compress(RValue(2e14));
+        const std::string status = Status();
+        Out(status);
+        return "failed=" + failed + " retried=" + retried + " after=" + Installs("num_compressSteam")
+             + " shown=" + shown + " failfast=" + std::to_string(world.failFast)
+             + " armed=" + (status.rfind("numguard: armed route=native ", 0) == 0 ? "yes" : "no");
+    });
+    // Both builds count the calls the detour saw, so "it never ran" and
+    // "nothing needed capping" read differently in a player's report.
+    Scenario("target/calls_counted_in_player_build", [] {
+        Stat("damage 11");
+        Compress(RValue(42.0));
+        Compress(RValue(2e14));
+        Out(Status());
+        return "failfast=" + std::to_string(world.failFast);
+    });
     // Every cap is counted; the first one of a session writes one line.
     Scenario("target/first_cap_logged_once", [] {
         Stat("damage 11");
@@ -472,6 +501,42 @@ int main() {
         Compress(RValue(1e9));
         const std::string shown = Compress(RValue(-2e9));
         return "shown=" + shown + " handed=" + Handed() + " failfast=" + std::to_string(world.failFast);
+    });
+    // `numguard trace on` names the route CalculateEndDamage's hook took, not
+    // only whether it is in: table-only when the trace installs it, table-only
+    // when `stat damage` installed it first, failed when it cannot resolve.
+    Scenario("research/trace_reply_names_end_damage_route", [] {
+        const auto damageRoute = [] {
+            const std::string open = "numguard trace -> on (";
+            const std::string key = "CalculateEndDamage ";
+            for (auto it = world.log.rbegin(); it != world.log.rend(); ++it) {
+                if (it->rfind(open, 0) != 0) continue;
+                const size_t at = it->find(key);
+                if (at == std::string::npos) return std::string("?");
+                const std::string rest = it->substr(at + key.size());
+                return rest.substr(0, rest.find(')'));
+            }
+            return std::string("-");
+        };
+        world.scripts["CalculateEndDamage"].nativeWorks = false;
+        Guard("trace on");
+        const std::string fresh = damageRoute();
+        const std::string table = Installs("CalculateEndDamage");
+        ResetAll();
+        world.scripts["CalculateEndDamage"].nativeWorks = false;
+        Stat("damage 11");
+        Guard("trace on");
+        const std::string prior = damageRoute();
+        const std::string priorInstalls = Installs("CalculateEndDamage");
+        ResetAll();
+        world.scripts["CalculateEndDamage"].found = false;
+        Guard("trace on");
+        const std::string failed = damageRoute();
+        ResetAll();
+        Guard("trace on");
+        const std::string native = damageRoute();
+        return "fresh=" + fresh + " freshinstalls=" + table + " prior=" + prior + " priorinstalls=" + priorInstalls
+             + " failed=" + failed + " native=" + native;
     });
     // A non-finite value writes a line each time; the trace stops at 400
     // lines a session and says so once.
