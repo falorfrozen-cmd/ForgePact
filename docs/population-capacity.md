@@ -1,5 +1,31 @@
 # Early population capacity experiment
 
+## Armed in player builds (2.4.0, #232, 2026-10-20)
+
+Until 2.4.0, no code path called `PreparePopulationCapacity()`. Nothing below
+ever ran in a player build, and modstate read `population.reason` "Not
+requested". Two player crash reports from 2.3.1 (2026-10-19 19:02 and
+2026-10-20 07:02) were the failure this document opens with, now at density 5
+with Battlefield, Chaos Pillars and Shadow Realm at 100×. Both dumps fault at
+`ac_dll_gm.dll!SetVariable+0xb4` on the game thread, under the game's own
+`instance_create_layer` (`bp_icl`; the second was a density copy). The
+handle in the faulting call resolves to page 0, slot -1. The allocator returns
+-1.0 only after scanning to the end of the 512 × 512 store, and a free moves its
+cursor back, so the store was full (measured from the dumps and the export
+machine code; what filled it is not established).
+
+`FrameCallback` now arms the router once per process, after setup, while
+`PopulationCapacityWanted()` holds: density above 1, any Special Content
+multiplier, `enemyall` above 1, or map reveal's spawn pass. With every lever at
+its vanilla value, nothing is loaded or detoured. The owner's rule
+(2026-10-20): a raised lever gets the monsters it asks for, and its frame-rate
+cost is the player's choice. So nothing here caps or refuses population; the
+router only makes room. The sections below still describe the pacing work
+and its unmet five-second target. Live confirmation at the reported
+settings is pending. `tests/test_population_capacity_arming.py` pins the
+arming. `test_population_capacity.py`, given the installed library through
+`FORGEPACT_POOL_TEST_DLL`, passed against `ea33261a…` the same day.
+
 > **Read first (2026-09-22):** [population-performance-analysis.md](population-performance-analysis.md)
 > explains why the lag survives an empty queue: the game walks every living
 > monster several times per frame (minimap layer, health bars, draw, the
