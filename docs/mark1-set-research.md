@@ -2107,6 +2107,20 @@ and not tracked.
 - `kill-control` (validity): with the drops switch off, `mark1probe unique
   10` places at least 8 items, every rarity below 7, `pieces=` all 0, and the
   candidate's count rises by 10.
+- `filter-control` (control for `filter-shown`), still with the drops switch
+  off, so it runs on the game's own items before any tier of ours exists:
+  one item `kill-control` placed whose line read `tier=5`; if none did,
+  `mark1probe unique 10` again, switch still off, up to four more times
+  until one does. The ground around it screenshotted without `lootshow`,
+  then the item hovered and its tooltip screenshotted, its affix lines
+  recorded. It passes when that item's ground label shows past the owner's
+  loot filter and its tooltip lists no affix lines, the shape of a Mark 1
+  piece, which carries none. The match matters because the filter's one
+  test read so far, `LootFilterAffixTierVisible`, reads the affix slots'
+  tiers, not the item's own tier (RDM § 18.5, static reading), so a tier-5
+  item shown for its affixes does not control for a piece without them. A
+  tier-5 item with affix lines is recorded with them and is not the
+  control; no tier-5 item in the 50 calls is recorded not observed.
 - `drops-on` (acceptance): `sigdrop status` and `flightcharm stat` recorded
   whole; `mark1set drops 1` replies `drops=on install=installed gate=pending
   kill-gate=pending`; `mark1set stat` then shows `kill-hook=detoured`,
@@ -2128,11 +2142,9 @@ and not tracked.
   `tier=` are recorded (`tier-read`). `sigdrop status`' `injected=`,
   `ourHits=` and `built=`, and `flightcharm stat`'s drops line, equal those
   recorded at `drops-on` (`sig-untouched`).
-- `filter-shown` (acceptance), `filter-control` (research): the ground around
-  the player screenshotted without `lootshow`. A `Mark 1 <piece>` ground
-  label shows past the owner's loot filter (`filter-shown`). An item that is
-  not a Mark 1 piece and whose placed line read `tier=5` shows its label
-  (`filter-control`); none placed at tier 5 is recorded not observed.
+- `filter-shown` (acceptance): the ground around the player screenshotted
+  without `lootshow`, under the same filter `filter-control` ran under. A
+  `Mark 1 <piece>` ground label shows past the owner's loot filter.
 - `drop-built`, `drop-art`, `tier-ss` (acceptance): if the filter showed no
   piece, `lootshow` first. One piece hovered on the ground and
   screenshotted, then picked up by a left click, the bag opened (C), the
@@ -2147,14 +2159,23 @@ and not tracked.
 - `spawn-tier` (acceptance): `mark1probe spawn set`, `lootshow`, and one
   spawned piece hovered and screenshotted: four lines `dressed=yes tier=5`,
   and the tooltip reads "Tier SS".
-- `kill-natural`, `dbg-unique` (research): `mark1probe copies 400`,
-  `mark1set stat` and the candidate's count recorded; the waypoint to
+- `kill-natural` (acceptance), `dbg-unique` (research): `mark1probe copies
+  400`, `mark1set stat` and the candidate's count recorded; the waypoint to
   `Act_01_01`, then monsters killed (by hs-drive input; by the owner only if
-  that fails, and recorded so) until the candidate's count has risen by at
-  least 1 and a placed item was seen, or for 10 minutes; then `mark1set
-  stat`. `kill-calls=` rises by exactly the candidate's rise, and a Mark 1
-  piece lies on the ground from a kill with its `kill-<key>` ours and built
-  each up by 1. No rise in 10 minutes is recorded not observed.
+  that fails, and recorded so), with every chest met opened and every pile
+  broken on the way, since those reach `DropItem` too (RDM § 13.1), until
+  the candidate's count has risen by at least 1, or for 30 minutes; then
+  `mark1set stat`. No by-name call runs in this step, so only the game's own
+  direct call moves the candidate. `dbg-unique` is the candidate's rise,
+  recorded whole. `kill-natural` passes when the candidate rose by N, at
+  least 1, and `kill-calls=` rose by the same N: the direct call from
+  `LoadDrops`, the one a kill makes, reached the hook the player build
+  ships. That is the only check of this session the script table cannot
+  satisfy; `drops-on` and `reach-kill` call the roll by name and so enter
+  the hook through the table. A Mark 1 piece on the ground from a kill,
+  with its `kill-<key>` ours and built each up by 1, is recorded when seen
+  and is not required, because whether a kill's one draw lands on a
+  stand-in is chance.
 - `drop-off` (acceptance): `mark1set drops 0`, `mark1probe unique 20` and
   `mark1set stat`: at least one item placed, `pieces=` all 0, and
   `injected=` and `kill-pushed=` unchanged since before the step.
@@ -2164,12 +2185,35 @@ and not tracked.
 The session passes on `dll-hash`, `control`, `marker`, `dbg-control`,
 `kill-control`, `drops-on`, `reach-kill`, `tier-read`, `sig-untouched`,
 `filter-shown`, `drop-built`, `drop-art`, `tier-ss`, `heroic-still`,
-`spawn-tier` and `drop-off`. `pool-kill`, `filter-control`, `kill-natural`
-and `dbg-unique` are research and never required. A research check whose
-control failed (`kill-control`, `dbg-control`) is recorded `not-run
-(control)`. `kill-natural` with `kill-calls=` unmoved while the candidate's
-count rose is a blind hook, recorded as a fail, never as "kills do not
-roll". No rise in 10 minutes is not observed, never "kills do not run the
-roll", because type 45's chance per kill is not read. A `filter-shown` fail
-while `filter-control` passed is a defect of ours; both failing says the
-owner's filter hides SS items too, and is recorded so.
+`spawn-tier`, `kill-natural` and `drop-off`. `pool-kill` and `dbg-unique`
+are research and never required; `filter-control` is `filter-shown`'s
+control. A check whose control failed (`kill-control`, `dbg-control`) is
+recorded `not-run (control)`.
+
+`kill-natural` is read one of three ways, and `### Phase 3 decision`'s
+`kill-natural:` line takes the matching value:
+
+- `seen`: it passed. The shipped route sees a kill.
+- `blind`: the candidate's count rose and `kill-calls=` did not rise by the
+  same amount. The session fails: the kill route's hook does not see the
+  game's own call, whatever the by-name checks showed. It is never read as
+  "kills do not roll".
+- `not-observed`: the candidate's count did not rise in the 30 minutes.
+  This is not a pass. The session is inconclusive for the kill route,
+  nothing is written saying the pieces drop from kills, and the feature's
+  pull request is not opened on the by-name checks alone. The next sitting
+  needs a kill whose call is made reliably, and the owner chooses how: a
+  longer kill window, or, in a research build and only with the owner's
+  acceptance, the lever behind § 13.1's measurement of type 45 (every gate
+  opened on one monster), which this build does not carry. It is never read
+  as "kills do not run the roll", because type 45's chance per kill is not
+  read.
+
+`filter-shown` is read against `filter-control`. A pass needs no control. A
+fail while `filter-control` passed is a defect of ours: the tier we write is
+not what the filter reads. A fail while `filter-control`'s item was hidden
+too says the owner's filter hides SS items without affixes, and is recorded
+so, with both screenshots. A fail while `filter-control` was not observed,
+or found only tier-5 items with affix lines, cannot tell those two apart and
+is recorded `not-run (control)`, not a fail; the next sitting brings a
+matching control before the switch goes on.
