@@ -5,7 +5,8 @@ Release date: 2026-10-23
 A new item set of ForgePact's own, **Mark 1**: four Heroic pieces that, worn
 together with the new **Mark 1 set** switch on (off by default), cast the
 skills on your Q, E, R and Y slots for you and send your jump three times as
-far over scenery, at the price of walking at half speed.
+far over scenery, at the price of walking at half speed. A second switch,
+**Mark 1 drops** (also off by default), lets the pieces drop from vaults.
 
 ## New
 
@@ -41,10 +42,17 @@ far over scenery, at the price of walking at half speed.
     character sheet, can show the changed value while the bonus is on.
     Casting a skill still slows your walk for about a second, as it does
     without the set, on top of the half speed.
-  - **Its own art** shows once you have switched the set on in that game
-    session; until then a piece looks like the base item it is built on.
-  - **The pieces cannot be found in the game yet.** A later update lets them
-    drop.
+  - **Its own art** shows once you have switched either Mark 1 switch on in
+    that game session; until then a piece looks like the base item it is
+    built on.
+  - **Finding the pieces.** Switch on **Mark 1 drops** (Mods → Items, off by
+    default; it works with or without the set's own switch). The pieces then
+    drop from the game's own Heroic roll, the one that runs when you open a
+    vault from your bag, not from kills. Each piece is about as likely as any
+    single Heroic unique that roll can give you, so expect one in a few
+    hundred vaults per piece; the exact rate has not been measured yet. A
+    dropped piece shows its own art. With the switch off, vaults drop exactly
+    what they always did.
 
   The set was checked in play on a research build of the plugin: the
   pieces, their art, the outlines and the jump worked, and in that session,
@@ -54,5 +62,5 @@ far over scenery, at the price of walking at half speed.
   seconds with no key pressed, Shadow Bolt was cast 31 times, Heavenly Fire 30
   and Healing Zone 3. It also measured the walk at half speed with the set on,
   and a cast's slowdown on top of that: while a cast slows you, you walk at
-  about a third of your normal speed. A toggle skill on the bar has not been
-  checked in play yet.
+  about a third of your normal speed. A toggle skill on the bar, and the
+  pieces dropping from vaults, have not been checked in play yet.
