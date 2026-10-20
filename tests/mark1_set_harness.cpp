@@ -497,6 +497,7 @@ int main()
             " skip-settle=0/0/0/0 skip-no-state=0/0/0/0"
             " col-unreadable=0/0/0/0 orig-unreadable=0/0/0/0 write-failed=0/0/0/0 restore-failed=0/0/0/0"
             " gate-calls=0 gate-other=0 threw=0"
+            " landed=0/0/0/0 skip-turn=0/0/0/0 yielded=0/0/0/0 cast-calls=0"
             " | jump granted=0 backed-off=0 refused-landing=0 refused-gate=0 refused-cursor=0 max=175(start)"
             " refused-unreadable=0 jumps=0 scaled=0 clamped=0 answered=0 excluded=0 rejected=0/0/0/0 unread=0/0/0/0/0/0"
             " grid-reads=0/0/0 | icons=0/0 art=off ground=0 ground-route=not-installed | speed=unavailable penalty=unavailable";
@@ -594,6 +595,7 @@ int main()
             "bonus", "active", "install", "set", "unreadable", "reads", "worn",
             "presses", "skip-empty", "skip-aura", "skip-toggle-on", "skip-settle", "skip-no-state",
             "col-unreadable", "orig-unreadable", "write-failed", "restore-failed", "gate-calls", "gate-other", "threw",
+            "landed", "skip-turn", "yielded", "cast-calls",
             "granted", "backed-off", "refused-landing", "refused-gate", "refused-cursor", "max",
             "refused-unreadable", "jumps", "scaled", "clamped", "answered", "excluded", "rejected", "unread", "grid-reads",
             "icons", "art", "ground", "ground-route", "speed", "penalty" };
@@ -680,6 +682,34 @@ int main()
             && col.find(" max=") < col.find(" refused-unreadable=") && col.find(" unread=") < col.find(" grid-reads=") && col.find(" grid-reads=") < col.find(" | icons=")
             && col.find(" icons=") < col.find(" art=") && col.find(" ground-route=") < col.find(" | speed=");
         check("failure_counts/new_fields_after_each_groups_own", ok, col);
+    }
+
+    // ---- turn_fields: the turn rule's counters in the automation group -------------
+    {
+        // A distinct value per column and field, each under its own name, in
+        // Q/E/R/Y order, after `threw=` and before the jump group.
+        StatFields f;
+        for (int i = 0; i < kColumnCount; ++i) {
+            f.columns[i].landed = 11 + i;
+            f.columns[i].skipTurn = 21 + i;
+            f.columns[i].yielded = 31 + i;
+        }
+        f.castCalls = 41;
+        f.threw = 5;
+        const std::string line = StatLine(f);
+        bool ok = field(line, "landed") == "11/12/13/14" && field(line, "skip-turn") == "21/22/23/24"
+            && field(line, "yielded") == "31/32/33/34" && field(line, "cast-calls") == "41";
+        check("turn_fields/each_under_its_own_name", ok, line);
+        ok = has(line, " threw=5 landed=11/12/13/14 skip-turn=21/22/23/24 yielded=31/32/33/34 cast-calls=41 | jump ");
+        check("turn_fields/after_threw_in_order", ok, line);
+        // Nothing folded into the older automation fields.
+        ok = field(line, "presses") == "0/0/0/0" && field(line, "skip-empty") == "0/0/0/0"
+            && field(line, "gate-calls") == "0" && field(line, "gate-other") == "0";
+        check("turn_fields/no_turn_count_folded_into_an_old_field", ok, line);
+        // A fresh line reads every turn field as zero.
+        const std::string fresh = StatLine(StatFields{});
+        check("turn_fields/fresh_zero", field(fresh, "landed") == "0/0/0/0" && field(fresh, "skip-turn") == "0/0/0/0"
+            && field(fresh, "yielded") == "0/0/0/0" && field(fresh, "cast-calls") == "0", fresh);
     }
 
     // ---- art_rule: the pieces' art follows the switch ---------------------------------

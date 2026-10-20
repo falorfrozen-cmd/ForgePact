@@ -242,6 +242,12 @@ class Mark1SetBehaviorTests(unittest.TestCase):
     def test_stat_line_failure_counts_column_unreadable_is_not_skip_no_state(self):
         self.assertScenarios("failure_counts/column_unreadable_never_in_skip_no_state")
 
+    # ---- turn_fields: the turn rule's counters (Live procedure 1 reads them) ----
+
+    def test_stat_line_turn_fields_under_their_own_names_after_threw(self):
+        self.assertScenarios("turn_fields/each_under_its_own_name", "turn_fields/after_threw_in_order",
+                             "turn_fields/no_turn_count_folded_into_an_old_field", "turn_fields/fresh_zero")
+
     # ---- art_rule: the pieces' art follows the switch ------------------------
 
     def test_art_rule_baseline_unarmed_session_writes_and_installs_nothing(self):

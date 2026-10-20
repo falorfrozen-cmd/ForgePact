@@ -5,12 +5,17 @@ columns 3 to 6) whenever the game's own gate allows, by putting the press
 value into the profile slot's `inputState` entry of the same index for the
 length of one `CheckTalentUse` call and putting the original back afterwards.
 These scenarios pin the game-independent part of that, before any adapter
-exists: which column is pressed, the toggle guard (a toggle is pressed only
+exists: which columns are eligible, the toggle guard (a toggle is pressed only
 while it reads Off and outside its own settle window, never while Unreadable),
-which columns wear the border, the press value and the column-to-entry
-mapping, and that the original value is restored after the call in every
-path, a throw included. The adapter in ModuleMain.cpp (reading the bar, the
-toggle state and `inputState` by name) is pinned by its own contract tests.
+the turn rule (one eligible column pressed per gate call, the one that has
+waited longest since its last landed cast; a holder that does not land within
+its patience rests, unless it is the only column free), which columns wear the
+border, the press value and the column-to-entry mapping, and that the original
+value is restored after the call in every path, a throw included. The turn
+rule also runs against a gate model in the harness: a test-side stand-in for
+which pressed column the game's gate casts, built from Live 2b's bar, and not
+the game. The adapter in ModuleMain.cpp (reading the bar, the toggle state and
+`inputState` by name, and seeing a landing) is pinned by its own contract tests.
 """
 import os
 import re
@@ -170,6 +175,59 @@ class Mark1AutomationBehaviorTests(unittest.TestCase):
 
     def test_a_failed_restore_is_counted_not_hidden(self):
         self.assertScenario("press/restore_failure_counted")
+
+    # ---- baseline: the old press-every-column rule ------------------------
+    def test_baseline_gate_model_press_every_column_starves_the_third_column(self):
+        # Live 2b's shape: Shadow Bolt on Q cast, Heavenly Fire on R never.
+        self.assertScenario("baseline/gate_model_press_every_column_starves_column_5")
+
+    def test_baseline_lone_eligible_column_is_pressed_on_every_gate_call(self):
+        self.assertScenario("baseline/lone_eligible_column_pressed_every_call")
+
+    # ---- the turn rule ----------------------------------------------------
+    def test_turns_one_column_per_gate_call_the_others_skip_turn(self):
+        self.assertScenario("turns/one_column_per_call")
+        self.assertScenario("turns/others_counted_skip_turn")
+
+    def test_turns_longest_waiting_column_first(self):
+        self.assertScenario("turns/ties_go_to_the_lower_column")
+        self.assertScenario("turns/longest_waiting_first")
+        self.assertScenario("turns/landed_column_goes_to_the_back")
+
+    def test_turns_landings_counted_only_for_a_written_press(self):
+        self.assertScenario("turns/landing_counted")
+        self.assertScenario("turns/landing_needs_a_written_press")
+        self.assertScenario("turns/one_landing_per_call")
+
+    def test_turns_patience_and_rest(self):
+        self.assertScenario("turns/patience_then_rest")
+        self.assertScenario("turns/rest_lasts_its_frames")
+        self.assertScenario("turns/rest_needs_another_free_column")
+        self.assertScenario("turns/rest_keeps_the_wait")
+        self.assertScenario("turns/frame_reset_ends_a_rest")
+
+    def test_turns_patience_and_rest_are_named_constants(self):
+        # Provisional values (Live 1 of the turns workorder records the casts
+        # per column they give).
+        self.assertIn("inline constexpr long long kMark1TurnPatienceFrames = 90;", self.header)
+        self.assertIn("inline constexpr long long kMark1TurnRestFrames = 288;", self.header)
+        self.assertScenario("turns/constants_90_and_288")
+
+    def test_turns_a_holder_that_stops_being_eligible_loses_the_turn(self):
+        self.assertScenario("turns/holder_losing_eligibility_loses_the_turn")
+
+    def test_turns_cleared_by_forget_presses_and_reactivation(self):
+        self.assertScenario("turns/forget_presses_clears_the_turns")
+        self.assertScenario("turns/reactivation_clears_the_turns")
+
+    def test_no_starvation_under_the_gate_model_whatever_its_order(self):
+        self.assertScenario("no_starvation/lowest_pressed_column_casts")
+        self.assertScenario("no_starvation/highest_pressed_column_casts")
+        self.assertScenario("no_starvation/gate_order_does_not_change_the_result")
+
+    def test_lone_column_is_never_rested(self):
+        self.assertScenario("lone_column/beside_ineligible_columns_pressed_every_call")
+        self.assertScenario("lone_column/landing_keeps_it_pressed")
 
 
 if __name__ == "__main__":

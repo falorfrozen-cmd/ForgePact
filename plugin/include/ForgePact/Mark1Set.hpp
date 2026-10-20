@@ -235,6 +235,10 @@ struct ColumnCounts {
     uint64_t originalUnreadable = 0;  // a press planned, the entry's value unreadable: nothing pressed
     uint64_t pressWriteFailed = 0;    // the press could not be written
     uint64_t restoreFailed = 0;       // the original value could not be put back
+    // The turn rule's (Mark1Automation.hpp's counters of the same names).
+    uint64_t landed = 0;              // a cast landed during a call that pressed this column
+    uint64_t skipTurn = 0;            // eligible, but another column held the turn (or this one rested)
+    uint64_t yielded = 0;             // gave up the turn after its patience ran out without a landing
 };
 
 // The jump's counters and its natural maximum M, filled from Mark1Jump.hpp's.
@@ -288,6 +292,11 @@ struct StatFields {
     uint64_t     gateCalls = 0;   // the gate's entries for the local player while the bonus was active
     uint64_t     gateOther = 0;   // its entries with the switch on whose self was not the local player
     uint64_t     threw = 0;       // calls whose original threw
+    // The local player's `TalentUseSetSpeed` calls the landing detour saw with
+    // the switch on, from any source: the landing instrument's own control
+    // (`landed=0` with this rising points at attribution, both 0 while casts
+    // happen at a blind detour).
+    uint64_t     castCalls = 0;
     JumpCounts   jump;
     int          iconsLoaded = 0;
     int          iconsEmbedded = 0;
@@ -360,6 +369,10 @@ inline std::string StatLine(const StatFields& f)
     s += " gate-calls=" + std::to_string(f.gateCalls);
     s += " gate-other=" + std::to_string(f.gateOther);
     s += " threw=" + std::to_string(f.threw);
+    s += " landed=" + ColumnsText(f.columns, &ColumnCounts::landed);
+    s += " skip-turn=" + ColumnsText(f.columns, &ColumnCounts::skipTurn);
+    s += " yielded=" + ColumnsText(f.columns, &ColumnCounts::yielded);
+    s += " cast-calls=" + std::to_string(f.castCalls);
     const JumpCounts& j = f.jump;
     s += " | jump granted=" + std::to_string(j.granted);
     s += " backed-off=" + std::to_string(j.backedOff);
