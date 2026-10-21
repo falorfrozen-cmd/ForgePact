@@ -1715,9 +1715,9 @@ line too.
   Broomstick each come as about 1 in 50 of the Angelic roll's drops (the
   same share as Headhunter and Tyrant's Crown). Pocket Elf joins the draw
   the game itself uses for a kill's unique items, which picks from one of
-  its unique lists by the monster's level: it stands in for one SS Satanic
-  unique there, the rarity and tier of Aimbot.exe, so it is about as likely
-  as one such unique. SS uniques are rare, and how often a kill gives a
+  its unique lists: it stands in for one SS Satanic unique, the rarity and
+  tier of Aimbot.exe, on each of the lists that draw can pick from. SS
+  uniques are rare, and how often a kill gives a
   Pocket Elf is not measured yet. It also still joins the game's named
   unique roll (about 1 in 51 to 1 in 222 of that roll's draws), which
   ordinary kills do not run. If the plugin cannot set a roll up safely on
@@ -1808,12 +1808,10 @@ all four.
   from the next load.
 - **Getting the pieces.** Switch on **Mark 1 drops** (Mods → Items, off by
   default, apart from the set's own switch). The pieces then join the draw
-  the game itself uses for a monster's unique items: when a kill (or a
-  chest or breakable) drops loot, the game picks one of its unique lists by
-  the monster's level and may draw a unique from it. Each piece stands in
-  there for one of the game's SS Satanic uniques of its kind, the way the
-  game's own SS set pieces sit on those lists, so a piece is about as likely
-  as one such unique; only when the game has no SS item of a piece's kind
+  the game itself uses for a monster's unique items: when a kill drops
+  loot, the game picks one of its unique lists and may draw a unique from
+  it. Each piece stands in for one of the game's SS Satanic uniques of its
+  kind on each of the lists that draw can pick from; only when the game has no SS item of a piece's kind
   does it stand in for a lower one. SS uniques are rare, and how often a
   kill gives a piece is not measured yet. The pieces also still join the
   game's named unique roll, which ordinary kills do not run, and the
