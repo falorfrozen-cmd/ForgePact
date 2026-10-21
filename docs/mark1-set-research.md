@@ -2936,10 +2936,17 @@ and what lands on the ground, each with a control in the same session.
   [Mod live 7 results](#mod-live-7-results) (the route, `satanic-draw`),
   `flightprobe copies` and `sigdrop status` (the hub guide's Command
   Reference).
-- **Cases:** ordinary packs in a Hell zone, where k reaches 5. The Heroic
+- **Cases:** ordinary packs in a Hell zone, where k reaches 5, at magic
+  find x10 (`stat magicfind 10`, as Live 1c's `mf-on`). The Heroic
   roll and the `DropUniqueItems` route are run by name. The operator
   teleports and casts its own kills, and nothing is placed on or near the
   waypoint.
+- **Who makes the kills:** Live 1's operator kill batches built no unique
+  through the draw (0 draw builds over the 345 `DropItem` calls of H4 to
+  H6, [Mod live 7 results](#mod-live-7-results)), while the owner's play in
+  Live 1c built 105 in about 28 minutes at magic find x10. So L3 and L4
+  start with the operator's own kill batches, at most 4, and continue in
+  the owner's play when those batches type no build.
 
 **Steps:**
 
@@ -2951,18 +2958,30 @@ and what lands on the ground, each with a control in the same session.
   draw-gate=pending`, and `mark1set stat`'s second line reads
   `draw-hook=detoured` and `tier-hook=detoured` (`drops-on`). `flightcharm
   stat` reads `elf-draw-hook=detoured` (`elf-on`).
-- L3: `sigdrop status` and `mark1set stat`, then one operator kill batch at
-  copies 1. `draw-calls=` and `draw-pushed=` each rise by at least 1
-  (`draw-control`).
+- L3: `stat magicfind 10`, then `sigdrop status`, `mark1set stat` and
+  `flightcharm stat`, then up to 4 operator kill batches at copies 1; if
+  `draw-typed=` has not risen after them, the owner plays until it does.
+  `draw-calls=`, `draw-pushed=`, `draw-typed=` (either half) and
+  `elf-draw-typed=` (either half) each rise by at least 1
+  (`draw-control`). This is a session-validity check: with a typed build
+  counted, the kill draw's hit typing is shown to run in this session, so
+  a later miss can be read as one.
 - L4: `raredrop ceiling 10` (as in Mod live procedure 7's H4b),
-  `mark1probe copies 400` and `flightprobe copies 400`, then kill batches
-  until each of the four `draw-<key>=` fields and `elf-draw=` has risen, or
-  8 batches have passed. At least one piece is built with an `SS` label on
-  screen and no lootshow (a screenshot), with `anomalies=0` and
-  `refused=0` (`draw-pieces`). Pocket Elf is built (`draw-elf`). Record
-  each `mark1set drops hit: kill draw -> <outcome>` and `flightcharm hit:
-  kill draw -> <outcome>` line, `tier-unread=`, `draw-nested=`, and each
-  `draw-standin-<key>=` and `elf-draw-standin=` as read.
+  `mark1probe copies 400` and `flightprobe copies 400`, then kill batches,
+  the operator's first and then the owner's play, until each of the four
+  `draw-<key>=` fields and `elf-draw=` has risen, or until `draw-typed=`
+  (both halves together) has risen by 105 since L4 began. At least one
+  piece is built with an `SS` label on screen and no lootshow (a
+  screenshot), with `anomalies=0` and `refused=0` (`draw-pieces`). Pocket
+  Elf is built (`draw-elf`). Record each `mark1set drops hit: kill draw ->
+  <outcome>` and `flightcharm hit: kill draw -> <outcome>` line,
+  `tier-unread=`, `draw-nested=`, and each `draw-standin-<key>=` and
+  `elf-draw-standin=` as read. At every read, record `draw-typed=`,
+  `draw-untyped=`, `draw-normal=` and `draw-outside=`, and their twins
+  `elf-draw-typed=`, `elf-draw-untyped=`, `elf-draw-normal=` and
+  `elf-draw-outside=`, and set the rise of `draw-typed=` and
+  `elf-draw-typed=` beside the model figures under *Expected hits per
+  typed build* below.
 - L5: `sigdrop status` matches L3's. `mark1probe pool kill` reads lengths
   50, 61, 79, 152 and 221, and `mark1probe pool` reads list 5 at 380
   (`nested-clean`): the entries came off every list, and #74's counters were
@@ -2972,8 +2991,9 @@ and what lands on the ground, each with a control in the same session.
   (`unique-still`). Both routes stay as built beside the draw.
 - L7: copies back to 1 (`mark1probe copies 1`, `flightprobe copies 1`),
   `raredrop ceiling 1`, `mark1set drops 0` and `flightcharm elf 0`; then one
-  kill batch. `draw-calls=` rises and `draw-pushed=` is unchanged, with no
-  piece and no Pocket Elf built (`drop-off`).
+  kill batch. `draw-calls=` rises and `draw-pushed=`, `draw-typed=` and
+  `elf-draw-typed=` are unchanged, with no piece and no Pocket Elf built
+  (`drop-off`). Then `stat magicfind 1`.
 - L8: teardown as in Mod live procedure 7's H9: stop the game, inspect and
   restore the saves.
 
@@ -2982,13 +3002,51 @@ and what lands on the ground, each with a control in the same session.
 `elf-on`, `draw-pieces`, `draw-elf`, `nested-clean`, `heroic-still`,
 `unique-still` and `drop-off`. Research, never required and recorded as
 read: `natural-draw`, a piece or Pocket Elf built at copies 1 if one is
-seen, with its hit line.
+seen, with its hit line; and `draw-scope`, `draw-untyped=`,
+`draw-normal=` and `draw-outside=` and their `elf-` twins
+(`elf-draw-untyped=`, `elf-draw-normal=`, `elf-draw-outside=`) as read at
+each of L3, L4 and L7.
+
+**Expected hits per typed build.** These are model figures, not
+measurements: hub `hs_game_sdk.unique_pick_model.draw_share` under
+`draw-mode: first-kept`, at UP19's fit, where the draw keeps a pushed SS
+entry it has read about 1 time in 100
+(`hs-game-sdk/curated/unique_pick_measurements.json`, UP19; why it keeps
+them so rarely is not established), with list lengths 50, 61, 79, 152, 221
+and 380 (UP20).
+
+- When a typed build is one of the item's own stand-ins, the coin makes it
+  that item's hit with chance c / (n_k + c). At copies 400, with the
+  stand-in's own count n_k at most 1, that is at least 400/401, so nearly
+  every own-stand-in typed build is a hit. Own-stand-in typed builds
+  counted (the first half of `draw-typed=` or `elf-draw-typed=`) with no
+  hit point at the route, not at luck.
+- What share of all typed builds lands on one item's own stand-in, with
+  Pocket Elf and all four pieces pushed at copies 400 (2000 entries a
+  call): about 1.7% on list 4 (221 long) and 1.0% on list 5 (380 long), and
+  more on the shorter lists. For the four pieces together, about 6.6% and
+  4.0%.
+- The chance that N typed builds bring no hit is one minus that share,
+  raised to the power N. At N = 105, the draw builds Live 1c counted in
+  about 28 minutes of the owner's play at magic find x10, that is 17% to
+  35% for Pocket Elf and 0.08% to 1.4% for the four pieces together.
+- At copies 1, the player build's constant, one item's share is about
+  4.5e-5 per typed build on list 4 and 2.6e-5 on list 5, so `natural-draw`
+  is not expected to see one.
 
 **What the result decides.** The session adds two values to
 [Phase 4 decision](#phase-4-decision), each on a line of its own.
 `draw-claim: yes` only if `draw-pieces` passed, and then the player text
-may say the pieces drop from kills; `draw-claim: no` otherwise.
-`elf-claim: yes` only if `draw-elf` passed, and then the player text may
-say Pocket Elf drops from kills; `elf-claim: no` otherwise. A pass at copies 400
-shows the route builds the item; it does not measure the rate per kill at
-copies 1, which `natural-draw` only samples.
+may say the pieces drop from kills. `draw-claim: no` only if `draw-pieces`
+did not pass and Mark 1's `draw-typed=` rose above 0 over L4: the result
+then reads "not observed in N typed builds", N that rise, with the model's
+chance of a miss at that N from the list above. `draw-claim: not-reached`
+when L4 counted no typed build: the session then says nothing about the
+route. `elf-claim:` follows the same rule on `draw-elf` and
+`elf-draw-typed=`: `elf-claim: yes` only if `draw-elf` passed, `elf-claim:
+no` with "not observed in N typed builds" and its miss chance, or
+`elf-claim: not-reached` when no typed build was counted. When the first
+half of either counter rose, own-stand-in typed builds, and no hit
+followed, the result records that as a defect of the route, not as a
+miss. A pass at copies 400 shows the route builds the item; it does not
+measure the rate per kill at copies 1, which `natural-draw` only samples.
