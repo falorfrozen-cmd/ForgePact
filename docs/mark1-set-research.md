@@ -106,11 +106,16 @@ anything that suspends the game's own loop.
   in Mod live 8 (§ Phase 4, "Mod live 7 results", "Phase 4 decision" and "Mod
   live 8 results"). It supersedes the `DropUniqueItems` route as the kill
   route, and its `draw-claim` decides what the player text says about kills.
-- **Phase 5 (the set tooltip and the pieces' art):** built, Mod live
-  procedure 9 pending (§ Phase 5). The pieces show their art from the moment
-  they exist, whatever the switches say, and each piece's tooltip draws the
-  set the way the game draws its own sets. The game facts it rests on are in
-  `docs/RUNTIME_DATA_MODELS.md` § 16.12.
+- **Phase 5 (the set tooltip and the pieces' art):** built (§ Phase 5). The
+  pieces show their art from the moment they exist, whatever the switches
+  say, and each piece's tooltip draws the set the way the game draws its own
+  sets. The game facts it rests on are in `docs/RUNTIME_DATA_MODELS.md`
+  § 16.12.
+- **Mod live procedure 9** ran on 2026-10-21: 12 of its 15 checks passed and
+  three failed (`tip-ground`, `art-spawn`, `tip-layout`); replan 1 recounted
+  the tooltip per call, wrapped the description at 478 and lit the bonus line
+  only with the bonus installed, and **Mod live procedure 10** re-checks the
+  three on that build, pending.
 
 ## Static search
 
@@ -3597,3 +3602,127 @@ piece already in the save makes it not observed. Research, never required
 and recorded as read: `tip-rehover` (whether each hover's `tip-armed=` rose;
 one that did not is not observed to re-run, and reads as a cached tooltip
 only if a pass count backs it) and `desc-plain`.
+
+### Mod live procedure 10
+
+Mod live 9 (2026-10-21) passed 12 of its 15 checks and failed three. In
+`tip-ground` the type line and the block were right but the counters were
+not: the tooltip's call runs on every frame the tooltip shows, while the
+game draws the tooltip's text on the first frame of a hover only and shows a
+cached copy after (hub `docs/RUNTIME_DATA_MODELS.md` § 16.6 measured the
+stat calls once per hover), so `tip-armed=` counted every frame and
+`typeline-miss=` the cached ones. In `art-spawn` the four pieces lay on
+Inoya's waypoint, which is drawn over any ground item lying on it. In
+`tip-layout` the description, wrapped at 622, ran past both edges of the
+box. Replan 1 counts each call by what it drew (`tip-armed=` the calls that
+drew the tooltip, `tip-cached=` the ones that showed the copy,
+`typeline-hook=` whether the type line's hook is in), wraps the description
+at 478 and lights the bonus line only with the bonus installed. This
+session re-checks those three on that build, with the debugger; Mod live 9's
+passes (`art-default`, `art-bag`, `tip-two`, `art-save` and the rest) are not
+re-run. The capture is the tooltip workorder's live capture 2,
+`forgepact-166-mark1-set-tooltip-live-2.md`, kept with the hub's workorder
+files and not tracked. Every Mark 1 switch stays off unless a step says
+otherwise, and every `mark1set stat` line read is recorded.
+
+**Setup:**
+
+- **Build:** the research build (`plugin_build\build.bat dev`) at the
+  ForgePact commit that carries replan 1; its path and SHA-256 are recorded
+  with the workorder, and `dll-hash` compares the installed DLL with that
+  SHA-256. The owner is asked before it is installed.
+- **Character:** save slot 14, "Sorak", saves backed up first and restored
+  at the end, so the pieces vanish with the restore.
+- **Control:** `ping` answers `pong (YYTK 4.0.1)` (`control`), and a bare
+  `mark1probe` answers `mark1probe: research build` with its rows line, and
+  `mark1set stat` before any `mark1set` command ends
+  `ground-route=not-installed tip=0 tip-unread=0 tip-armed=0 typeline=0
+  typeline-miss=0 tip-cached=0 typeline-hook=not-tried | speed=…`
+  (`marker`, both, which also proves replan 1's build).
+- **Cases:** a ground piece hovered (`UI_Pickup_Tooltip_obj`), a bag piece
+  hovered with none worn (`UI_Inventory_Tooltip_obj`), a worn piece hovered
+  with the switch off and then on (both colours of the bonus line), and the
+  cursor resting on a piece (the cached frames). Two pieces worn and the
+  reload are not re-run (Mod live 9's `tip-two` and `art-save`).
+- **Debugger:** the hub's x64dbg MCP, attached under the session's lease
+  after S1 and detached after S6, before `mark1set bonus 1` detours
+  `CheckTalentUse` and before any `hs_stop_game`. Three non-breaking
+  logpoints, each named here by what it watches; their addresses and
+  expected bytes stay with the workorder. `dbg-control` on `CheckTalentUse`,
+  which runs many times a second in town, is the positive control.
+  `dbg-stat-site` on a direct call to `DrawInventoryStatsNew` inside the
+  tooltip pass (the site flight charms' Mod live 2 measured logging once per
+  hover) counts the drawn passes, read before and after each hover of S3,
+  S5 and S6 and across S4's rest. `dbg-ground-draw` on `LootGroundDraw`,
+  armed in S2 just before the spawn and cleared after the second warp,
+  shows that the pieces' ground draw runs, since `ground=` counts sprite
+  writes, not draws.
+- **Relies on:** `playerwarp <x> <y>` (the hub guide's Command Reference;
+  `912 960` and `1040 960` are Mod live 2's points south of Inoya's waypoint
+  at 912,822); the waypoint drawn over ground items lying on it (Mod live 2,
+  V2a); `mark1probe spawn set` (the hub guide's Mark 1 set › *Commands*);
+  `lootshow`; `soulprobe ground` (research build: each `Loot_Ground_obj`
+  within 300 px of the player, with its sprite by name and the item's `a=`);
+  a ground item's sprite and `Error_spr` (hub `docs/RUNTIME_DATA_MODELS.md`
+  § 23.7), and the ground Draw
+  calling `LootGroundDraw` (§ 18.5); the tooltip drawn once per hover
+  (§ 16.6, measured) while its call runs every frame (Mod live 9); the set
+  display's colours (§ 16.12, measured); the bag on C, a pickup by hovering
+  the name label and pressing F (the owner's standing rules), and wearing by
+  a right click (Mod live procedure 2).
+
+**Steps:**
+
+- S1: a fresh game process with the character loaded: `dll-hash`,
+  `control` and `marker`. Screenshot the life on the HUD (an observation).
+- D1: attach the debugger and arm `dbg-control` and `dbg-stat-site`.
+- S2, off the waypoint: `playerwarp 912 960` (if its `before=` is not
+  `912.0,822.0`, warp 138 px south of `before=` instead and record it); arm
+  `dbg-ground-draw` and read its count; `mark1probe spawn set` (four
+  `dressed=yes tier=5` lines, SS, which the owner's loot filter shows);
+  `playerwarp 1040 960`; `lootshow` only if no label shows. `mark1set stat`
+  reads `art=armed icons=8/8 ground=4 ground-route=both` and
+  `typeline-hook=in`; `soulprobe ground` lists four items, `a=777500` to
+  `777503`, each sprite neither `Error_spr` nor a `Pickup_` name (the names
+  recorded); a screenshot shows four item sprites in the owner's steel art
+  under the four labels, never base art or `Error_spr`. `art-spawn` needs
+  all three. Then read and clear `dbg-ground-draw`.
+- S3: read `mark1set stat` and `dbg-stat-site`, hover one piece's ground
+  label for 1 s, screenshot, and read both again. The type line reads
+  `Satanic Set <type>`; the block shows `+1 to Automation` grey, the
+  description wrapped, `Mark 1` gold and four grey names; `tip-armed=`,
+  `tip=` and `typeline=` rose by the same k of 1 or more, `typeline-miss=`
+  did not rise, `tip-cached=` rose, and `typeline-hook=in` (`tip-ground`).
+- S4: the cursor rests on that label for 5 s without moving, then read:
+  `tip-armed=`, `tip=` and `typeline=` as at S3's second read, `tip-cached=`
+  up by 100 or more (`tip-cached`). Move the cursor to empty ground.
+- S5: pick up all four (hover each label, then F) and open the bag (C),
+  Extra tab 1 if the Main tab is full. Hover a bag piece, none worn, with
+  S3's reads before and after: the block and the counters as in S3
+  (`tip-none`).
+- S6: wear all four (right click each), move the cursor off, then hover a
+  worn piece with S3's reads: four names green, `+1 to Automation` grey and
+  `bonus=off` (`tip-full-off`).
+- D2: detach the debugger.
+- S7: screenshot the life; `mark1set bonus 1` answers `mark1set: bonus=on
+  install=installed`; move the cursor off the worn piece and back onto it;
+  a screenshot shows `+1 to Automation` gold and four names green, and
+  `mark1set stat` reads `bonus=on active=yes install=installed set=full`
+  (`tip-full-on`). Screenshot the life about 5 s after `bonus 1` (an
+  observation). Then `mark1set bonus 0`.
+- In S3, S5, S6 and S7, every row sits inside the box, no letter cut at
+  either edge and none over another row or the footer (`tip-layout`).
+- S8: teardown: close the bag, `hs_stop_game`, `hs_saves_inspect`,
+  `hs_saves_restore`, inspect clean again, and `hs_lease_release`.
+
+**Checks.** Session validity, all required: `dll-hash`, `control`, `marker`
+and `dbg-control` (it logged throughout S2 to S6). Acceptance, all required:
+`art-spawn`, `tip-ground`, `tip-cached`, `tip-none`, `tip-full-off`,
+`tip-full-on` and `tip-layout`. Research, never required:
+`dbg-stat-site` (pass when it rose by the same k as `tip-armed=` on every
+hover and stayed flat across S4's rest while `dbg-control` logged; fail when
+it disagrees with `tip-armed=`; not observed when it logged nothing while the
+control logged) and `dbg-ground-draw` (pass when its count rose with the
+pieces on screen after staying flat before the spawn; not observed when it
+stayed flat while the control logged). The life readings are an observation,
+not a check. The results are recorded below once the session has run.

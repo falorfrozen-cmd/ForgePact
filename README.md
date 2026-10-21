@@ -1839,11 +1839,15 @@ and the turns each of the four slots waited or gave up, the jumps it
 lengthened or left alone and the reach it used, how many of the pieces' icons
 loaded, how many set displays it drew in the pieces' tooltips, and how many
 movement-speed answers it halved. The tooltip counts are for tooltips you
-hover on screen only: `tip=` the set displays drawn, `tip-armed=` the
-tooltips it got ready for a piece (whether or not the display was drawn),
-and of those `typeline=` the ones whose line under the name it changed to
-`Satanic Set <type>` and `typeline-miss=` the ones where it did not. A
-second line,
+hover on screen only. The game draws a tooltip once when you start hovering
+and then shows a copy of it for as long as you stay, so: `tip-armed=` the
+tooltips drawn for a piece (one per hover), `tip=` the set displays drawn in
+them, and of those tooltips `typeline=` the ones whose line under the name it
+changed to `Satanic Set <type>` and `typeline-miss=` the ones where it did
+not; `tip-cached=` the frames the game showed its own copy instead of
+drawing again; and `typeline-hook=` whether the hook that changes that line
+is in (`in`), could not go in (`failed`), or has not been tried yet
+(`not-tried`). A second line,
 beginning `mark1set drops:`, shows the drops: the switch, how many Heroic
 rolls, named unique rolls and kill draws it saw and added the pieces to,
 each piece's drops from each, and the game's item each piece stands in for on
