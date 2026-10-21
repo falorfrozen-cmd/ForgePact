@@ -61,13 +61,17 @@ text, comments stripped, and pins the adapter around it:
 - tooltip: a piece, recognised by Mark1PieceOf where both tooltip passes arm
   their rows (the player's and Item Truth's drawn one), gets the core's set
   block from one worn read (Mark1ReadWorn + Evaluate, never Bonus::ReadNow) per
-  armed pass, drawn at the forged rows' anchor in its colours; every other
-  forged item keeps its gold rows; the pass's draw_text draws the piece's type
-  line as the core's `Satanic Set <type>`, the hook going in with the ground
-  consumer's callers, once the art is armed and a character exists, never
-  behind the icons' own gate; `tip=` and `tip-unread=` count the blocks drawn
-  in the player's own (on-screen) passes, `tip-armed=` those passes armed for a
-  piece, `typeline=` / `typeline-miss=` whether each drew its type line, and
+  armed call, its bonus line asking the switch and the install, drawn at the
+  forged rows' anchor in its colours, the description wrapped at 478; every
+  other forged item keeps its gold rows; the pass's draw_text draws the
+  piece's type line as the core's `Satanic Set <type>`, the hook going in with
+  the ground consumer's callers, once the art is armed and a character exists,
+  never behind the icons' own gate; `tip=` and `tip-unread=` count the blocks
+  drawn in the player's own (on-screen) calls, and the core's TipCallCountsOf
+  classifies each on-screen call armed for a piece, from differences across
+  the game's call of a never-reset stat-call counter and of the type-line
+  swaps, as drawn (`tip-armed=`, then `typeline=` / `typeline-miss=`) or
+  cached (`tip-cached=`); `typeline-hook=` names the type line's install; and
   Item Truth's off-screen passes count in none of them;
 - the jump (Mark1Jump.hpp, applied here): one skillsLeap detour and one
   install of the five collision builtins in the whole plugin, shared with
@@ -990,7 +994,7 @@ class Mark1SetContract(unittest.TestCase):
         self.assertEqual(rows.count("M1sNs::Evaluate("), 1)
         self.assertNotIn("ReadNow(", rows)   # `reads=` and `set=` keep their meaning
         self.assertNotIn("Active(", rows)
-        self.assertIn("M1sNs::SetBlockRows(read, readOk, g_Mark1.Enabled())", rows)
+        self.assertIn("M1sNs::SetBlockRows(read, readOk, g_Mark1.Enabled(), g_Mark1.Installed())", rows)
         self.assertIn("const M1sNs::SetRead read = readOk ? M1sNs::Evaluate(slots) : M1sNs::SetRead{};", rows)
         self.assertIn("g_TipSetBlockUnread = M1sNs::BlockUnread(read, readOk);", rows)
         # Mark 1's own game calls run under its busy flag, put back after.
@@ -999,8 +1003,21 @@ class Mark1SetContract(unittest.TestCase):
         # Its two callers are the two arming sites, and nothing else reads the
         # set for a tooltip.
         self.assertEqual(len(re.findall(r"\bMark1TooltipRows\(tipPiece\)", self.shipped)), 2)
+        # It installs nothing; it only asks whether the bonus is installed.
+        installs = rows.replace("g_Mark1.Installed()", "")
         for install in ("HookOneScript", "HookBuiltin", "MmCreateHook", "Install"):
-            self.assertNotIn(install, rows)
+            self.assertNotIn(install, installs)
+
+    def test_tooltip_bonus_line_asks_the_install(self):
+        # Round 1's NON-BLOCKING finding: the bonus line is lit only while the
+        # bonus is active, so the adapter hands the core the install beside the
+        # switch, and the core lights it only when both hold and all four are worn.
+        rows = self.body("tooltip_rows")
+        self.assertIn("M1sNs::SetBlockRows(read, readOk, g_Mark1.Enabled(), g_Mark1.Installed())", rows)
+        header = self.header()
+        self.assertIn("return readOk && r.full && switchOn && installed;", function_body(header, "inline bool BlockBonusActive("))
+        self.assertIn("BlockBonusActive(r, readOk, switchOn, installed)",
+                      function_body(header, "inline std::vector<TipRow> SetBlockRows("))
 
     def test_tooltip_the_block_draws_at_the_anchor_in_its_colours_and_other_rows_stay_gold(self):
         stat = function_body(self.shipped, "static RValue& Hook_DrawInventoryStatsNew(")
@@ -1016,7 +1033,10 @@ class Mark1SetContract(unittest.TestCase):
         self.assertIn('"draw_text_ext"', draw)
         self.assertIn('"string_height_ext"', draw)
         self.assertIn("RValue(kTipWrapSeparation), RValue(kTipWrapWidth)", draw)
-        self.assertIn("static const double kTipWrapWidth = 622.0;", self.shipped)
+        # The narrowest width the game's own description rows were measured at
+        # (Item Truth's captures: 478 to 1160), so it fits any box the game draws.
+        self.assertIn("static const double kTipWrapWidth = 478.0;", self.shipped)
+        self.assertNotIn("kTipWrapWidth = 622.0", self.shipped)
         self.assertIn("static const double kTipWrapSeparation = -1.0;", self.shipped)
         self.assertIn('{ RValue(row.colour) }', draw)
 
@@ -1084,50 +1104,76 @@ class Mark1SetContract(unittest.TestCase):
         self.assertEqual(len(re.findall(r"\bInstallTipTypeLineHook\(\);", self.shipped)), 1)
 
     def test_item_truth_passes_not_counted_in_tip(self):
-        # `tip=`, `tip-unread=`, `tip-armed=`, `typeline=` and `typeline-miss=`
-        # count the player's own (on-screen) passes only. Item Truth's
-        # off-screen TipDrawOne passes arm the block and draw the type line
-        # too, but never mark the pass on screen and bump none of the counts.
+        # `tip=`, `tip-unread=`, `tip-armed=`, `typeline=`, `typeline-miss=`
+        # and `tip-cached=` count the player's own (on-screen) calls only. Item
+        # Truth's off-screen TipDrawOne passes arm the block and draw the type
+        # line too, but never mark the call on screen and bump none of the counts.
         one = strip_comments(function_body(self.shipped, "static bool TipDrawOne("))
         for name in ("g_TipSetOnScreen", "g_TipSetBlocks", "g_TipSetBlocksUnread", "g_TipSetPassesArmed",
-                     "g_TipTypeLines", "g_TipTypeLineMisses", "g_TipTypeLineSwaps"):
+                     "g_TipTypeLines", "g_TipTypeLineMisses", "g_TipTypeLineSwaps", "g_TipSetCallsCached",
+                     "g_TipStatCallsTotal", "TipCallCountsOf"):
             with self.subTest(name=name):
                 self.assertNotIn(name, one)
-        # The on-screen flag is set in one place: the player's pass, once armed for a piece.
+        # The on-screen flag is set in one place: the player's call, once armed for a piece.
         self.assertEqual(re.findall(r"\bg_TipSetOnScreen\s*=\s*true\b", self.shipped), ["g_TipSetOnScreen = true"])
         item = strip_comments(function_body(self.shipped, "static RValue& Hook_DrawInventoryItemV2("))
-        arm = "if (pieceOnScreen) {"
         self.assertIn("const bool pieceOnScreen = g_TipSetBlock;", item)
-        self.assertIn("g_TipSetOnScreen = true;", item)
-        self.assertIn("++g_TipSetPassesArmed;", item)
-        # Armed after the piece's rows were built, and before the game's pass.
+        self.assertIn("if (pieceOnScreen) g_TipSetOnScreen = true;", item)
+        call = item.index("g_Orig_DrawInventoryItemV2(")
+        # Armed after the piece's rows were built, and before the game's call.
         self.assertLess(item.index("Mark1TooltipRows(tipPiece)"), item.index("const bool pieceOnScreen = g_TipSetBlock;"))
-        self.assertLess(item.index("++g_TipSetPassesArmed;"), item.index("g_Orig_DrawInventoryItemV2("))
-        # Off-screen batches run before the arming, so never inside an armed pass.
+        self.assertLess(item.index("if (pieceOnScreen) g_TipSetOnScreen = true;"), call)
+        # Off-screen batches run before the arming, so never inside an armed call.
         self.assertLess(item.index("TipDrawBatch(S, O, argc, A);"), item.index("const bool pieceOnScreen = g_TipSetBlock;"))
-        # The pass end: of the armed passes, swapped or not, then cleared.
-        end = "if (g_TipTypeLineSwaps != swapsBefore) ++g_TipTypeLines;"
-        self.assertIn(end, item)
-        self.assertIn("else ++g_TipTypeLineMisses;", item)
-        self.assertLess(item.index("g_Orig_DrawInventoryItemV2("), item.index(end))
-        self.assertLess(item.index(end), item.rindex("TipSetBlockClear();"))
-        self.assertEqual(item.count(arm), 2)
+        # Live 1 (replan 1): the call runs on every frame the tooltip shows and
+        # the game draws the text on a hover's first frame only, so the core
+        # classifies each call from differences across the game's call: a
+        # stat-call counter that is never reset (a nested call would zero
+        # g_TipStatCallsInTooltip) and the type-line swaps.
+        stats_before = "const uint64_t statCallsBefore = g_TipStatCallsTotal;"
+        swaps_before = "const uint64_t swapsBefore = g_TipTypeLineSwaps;"
+        classify = ("M1sNs::TipCallCountsOf(pieceOnScreen, g_TipStatCallsTotal - statCallsBefore, "
+                    "g_TipTypeLineSwaps - swapsBefore)")
+        for before in (stats_before, swaps_before):
+            with self.subTest(before=before):
+                self.assertIn(before, item)
+                self.assertLess(item.index(before), call)
+        self.assertIn(classify, item)
+        self.assertLess(call, item.index(classify))
+        self.assertLess(item.index(classify), item.rindex("TipSetBlockClear();"))
+        self.assertNotIn("g_TipStatCallsInTooltip - ", item)
+        self.assertNotIn("if (pieceOnScreen) {", item)
+        # The never-reset counter: assigned only where it is declared, raised
+        # once, by every stat call, before anything else in the stat detour.
+        self.assertEqual(re.findall(r"\bg_TipStatCallsTotal\s*=(?!=)", self.shipped), ["g_TipStatCallsTotal ="])
+        self.assertIn("static uint64_t g_TipStatCallsTotal = 0;", self.shipped)
+        self.assertEqual(re.findall(r"\+\+g_TipStatCallsTotal\b", self.shipped), ["++g_TipStatCallsTotal"])
+        stat = function_body(self.shipped, "static RValue& Hook_DrawInventoryStatsNew(")
+        self.assertTrue(stat.lstrip().startswith("++g_TipStatCallsTotal;"), stat[:200])
+        # Each field is raised by the core's answer, once, in the player's call.
+        for flag, counter in (("tipArmed", "g_TipSetPassesArmed"), ("typeLine", "g_TipTypeLines"),
+                              ("typeLineMiss", "g_TipTypeLineMisses"), ("tipCached", "g_TipSetCallsCached")):
+            with self.subTest(counter=counter):
+                raise_it = f"if (counted.{flag}) ++{counter};"
+                self.assertIn(raise_it, item)
+                self.assertLess(item.index(classify), item.index(raise_it))
+                self.assertEqual(re.findall(r"\+\+" + counter + r"\b", self.shipped), ["++" + counter])
         # The swap is counted where the type-line detour draws it, and nowhere else.
         line = strip_comments(function_body(self.shipped, "static bool TipTypeLineDraw("))
         self.assertLess(line.index("if (line == drawn) return false;"), line.index("++g_TipTypeLineSwaps;"))
         self.assertEqual(re.findall(r"\+\+g_TipTypeLineSwaps\b", self.shipped), ["++g_TipTypeLineSwaps"])
-        for counter in ("g_TipSetPassesArmed", "g_TipTypeLines", "g_TipTypeLineMisses"):
-            with self.subTest(counter=counter):
-                self.assertEqual(re.findall(r"\+\+" + counter + r"\b", self.shipped), ["++" + counter])
-        # The block's own count needs the on-screen pass too.
-        stat = function_body(self.shipped, "static RValue& Hook_DrawInventoryStatsNew(")
+        # The block's own count needs the on-screen call too.
         self.assertIn("if (g_TipSetBlock && g_TipSetOnScreen) {", stat)
-        # And the line's three new fields read those counters.
+        # And the line's fields read those counters; `typeline-hook=` the
+        # install's try and draw_text's saved original.
         fields = self.body("stat_fields")
         self.assertIn("f.tipArmed = g_TipSetPassesArmed;", fields)
         self.assertIn("f.typeLine = g_TipTypeLines;", fields)
         self.assertIn("f.typeLineMiss = g_TipTypeLineMisses;", fields)
-        # Each pass starts and ends with the on-screen flag clear.
+        self.assertIn("f.tipCached = g_TipSetCallsCached;", fields)
+        self.assertIn("f.typeLineHook = std::string(M1sNs::TypeLineHookName(g_TipTypeLineTried, "
+                      "g_Orig_TipBuiltinText[0] != nullptr));", fields)
+        # Each call starts and ends with the on-screen flag clear.
         clear = function_body(self.shipped, "static void TipSetBlockClear()")
         self.assertIn("g_TipSetOnScreen = false;", clear)
 

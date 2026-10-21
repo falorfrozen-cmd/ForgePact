@@ -323,11 +323,17 @@ struct StatFields {
     bool         artArmed = false;           // the art rule's sticky flag (Bonus::ArtArmed)
     uint64_t     ground = 0;                 // ground items given our icon
     std::string  groundRoute = "not-installed";  // GroundRouteName(): the shared LootGroundInit detour's route
-    uint64_t     tip = 0;                    // set blocks drawn in a piece's on-screen tooltip (once per uncached pass)
+    // The tooltip's counters. The player's on-screen call for a tooltip runs on
+    // every frame the tooltip shows, and the game draws its text on a hover's
+    // first frame only, showing a cached copy after (TipCallCountsOf), so
+    // each counts calls, not hovers.
+    uint64_t     tip = 0;                    // set blocks drawn in a piece's on-screen tooltip (drawn calls only)
     uint64_t     tipUnread = 0;              // of those, drawn on a worn read that failed or had an unreadable slot
-    uint64_t     tipArmed = 0;               // on-screen passes armed for a piece, whether or not the block anchored
-    uint64_t     typeLine = 0;               // of those, passes whose type line was drawn as `Satanic Set <type>`
-    uint64_t     typeLineMiss = 0;           // of those, passes that ended with no type line swapped
+    uint64_t     tipArmed = 0;               // on-screen calls armed for a piece in which the game drew the tooltip
+    uint64_t     typeLine = 0;               // of those, calls whose type line was drawn as `Satanic Set <type>`
+    uint64_t     typeLineMiss = 0;           // of those, calls that drew with no type line swapped
+    uint64_t     tipCached = 0;              // on-screen calls armed for a piece that drew nothing: the cached tooltip
+    std::string  typeLineHook = "not-tried"; // TypeLineHookName(): the type line's draw_text hook
     LeverCount   speed;
     LeverCount   penalty;
 };
@@ -425,6 +431,8 @@ inline std::string StatLine(const StatFields& f)
     s += " tip=" + std::to_string(f.tip) + " tip-unread=" + std::to_string(f.tipUnread);
     s += " tip-armed=" + std::to_string(f.tipArmed);
     s += " typeline=" + std::to_string(f.typeLine) + " typeline-miss=" + std::to_string(f.typeLineMiss);
+    s += " tip-cached=" + std::to_string(f.tipCached);
+    s += " typeline-hook=" + f.typeLineHook;
     s += " | speed=" + LeverText(f.speed) + " penalty=" + LeverText(f.penalty);
     return s;
 }
@@ -539,8 +547,9 @@ inline constexpr std::string_view kAutomationDescription =
     "Your jump goes three times as far, over scenery. You walk at half speed.";
 
 // One row of the block. `wrapped` marks the description, which the adapter
-// wraps with the game's own builtins at the lore row's width and measures; an
-// empty text is one empty row.
+// wraps with the game's own builtins at the narrowest width the game's own
+// description rows were measured at, and measures; an empty text is one
+// empty row.
 struct TipRow {
     std::string text;
     int         colour = kColourPieceNotWorn;
@@ -548,10 +557,12 @@ struct TipRow {
 };
 
 // The bonus line is lit while the bonus is active: all four pieces worn (a
-// read that succeeded) and the "Mark 1 set" switch on.
-inline bool BlockBonusActive(const SetRead& r, bool readOk, bool switchOn)
+// read that succeeded), the "Mark 1 set" switch on and the bonus installed.
+// A switch on over an install refused or still waiting is no active bonus,
+// so the line stays grey.
+inline bool BlockBonusActive(const SetRead& r, bool readOk, bool switchOn, bool installed)
 {
-    return readOk && r.full && switchOn;
+    return readOk && r.full && switchOn && installed;
 }
 
 // The block was drawn on a worn read that failed as a whole or had an
@@ -566,11 +577,11 @@ inline bool BlockUnread(const SetRead& r, bool readOk)
 // set's name, then the four pieces in table order, green when worn. A read
 // that failed as a whole shows no piece worn; an unreadable slot can leave a
 // piece unfound, never found (Evaluate's rule).
-inline std::vector<TipRow> SetBlockRows(const SetRead& r, bool readOk, bool switchOn)
+inline std::vector<TipRow> SetBlockRows(const SetRead& r, bool readOk, bool switchOn, bool installed)
 {
     std::vector<TipRow> rows;
     rows.push_back({ std::string(kBonusLine),
-                     BlockBonusActive(r, readOk, switchOn) ? kColourBonusActive : kColourBonusInactive, false });
+                     BlockBonusActive(r, readOk, switchOn, installed) ? kColourBonusActive : kColourBonusInactive, false });
     rows.push_back({ std::string(kAutomationDescription), kColourDescription, true });
     rows.push_back({ std::string(), kColourPieceNotWorn, false });
     rows.push_back({ std::string(kSetName), kColourSetName, false });
@@ -607,6 +618,48 @@ inline std::string TypeLineFor(bool isPiece, Piece p, std::string_view drawn)
 {
     if (isPiece && drawn == GameTypeLine(p)) return TypeLine(p);
     return std::string(drawn);
+}
+
+// ---- what one on-screen tooltip call counts ------------------------------------------
+//
+// The player's on-screen call for a tooltip runs on every frame the tooltip
+// shows. The game draws the tooltip's text (the name, the type line, the stat
+// run and so our anchored block) on a hover's first frame only and shows a
+// cached copy on the frames after (RDM § 16.6 measured the stat run once per
+// hover; Live 1, 2026-10-21, showed the type line in the cached part too). A
+// call armed for a piece is drawn when the stat run ran during it (one or more
+// stat calls) or its type line was swapped, and cached when neither happened.
+// A drawn call raises `tip-armed=` and one of `typeline=` (swapped) or
+// `typeline-miss=` (not swapped), so typeline + typeline-miss = tip-armed; a
+// cached call raises `tip-cached=` alone; a call not armed for a piece raises
+// nothing. The adapter feeds the two counts as differences across the call.
+struct TipCallCounts {
+    bool tipArmed = false;
+    bool typeLine = false;
+    bool typeLineMiss = false;
+    bool tipCached = false;
+};
+
+inline TipCallCounts TipCallCountsOf(bool armedForPiece, uint64_t statCalls, uint64_t typeLineSwaps)
+{
+    TipCallCounts c;
+    if (!armedForPiece) return c;
+    const bool drawn = statCalls > 0 || typeLineSwaps > 0;
+    c.tipArmed = drawn;
+    c.typeLine = drawn && typeLineSwaps > 0;
+    c.typeLineMiss = drawn && typeLineSwaps == 0;
+    c.tipCached = !drawn;
+    return c;
+}
+
+// `typeline-hook=`: `not-tried` until the pieces' type-line install has run
+// (whatever Item Truth installed before it), then `in` when draw_text's hook
+// is in (by that install or by Item Truth's earlier one) and `failed` when it
+// is not. It tells "the hook is not in" from "it ran and matched nothing".
+inline std::string_view TypeLineHookName(bool tried, bool in)
+{
+    if (!tried) return "not-tried";
+    return in ? "in" : "failed";
 }
 
 // ---- the bonus: the switch, the install and the refreshed read -------------------

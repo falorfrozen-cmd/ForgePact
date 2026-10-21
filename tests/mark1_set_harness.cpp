@@ -593,7 +593,7 @@ int main()
             " | jump granted=0 backed-off=0 refused-landing=0 refused-gate=0 refused-cursor=0 max=175(start)"
             " refused-unreadable=0 jumps=0 scaled=0 clamped=0 answered=0 excluded=0 rejected=0/0/0/0 unread=0/0/0/0/0/0"
             " grid-reads=0/0/0 | icons=0/0 art=off ground=0 ground-route=not-installed tip=0 tip-unread=0"
-            " tip-armed=0 typeline=0 typeline-miss=0 | speed=unavailable penalty=unavailable";
+            " tip-armed=0 typeline=0 typeline-miss=0 tip-cached=0 typeline-hook=not-tried | speed=unavailable penalty=unavailable";
         check("stat/fresh_line_exact", fresh == expected, fresh);
 
         bool ok = true;
@@ -692,7 +692,7 @@ int main()
             "granted", "backed-off", "refused-landing", "refused-gate", "refused-cursor", "max",
             "refused-unreadable", "jumps", "scaled", "clamped", "answered", "excluded", "rejected", "unread", "grid-reads",
             "icons", "art", "ground", "ground-route", "tip", "tip-unread", "tip-armed", "typeline", "typeline-miss",
-            "speed", "penalty" };
+            "tip-cached", "typeline-hook", "speed", "penalty" };
         const std::string fresh = StatLine(StatFields{});
         bool ok = fieldNames(fresh) == names;
         check("failure_counts/every_field_once_in_order", ok, fresh);
@@ -1076,7 +1076,7 @@ int main()
 
         WornSlots none;
         for (auto& s : none) s = emptySlot();
-        const std::vector<TipRow> noneRows = SetBlockRows(Evaluate(none), true, true);
+        const std::vector<TipRow> noneRows = SetBlockRows(Evaluate(none), true, true, true);
         bool ok = rowsText(noneRows) == text && noneRows.size() == 8
             && colours(noneRows) == grey + "/" + desc + "/" + grey + "/" + gold + "/" + grey + "/" + grey + "/" + grey + "/" + grey;
         // Only the description is wrapped.
@@ -1087,28 +1087,28 @@ int main()
         WornSlots two = none;
         two[0] = pieceIn(Piece::Helmet);
         two[7] = pieceIn(Piece::Gloves);
-        const std::vector<TipRow> twoRows = SetBlockRows(Evaluate(two), true, true);
+        const std::vector<TipRow> twoRows = SetBlockRows(Evaluate(two), true, true, true);
         ok = rowsText(twoRows) == text
             && colours(twoRows) == grey + "/" + desc + "/" + grey + "/" + gold + "/" + green + "/" + grey + "/" + grey + "/" + green;
         check("tooltip_target/two_worn_those_two_green", ok, colours(twoRows));
 
-        const std::vector<TipRow> fullOff = SetBlockRows(Evaluate(fullSet()), true, false);
+        const std::vector<TipRow> fullOff = SetBlockRows(Evaluate(fullSet()), true, false, true);
         ok = rowsText(fullOff) == text
             && colours(fullOff) == grey + "/" + desc + "/" + grey + "/" + gold + "/" + green + "/" + green + "/" + green + "/" + green;
         check("tooltip_target/four_worn_switch_off_all_green_and_a_grey_bonus", ok, colours(fullOff));
 
-        const std::vector<TipRow> fullOn = SetBlockRows(Evaluate(fullSet()), true, true);
+        const std::vector<TipRow> fullOn = SetBlockRows(Evaluate(fullSet()), true, true, true);
         ok = rowsText(fullOn) == text
             && colours(fullOn) == gold + "/" + desc + "/" + grey + "/" + gold + "/" + green + "/" + green + "/" + green + "/" + green
-            && BlockBonusActive(Evaluate(fullSet()), true, true) && !BlockUnread(Evaluate(fullSet()), true);
+            && BlockBonusActive(Evaluate(fullSet()), true, true, true) && !BlockUnread(Evaluate(fullSet()), true);
         check("tooltip_target/four_worn_switch_on_a_gold_bonus", ok, colours(fullOn));
 
         // A read that failed as a whole: nothing green, the bonus grey, even
         // with a SetRead that claims the full set; counted unread.
-        const std::vector<TipRow> failed = SetBlockRows(Evaluate(fullSet()), false, true);
+        const std::vector<TipRow> failed = SetBlockRows(Evaluate(fullSet()), false, true, true);
         ok = rowsText(failed) == text
             && colours(failed) == grey + "/" + desc + "/" + grey + "/" + gold + "/" + grey + "/" + grey + "/" + grey + "/" + grey
-            && BlockUnread(Evaluate(fullSet()), false) && !BlockBonusActive(Evaluate(fullSet()), false, true);
+            && BlockUnread(Evaluate(fullSet()), false) && !BlockBonusActive(Evaluate(fullSet()), false, true, true);
         check("tooltip_target/a_failed_read_gives_nothing_green", ok, colours(failed));
 
         // An unreadable slot can leave a piece unfound, never found: the
@@ -1116,7 +1116,7 @@ int main()
         WornSlots partly = fullSet();
         partly[3] = WornSlot{};   // the gloves' slot, unreadable
         const SetRead pr = Evaluate(partly);
-        const std::vector<TipRow> partlyRows = SetBlockRows(pr, true, true);
+        const std::vector<TipRow> partlyRows = SetBlockRows(pr, true, true, true);
         ok = colours(partlyRows) == grey + "/" + desc + "/" + grey + "/" + gold + "/" + green + "/" + green + "/" + green + "/" + grey
             && BlockUnread(pr, true);
         check("tooltip_target/an_unreadable_slot_leaves_that_piece_grey_and_counts_unread", ok, colours(partlyRows));
@@ -1151,7 +1151,7 @@ int main()
         passes.typeLine = 4;
         passes.typeLineMiss = 1;
         const std::string counted2 = StatLine(passes);
-        ok = has(fresh, " tip=0 tip-unread=0 tip-armed=0 typeline=0 typeline-miss=0 | speed=")
+        ok = has(fresh, " tip=0 tip-unread=0 tip-armed=0 typeline=0 typeline-miss=0 ")
             && field(counted2, "tip") == "3" && field(counted2, "tip-unread") == "1" && field(counted2, "tip-armed") == "5"
             && field(counted2, "typeline") == "4" && field(counted2, "typeline-miss") == "1"
             && counted2.find(" tip-unread=") < counted2.find(" tip-armed=")
@@ -1159,6 +1159,75 @@ int main()
             && counted2.find(" typeline=") < counted2.find(" typeline-miss=")
             && counted2.find(" typeline-miss=") < counted2.find(" | speed=");
         check("tooltip_target/the_line_carries_tip_armed_typeline_and_typeline_miss", ok, counted2);
+
+        // Live 1 (replan 1): the on-screen call runs on every frame a tooltip
+        // shows, and the game draws the text on a hover's first frame only.
+        // Which field one call raises, from armed for a piece, the stat calls
+        // during it and the type-line swaps during it.
+        const auto counts = [](bool armed, uint64_t stats, uint64_t swaps) {
+            const TipCallCounts c = TipCallCountsOf(armed, stats, swaps);
+            return std::string(c.tipArmed ? "A" : "-") + (c.typeLine ? "T" : "-") + (c.typeLineMiss ? "M" : "-")
+                + (c.tipCached ? "C" : "-");
+        };
+        ok = counts(true, 1, 1) == "AT--" && counts(true, 14, 2) == "AT--";
+        check("tooltip_target/a_drawn_call_that_swapped_raises_tip_armed_and_typeline", ok, counts(true, 1, 1));
+        ok = counts(true, 3, 0) == "A-M-";
+        check("tooltip_target/a_drawn_call_with_no_swap_raises_tip_armed_and_typeline_miss", ok, counts(true, 3, 0));
+        ok = counts(true, 0, 1) == "AT--";
+        check("tooltip_target/a_swap_with_no_stat_call_is_a_drawn_call", ok, counts(true, 0, 1));
+        ok = counts(true, 0, 0) == "---C";
+        check("tooltip_target/a_call_that_drew_nothing_is_cached", ok, counts(true, 0, 0));
+        ok = counts(false, 0, 0) == "----" && counts(false, 5, 0) == "----" && counts(false, 0, 1) == "----"
+            && counts(false, 5, 1) == "----";
+        check("tooltip_target/a_call_not_armed_for_a_piece_raises_nothing", ok, counts(false, 5, 1));
+        // Over a hover of 1 drawn frame and 200 cached ones, typeline +
+        // typeline-miss equals tip-armed, and only tip-cached grows at rest.
+        StatFields hover;
+        const auto apply = [&hover](const TipCallCounts& c) {
+            if (c.tipArmed) ++hover.tipArmed;
+            if (c.typeLine) ++hover.typeLine;
+            if (c.typeLineMiss) ++hover.typeLineMiss;
+            if (c.tipCached) ++hover.tipCached;
+        };
+        apply(TipCallCountsOf(true, 2, 1));
+        for (int i = 0; i < 200; ++i) apply(TipCallCountsOf(true, 0, 0));
+        ok = hover.tipArmed == 1 && hover.typeLine == 1 && hover.typeLineMiss == 0 && hover.tipCached == 200
+            && hover.typeLine + hover.typeLineMiss == hover.tipArmed;
+        check("tooltip_target/a_hover_and_its_rest_count_one_drawn_and_the_rest_cached", ok, StatLine(hover));
+
+        // `typeline-hook=`: not-tried until the install ran, then in or failed.
+        ok = TypeLineHookName(false, false) == "not-tried" && TypeLineHookName(false, true) == "not-tried"
+            && TypeLineHookName(true, true) == "in" && TypeLineHookName(true, false) == "failed"
+            && StatFields{}.typeLineHook == "not-tried";
+        check("tooltip_target/typeline_hook_names_not_tried_in_and_failed", ok, std::string(TypeLineHookName(true, false)));
+
+        // The two new fields, appended after typeline-miss=, before ` | speed=`.
+        StatFields cached;
+        cached.tipArmed = 2;
+        cached.typeLine = 2;
+        cached.tipCached = 767;
+        cached.typeLineHook = std::string(TypeLineHookName(true, true));
+        const std::string counted3 = StatLine(cached);
+        ok = has(fresh, " typeline-miss=0 tip-cached=0 typeline-hook=not-tried | speed=")
+            && field(counted3, "tip-cached") == "767" && field(counted3, "typeline-hook") == "in"
+            && field(counted3, "tip-armed") == "2" && field(counted3, "typeline") == "2"
+            && counted3.find(" typeline-miss=") < counted3.find(" tip-cached=")
+            && counted3.find(" tip-cached=") < counted3.find(" typeline-hook=")
+            && counted3.find(" typeline-hook=") < counted3.find(" | speed=");
+        check("tooltip_target/the_line_carries_tip_cached_and_typeline_hook", ok, counted3);
+
+        // The bonus line asks the install too (round 1's NON-BLOCKING finding):
+        // lit only with all four worn, the switch on and the bonus installed.
+        const auto bonusColour = [&](bool switchOn, bool installed) {
+            return std::to_string(SetBlockRows(Evaluate(fullSet()), true, switchOn, installed)[0].colour);
+        };
+        ok = bonusColour(true, false) == grey && bonusColour(true, true) == gold && bonusColour(false, true) == grey
+            && bonusColour(false, false) == grey
+            && !BlockBonusActive(Evaluate(fullSet()), true, true, false)
+            && BlockBonusActive(Evaluate(fullSet()), true, true, true)
+            && !BlockBonusActive(Evaluate(fullSet()), true, false, true);
+        check("tooltip_target/the_bonus_line_needs_the_switch_and_the_install", ok,
+              bonusColour(true, false) + "/" + bonusColour(true, true) + "/" + bonusColour(false, true));
     }
 
     std::cout << (failures ? "RESULT FAIL " + std::to_string(failures) : std::string("RESULT OK")) << std::endl;

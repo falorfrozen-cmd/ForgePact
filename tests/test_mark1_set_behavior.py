@@ -42,13 +42,14 @@ pending. `tooltip_baseline`: what is not a piece gets no block and keeps its
 type line, and the core's colours are the game's own set display and skill
 grant (hs-game-sdk's curated item_info.json, `tooltip.set_section` and
 `tooltip.skill_grant`). `tooltip_target`: the set block's rows exactly, grey
-and green by what is worn, its bonus line lit only with all four worn and the
-switch on, nothing green on a failed read, the type line `Satanic Set
-Gloves`, and the stat line's `tip=0 tip-unread=0 tip-armed=0 typeline=0
-typeline-miss=0` (round 0's instrument-blindness findings: the on-screen
-passes armed for a piece, and of those the ones whose type line was swapped
-and the ones that ended with none). The type line's install waits for the art
-to be armed, never for embedded art (`art_baseline`/`art_target`).
+and green by what is worn, its bonus line lit only with all four worn, the
+switch on and the bonus installed, nothing green on a failed read, the type
+line `Satanic Set Gloves`, and the stat line's `tip=0 tip-unread=0
+tip-armed=0 typeline=0 typeline-miss=0 tip-cached=0 typeline-hook=not-tried`
+(round 0's instrument-blindness findings and Live 1: the on-screen call runs
+on every frame a tooltip shows, so each call armed for a piece is drawn, and
+then swapped its type line or not, or cached). The type line's install waits
+for the art to be armed, never for embedded art (`art_baseline`/`art_target`).
 """
 import json
 import os
@@ -425,8 +426,38 @@ class Mark1SetBehaviorTests(unittest.TestCase):
         # was swapped and `typeline-miss=` those that ended with none.
         self.assertScenarios("tooltip_target/the_line_carries_tip_armed_typeline_and_typeline_miss",
                              "stat/fresh_line_exact", "failure_counts/every_field_once_in_order")
-        self.assertIn(" tip=0 tip-unread=0 tip-armed=0 typeline=0 typeline-miss=0 | speed=",
+        self.assertIn(" tip=0 tip-unread=0 tip-armed=0 typeline=0 typeline-miss=0 ",
                       self.line("stat/fresh_line_exact"))
+
+    def test_tooltip_target_counts_drawn_and_cached_calls(self):
+        # Live 1 (replan 1): the on-screen call runs on every frame a tooltip
+        # shows and the game draws the text on a hover's first frame only, so
+        # each call is classified: drawn (a stat call or a type-line swap
+        # during it) raises `tip-armed=` and one of `typeline=` /
+        # `typeline-miss=`, nothing drawn raises `tip-cached=`, and a call not
+        # armed for a piece raises nothing. `typeline-hook=` separates "the
+        # hook is not in" from "it ran and matched nothing".
+        self.assertScenarios("tooltip_target/a_drawn_call_that_swapped_raises_tip_armed_and_typeline",
+                             "tooltip_target/a_drawn_call_with_no_swap_raises_tip_armed_and_typeline_miss",
+                             "tooltip_target/a_swap_with_no_stat_call_is_a_drawn_call",
+                             "tooltip_target/a_call_that_drew_nothing_is_cached",
+                             "tooltip_target/a_call_not_armed_for_a_piece_raises_nothing",
+                             "tooltip_target/a_hover_and_its_rest_count_one_drawn_and_the_rest_cached",
+                             "tooltip_target/typeline_hook_names_not_tried_in_and_failed",
+                             "tooltip_target/the_line_carries_tip_cached_and_typeline_hook",
+                             "stat/fresh_line_exact", "failure_counts/every_field_once_in_order")
+        # The fresh line: the two new fields appended after `typeline-miss=`.
+        self.assertIn(" tip=0 tip-unread=0 tip-armed=0 typeline=0 typeline-miss=0 tip-cached=0 typeline-hook=not-tried | speed=",
+                      self.line("stat/fresh_line_exact"))
+        self.assertIn(" typeline-miss=0 tip-cached=0 typeline-hook=not-tried | speed=", self.line("stat/fresh_line_exact"))
+
+    def test_tooltip_target_bonus_line_needs_the_install(self):
+        # Round 1's NON-BLOCKING finding: the bonus line is lit only while the
+        # bonus is installed too. On and not installed grey, on and installed
+        # gold, off and installed grey.
+        self.assertScenarios("tooltip_target/the_bonus_line_needs_the_switch_and_the_install",
+                             "tooltip_target/four_worn_switch_on_a_gold_bonus",
+                             "tooltip_target/four_worn_switch_off_all_green_and_a_grey_bonus")
 
 
 if __name__ == "__main__":

@@ -22320,6 +22320,11 @@ static long long TipStatIdOf(int argc, RValue** A)
 static PFUNC_YYGMLScript g_Orig_DrawInventoryItemV2 = nullptr;
 static PFUNC_YYGMLScript g_Orig_DrawInventoryStatsNew = nullptr;
 static int g_TipStatCallsInTooltip = 0;
+// Every DrawInventoryStatsNew call this session, never reset: Mark 1's
+// on-screen tooltip counters take a before/after difference of it across one
+// DrawInventoryItemV2 call, which a nested call (zeroing the per-tooltip count
+// above) cannot disturb.
+static uint64_t g_TipStatCallsTotal = 0;
 // One row the pass draws at the anchor: its text, its colour (0xBBGGRR) and,
 // for a Mark 1 piece's description alone, wrapped by the game's builtins. A
 // forged item's own rows are gold and never wrapped, exactly as before; an
@@ -22335,28 +22340,35 @@ static bool g_TipRowsPending = false;
 static bool g_TipItemNoStats = false;   // the pass's item has no stats: its rows anchor at the first row call
 static bool g_TipInsideStat = false;
 static const double kTipRowHeight = 30.0;
-// The lore row's draw_text_ext width and separation (measured, Item Truth's
-// captures): a Mark 1 piece's description wraps the same way.
-static const double kTipWrapWidth = 622.0;
+// A Mark 1 piece's description wraps with draw_text_ext at the game's own
+// description and lore rows' separation, and at 478, the narrowest width those
+// rows were measured at (Item Truth's captures: 478 to 1160 across 1,176
+// tooltips, the width following the item's box), so it fits any box the game
+// draws. 622, a wide box's width, ran past a piece's box in Live 1.
+static const double kTipWrapWidth = 478.0;
 static const double kTipWrapSeparation = -1.0;
-// Mark 1's set block in this pass (Mark1TooltipRows): whether the rows are it,
+// Mark 1's set block in this call (Mark1TooltipRows): whether the rows are it,
 // whether its worn read failed or had an unreadable slot, and the piece whose
-// type line the pass's draw_text rewrites (-1: none). `mark1set stat` counts
-// the player's own (on-screen) passes only, so an Item Truth drawing request
-// never moves a count: `tip=` and `tip-unread=` when the block is drawn,
-// `tip-armed=` when a pass is armed for a piece (Hook_DrawInventoryItemV2),
-// and of those `typeline=` / `typeline-miss=` at the pass's end, by whether
-// the type-line detour drew its `Satanic Set <type>` (g_TipTypeLineSwaps).
+// type line the call's draw_text rewrites (-1: none). `mark1set stat` counts
+// the player's own (on-screen) calls only, so an Item Truth drawing request
+// never moves a count. The on-screen call runs on every frame a tooltip
+// shows, and the game draws the text on a hover's first frame only, so the
+// counts are per call: `tip=` and `tip-unread=` when the block is drawn, and
+// for each call armed for a piece the core's TipCallCountsOf, from what ran
+// during it (Hook_DrawInventoryItemV2): drawn (`tip-armed=`, then
+// `typeline=` / `typeline-miss=` by whether the type-line detour drew its
+// `Satanic Set <type>`, g_TipTypeLineSwaps) or cached (`tip-cached=`).
 static bool g_TipSetBlock = false;
 static bool g_TipSetBlockUnread = false;
-static bool g_TipSetOnScreen = false;   // the pass is the player's own, armed for a piece
+static bool g_TipSetOnScreen = false;   // the call is the player's own, armed for a piece
 static int g_TipTypeLinePiece = -1;
 static uint64_t g_TipSetBlocks = 0;
 static uint64_t g_TipSetBlocksUnread = 0;
-static uint64_t g_TipSetPassesArmed = 0;
+static uint64_t g_TipSetPassesArmed = 0;   // `tip-armed=`: calls armed for a piece that drew
 static uint64_t g_TipTypeLines = 0;
 static uint64_t g_TipTypeLineMisses = 0;
-static uint64_t g_TipTypeLineSwaps = 0;   // type lines the detour drew, in any pass
+static uint64_t g_TipSetCallsCached = 0;   // `tip-cached=`: calls armed for a piece that drew nothing
+static uint64_t g_TipTypeLineSwaps = 0;   // type lines the detour drew, in any call
 
 static void TipSetBlockClear()
 {
@@ -22429,8 +22441,8 @@ static void HhDrawTooltipLine(double x, double y, const std::string& text)
 
 // Draws one anchored row and returns its height. A gold row is
 // HhDrawTooltipLine's, unchanged. Any other row is drawn the same way in its
-// own colour; a wrapped one with draw_text_ext at the lore row's width and
-// separation, its height measured by string_height_ext (a row's height if the
+// own colour; a wrapped one with draw_text_ext at kTipWrapWidth and the lore
+// row's separation, its height measured by string_height_ext (a row's height if the
 // measure fails). An empty row draws nothing.
 static double TipDrawRow(double x, double y, const TipRow& row)
 {
@@ -22719,14 +22731,15 @@ static RValue& Hook_DrawInventoryItemV2(CInstance* S, CInstance* O, RValue& R, i
             g_TipItemNoStats = g_TipRowsPending && TipItemHasNoStats(*A[3]);
         }
     } catch (...) { g_TipRows.clear(); g_TipRowsPending = false; g_TipItemNoStats = false; TipSetBlockClear(); }
-    // The player's own pass, armed for a piece (`tip-armed=`), whether or not
-    // its block reaches the anchor. Item Truth's batch above ran and cleared
-    // before this, so only this pass is counted.
+    // The player's own call, armed for a piece. Item Truth's batch above ran
+    // and cleared before this, so only this call is counted. The call runs on
+    // every frame the tooltip shows and the game draws the text on a hover's
+    // first frame only, so what it counts is decided after the game's call,
+    // from what ran during it: the stat calls (a difference of the never-reset
+    // g_TipStatCallsTotal) and the type-line swaps.
     const bool pieceOnScreen = g_TipSetBlock;
-    if (pieceOnScreen) {
-        g_TipSetOnScreen = true;
-        ++g_TipSetPassesArmed;
-    }
+    if (pieceOnScreen) g_TipSetOnScreen = true;
+    const uint64_t statCallsBefore = g_TipStatCallsTotal;
     const uint64_t swapsBefore = g_TipTypeLineSwaps;
     g_TipStatCallsInTooltip = 0;
     const bool capturing = TipCaptureBegin(argc, A);
@@ -22741,13 +22754,15 @@ static RValue& Hook_DrawInventoryItemV2(CInstance* S, CInstance* O, RValue& R, i
 #ifndef FORGEPACT_RELEASE
     if (trace) Out("   DrawInventoryItemV2 -> " + Describe(r) + " statLines=" + std::to_string(g_TipStatCallsInTooltip) + " forgedRows=" + std::to_string(g_TipRows.size()));
 #endif
-    // Of the armed passes, whether the type-line detour drew `Satanic Set
-    // <type>` during this one (`typeline=`) or the pass ended with none
-    // (`typeline-miss=`: the hook not in, or no draw_text matched).
-    if (pieceOnScreen) {
-        if (g_TipTypeLineSwaps != swapsBefore) ++g_TipTypeLines;
-        else ++g_TipTypeLineMisses;
-    }
+    // The core's answer for this call (Mark1Set.hpp's TipCallCountsOf): drawn
+    // (`tip-armed=`, and `typeline=` when the type-line detour drew `Satanic
+    // Set <type>`, `typeline-miss=` when it did not: the hook not in, or no
+    // draw_text matched) or cached (`tip-cached=`); nothing when not armed.
+    const M1sNs::TipCallCounts counted = M1sNs::TipCallCountsOf(pieceOnScreen, g_TipStatCallsTotal - statCallsBefore, g_TipTypeLineSwaps - swapsBefore);
+    if (counted.tipArmed) ++g_TipSetPassesArmed;
+    if (counted.typeLine) ++g_TipTypeLines;
+    if (counted.typeLineMiss) ++g_TipTypeLineMisses;
+    if (counted.tipCached) ++g_TipSetCallsCached;
     g_TipRowsPending = false;
     g_TipItemNoStats = false;
     TipSetBlockClear();
@@ -22755,6 +22770,7 @@ static RValue& Hook_DrawInventoryItemV2(CInstance* S, CInstance* O, RValue& R, i
 }
 
 static RValue& Hook_DrawInventoryStatsNew(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) {
+    ++g_TipStatCallsTotal;
     ++g_TipStatCallsInTooltip;
 #ifndef FORGEPACT_RELEASE
     bool trace = false;
@@ -63827,13 +63843,16 @@ static bool Mark1ReadWorn(M1sNs::WornSlots& slots)
 }
 
 // ---- the set block in a piece's tooltip ----
-// Where a tooltip pass arms its rows for an item Mark1PieceOf recognises
+// Where a tooltip call arms its rows for an item Mark1PieceOf recognises
 // (Hook_DrawInventoryItemV2, and TipDrawOne for Item Truth's off-screen
-// draws): one worn read and Evaluate for the pass, never Bonus::ReadNow (the
-// line's `reads=` and `set=` keep their meaning), and the core's block from it
-// and the switch. A read that failed as a whole shows nothing worn. The pass's
-// draw_text then draws the piece's type line as `Satanic Set <type>`. Mark 1's
-// own game calls here run under the adapter's busy flag, as `mark1set stat`'s.
+// draws): one worn read and Evaluate per call, never Bonus::ReadNow (the
+// line's `reads=` and `set=` keep their meaning), and the core's block from it,
+// the switch and the install (the bonus line lit only while the bonus is
+// active). The player's call runs on every frame a piece's tooltip shows, so
+// the read does too, and only a call the game draws uses its rows. A read that
+// failed as a whole shows nothing worn. The call's draw_text then draws the
+// piece's type line as `Satanic Set <type>`. Mark 1's own game calls here run
+// under the adapter's busy flag, as `mark1set stat`'s.
 static std::vector<TipRow> Mark1TooltipRows(M1sNs::Piece piece)
 {
     M1sNs::WornSlots slots{};
@@ -63844,7 +63863,7 @@ static std::vector<TipRow> Mark1TooltipRows(M1sNs::Piece piece)
     g_M1sBusy = busy;
     const M1sNs::SetRead read = readOk ? M1sNs::Evaluate(slots) : M1sNs::SetRead{};
     std::vector<TipRow> rows;
-    for (const M1sNs::TipRow& r : M1sNs::SetBlockRows(read, readOk, g_Mark1.Enabled()))
+    for (const M1sNs::TipRow& r : M1sNs::SetBlockRows(read, readOk, g_Mark1.Enabled(), g_Mark1.Installed()))
         rows.push_back(TipRow{ r.text, static_cast<double>(r.colour), r.wrapped });
     g_TipSetBlock = true;
     g_TipSetBlockUnread = M1sNs::BlockUnread(read, readOk);
@@ -64623,9 +64642,13 @@ static M1sNs::StatFields Mark1SetStatFields()
     g_Mark1.FillStat(f);
     f.tip = g_TipSetBlocks;               // set blocks drawn in a piece's tooltip
     f.tipUnread = g_TipSetBlocksUnread;   // of those, on a failed or partly unreadable worn read
-    f.tipArmed = g_TipSetPassesArmed;     // on-screen passes armed for a piece
+    f.tipArmed = g_TipSetPassesArmed;     // on-screen calls armed for a piece that drew
     f.typeLine = g_TipTypeLines;          // of those, the type line drawn as `Satanic Set <type>`
-    f.typeLineMiss = g_TipTypeLineMisses; // of those, ended with no type line swapped
+    f.typeLineMiss = g_TipTypeLineMisses; // of those, drawn with no type line swapped
+    f.tipCached = g_TipSetCallsCached;    // on-screen calls armed for a piece that drew nothing
+    // The type line's install: not tried, or draw_text's hook in (by it or by
+    // Item Truth's earlier install) or not.
+    f.typeLineHook = std::string(M1sNs::TypeLineHookName(g_TipTypeLineTried, g_Orig_TipBuiltinText[0] != nullptr));
     const ForgePact::Mark1Automation& automation = ForgePact::Mark1Automation::Instance();
     for (int i = 0; i < M1sNs::kColumnCount; ++i) {
         const ForgePact::Mark1ColumnCounters k = automation.Counters(ForgePact::kMark1FirstColumn + i);
