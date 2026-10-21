@@ -102,6 +102,9 @@ PRODUCTION_TYPES = (
     'struct SignatureStandIn {',
     'struct FlightDropState {',                  # #158: the flight charms' drop adapter's state
     'struct Mark1DropState {',                   # #166: the Mark 1 drop adapter's state
+    'struct KillDrawRollAside {',                # #166's kill draw: a nested roll's set-aside
+    'struct KillDrawHit {',                      # #166's kill draw: its state
+    'struct KillDrawState {',
 )
 
 # Inserted at `// PRODUCTION_FUNCTIONS`, callees before callers.
@@ -219,7 +222,52 @@ PRODUCTION = (
     'static void Mark1DropsTick(',
     'static void Mark1DropsSwitch(',
     'static std::string Mark1DropStatLine(',
+    # #166's kill draw: raredrop's one LoadSatanicDropTier detour and its install, then the adapter on
+    # DropManager's DropItem detour (DropManager.hpp is spliced in whole, at PRODUCTION_DROPMANAGER).
+    'static RValue& SatanicTierLift(',
+    'static RValue& HookSatanicTier(',
+    'static bool InstallSatanicTierHook(',
+    'static std::string KillDrawRoute(',
+    'static bool KillDrawHoldsDropItem(',
+    'static bool KillDrawScope(',
+    'static bool KillDrawElfOn(',
+    'struct KillDrawBusyScope {',
+    'static bool KillDrawDefinition(',
+    'static bool KillDrawPieceVerdict(',
+    'static bool KillDrawElfVerdict(',
+    'static void KillDrawAnomaly(',
+    'static bool KillDrawRemove(',
+    'static bool KillDrawHeldReadBack(',
+    'static bool KillDrawPut(',
+    'static void KillDrawPush(',
+    'static void KillDrawCloseHit(',
+    'static std::string KillDrawWho(',
+    'static void KillDrawNoteRead(',
+    'static bool KillDrawTypePick(',
+    'static void KillDrawSettleHit(',
+    'static bool KillDrawBeforeCreate(',
+    'static bool KillDrawNoteBuiltPiece(',
+    'static bool KillDrawNoteBuiltElf(',
+    'static void KillDrawNoteTier(',
+    'static void KillDrawEnterRoll(',
+    'static void KillDrawLeaveRoll(',
+    'static void KillDrawBeginCall(',
+    'static void KillDrawEndCall(',
+    'struct KillDrawCall {',
+    'static RValue& KillDrawDropItem(',
+    'static std::string KillDrawInstall(',
+    'static void KillDrawElfFillStat(',
 )
+
+# The real DropManager.hpp, spliced at `// PRODUCTION_DROPMANAGER` without its #pragma and #include
+# lines (as tests/test_drop_gold_behavior.py splices it): the kill draw's DropItem detour is its
+# Hook_DropItem, and the scenarios' `dropmult item` copies are its own loop.
+DROP_MANAGER = ROOT / 'plugin' / 'include' / 'ForgePact' / 'DropManager.hpp'
+
+
+def spliceable(header_text):
+    return '\n'.join(line for line in header_text.replace('\r\n', '\n').split('\n')
+                     if not line.strip().startswith(('#pragma', '#include')))
 
 # The plugin's own pool build, appended to the functions under another name: the harness's
 # BuildAngelicPool keeps its fixed pool for every scenario but `test_pool_retry`'s, which hand
@@ -289,6 +337,7 @@ class AngelicHitBehaviorTests(unittest.TestCase):
     def compile(cls, output, types, functions):
         code = (ROOT / 'tests/angelic_hit_harness.cpp').read_text(encoding='utf-8')
         cpp = output / 'angelic_hit.cpp'
+        code = code.replace('// PRODUCTION_DROPMANAGER', spliceable(DROP_MANAGER.read_text(encoding='utf-8')))
         cpp.write_text(code.replace('// PRODUCTION_TYPES', types).replace('// PRODUCTION_FUNCTIONS', functions), encoding='utf-8')
         cls.binary = output / ('angelic_hit.exe' if os.name == 'nt' else 'angelic_hit')
         if os.name == 'nt':
@@ -501,6 +550,49 @@ class AngelicHitBehaviorTests(unittest.TestCase):
             'mark1_kill_each_switch_pushes_only_its_own', 'mark1_kill_throw_leaves_the_lists_as_found',
             'mark1_kill_nested_in_the_angelic_roll_passes_through', 'mark1_kill_74s_counters_unchanged',
             'mark1_kill_shares_the_elfs_detour', 'mark1_kill_art_not_ready_pushes_nothing',
+        ))
+
+    def test_mark1_draw_baseline(self):
+        # #166's kill draw (DropItem's own unique draw): with neither switch touched DropItem, its tier
+        # and its draw are the game's own and nothing is hooked (holds against the source before the
+        # kill draw too); both switches on and off again leave DropManager's DropItem detour and
+        # raredrop's tier detour in, and Hook_DropItem calls the game's DropItem exactly as before -
+        # once per call, the caller's own arguments, its return handed back, no runtime call - each
+        # call counted (fails there: no draw hooks, no draw fields).
+        self.run_scenarios(('mark1_draw_untouched_installs_nothing', 'mark1_draw_switch_off_is_vanilla'))
+
+    def test_mark1_draw_target(self):
+        # #166's kill draw: the drops' install hooks DropItem through DropManager's one detour and
+        # LoadSatanicDropTier through raredrop's, refused whole unless both are inline. Each DropItem
+        # call (each `dropmult item` copy too) carries one entry per draw stand-in on each of
+        # lootListUnique[0..5]; a typed draw pick of one is the piece's at c in n_k + c, k the tier the
+        # call recorded, rewritten and built, on the draw's own tally; no tier recorded refuses the hit;
+        # two hits in one call are settled apart; #74's Angelic roll nested in DropItem sees the lists
+        # as on its own and types its hit the same way, the shared DropUniqueItems detour nested in it
+        # pushes and hits as today, and the draw after either reads its stand-ins back on; a throw
+        # leaves every list as found. Every scenario fails against the source before the kill draw.
+        self.run_scenarios((
+            'mark1_draw_hit_builds_the_piece', 'mark1_draw_coin_one_in_n_plus_c_at_k', 'mark1_draw_no_tier_is_refused',
+            'mark1_draw_two_hits_in_one_call', 'mark1_draw_nested_angelic_sees_the_lists_as_before',
+            'mark1_draw_nested_unique_pushes_and_hits_as_today', 'mark1_draw_throw_leaves_the_lists_as_found',
+            'mark1_draw_dropmult_copies_each_carry_the_draw', 'mark1_draw_table_only_dropitem_refuses',
+            'mark1_draw_table_only_tier_refuses',
+        ))
+
+    def test_flight_draw_baseline(self):
+        # #166's kill draw for Pocket Elf: its switch on and off again leaves the draw's hooks in,
+        # passing every DropItem call through, counted (` elf-draw-calls=`).
+        self.run_scenarios(('flight_draw_switch_off_is_vanilla',))
+
+    def test_flight_draw_target(self):
+        # #166's kill draw for Pocket Elf: its SS stand-in (Aimbot.exe's rarity and tier) on each of
+        # [0..5] for the length of a DropItem call, a typed pick of it Pocket Elf's at c in n_k + c,
+        # rewritten, built and counted on `elf-draw=`; with the Mark 1 drops on too, each pick goes to
+        # its own item; #74's Angelic roll nested in the call does not see it; a table-only DropItem
+        # hook refuses Pocket Elf whole and turns its switch off.
+        self.run_scenarios((
+            'flight_draw_hit_builds_pocket_elf', 'flight_draw_and_mark1_each_hit_their_own',
+            'flight_draw_nested_angelic_sees_the_lists_as_before', 'flight_draw_refuses_whole_when_not_inline',
         ))
 
 

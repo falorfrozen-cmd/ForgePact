@@ -194,6 +194,20 @@ class DropGoldBehaviorTests(unittest.TestCase):
     def test_target_gold_crumbs_ordinal_rises_per_call(self):
         self.assertScenario("target/gold_crumbs_ordinal_rises_per_call")
 
+    # ---- #166: DropItem's hook alone, for the kill draw ---------------------------
+
+    def test_target_drop_item_install_alone_reports_its_route_once(self):
+        # The Mark 1 drops' and Pocket Elf's kill draw install DropItem's hook and none of the other
+        # 18; the route is read back (`detoured` here); a later InstallHooks() never installs
+        # DropItem a second time.
+        self.assertScenario("target/drop_item_install_alone_reports_its_route_once")
+
+    def test_target_drop_item_splice_sees_every_original_call(self):
+        # The kill draw's call-out pair, spliced into DropItem's saved original, runs once per
+        # original call Hook_DropItem makes (three at `dropmult item 3`); taken out, the hook is as
+        # before.
+        self.assertScenario("target/drop_item_splice_sees_every_original_call")
+
     def test_without_a_sink_the_points_compile_to_nothing(self):
         # The player build defines no sink. There each point is ((void)0), its
         # arguments never evaluated, and the harness built that way prints

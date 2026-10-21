@@ -65,7 +65,8 @@ saved original and never hooked a second time, refused while angelicprobe's drop
 row or gambaprobe's DropItem row holds it, and the lever writing only through the drop
 adapter's add and delete. `test_satanic_tier_one_detour`: LoadSatanicDropTier has one
 HookOneScript in the source, raredrop's HookSatanicTier, installed by one function that
-reads the route back and that raredrop satanic and the watch both call.
+reads the route back and that raredrop satanic, the watch and the kill draw's install
+(#166) all call.
 """
 import re
 import sys
@@ -842,7 +843,11 @@ class Mark1ProbeContract(unittest.TestCase):
         raredrop = strip_comments(function_body(self.plugin, "static void RareDropCmd(const std::string& rest)"))
         self.assertIn("if (mult > 1.0 && !InstallSatanicTierHook()) {", raredrop)
         self.assertIn("InstallSatanicTierHook();", self.body("static void M1pDrawsInstall()"))
-        self.assertEqual(len(re.findall(r"\bInstallSatanicTierHook\(\)", whole)), 3)   # the definition and the two callers
+        # The kill draw's install (#166, the Mark 1 drops' and Pocket Elf's) is the third caller, in
+        # both builds: the draw's tier is this detour's call-out.
+        self.assertIn("InstallSatanicTierHook();", strip_comments(function_body(strip_research_blocks(self.plugin),
+                                                                                  "static std::string KillDrawInstall()")))
+        self.assertEqual(len(re.findall(r"\bInstallSatanicTierHook\(\)", whole)), 4)   # the definition and the three callers
         self.assertIn("InstallSatanicTierHook()", strip_comments(function_body(strip_research_blocks(self.plugin),
                                                                                  "static void RareDropCmd(const std::string& rest)")))
         # raredrop's lift is as it was, inside the one detour; the watch's route is read from it.

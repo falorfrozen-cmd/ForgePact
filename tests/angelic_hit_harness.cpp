@@ -35,6 +35,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -123,7 +124,22 @@ inline constexpr std::string_view gml_Script_GetUniqueRepoStruct = "gml_Script_G
 inline constexpr std::string_view gml_Script_CreateItemNew = "gml_Script_CreateItemNew";
 inline constexpr std::string_view gml_Script_DropUniqueItems = "gml_Script_DropUniqueItems";
 inline constexpr std::string_view gml_Script_DropItemHeroic = "gml_Script_DropItemHeroic";
+inline constexpr std::string_view gml_Script_LoadSatanicDropTier = "gml_Script_LoadSatanicDropTier";
 }
+// What DropManager.hpp (#166's kill draw: DropManager's one DropItem detour, spliced in below the
+// production types) names beside the plugin's own: reward scopes never active here, its research
+// macros empty, and the incident monitor's scope and guard as the bare call (the header is absent
+// here, as in drop_gold_harness.cpp).
+namespace HeroSiege::RewardScope { inline bool Active() { return false; } }
+#define BP_ANGELIC_PROBE_SCOPE(name, s, argc, a) ((void)0)
+#define BP_DIAG_INCREMENT(counter) ((void)0)
+#define BP_LOGDROP(name, res, argc, argv) ((void)0)
+#ifndef _MSC_VER
+#define sprintf_s(buf, ...) std::snprintf(buf, sizeof(buf), __VA_ARGS__)
+#endif
+#define FP_GAME_ORIGINAL(call) (call)
+namespace IncidentMod { inline constexpr int drops = 0; }
+struct IncidentScope { explicit IncidentScope(int) {} };
 namespace HeroSiege::Objects {
 enum class GameObject { Loot_Ground_obj = 902, Controller_obj = 984 };
 inline constexpr std::string_view GetObjectName(GameObject o) { return o == GameObject::Controller_obj ? "Controller_obj" : "Loot_Ground_obj"; }
@@ -133,6 +149,7 @@ static constexpr const char* SdkShortScriptName(std::string_view sdkConstant) { 
 // ---- log ---------------------------------------------------------------------------------
 static std::vector<std::string> outLines;
 static void Out(const std::string& line) { outLines.push_back(line); }
+static std::string Lower(std::string s) { for (char& c : s) c = (char)std::tolower((unsigned char)c); return s; }
 static int linesStartingWith(const char* prefix) {
     int n = 0;
     for (const auto& l : outLines) if (l.rfind(prefix, 0) == 0) ++n;
@@ -294,10 +311,15 @@ static std::map<Triple, double> repoBase;
 // The definition's itemBaseInfoStruct per (type, sub, b), for the triples a flight scenario names:
 // its rarity ("27") and whether it is flagged hidden ("40"). The unique roll keeps an entry only
 // when the rarity is below 7 and it is not hidden (RDM § 23.4, § 23.8); so does the elf's filter.
-struct RepoInfo { double rarity; bool hidden; };
+// The kill draw's scenarios (#166) also give a triple its tier ("32", none below 0) and field 41,
+// which DropItem's own draw reads beside 40 (RDM § 13.12, static reading).
+struct RepoInfo { double rarity; bool hidden; double tier = -1.0; bool f41 = false; };
 static std::map<Triple, RepoInfo> repoInfo;
 static RValue repoInfoStruct(const RepoInfo& i) {
-    return makeStruct({ { "27", RValue(i.rarity) }, { "40", RValue(i.hidden ? 1.0 : 0.0) } });
+    std::map<std::string, RValue> f{ { "27", RValue(i.rarity) }, { "40", RValue(i.hidden ? 1.0 : 0.0) } };
+    if (i.tier >= 0.0) f["32"] = RValue(i.tier);
+    if (i.f41) f["41"] = RValue(1.0);
+    return makeStruct(std::move(f));
 }
 // The unique data the plugin's own pool build reads (scenarios with `gamePool` only): each known
 // triple's name key (itemBaseInfoStruct "28"), and whether the game has it yet. Before it does -
@@ -559,6 +581,29 @@ struct AngelicHitBase {};
 static std::vector<AngelicHitBase> g_AngHitBases;
 static double g_AngHitChance = -1.0, g_AngHitRate = -1.0, g_AngHitSharePct = -1.0;
 static std::string AngelicHitNumber(double v) { char b[48]; std::snprintf(b, sizeof b, "%g", v); return b; }
+// raredrop's one LoadSatanicDropTier detour (#166, the kill draw's tier) and the globals beside it in
+// ModuleMain.cpp: the lift off (x1, a pass-through), its saved original, and the one install's route.
+static PFUNC_YYGMLScript g_OrigSatTier = nullptr;
+static double g_SatanicMult = 1.0;
+static constexpr double kSatanicTopBracket = 200.0;
+static volatile long g_SatTierHits = 0;
+static bool g_SatTierTried = false;
+static std::string g_SatTierRoute = "not-installed";
+// The kill draw's call-outs (#166), which hooks defined before its adapter call, as ModuleMain.cpp
+// declares them.
+static void KillDrawNoteRead(int argc, RValue** A);
+static bool KillDrawTypePick(int argc, RValue** A);
+static void KillDrawSettleHit();
+static void KillDrawNoteTier(const RValue& result);
+static bool KillDrawBeforeCreate(int argc, RValue** A);
+static bool KillDrawHoldsDropItem();
+static void KillDrawEnterRoll();
+static void KillDrawLeaveRoll();
+static bool KillDrawNoteBuiltElf();
+static std::string KillDrawInstall();
+static void KillDrawElfFillStat(FcNs::StatFields& s);
+static bool KillDrawNoteBuiltPiece(M1sNs::Piece piece);
+static std::string KillDrawRoute();
 
 // PRODUCTION_TYPES
 
@@ -623,6 +668,12 @@ static bool Mark1KillBeginCall(int uniqueDepth);
 static void Mark1KillEnter();
 static void Mark1KillLeave();
 static void Mark1DropAfterHit();
+#endif
+#ifdef HAS_KILLDRAWSTATE
+// The kill draw's state (#166), as ModuleMain.cpp declares it.
+static KillDrawState g_KillDraw;
+static FcNs::ElfDraw g_ElfDraw;
+static FcNs::ElfDrawCache g_ElfDrawCache;
 #endif
 
 // ---- the game: CreateDefaultParams, the item builder, the script table, DropItemAngelicChance ---
@@ -910,6 +961,100 @@ static RValue& gameDropItemHeroic(CInstance* self, CInstance* other, RValue&, in
     throw std::runtime_error("the model's Heroic roll kept nothing in 100000 draws");
 }
 
+// LoadSatanicDropTier(level): the tier DropItem draws its unique from (a whole number 0 to 5 by the
+// monster's level, static reading); here whatever a scenario sets, a number or not.
+static RValue satTierAnswer = RValue(3.0);
+static int satTierCalls = 0;
+static RValue satTierReturn;
+static RValue& gameLoadSatanicDropTier(CInstance*, CInstance*, RValue&, int, RValue**) {
+    ++satTierCalls;
+    satTierReturn = satTierAnswer;
+    return satTierReturn;
+}
+// Where DropItem's direct call lands: the game's function, or a detoured hook on it.
+static PFUNC_YYGMLScript satTierEntry = gameLoadSatanicDropTier;
+
+// DropItem(... twelve arguments), the kill's own drop (#166; hub RDM § 13.12, static reading): the
+// tier from LoadSatanicDropTier by direct call; an ordinary item when a scenario asks
+// (CreateDefaultParams(0, 900, 0), never typed by a unique read); the nested rolls a scenario asks for,
+// each through wherever the game's calls to it land (#74's Angelic roll, its outcome the next of
+// `outcomes`, and DropUniqueItems); then `dropItemDraws` unique draws from lootListUnique[k], k the
+// tier (0 when it is not a number): an index drawn (pickPolicy), drawn again unless the entry is an
+// array, its definition read through GetUniqueRepoStruct by direct call, drawn again on a set field
+// 40 or 41 or a rarity other than Satanic (6), at most 500 draws; then CreateDefaultParams(sub, b, 1)
+// and the placement under the entry's type. The layout each draw reads is recorded.
+static int dropItemCalls = 0;
+static bool dropItemThrows = false;
+static int dropItemDraws = 1;
+static bool dropItemNormal = false;
+static bool dropItemNestsAngelic = false, dropItemNestsUnique = false;
+static PFUNC_YYGMLScript angelicEntry = nullptr;   // the game's calls to DropItemAngelicChance: HookAngelicChance (set in reset)
+static int dropItemArgcSeen = -1;
+static std::vector<RValue*> dropItemArgsSeen;
+static std::vector<int> dropItemTiers;
+static std::vector<std::vector<std::vector<Triple>>> dropItemLayoutAtDraw;
+static RValue dropItemReturn;
+static RValue& gameDropItem(CInstance* self, CInstance* other, RValue&, int argc, RValue** A) {
+    ++dropItemCalls;
+    dropItemArgcSeen = argc;
+    dropItemArgsSeen.assign(A, A + argc);
+    if (dropItemThrows) throw std::runtime_error("the game's DropItem threw");
+    dropItemReturn = RValue();
+    RValue level(60.0), tierResult;
+    RValue* tierArgs[] = { &level };
+    const RValue& tier = satTierEntry(self, other, tierResult, 1, tierArgs);
+    const size_t k = tier.m_Kind == VALUE_REAL && tier.number >= 0 && tier.number < 6 ? (size_t)tier.number : 0;
+    dropItemTiers.push_back((int)k);
+    if (dropItemNormal) {
+        RValue sub(0.0), b(900.0), c(0.0), params;
+        RValue* args[] = { &sub, &b, &c };
+        RValue& made = cdpEntry(self, other, params, 3, args);
+        gameLootGroundCreate(6, made);
+    }
+    if (dropItemNestsAngelic && angelicEntry) {
+        RValue a0(640.0), a1(320.0), a2(1500.0), a3, r;
+        RValue* args[] = { &a0, &a1, &a2, &a3 };
+        angelicEntry(self, other, r, 4, args);
+    }
+    if (dropItemNestsUnique) nestedUniqueCall(self, other);
+    for (int i = 0; i < dropItemDraws; ++i) {
+        dropItemLayoutAtDraw.push_back(layoutNow());
+        RValue* v = listVariable();
+        if (!v || v->m_Kind != VALUE_ARRAY || v->array->size() <= k) continue;
+        std::vector<RValue>* list = dsFind((*v->array)[k]);
+        if (!list || list->empty()) continue;
+        std::vector<size_t> among;
+        if (pickPolicy == Pick::Among)
+            for (size_t e = 0; e < list->size(); ++e)
+                if (std::find(pickTriples.begin(), pickTriples.end(), tripleOf((*list)[e])) != pickTriples.end()) among.push_back(e);
+        for (size_t draw = 0; draw < 500; ++draw) {
+            size_t index = 0;
+            if (pickPolicy == Pick::First) index = draw % list->size();
+            else if (pickPolicy == Pick::Last) index = list->size() - 1 - draw % list->size();
+            else if (!among.empty() && draw == 0) index = among[std::uniform_int_distribution<size_t>(0, among.size() - 1)(pickRng)];
+            else index = std::uniform_int_distribution<size_t>(0, list->size() - 1)(pickRng);
+            if ((*list)[index].m_Kind != VALUE_ARRAY) continue;
+            const Triple picked = tripleOf((*list)[index]);
+            RValue type(picked[0]), sub(picked[1]), b(picked[2]), definition;
+            RValue* readArgs[] = { &type, &sub, &b };
+            RValue& def = repoEntry(self, other, definition, 3, readArgs);
+            if (def.m_Kind != VALUE_OBJECT || !def.fields->count("itemBaseInfoStruct")) continue;
+            auto& info = obj((*def.fields)["itemBaseInfoStruct"]);
+            if (info["40"].number != 0.0 || (info.count("41") && info["41"].number != 0.0) || info["27"].number != 6.0) continue;
+            if (repoRead == RepoRead::PickedThenOther) readDefinition(self, other, kOtherRead);   // a read the pick cannot be typed from
+            RValue c(1.0), params;
+            RValue* args[] = { &sub, &b, &c };
+            RValue& made = cdpEntry(self, other, params, 3, args);
+            gameLootGroundCreate(picked[0], made);
+            break;
+        }
+    }
+    return dropItemReturn;
+}
+// Where the game's own calls to DropItem land: its function, or DropManager's detoured hook on it
+// (which stays in for the process, as in the plugin, across a scenario's reset()).
+static PFUNC_YYGMLScript dropItemEntry = gameDropItem;
+
 // HookOneScript into a fake table: one install per name, a second call answers from the table.
 // By default every install is an inline detour (`*nativeOut = true`), so the roll's direct call
 // reaches the hook. `tableOnlyHook` names one hook whose detour fails, as HookOneScript's
@@ -960,6 +1105,18 @@ static bool HookOneScript(const char* shortName, const char* /*id*/, PVOID dest,
         else gameImage.push_back(reinterpret_cast<const void*>(gameDropItemHeroic));
         return true;
     }
+    if (name == "DropItem") {
+        *origOut = gameDropItem;
+        if (native) dropItemEntry = reinterpret_cast<PFUNC_YYGMLScript>(dest);
+        else gameImage.push_back(reinterpret_cast<const void*>(gameDropItem));
+        return true;
+    }
+    if (name == "LoadSatanicDropTier") {
+        *origOut = gameLoadSatanicDropTier;
+        if (native) satTierEntry = reinterpret_cast<PFUNC_YYGMLScript>(dest);
+        else gameImage.push_back(reinterpret_cast<const void*>(gameLoadSatanicDropTier));
+        return true;
+    }
     return false;
 }
 // The production test for "this saved original is the game's own code" (HookOneScript's
@@ -970,6 +1127,10 @@ static bool AddrIsExecutableInModule(HMODULE, const void* address) {
     for (const void* p : gameImage) if (p == address) return true;
     return false;
 }
+
+// The real plugin/include/ForgePact/DropManager.hpp (#166: the kill draw's DropItem detour is its
+// Hook_DropItem, installed alone by InstallDropItemHook), its #pragma and #include lines removed.
+// PRODUCTION_DROPMANAGER
 
 // PRODUCTION_FUNCTIONS
 
@@ -1069,6 +1230,23 @@ static void reset() {
     heroicCalls = 0; heroicThrows = false; heroicLayoutDuringCall.clear(); heroicListRead.clear();
 #ifdef HAS_MARK1DROPSTATE
     g_M1Drop = Mark1DropState{}; g_Orig_Mark1DropHeroic = nullptr; g_Mark1DropCopies = 1;
+#endif
+    // The kill draw (#166): the game's own DropItem and LoadSatanicDropTier, every lever off, and
+    // raredrop's one tier detour not tried.
+    satTierAnswer = RValue(3.0); satTierCalls = 0; satTierEntry = gameLoadSatanicDropTier;
+    dropItemCalls = 0; dropItemThrows = false; dropItemDraws = 1; dropItemNormal = false;
+    dropItemNestsAngelic = false; dropItemNestsUnique = false; dropItemArgcSeen = -1; dropItemArgsSeen.clear();
+    dropItemTiers.clear(); dropItemLayoutAtDraw.clear();
+    g_OrigSatTier = nullptr; g_SatanicMult = 1.0; g_SatTierHits = 0; g_SatTierTried = false; g_SatTierRoute = "not-installed";
+#ifdef HAS_HOOKANGELICCHANCE
+    angelicEntry = HookAngelicChance;
+#endif
+#ifdef HAS_KILLDRAWSTATE
+    g_KillDraw = KillDrawState{}; g_ElfDraw = FcNs::ElfDraw{}; g_ElfDrawCache = FcNs::ElfDrawCache{};
+    // DropManager is a process-wide singleton, as in the plugin: its DropItem hook, once in, stays in
+    // (the game's calls keep landing on it); an earlier install's splice is undone, so the next
+    // install splices the game's own function again.
+    if (PFUNC_YYGMLScript* slot = ForgePact::DropManager::Instance().DropItemOriginal(); slot && *slot) *slot = gameDropItem;
 #endif
 }
 static void require(bool condition, const std::string& message) {
@@ -1217,6 +1395,9 @@ static std::string flightStatLine() {
 #ifdef HAS_FLIGHTDROPFILLSTAT
     FcNs::StatFields s;
     FlightDropFillStat(s);
+#ifdef HAS_KILLDRAWELFFILLSTAT
+    KillDrawElfFillStat(s);   // as FlightCharmStatFields fills the `elf-draw-` fields after the drops'
+#endif
     return FcNs::StatLine(s);
 #else
     return std::string();
@@ -1372,12 +1553,78 @@ static const char* const kFreshDropsLine =
     " art-wait=0 helmet=0/0 body=0/0 boots=0/0 gloves=0/0 injected=0 refused=0 anomalies=0 standin-helmet=none"
     " standin-body=none standin-boots=none standin-gloves=none list-refused=0 unread=0 kill-gate=off kill-hook=not-installed"
     " kill-calls=0 kill-pushed=0 kill-nested=0 kill-helmet=0/0 kill-body=0/0 kill-boots=0/0 kill-gloves=0/0"
-    " kill-standin-helmet=none kill-standin-body=none kill-standin-boots=none kill-standin-gloves=none";
+    " kill-standin-helmet=none kill-standin-body=none kill-standin-boots=none kill-standin-gloves=none"
+    " draw-gate=off draw-hook=not-installed tier-hook=not-installed draw-calls=0 draw-pushed=0 draw-nested=0 tier-unread=0"
+    " draw-helmet=0/0 draw-body=0/0 draw-boots=0/0 draw-gloves=0/0 draw-standin-helmet=none draw-standin-body=none"
+    " draw-standin-boots=none draw-standin-gloves=none";
 
 static const char* const kFreshFlightLine =
     "flightcharm: switches elf=off wings=off broom=off | flight install=not-armed state=off equipped=none answered=0 excluded=0"
     " outside-room=0 depth=0 | icons=not-loaded ground=0 | guard kept=0 failed=0 | drops gate=off elf=0/0 wings=0/0 broom=0/0"
-    " injected=0 refused=0 anomalies=0 standin-elf=none";
+    " injected=0 refused=0 anomalies=0 standin-elf=none elf-draw-hook=not-installed elf-draw-calls=0 elf-draw-pushed=0"
+    " elf-draw=0/0 elf-draw-standin=none";
+
+// ---- the kill draw (#166): DropItem's own unique draw ---------------------------------------------
+// lootListUnique[0..4]: setUniqueLayout's twenty ordinary uniques each (class 4, rarity 3: the draw
+// never keeps one) plus one Satanic unique of the game's own the draw keeps, and the rows below; [5]
+// the Angelic list plus the rows only it holds. The draw stand-in rule (Mark1Drops.hpp's
+// ResolveDrawStandIns, FlightCharms.hpp's ResolveElfDrawStandIn): a triple of the class the draw keeps
+// as read (rarity 6, fields 40 and 41 clear), SS (tier 5) first - Pocket Elf's SS only - then the
+// smallest largest count over [0..5]; the coin c / (n_k + c) takes n on the list the tier names.
+static const Triple kDrawNatural{ 3, 2, 90 };      // Satanic, tier 3, once on each of [0..4]: the game's own unique
+static const Triple kHelmetDrawSs{ 0, 12, 50 };    // Satanic SS, on [5] once: the helmet's draw stand-in, n 0 on [0..4]
+static const Triple kHelmetDrawLow{ 0, 12, 51 };   // Satanic, tier 3, on [0]: kept by the draw, below SS, so not chosen
+static const Triple kBodyDrawSs{ 1, 13, 60 };      // Satanic SS, twice on [2]: the body armor's, n_2 2 (1 in 3 there)
+static const Triple kBootsDrawSs{ 2, 14, 70 };     // Satanic SS, on [5] once: the boots', n 0 on [0..4]
+static const Triple kGlovesDrawF41{ 4, 15, 80 };   // Satanic SS with field 41 set: never kept, so gloves have none
+static const Triple kElfDrawSs{ 10, 0, 76 };       // Aimbot.exe, Satanic SS, on [5] once: Pocket Elf's draw stand-in
+static const Triple kElfDrawLow{ 10, 0, 41 };      // Satanic tier 4, on [1]: kept, below SS, never Pocket Elf's
+static void setDrawLayout() {
+    std::array<std::vector<Triple>, 5> extra;
+    for (auto& e : extra) e = { kDrawNatural };
+    extra[0].push_back(kHelmetDrawLow);
+    extra[1].push_back(kElfDrawLow);
+    extra[2].push_back(kBodyDrawSs);
+    extra[2].push_back(kBodyDrawSs);
+    setUniqueLayout(extra, plus(vanillaTriples(), { kHelmetDrawSs, kBootsDrawSs, kGlovesDrawF41, kElfDrawSs }));
+    for (const Triple& t : vanillaTriples()) repoInfo[t] = { 7.0, false };   // the Angelic list's own: never kept by the draw
+    repoInfo[kDrawNatural] = { 6.0, false, 3.0 };
+    repoInfo[kHelmetDrawSs] = { 6.0, false, 5.0 };
+    repoInfo[kHelmetDrawLow] = { 6.0, false, 3.0 };
+    repoInfo[kBodyDrawSs] = { 6.0, false, 5.0 };
+    repoInfo[kBootsDrawSs] = { 6.0, false, 5.0 };
+    repoInfo[kGlovesDrawF41] = { 6.0, false, 5.0, true };
+    repoInfo[kElfDrawSs] = { 6.0, false, 5.0 };
+    repoInfo[kElfDrawLow] = { 6.0, false, 4.0 };
+}
+// The pieces' draw stand-ins in the core's plan order, and the stat line's form of them.
+static const std::vector<Triple> kDrawPush{ kHelmetDrawSs, kBodyDrawSs, kBootsDrawSs };
+static const char* const kDrawStandIns =
+    " draw-standin-helmet=12:50@6/5x0,0,0,0,0,1 draw-standin-body=13:60@6/5x0,0,2,0,0,0"
+    " draw-standin-boots=14:70@6/5x0,0,0,0,0,1 draw-standin-gloves=none";
+// What list k carries during a pushing DropItem call: Pocket Elf's row first (when it is on), then the
+// pieces' (when the drops are on).
+static std::vector<Triple> drawCarried(size_t k, bool elf, bool pieces = true) {
+    std::vector<Triple> v = vanillaLayout[k];
+    if (elf) v.push_back(kElfDrawSs);
+    if (pieces) v.insert(v.end(), kDrawPush.begin(), kDrawPush.end());
+    return v;
+}
+// One call of the game's DropItem, through wherever the game's calls land (DropManager's detour once
+// it is in), with twelve arguments, as each of its object-event call sites passes.
+static RValue dropItemArgs[12];
+static RValue* dropItemArgv[12];
+static RValue* dropItem(CInstance& monster) {
+    static RValue result;
+    for (int i = 0; i < 12; ++i) { dropItemArgs[i] = RValue((double)(i + 1)); dropItemArgv[i] = &dropItemArgs[i]; }
+    return &dropItemEntry(&monster, nullptr, result, 12, dropItemArgv);
+}
+static bool layoutsCarry(size_t from, bool elf, bool pieces = true) {
+    for (size_t i = from; i < dropItemLayoutAtDraw.size(); ++i)
+        for (size_t k = 0; k < 6; ++k)
+            if (dropItemLayoutAtDraw[i][k] != drawCarried(k, elf, pieces)) return false;
+    return from < dropItemLayoutAtDraw.size();
+}
 
 int main(int argc, char** argv) {
     if (argc != 2) return 2;
@@ -2688,7 +2935,7 @@ int main(int argc, char** argv) {
 #ifdef HAS_MARK1DROPSTATE
             setHeroicLayout();
             dropsSwitch(true);
-            require(lastLine("mark1set:") == "mark1set: drops=on install=installed gate=pending kill-gate=pending",
+            require(lastLine("mark1set:") == "mark1set: drops=on install=installed gate=pending kill-gate=pending draw-gate=pending",
                     "the switch-on reply: " + lastLine("mark1set:"));
             require(g_Mark1.ArtArmed() && g_M1sGroundTried && mark1GroundInstalls == 1,
                     "the drops' switch-on did not arm the art and try the pieces' ground install");
@@ -2884,7 +3131,7 @@ int main(int argc, char** argv) {
             setHeroicLayout();
             playerResolves = false;
             dropsSwitch(true);
-            require(lastLine("mark1set:") == "mark1set: drops=on install=waiting-for-character gate=off kill-gate=off",
+            require(lastLine("mark1set:") == "mark1set: drops=on install=waiting-for-character gate=off kill-gate=off draw-gate=off",
                     "the armed reply: " + lastLine("mark1set:"));
             require(installs["DropItemHeroic"] == 0 && installs["CreateDefaultParams"] == 0 && heroicEntry == gameDropItemHeroic,
                     "something was hooked at character select");
@@ -2909,7 +3156,7 @@ int main(int argc, char** argv) {
             setHeroicLayout();
             tableOnlyHook = "DropItemHeroic";
             dropsSwitch(true);
-            require(lastLine("mark1set:") == "mark1set: drops=off install=refused gate=refused kill-gate=refused",
+            require(lastLine("mark1set:") == "mark1set: drops=off install=refused gate=refused kill-gate=refused draw-gate=refused",
                     "the refused reply: " + lastLine("mark1set:"));
             require(anyLineHas("mark1set drops: refused - ", "DropItemHeroic went in TABLE-ONLY"), "the refusal line: " + lastLine("mark1set drops:"));
             dropHeroic(monster);
@@ -2918,7 +3165,7 @@ int main(int argc, char** argv) {
             setHeroicLayout();
             tableOnlyHook = "CreateDefaultParams";
             dropsSwitch(true);
-            require(lastLine("mark1set:") == "mark1set: drops=on install=installed gate=no-detection kill-gate=no-detection",
+            require(lastLine("mark1set:") == "mark1set: drops=on install=installed gate=no-detection kill-gate=no-detection draw-gate=no-detection",
                     "the no-detection reply: " + lastLine("mark1set:"));
             dropHeroic(monster);
             require(heroicLayoutDuringCall[0] == vanillaLayout && lineHas(dropsStatLine(), " heroic-calls=1 pushed-calls=0 "),
@@ -3009,7 +3256,7 @@ int main(int argc, char** argv) {
 #ifdef HAS_MARK1DROPSTATE
             setKillLayout();
             dropsSwitch(true);
-            require(lastLine("mark1set:") == "mark1set: drops=on install=installed gate=pending kill-gate=pending",
+            require(lastLine("mark1set:") == "mark1set: drops=on install=installed gate=pending kill-gate=pending draw-gate=pending",
                     "the switch-on reply: " + lastLine("mark1set:"));
             require(installs["DropUniqueItems"] == 1 && uniqueEntry != gameDropUniqueItems, "the drops' install did not hook DropUniqueItems, detoured");
             const std::string fresh = dropsStatLine();
@@ -3204,13 +3451,13 @@ int main(int argc, char** argv) {
             flightSwitch(FcNs::Charm::Elf, true);
             dropsSwitch(true);
             require(installs["DropUniqueItems"] == 1 && uniqueEntry != gameDropUniqueItems, "elf first: not one detoured hook");
-            require(lastLine("mark1set:") == "mark1set: drops=on install=installed gate=pending kill-gate=pending", "elf first, the reply: " + lastLine("mark1set:"));
+            require(lastLine("mark1set:") == "mark1set: drops=on install=installed gate=pending kill-gate=pending draw-gate=pending", "elf first, the reply: " + lastLine("mark1set:"));
             require(lineHas(dropsStatLine(), " kill-hook=detoured "), "elf first, kill-hook: " + dropsStatLine());
             reset();
             setKillLayout();
             tableOnlyHook = "DropUniqueItems";
             dropsSwitch(true);
-            require(lastLine("mark1set:") == "mark1set: drops=off install=refused gate=refused kill-gate=refused", "table-only, the reply: " + lastLine("mark1set:"));
+            require(lastLine("mark1set:") == "mark1set: drops=off install=refused gate=refused kill-gate=refused draw-gate=refused", "table-only, the reply: " + lastLine("mark1set:"));
             require(anyLineHas("mark1set drops: refused - ", "DropUniqueItems went in TABLE-ONLY"), "the refusal line: " + lastLine("mark1set drops:"));
             require(linesStartingWith("flightcharm") == 0, "the drops' refusal was logged as Pocket Elf's");
             require(lineHas(dropsStatLine(), " kill-hook=TABLE-ONLY "), "table-only, kill-hook: " + dropsStatLine());
@@ -3237,6 +3484,397 @@ int main(int argc, char** argv) {
             for (size_t k = 0; k < 5; ++k) require(uniqueLayoutDuringCall[1][k] == killCarried(k), "an art-ready call did not push");
 #else
             require(false, "this source has no Mark 1 drop adapter");
+#endif
+        // ---- the kill draw (#166): baseline, holds against the source before it ----
+        } else if (test == "mark1_draw_untouched_installs_nothing") {
+            // Neither switch touched: DropItem and its own unique draw are the game's, nothing is
+            // hooked and the plugin calls nothing.
+            setDrawLayout();
+            pickPolicy = Pick::First;
+            for (int i = 0; i < 3; ++i) dropItem(monster);
+            require(installs["DropItem"] == 0 && dropItemEntry == gameDropItem, "DropItem was hooked with no switch on");
+            require(installs["LoadSatanicDropTier"] == 0 && satTierEntry == gameLoadSatanicDropTier, "LoadSatanicDropTier was hooked with no switch on");
+            require(builtinCalls == 0, "with no switch on the plugin called the runtime");
+            require(dropItemCalls == 3 && satTierCalls == 3, "DropItem or its tier did not run once per call");
+            for (const auto& seen : dropItemLayoutAtDraw) require(seen == vanillaLayout, "the draw read lists that are not the game's own");
+            require(builds.size() == 3, "not one unique per call");
+            for (const auto& b : builds) require(b.t == 3 && b.j == 2 && b.b == 90 && b.c == 1.0 && b.a == kLootGroundSeed, "the draw did not build the game's own pick");
+            require(linesStartingWith("mark1set") == 0 && linesStartingWith("flightcharm") == 0 && linesStartingWith("kill draw") == 0,
+                    "a line was logged with no switch on");
+        } else if (test == "mark1_draw_switch_off_is_vanilla") {
+            // Both features on (DropManager's DropItem detour and raredrop's tier detour go in, detoured)
+            // and off again: Hook_DropItem calls the game's DropItem exactly as before - once per call,
+            // with the caller's own twelve arguments, its return handed back - each call counted
+            // (` draw-calls=`, ` elf-draw-calls=`), and the lists the draw reads, what it builds and the
+            // runtime calls the plugin makes are the game's own.
+#ifdef HAS_KILLDRAWSTATE
+            flightRepo();
+            setDrawLayout();
+            dropsSwitch(true);
+            flightSwitch(FcNs::Charm::Elf, true);
+            require(installs["DropItem"] == 1 && dropItemEntry != gameDropItem, "the switch-on did not hook DropItem, detoured");
+            require(installs["LoadSatanicDropTier"] == 1 && satTierEntry != gameLoadSatanicDropTier, "the switch-on did not hook LoadSatanicDropTier, detoured");
+            dropsSwitch(false);
+            flightSwitch(FcNs::Charm::Elf, false);
+            const int runtime = builtinCalls;
+            pickPolicy = Pick::First;
+            for (int i = 0; i < 4; ++i) {
+                RValue* r = dropItem(monster);
+                require(r == &dropItemReturn, "Hook_DropItem did not hand back the game's own return");
+                require(dropItemArgcSeen == 12 && dropItemArgsSeen == std::vector<RValue*>(dropItemArgv, dropItemArgv + 12),
+                        "the game's DropItem was not handed the caller's own arguments");
+            }
+            require(dropItemCalls == 4 && satTierCalls == 4, "switched off, DropItem or its tier did not run once per call");
+            for (const auto& seen : dropItemLayoutAtDraw) require(seen == vanillaLayout, "switched off, the draw read a changed list");
+            require(layoutNow() == vanillaLayout, "switched off, the lists are not the game's own after the calls");
+            require(builtinCalls == runtime, "switched off, the plugin called the runtime during a DropItem call");
+            require(builds.size() == 4 && countPieceBuilds(-1) == 0 && countFlightBuilds(-1) == 0, "switched off, a piece or a charm was built");
+            for (const auto& b : builds) require(b.c == 1.0 && b.a == kLootGroundSeed, "switched off, a record was rewritten");
+            const std::string line = dropsStatLine();
+            require(lineHas(line, " draw-gate=off draw-hook=detoured tier-hook=detoured draw-calls=4 draw-pushed=0 draw-nested=0 tier-unread=0"
+                                  " draw-helmet=0/0 draw-body=0/0 draw-boots=0/0 draw-gloves=0/0 "), "switched off, the draw fields: " + line);
+            require(lineHas(flightStatLine(), " elf-draw-hook=detoured elf-draw-calls=4 elf-draw-pushed=0 elf-draw=0/0 "),
+                    "switched off, the elf's draw fields: " + flightStatLine());
+            require(linesStartingWith("kill draw") == 0 && linesStartingWith("mark1set drops hit:") == 0 && linesStartingWith("flightcharm hit:") == 0,
+                    "switched off, a hit or an anomaly was logged");
+#else
+            require(false, "this source has no kill draw");
+#endif
+        } else if (test == "flight_draw_switch_off_is_vanilla") {
+            // Pocket Elf alone, on and off again: the draw's hooks stay in and pass every call through.
+#ifdef HAS_KILLDRAWSTATE
+            flightRepo();
+            setDrawLayout();
+            flightSwitch(FcNs::Charm::Elf, true);
+            require(installs["DropItem"] == 1 && installs["LoadSatanicDropTier"] == 1, "Pocket Elf's switch-on did not hook the draw");
+            flightSwitch(FcNs::Charm::Elf, false);
+            pickPolicy = Pick::Last;
+            for (int i = 0; i < 3; ++i) dropItem(monster);
+            for (const auto& seen : dropItemLayoutAtDraw) require(seen == vanillaLayout, "switched off, the draw read a changed list");
+            require(builds.size() == 3 && countFlightBuilds(-1) == 0, "switched off, a charm was built");
+            require(lineHas(flightStatLine(), " elf-draw-hook=detoured elf-draw-calls=3 elf-draw-pushed=0 elf-draw=0/0 elf-draw-standin=none"),
+                    "switched off, the elf's draw fields: " + flightStatLine());
+#else
+            require(false, "this source has no kill draw");
+#endif
+        // ---- the kill draw (#166): target, every scenario fails against the source before it ----
+        } else if (test == "mark1_draw_hit_builds_the_piece") {
+            // The drops' install hooks DropItem (DropManager's one detour) and LoadSatanicDropTier
+            // (raredrop's); each DropItem call carries one entry per draw stand-in on each of
+            // lootListUnique[0..5] for its length; a typed pick of a pushed stand-in's whole triple is
+            // the piece's at c in n_k + c, k the tier the call recorded (boots: n_3 0, so every one); the
+            // game builds it from the rewritten record, the forge's final pass counts it built on the
+            // draw's own tally, and the hit's line says so. #74's `sigdrop status` does not move.
+#ifdef HAS_KILLDRAWSTATE
+            setDrawLayout();
+            dropsSwitch(true);
+            require(lastLine("mark1set:") == "mark1set: drops=on install=installed gate=pending kill-gate=pending draw-gate=pending",
+                    "the switch-on reply: " + lastLine("mark1set:"));
+            require(installs["DropItem"] == 1 && dropItemEntry != gameDropItem, "the drops' install did not hook DropItem, detoured");
+            require(installs["LoadSatanicDropTier"] == 1 && satTierEntry != gameLoadSatanicDropTier, "the drops' install did not hook the tier, detoured");
+            const std::string fresh = dropsStatLine();
+            require(lineHas(fresh, " draw-gate=pending draw-hook=detoured tier-hook=detoured draw-calls=0 draw-pushed=0 draw-nested=0 tier-unread=0 ")
+                        && lineHas(fresh, " draw-standin-helmet=pending draw-standin-body=pending draw-standin-boots=pending draw-standin-gloves=pending"),
+                    "the drops line before the first call: " + fresh);
+            const std::string sig = sigdropStatusLine();
+            pickPolicy = Pick::Last;
+            satTierAnswer = RValue(3.0);
+            for (int i = 0; i < 5; ++i) dropItem(monster);
+            require(dropItemCalls == 5 && dropItemTiers.size() == 5 && dropItemTiers[0] == 3, "DropItem did not run once per call at tier 3");
+            require(layoutsCarry(0, false), "a draw did not read every list carrying the three draw stand-ins once");
+            require(layoutNow() == vanillaLayout, "after the calls the lists are not the game's own");
+            require(builds.size() == 5 && countPieceBuilds(2) == 5, "every boots pick (n_3 0) was not built as Mark 1 Boots");
+            for (const auto& b : builds) require(b.t == 2 && b.c == 0 && b.j == 0, "a piece was not built from Mark 1 Boots' own definition");
+            const M1dNs::DropStatFields f = dropsFields();
+            require(f.drawPieces[2].ours == 5 && f.drawPieces[2].built == 5 && f.pieces[2].ours == 0 && f.killPieces[2].ours == 0,
+                    "the boots were not counted ours and built on the draw's own tally");
+            require(linesEndingWith("mark1set drops hit:", "kill draw -> Mark 1 Boots (stand-in 2/14/70, 1 in 1, k 3) built by the game") == 5,
+                    "a hit line does not say the game built the boots: " + lastLine("mark1set drops hit:"));
+            const std::string line = dropsStatLine();
+            require(lineHas(line, " draw-gate=on draw-hook=detoured tier-hook=detoured draw-calls=5 draw-pushed=5 draw-nested=0 tier-unread=0"
+                                  " draw-helmet=0/0 draw-body=0/0 draw-boots=5/5 draw-gloves=0/0" + std::string(kDrawStandIns)),
+                    "the draw fields after the calls: " + line);
+            require(lineHas(line, " injected=90 refused=0 anomalies=0 "), "the injected count (3 per list, 6 lists, 5 calls): " + line);
+            const std::string after = sigdropStatusLine();
+            require(after.substr(0, after.find(" cdpCalls=")) == sig.substr(0, sig.find(" cdpCalls=")), "`sigdrop status` moved: " + after);
+            require(g_FlightDrop.injected == 0, "Pocket Elf's counters moved");
+            require(g_SigRollDepth == 0 && g_KillDraw.depth == 0 && g_KillDraw.pushDepth == 0 && g_KillDraw.aside == 0, "the draw's state stayed raised");
+#else
+            require(false, "this source has no kill draw");
+#endif
+        } else if (test == "mark1_draw_coin_one_in_n_plus_c_at_k") {
+            // The body armor's draw stand-in is listed twice on [2] and nowhere else: a pick of it at
+            // tier 2 is the piece's 1 in 3, at tier 4 every time; a pick not ours is the game's own.
+#ifdef HAS_KILLDRAWSTATE
+            setDrawLayout();
+            dropsSwitch(true);
+            pickPolicy = Pick::Among; pickTriples = { kBodyDrawSs };
+            satTierAnswer = RValue(2.0);
+            for (int i = 0; i < 1500; ++i) dropItem(monster);
+            const long long ours = (long long)dropsFields().drawPieces[1].ours;
+            require(ours >= 400 && ours <= 600, "a body armor stand-in pick at k 2 was not ours about 1 in 3: " + std::to_string(ours));
+            require(builds.size() == 1500 && countPieceBuilds(1) == ours && (long long)dropsFields().drawPieces[1].built == ours,
+                    "the game did not build a body armor for every pick that was ours");
+            for (const auto& b : builds)
+                if (b.c == 1.0) require(b.t == 1 && b.j == 13 && b.b == 60 && b.a == kLootGroundSeed, "a pick not ours was not the game's own stand-in");
+                else require(b.t == 1 && b.c == 0 && b.j == 0, "a body armor was not built from its own definition");
+            require(anyLineHas("mark1set drops hit:", "kill draw -> Mark 1 Body Armor (stand-in 1/13/60, 1 in 3, k 2) built by the game"),
+                    "the hit line's odds at k 2");
+            satTierAnswer = RValue(4.0);
+            for (int i = 0; i < 50; ++i) dropItem(monster);
+            require((long long)dropsFields().drawPieces[1].ours == ours + 50, "a pick at k 4 (n_4 0) was not ours every time");
+            require(anyLineHas("mark1set drops hit:", "(stand-in 1/13/60, 1 in 1, k 4) built by the game"), "the hit line's odds at k 4");
+            require(layoutNow() == vanillaLayout, "the lists are not the game's own after the calls");
+#else
+            require(false, "this source has no kill draw");
+#endif
+        } else if (test == "mark1_draw_no_tier_is_refused") {
+            // LoadSatanicDropTier answers no number: a pick of a stand-in is refused (` tier-unread=`), the
+            // game's own stand-in is built, untouched, and no line names a piece.
+#ifdef HAS_KILLDRAWSTATE
+            setDrawLayout();
+            dropsSwitch(true);
+            satTierAnswer = RValue();
+            pickPolicy = Pick::Last;
+            for (int i = 0; i < 3; ++i) dropItem(monster);
+            require(countPieceBuilds(-1) == 0, "a pick with no tier recorded was built as a piece");
+            require(builds.size() == 3, "not one unique per call");
+            for (const auto& b : builds) require(b.t == 2 && b.j == 14 && b.b == 70 && b.c == 1.0 && b.a == kLootGroundSeed, "the game's own stand-in was rewritten");
+            const std::string line = dropsStatLine();
+            require(lineHas(line, " tier-unread=3 draw-helmet=0/0 draw-body=0/0 draw-boots=0/0 "), "the refusals: " + line);
+            require(linesStartingWith("mark1set drops hit:") == 0, "a refused pick logged a hit");
+            require(layoutNow() == vanillaLayout, "the lists are not the game's own after the calls");
+#else
+            require(false, "this source has no kill draw");
+#endif
+        } else if (test == "mark1_draw_two_hits_in_one_call") {
+            // A call that draws twice and picks a stand-in both times: each hit is settled before the
+            // next starts, each rewritten, built and counted, each with its own line.
+#ifdef HAS_KILLDRAWSTATE
+            setDrawLayout();
+            dropsSwitch(true);
+            dropItemDraws = 2;
+            pickPolicy = Pick::Last;
+            for (int i = 0; i < 3; ++i) dropItem(monster);
+            require(builds.size() == 6 && countPieceBuilds(2) == 6, "two hits per call were not each built as Mark 1 Boots");
+            require(dropsFields().drawPieces[2].ours == 6 && dropsFields().drawPieces[2].built == 6, "the two hits per call were not each counted");
+            require(linesEndingWith("mark1set drops hit:", "kill draw -> Mark 1 Boots (stand-in 2/14/70, 1 in 1, k 3) built by the game") == 6,
+                    "a hit's line is missing or wrong: " + lastLine("mark1set drops hit:"));
+            require(lineHas(dropsStatLine(), " draw-calls=3 draw-pushed=3 "), "one push per call: " + dropsStatLine());
+            require(layoutsCarry(0, false) && layoutNow() == vanillaLayout, "the second draw did not read the same push, or the lists were left changed");
+#else
+            require(false, "this source has no kill draw");
+#endif
+        } else if (test == "mark1_draw_nested_angelic_sees_the_lists_as_before") {
+            // #74's Angelic roll inside a pushing DropItem call sees the lists exactly as on its own -
+            // #74's stand-in, no draw stand-in - and types its hit the same way; the draw after it reads
+            // the stand-ins back on, and its hit is the piece's (` draw-nested=1`).
+#ifdef HAS_KILLDRAWSTATE
+            setDrawLayout();
+            dropsSwitch(true);
+            g_HhEnabled = true; g_HhForced = true;
+            installDetection();
+            pickPolicy = Pick::Last;
+            roll(monster, { true });
+            require(originalCalls == 1 && linesStartingWith("angelic hit:") == 1 && anyLineHas("angelic hit:", "picked 8/0/51"),
+                    "the Angelic roll on its own did not hit #74's stand-in: " + lastLine("angelic hit:"));
+            const std::vector<std::vector<Triple>> alone = layoutDuringCall[0];
+            const long hits = g_SigGameHits;
+            dropItemNestsAngelic = true;
+            outcomes.assign({ true });
+            dropItem(monster);
+            require(originalCalls == 2 && layoutDuringCall[1] == alone, "the Angelic roll nested in DropItem did not see the lists as on its own");
+            require(g_SigGameHits == hits + 1 && linesStartingWith("angelic hit:") == 2 && lastLine("angelic hit:").find("picked 8/0/51") != std::string::npos,
+                    "the nested Angelic hit was not typed as on its own: " + lastLine("angelic hit:"));
+            require(layoutsCarry(0, false), "the draw after the nested roll did not read the stand-ins back on");
+            require(countPieceBuilds(2) == 1 && dropsFields().drawPieces[2].built == 1, "the draw's hit after the nested roll was not the piece's");
+            require(lineHas(dropsStatLine(), " draw-calls=1 draw-pushed=1 draw-nested=1 "), "the nested roll was not counted: " + dropsStatLine());
+            require(layoutNow() == vanillaLayout && g_SigRollDepth == 0 && g_KillDraw.aside == 0, "the lists or the state were left changed");
+#else
+            require(false, "this source has no kill draw");
+#endif
+        } else if (test == "mark1_draw_nested_unique_pushes_and_hits_as_today") {
+            // The shared DropUniqueItems detour inside a pushing DropItem call sees the lists without the
+            // draw's entries and pushes and hits as it does on its own (the kill stand-ins on [0..4]);
+            // the draw after it reads its own entries back on.
+#ifdef HAS_KILLDRAWSTATE
+            setDrawLayout();
+            dropsSwitch(true);
+            dropItemNestsUnique = true;
+            uniqueK = 3;
+            pickPolicy = Pick::Last;
+            dropItem(monster);
+            require(uniqueCalls == 1, "the nested unique roll did not run once");
+            for (size_t k = 0; k < 5; ++k)
+                require(uniqueLayoutDuringCall[0][k] == plus(vanillaLayout[k], { kHelmetDrawSs, kBootsDrawSs, kGlovesDrawF41 }),
+                        "lootListUnique[" + std::to_string(k) + "] during the nested unique roll was not the kill route's own push");
+            require(uniqueLayoutDuringCall[0][5] == vanillaLayout[5], "the nested unique roll saw a draw entry on [5]");
+            const M1dNs::DropStatFields f = dropsFields();
+            require(f.killPieces[3].ours == 1 && f.killPieces[3].built == 1 && countPieceBuilds(3) == 1, "the nested unique roll's hit was not the gloves' as on its own");
+            require(anyLineHas("mark1set drops hit:", "unique roll -> Mark 1 Gloves"), "the nested unique roll's hit line");
+            require(layoutsCarry(0, false) && f.drawPieces[2].built == 1 && countPieceBuilds(2) == 1, "the draw after the nested roll did not hit as before");
+            require(lineHas(dropsStatLine(), " kill-calls=1 kill-pushed=1 kill-nested=0 ") && lineHas(dropsStatLine(), " draw-nested=1 "),
+                    "the counts: " + dropsStatLine());
+            require(layoutNow() == vanillaLayout && g_FlightDrop.uniqueDepth == 0 && g_KillDraw.aside == 0, "the lists or the state were left changed");
+#else
+            require(false, "this source has no kill draw");
+#endif
+        } else if (test == "mark1_draw_throw_leaves_the_lists_as_found") {
+            // The game's DropItem throws with the entries on: the throw reaches the caller and every entry
+            // comes off all six lists first; the next call pushes and removes as before.
+#ifdef HAS_KILLDRAWSTATE
+            setDrawLayout();
+            dropsSwitch(true);
+            dropItemThrows = true;
+            bool threw = false;
+            try { dropItem(monster); } catch (const std::exception&) { threw = true; }
+            require(threw, "the game's throw did not reach the caller");
+            require(layoutNow() == vanillaLayout, "after the throw a list kept stand-in entries");
+            require(g_KillDraw.depth == 0 && g_KillDraw.pushDepth == 0 && !g_KillDraw.onLists, "the draw's state stayed raised after the throw");
+            require(dropsFields().anomalies == 0, "the throw was counted as an anomaly");
+            dropItemThrows = false;
+            pickPolicy = Pick::Last;
+            dropItem(monster);
+            require(layoutsCarry(0, false) && countPieceBuilds(2) == 1 && layoutNow() == vanillaLayout, "the next call did not push, hit and remove as before");
+#else
+            require(false, "this source has no kill draw");
+#endif
+        } else if (test == "mark1_draw_dropmult_copies_each_carry_the_draw") {
+            // `dropmult item 3`: Hook_DropItem calls the game's DropItem three times, and each original call
+            // is one draw call with its own push and removal.
+#ifdef HAS_KILLDRAWSTATE
+            setDrawLayout();
+            dropsSwitch(true);
+            ForgePact::DropManager::Instance().SetMultiplier("item", 3);
+            pickPolicy = Pick::Last;
+            dropItem(monster);
+            require(dropItemCalls == 3 && dropItemLayoutAtDraw.size() == 3 && layoutsCarry(0, false), "each dropmult copy did not carry the draw's entries");
+            require(countPieceBuilds(2) == 3, "each copy's hit was not the piece's");
+            require(lineHas(dropsStatLine(), " draw-calls=3 draw-pushed=3 "), "each copy was not one draw call: " + dropsStatLine());
+            require(layoutNow() == vanillaLayout, "the lists were left changed");
+#else
+            require(false, "this source has no kill draw");
+#endif
+        } else if (test == "mark1_draw_table_only_dropitem_refuses") {
+            // A DropItem hook that went in table-only refuses the drops whole, on a line of their own; the
+            // game's calls pass it by and nothing is pushed.
+#ifdef HAS_KILLDRAWSTATE
+            setDrawLayout();
+            tableOnlyHook = "DropItem";
+            dropsSwitch(true);
+            require(lastLine("mark1set:") == "mark1set: drops=off install=refused gate=refused kill-gate=refused draw-gate=refused",
+                    "the reply: " + lastLine("mark1set:"));
+            require(anyLineHas("mark1set drops: refused - ", "DropItem went in TABLE-ONLY"), "the refusal line: " + lastLine("mark1set drops:"));
+            require(lineHas(dropsStatLine(), " draw-hook=TABLE-ONLY "), "draw-hook: " + dropsStatLine());
+            pickPolicy = Pick::Last;
+            dropItem(monster);
+            require(dropItemLayoutAtDraw[0] == vanillaLayout && countPieceBuilds(-1) == 0, "a table-only hook changed the draw");
+#else
+            require(false, "this source has no kill draw");
+#endif
+        } else if (test == "mark1_draw_table_only_tier_refuses") {
+            // A LoadSatanicDropTier hook that went in table-only refuses the drops whole too: the draw's
+            // tier would go unrecorded.
+#ifdef HAS_KILLDRAWSTATE
+            setDrawLayout();
+            tableOnlyHook = "LoadSatanicDropTier";
+            dropsSwitch(true);
+            require(lastLine("mark1set:") == "mark1set: drops=off install=refused gate=refused kill-gate=refused draw-gate=refused",
+                    "the reply: " + lastLine("mark1set:"));
+            require(anyLineHas("mark1set drops: refused - ", "LoadSatanicDropTier went in TABLE-ONLY"), "the refusal line: " + lastLine("mark1set drops:"));
+            require(lineHas(dropsStatLine(), " draw-hook=detoured tier-hook=TABLE-ONLY "), "the hooks: " + dropsStatLine());
+#else
+            require(false, "this source has no kill draw");
+#endif
+        } else if (test == "flight_draw_hit_builds_pocket_elf") {
+            // Pocket Elf's switch-on hooks the draw too; each DropItem call carries its SS stand-in
+            // (Aimbot.exe) once on each of [0..5]; a typed pick of it is Pocket Elf's at c in n_k + c
+            // (n_3 0, so every one), rewritten to Pocket Elf's own definition, built and counted on the
+            // `elf-draw=` tally, the DropUniqueItems route's own tally untouched.
+#ifdef HAS_KILLDRAWSTATE
+            flightRepo();
+            setDrawLayout();
+            flightSwitch(FcNs::Charm::Elf, true);
+            require(installs["DropItem"] == 1 && dropItemEntry != gameDropItem && installs["LoadSatanicDropTier"] == 1,
+                    "Pocket Elf's switch-on did not hook the draw, detoured");
+            require(lineHas(flightStatLine(), " elf-draw-hook=detoured elf-draw-calls=0 elf-draw-pushed=0 elf-draw=0/0 elf-draw-standin=pending"),
+                    "the elf's draw fields before the first call: " + flightStatLine());
+            const std::string sig = sigdropStatusLine();
+            pickPolicy = Pick::Last;
+            for (int i = 0; i < 4; ++i) dropItem(monster);
+            require(layoutsCarry(0, true, false), "a draw did not read every list carrying Aimbot.exe once");
+            require(layoutNow() == vanillaLayout, "after the calls the lists are not the game's own");
+            require(builds.size() == 4 && countFlightBuilds((int)FcNs::Charm::Elf) == 4, "every Aimbot.exe pick (n_3 0) was not built as Pocket Elf");
+            for (const auto& b : builds) require(b.t == 10 && b.b == 0 && b.c == 0 && b.j == 0, "a Pocket Elf was not built from its own definition");
+            require(linesEndingWith("flightcharm hit:", "kill draw -> Pocket Elf (stand-in 10/0/76, 1 in 1, k 3) built by the game") == 4,
+                    "a hit line does not say the game built Pocket Elf: " + lastLine("flightcharm hit:"));
+            require(lineHas(flightStatLine(), " elf-draw-hook=detoured elf-draw-calls=4 elf-draw-pushed=4 elf-draw=4/4 elf-draw-standin=0:76@6/5x0,0,0,0,0,1"),
+                    "the elf's draw fields after the calls: " + flightStatLine());
+            require(g_FlightDrop.tally[(int)FcNs::Charm::Elf].ours == 0 && g_FlightDrop.injected == 24 && g_FlightDrop.anomalies == 0,
+                    "the DropUniqueItems route's tally moved, or the draw's pushes were not counted");
+            const std::string after = sigdropStatusLine();
+            require(after.substr(0, after.find(" cdpCalls=")) == sig.substr(0, sig.find(" cdpCalls=")), "`sigdrop status` moved: " + after);
+#else
+            require(false, "this source has no kill draw");
+#endif
+        } else if (test == "flight_draw_and_mark1_each_hit_their_own") {
+            // Both on, one DropItem detour and one tier detour: each call carries Pocket Elf's stand-in and
+            // then the pieces'; a pick of Aimbot.exe is Pocket Elf's, a pick of the boots' stand-in Mark 1
+            // Boots', each counted on its own feature's draw tally alone.
+#ifdef HAS_KILLDRAWSTATE
+            flightRepo();
+            setDrawLayout();
+            dropsSwitch(true);
+            flightSwitch(FcNs::Charm::Elf, true);
+            require(installs["DropItem"] == 1 && installs["LoadSatanicDropTier"] == 1, "a second DropItem or tier hook went in");
+            pickPolicy = Pick::Among; pickTriples = { kElfDrawSs, kBootsDrawSs };
+            for (int i = 0; i < 400; ++i) dropItem(monster);
+            require(layoutsCarry(0, true, true), "a list did not carry Pocket Elf's entry and then the pieces'");
+            require(layoutNow() == vanillaLayout, "the lists are not the game's own after the calls");
+            const int elf = countFlightBuilds((int)FcNs::Charm::Elf), boots = countPieceBuilds(2);
+            require(builds.size() == 400 && elf + boots == 400 && elf > 100 && boots > 100,
+                    "the picks were not each built as their own item: elf " + std::to_string(elf) + ", boots " + std::to_string(boots));
+            require(lineHas(flightStatLine(), " elf-draw=" + std::to_string(elf) + "/" + std::to_string(elf) + " "), "Pocket Elf's draw tally: " + flightStatLine());
+            const M1dNs::DropStatFields f = dropsFields();
+            require((int)f.drawPieces[2].ours == boots && (int)f.drawPieces[2].built == boots, "the boots' draw tally is not their builds");
+            require(g_FlightDrop.anomalies == 0 && f.anomalies == 0, "a removal found someone else's tail");
+#else
+            require(false, "this source has no kill draw");
+#endif
+        } else if (test == "flight_draw_nested_angelic_sees_the_lists_as_before") {
+            // Pocket Elf's draw entries are off the lists while #74's Angelic roll runs inside the call,
+            // and back on for the draw after it.
+#ifdef HAS_KILLDRAWSTATE
+            flightRepo();
+            setDrawLayout();
+            flightSwitch(FcNs::Charm::Elf, true);
+            dropItemNestsAngelic = true;
+            outcomes.assign({ false });
+            pickPolicy = Pick::Last;
+            dropItem(monster);
+            require(originalCalls == 1 && layoutDuringCall[0] == vanillaLayout, "the nested Angelic roll saw Pocket Elf's draw entry");
+            require(layoutsCarry(0, true, false) && countFlightBuilds((int)FcNs::Charm::Elf) == 1, "the draw after the nested roll did not hit as before");
+            require(layoutNow() == vanillaLayout && g_KillDraw.aside == 0, "the lists or the state were left changed");
+#else
+            require(false, "this source has no kill draw");
+#endif
+        } else if (test == "flight_draw_refuses_whole_when_not_inline") {
+            // A table-only DropItem hook: Pocket Elf's switch-on refuses whole on one line and turns its
+            // switch off; the game's calls pass the hook by.
+#ifdef HAS_KILLDRAWSTATE
+            flightRepo();
+            setDrawLayout();
+            tableOnlyHook = "DropItem";
+            flightSwitch(FcNs::Charm::Elf, true);
+            require(!g_FlightDrop.switches[(int)FcNs::Charm::Elf], "the refused switch stayed on");
+            require(anyLineHas("flightcharm: refused - ", "elf: DropItem went in TABLE-ONLY") && anyLineHas("flightcharm: refused - ", "Pocket Elf stays off"),
+                    "the refusal line: " + lastLine("flightcharm: refused"));
+            require(lineHas(flightStatLine(), " elf-draw-hook=TABLE-ONLY "), "elf-draw-hook: " + flightStatLine());
+            pickPolicy = Pick::Last;
+            dropItem(monster);
+            require(dropItemLayoutAtDraw[0] == vanillaLayout && countFlightBuilds(-1) == 0, "a table-only hook changed the draw");
+#else
+            require(false, "this source has no kill draw");
 #endif
         } else return 2;
         std::cout << "PASS " << test << '\n';

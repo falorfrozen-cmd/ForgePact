@@ -516,6 +516,30 @@ static void SignatureNoteBuilt(const std::map<std::string, double>& selector);
 // #74: the rewrite point, in the same hook's pre-call slot beside GemsBeforeCreate: CreateItemNew's
 // entry, where the item's definition is the record the game builds from.
 static void SignatureBeforeCreate(int argc, RValue** A);
+// #166: the Mark 1 drops' and Pocket Elf's kill draw (DropItem's own unique draw), defined with its
+// adapter after the Mark 1 drop adapter. Its call-outs in hooks defined before it: the draw scope's
+// repository read and typed pick (#74's two typing detours), the tier LoadSatanicDropTier answered
+// (raredrop's one detour), the rewrite at CreateItemNew's entry (SignatureBeforeCreate's draw half),
+// the nested rolls that see the lists as before (KillDrawRollAside), and whether its call-out pair
+// holds DropItem's slot (the research build's probe rows ask before they take it).
+static void KillDrawNoteRead(int argc, RValue** A);
+static bool KillDrawTypePick(int argc, RValue** A);
+static void KillDrawSettleHit();
+static void KillDrawNoteTier(const RValue& result);
+static bool KillDrawBeforeCreate(int argc, RValue** A);
+static bool KillDrawHoldsDropItem();
+static void KillDrawEnterRoll();
+static void KillDrawLeaveRoll();
+// A roll nested in a DropItem call (#74's Angelic roll, the shared DropUniqueItems detour, Mark 1's
+// Heroic hook) sees the lists as before: the call's draw entries come off for its length and its
+// hit state is set aside, both back when it returns, on every way out. Declared first in each of
+// those hooks, so it is the last thing undone, after the nested roll's own removals.
+struct KillDrawRollAside {
+    KillDrawRollAside() { KillDrawEnterRoll(); }
+    ~KillDrawRollAside() { KillDrawLeaveRoll(); }
+    KillDrawRollAside(const KillDrawRollAside&) = delete;
+    KillDrawRollAside& operator=(const KillDrawRollAside&) = delete;
+};
 #ifndef FORGEPACT_RELEASE
 // #74 research: the same hook's final pass, for typing's independent control (typeAgree= /
 // typeDisagree=, builtType= on the hit line). Defined with the signature drops.
@@ -4741,6 +4765,12 @@ static bool FlightGuardHolds(std::string_view runtimeName);
 // A drop of ours the game built, on CreateItemNew's own return: `built=` of the
 // `flightcharm stat` line. Defined with the drop adapter.
 static void FlightDropNoteBuilt(FcNs::Charm charm);
+// #166: Pocket Elf's kill draw, defined with the kill draw's adapter: a Pocket Elf the draw's
+// rewrite made, counted built (FlightDropNoteBuilt asks first); the switch-on's install of the
+// draw's two hooks ("" or why it refuses); and the `elf-draw-` fields of `flightcharm stat`.
+static bool KillDrawNoteBuiltElf();
+static std::string KillDrawInstall();
+static void KillDrawElfFillStat(FcNs::StatFields& s);
 // ---- end of what the Custom Forge reads for the flight charms ----------------
 
 // ---- Mark 1 set (Mark1Set.hpp): what the Custom Forge reads -----------------
@@ -4810,6 +4840,10 @@ static void Mark1DressFinal(RValue& item, M1sNs::Piece piece);
 // A drop of ours the game built, on CreateItemNew's own return: `built` of the
 // `mark1set drops:` line. Defined with the drop adapter.
 static void Mark1DropNoteBuilt(M1sNs::Piece piece);
+// #166: a piece the kill draw's rewrite made, counted built on the draw's tally (Mark1DropNoteBuilt
+// asks first), and the draw's DropItem route for the `draw-hook=` field; defined with the kill draw.
+static bool KillDrawNoteBuiltPiece(M1sNs::Piece piece);
+static std::string KillDrawRoute();
 // ---- end of what the Custom Forge reads for the Mark 1 set ------------------
 
 static volatile LONG g_CustomForgeHashMisses = 0;
@@ -14117,6 +14151,9 @@ static void SignatureAttributeHit()
 // that route into the gate (InstallSignatureAngelicHooks).
 static void SignatureBeforeCreate(int argc, RValue** A)
 {
+    // #166: outside every roll, a kill draw hit that fell to a piece or Pocket Elf is rewritten here
+    // by the draw's own adapter (its hit state is not #74's).
+    if (g_SigRollDepth <= 0 && KillDrawBeforeCreate(argc, A)) return;
     if (g_SigRollDepth <= 0 || !g_SigHitSeen || g_SigHitAtPoint) return;
     g_SigHitAtPoint = true;
     RValue record;
@@ -14356,7 +14393,13 @@ static RValue& Hook_CreateDefaultParams(CInstance* S, CInstance* O, RValue& R, i
 #ifndef FORGEPACT_RELEASE
     M1pDrawsNotePick(argc, A);   // `mark1probe draws`: the pick, in whichever scope it is made
 #endif
+    // #166: in the kill draw's scope (a DropItem call carrying its entries, outside every roll), a
+    // pick typed by the scope's latest repository read; settled after the game built the params.
+    const bool drawTyped = KillDrawTypePick(argc, A);
     RValue& r = g_Orig_CreateDefaultParams ? g_Orig_CreateDefaultParams(S, O, R, argc, A) : R;
+    if (drawTyped) {
+        try { KillDrawSettleHit(); } catch (...) {}
+    }
     if (g_SigRollDepth > 0 && g_SigHitTyped && g_SigRollPushed > 0) {
         try { SignatureAttributeHit(); } catch (...) {}
     }
@@ -14382,6 +14425,7 @@ static RValue& Hook_GetUniqueRepoStruct(CInstance* S, CInstance* O, RValue& R, i
 #ifndef FORGEPACT_RELEASE
     M1pDrawsNoteRead(argc, A);   // `mark1probe draws`: the read, in whichever scope it is made
 #endif
+    KillDrawNoteRead(argc, A);   // #166: the kill draw's scope keeps its own latest read
     if (g_SigRollDepth > 0) {
         try {
             double t = 0.0, s = 0.0, b = 0.0;
@@ -14882,6 +14926,7 @@ static void FlightDropBeforeCreate(RValue& record, const std::string& missing)
 
 static void FlightDropNoteBuilt(FcNs::Charm charm)
 {
+    if (charm == FcNs::Charm::Elf && KillDrawNoteBuiltElf()) return;   // #166: the kill draw's own Pocket Elf
     const int i = static_cast<int>(charm);
     if (i < 0 || i >= FcNs::kCharmCount || g_FlightDrop.pending[i] <= 0) return;
     --g_FlightDrop.pending[i];
@@ -14974,6 +15019,7 @@ struct FlightUniqueCounterScope {
 static RValue& Hook_FlightDropUniqueItems(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
     if (!g_Orig_FlightDropUnique) return R;
+    KillDrawRollAside drawAside;   // #166: inside a DropItem call, the kill draw's entries off for this roll
     const bool mark1 = Mark1KillBeginCall(g_FlightDrop.uniqueDepth);
     const bool elf = g_SigRollDepth <= 0 && g_FlightDrop.uniqueDepth <= 0 && g_FlightDrop.switches[(int)FcNs::Charm::Elf];
     if (!elf && !mark1) return g_Orig_FlightDropUnique(S, O, R, argc, A);
@@ -15043,6 +15089,15 @@ static void FlightDropSwitch(FcNs::Charm c, bool on)
         InstallSignatureAngelicHooks();
         if (c == FcNs::Charm::Elf) {
             FlightDropInstallUnique();
+            // #166: the kill draw's two hooks (DropManager's DropItem detour and raredrop's
+            // LoadSatanicDropTier detour), shared with the Mark 1 drops; refused unless both are
+            // inline, and then Pocket Elf stays off as a whole.
+            const std::string drawWhy = KillDrawInstall();
+            if (!drawWhy.empty()) {
+                g_FlightDrop.switches[i] = false;
+                Out(FcNs::RefusedLine("elf: " + drawWhy + " - Pocket Elf stays off"));
+                return;
+            }
             g_FlightDrop.elfRefusalLogged = false;
             FlightDropResolveElf();
         } else {
@@ -23123,6 +23178,7 @@ static FcNs::StatFields FlightCharmStatFields()
     s.ground = g_FlightGround;
     g_FlightGuard.FillStat(s);
     FlightDropFillStat(s);
+    KillDrawElfFillStat(s);   // #166: the `elf-draw-` fields, Pocket Elf's kill draw
     return s;
 }
 
@@ -24634,11 +24690,13 @@ static RValue& SatanicTierLift(CInstance* S, CInstance* O, RValue& R, int argc, 
     return g_OrigSatTier ? g_OrigSatTier(S, O, R, argc, A) : R;
 }
 
-// LoadSatanicDropTier's one detour (ForgePact #166): raredrop satanic's lift, and in the
-// research build the tier the Mark 1 research watch records for the DropItem call in progress.
+// LoadSatanicDropTier's one detour (ForgePact #166): raredrop satanic's lift, the tier (after the
+// lift) the kill draw records for the innermost DropItem call in progress, and in the research
+// build the same tier for the Mark 1 research watch.
 static RValue& HookSatanicTier(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
     RValue& r = SatanicTierLift(S, O, R, argc, A);
+    KillDrawNoteTier(r);
 #ifndef FORGEPACT_RELEASE
     M1pDrawsNoteTier(r);
 #endif
@@ -24846,6 +24904,9 @@ static RValue& HookAngelicChance(CInstance* S, CInstance* O, RValue& R, int argc
     // arrives as a real, so the game's own die is below it and a hit can be seen in a session.
     if (g_AngHitChance >= 0.0 && argc > 2 && A && A[2] && A[2]->m_Kind == VALUE_REAL) *A[2] = RValue(g_AngHitChance);
 #endif
+    // #166: inside a DropItem call, the kill draw's entries come off the lists for this roll and its
+    // hit state is set aside, before #74's push and back after #74's removal.
+    KillDrawRollAside drawAside;
     // #74: the roll is in progress from here to the end of the function, extra rolls included,
     // so a CreateDefaultParams call inside any of the original calls below is a hit.  The guard
     // lowers the depth on every way out, a throw from the game's roll included.
@@ -25693,6 +25754,13 @@ static void ApRollAttach(ApRollRow& r)
     if (std::string_view(r.id) == "drop-item" && M1pDrawsHoldsDropItem()) {
         ApRollSetRoute(r, kApRollBlocked, "blocked: `mark1probe draws` holds DropItem's slot (spliced into Hook_DropItem's saved original) - "
             "its calls= is the measure");
+        return;
+    }
+    // #166: the Mark 1 drops' and Pocket Elf's kill draw, installed first, holds the same slot with
+    // its call-out pair; this row refuses (KillDrawInstall refuses the other way round, naming it).
+    if (std::string_view(r.id) == "drop-item" && KillDrawHoldsDropItem()) {
+        ApRollSetRoute(r, kApRollBlocked, "blocked: the Mark 1 / Pocket Elf kill draw holds DropItem's slot (spliced into Hook_DropItem's "
+            "saved original) - `mark1set stat`'s draw-calls= is the measure");
         return;
     }
     const std::string full = "gml_Script_" + std::string(r.script);
@@ -52204,6 +52272,13 @@ static void GpInstallScripts(HMODULE mainMod)
             Out(GpScriptRowLine(t, t.status));
             continue;
         }
+        // #166: the Mark 1 drops' and Pocket Elf's kill draw, installed first, holds the same slot;
+        // the row refuses (KillDrawInstall refuses the other way round, naming it).
+        if (&t == &g_GpScriptRows[kGpScript_DropItem] && KillDrawHoldsDropItem()) {
+            t.status = "held by the Mark 1 / Pocket Elf kill draw (spliced into Hook_DropItem's saved original); not hooked";
+            Out(GpScriptRowLine(t, t.status));
+            continue;
+        }
         t.tried = true;
         std::string holder;
         if (t.holder) holder = GpInstallScriptHolder(t.holder, signatureTried);
@@ -65040,6 +65115,7 @@ static bool Mark1DropBeforeCreate(RValue& record, const std::string& missing)
 // rewritten record is pending, i.e. inside the call that rewrote it, and on the roll that call was.
 static void Mark1DropNoteBuilt(M1sNs::Piece piece)
 {
+    if (KillDrawNoteBuiltPiece(piece)) return;   // #166: the kill draw's own piece, on the draw's tally
     const int i = static_cast<int>(piece);
     if (i < 0 || i >= M1sNs::kPieceCount || g_M1Drop.pending[i] <= 0) return;
     --g_M1Drop.pending[i];
@@ -65095,6 +65171,7 @@ struct Mark1DropInjectGuard {
 static RValue& Hook_Mark1DropHeroic(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
     if (!g_Orig_Mark1DropHeroic) return R;
+    KillDrawRollAside drawAside;   // #166: inside a DropItem call, the kill draw's entries off for this roll
     double value = 0.0;
     const M1dNs::ArgKind kind = Mark1DropArgOf(argc, A, value);
     int index = M1dNs::kListRefused;
@@ -65176,12 +65253,16 @@ static std::string Mark1DropInstall()
     }
     FlightDropInstallUnique();
     d.killRoute = FlightDropUniqueRoute();
+    // The kill draw (#166): DropManager's DropItem detour with its call-out pair, and raredrop's one
+    // LoadSatanicDropTier detour, shared with Pocket Elf (KillDrawInstall, whichever comes first).
+    const std::string drawWhy = KillDrawInstall();
     if (d.hookRoute == "not-found") return "DropItemHeroic was not found by name (see the hook line above)";
     if (!d.hookNative)
         return "DropItemHeroic went in " + d.hookRoute + " (no inline detour): the game's own calls would pass it by";
     if (d.killRoute == "not-found") return "DropUniqueItems was not found by name (see the hook line above)";
     if (d.killRoute != "detoured")
         return "DropUniqueItems went in " + d.killRoute + " (no inline detour): the game's own calls from kills would pass it by";
+    if (!drawWhy.empty()) return drawWhy;
     return "";
 }
 
@@ -65220,16 +65301,653 @@ static void Mark1DropsSwitch(bool on)
 }
 
 // `mark1set stat`'s second line: every field the core's FillStat, `hook=` the DropItemHeroic
-// route this adapter got, and `kill-hook=` the shared DropUniqueItems detour's as its install read it.
+// route this adapter got, `kill-hook=` the shared DropUniqueItems detour's as its install read it,
+// and the kill draw's `draw-hook=` (DropManager's DropItem detour) and `tier-hook=` (raredrop's one
+// LoadSatanicDropTier detour).
 static std::string Mark1DropStatLine()
 {
     M1dNs::DropStatFields f;
     g_M1Drop.core.FillStat(f, g_SigDetectNative);
     f.hook = g_M1Drop.hookRoute;
     f.killHook = g_M1Drop.killRoute;
+    f.drawHook = KillDrawRoute();
+    f.tierHook = g_SatTierRoute;
     return M1dNs::DropStatLine(f);
 }
 // ---- end of the Mark 1 drop adapter ----------------------------------------------
+
+// ---- the kill draw (#166): DropItem's own unique draw, for the Mark 1 drops and Pocket Elf ----
+// A kill's unique is drawn by DropItem itself, from lootListUnique[k], k what LoadSatanicDropTier
+// answered in the same call (hub RDM § 13.12; Live 1: `unique-route: satanic-draw`,
+// `tier-k: matches`). With `mark1set drops 1` or `flightcharm elf 1` on, each piece and Pocket Elf
+// join that draw: for the length of each outermost DropItem call, every resolved draw stand-in goes
+// onto each of lootListUnique[0..5], Pocket Elf's first and then the pieces' in the core's plan
+// order, `copies` times (the constant 1 in the player build; each feature's copies lever in the
+// research build), held read-back, and taken off again on every way out under the
+// tail rule (` anomalies=` otherwise). In the draw's scope - inside that call, outside every roll
+// nested in it - a CreateDefaultParams call typed by the scope's latest GetUniqueRepoStruct read is
+// a hit; on a stand-in's whole triple it is the piece's or the charm's at c in n_k + c, k the tier
+// recorded in the call (none recorded: refused, ` tier-unread=`). Ours is rewritten at
+// CreateItemNew's entry (#74's SignatureRewriteParams), the forge's final pass counts it built, and
+// each hit is settled, with its one `kill draw` line, before the next one starts. Every decision is
+// the cores' (Mark1Drops.hpp's draw half of Drops, FlightCharms.hpp's ElfDraw); this block hooks,
+// reads, pushes and removes.
+//
+// The hooks are ones that already exist, each once and by name. DropManager's DropItem detour
+// (InstallDropItemHook) takes this block's call-out pair in its saved original (KillDrawDropItem,
+// over the trampoline only), so every original call Hook_DropItem makes, a `dropmult item` copy
+// too, is one draw call; with both switches off the pair counts the call (` draw-calls=`) and
+// hands the game's call through untouched. raredrop's LoadSatanicDropTier detour
+// (InstallSatanicTierHook, the one install `raredrop satanic` and the research watch share) records
+// the tier after its lift. The install refuses whole unless both are inline. A roll nested in the
+// call (#74's Angelic roll, the shared DropUniqueItems detour, Mark 1's Heroic hook) sees the lists
+// as before: KillDrawRollAside, first in each of those hooks, takes the call's entries off and sets
+// its hit state aside until the roll returns; that roll's own pushes, hits and counters are as
+// before. The draw's scope never raises #74's roll-in-progress depth, so #74's counters
+// (`sigdrop status`) do not move. In the research build the install refuses while a research
+// instrument holds DropItem's slot (KillDrawInstall names it), and each of those refuses once this
+// holds it. Game thread only.
+
+// The current hit of the pushing call: the piece it fell to (-1 none) or Pocket Elf, whether it
+// reached the rewrite point and was rewritten, whether the forge counted it built, why a refusal
+// was refused, and its line's `<name> (stand-in t/sub/b, c in n + c, k <k>)`.
+struct KillDrawHit {
+    int         piece = -1;
+    bool        elf = false;
+    bool        atPoint = false;
+    bool        rewritten = false;
+    bool        built = false;
+    std::string why;
+    std::string who;
+};
+
+struct KillDrawState {
+    std::string       route = "not-installed";   // DropManager's DropItem detour, as the install read it
+    PFUNC_YYGMLScript orig = nullptr;            // what DropManager's slot held: the trampoline
+    int               depth = 0;                 // DropItem calls in progress
+    int               pushDepth = 0;             // the depth of the call whose entries these are; 0 none
+    int               aside = 0;                 // rolls in progress (KillDrawRollAside)
+    bool              offForRoll = false;        // the entries came off whole for a nested roll
+    bool              busy = false;              // the adapter's own repository reads
+    bool              mark1 = false, elf = false;   // whose entries the pushing call carries
+    // Every row pushed, Pocket Elf's first, each `copies` times onto each list; what went onto each
+    // list (fewer after a ds_list_add that threw partway), the lists (their handles as read) and
+    // their sizes before.
+    std::vector<M1dNs::PushEntry> rows;
+    std::array<std::vector<int>, M1dNs::kListCount> on{};
+    RValue            subs[M1dNs::kListCount];
+    int               before[M1dNs::kListCount] = { -1, -1, -1, -1, -1, -1 };
+    bool              onLists = false;
+    bool              heldMissLogged = false;
+    FcNs::DrawStandIn elfStandIn;                // Pocket Elf's stand-in in this call, and its copies
+    int               elfCopies = 0;
+    // The scope's latest GetUniqueRepoStruct read, and the typed pick it gave.
+    bool              readSeen = false;
+    double            readT = -1.0, readSub = -1.0, readB = -1.0;
+    bool              picked = false;
+    double            pickT = -1.0, pickSub = -1.0, pickB = -1.0;
+    KillDrawHit       hit;
+    int               piecePending[M1sNs::kPieceCount] = { 0, 0, 0, 0 };   // rewritten, not yet seen built
+    int               elfPending = 0;
+};
+static KillDrawState g_KillDraw;
+static FcNs::ElfDraw g_ElfDraw;
+static FcNs::ElfDrawCache g_ElfDrawCache;
+
+static std::string KillDrawRoute() { return g_KillDraw.route; }
+static bool KillDrawHoldsDropItem() { return g_KillDraw.orig != nullptr; }
+
+// The draw's scope: a DropItem call whose entries of ours are on the lists, outside every roll and
+// every read of the adapter's own.
+static bool KillDrawScope()
+{
+    const KillDrawState& d = g_KillDraw;
+    return d.pushDepth > 0 && d.onLists && d.aside == 0 && !d.busy && g_SigRollDepth <= 0 && (d.mark1 || d.elf);
+}
+
+// Pocket Elf's part of a call: its switch on, its rewrite never refused, #74's detection inline and
+// the draw's hooks in.
+static bool KillDrawElfOn()
+{
+    const int elf = static_cast<int>(FcNs::Charm::Elf);
+    return g_FlightDrop.switches[elf] && !g_FlightDrop.refused[elf] && g_SigDetectNative && g_KillDraw.orig != nullptr;
+}
+
+struct KillDrawBusyScope {
+    KillDrawBusyScope() { g_KillDraw.busy = true; }
+    ~KillDrawBusyScope() { g_KillDraw.busy = false; }
+    KillDrawBusyScope(const KillDrawBusyScope&) = delete;
+    KillDrawBusyScope& operator=(const KillDrawBusyScope&) = delete;
+};
+
+// A triple's definition as the draw reads it, by name outside a roll: rarity ("27"), tier ("32"),
+// and fields 40 and 41 of its itemBaseInfoStruct. False when the definition or its rarity cannot
+// be read.
+static bool KillDrawDefinition(long long t, long long sub, long long b, int& rarity, int& tier, bool& f40, bool& f41)
+{
+    try {
+        const RValue def = g_Yytk->CallGameScript(HeroSiege::Scripts::gml_Script_GetUniqueRepoStruct,
+                                                  { RValue((double)t), RValue((double)sub), RValue((double)b) });
+        if (def.m_Kind != VALUE_OBJECT) return false;
+        const RValue info = g_Yytk->CallBuiltin("variable_struct_get", { def, RValue("itemBaseInfoStruct") });
+        double r = -1.0, k = -1.0;
+        if (!TryStructNumber(info, "27", r)) return false;
+        rarity = (int)r;
+        tier = TryStructNumber(info, "32", k) ? (int)k : -1;
+        auto flag = [&](const char* name) {
+            try {
+                const RValue f = g_Yytk->CallBuiltin("variable_struct_get", { info, RValue(name) });
+                return f.m_Kind != VALUE_UNDEFINED && f.m_Kind != VALUE_UNSET && f.ToBoolean();
+            } catch (...) { return false; }
+        };
+        f40 = flag("40");
+        f41 = flag("41");
+        return true;
+    } catch (...) { return false; }
+}
+
+static bool KillDrawPieceVerdict(const M1dNs::Triple& key, M1dNs::DrawRead& out)
+{
+    return KillDrawDefinition(key.t, key.sub, key.b, out.rarity, out.tier, out.f40, out.f41);
+}
+
+static bool KillDrawElfVerdict(const FcNs::DrawTriple& key, FcNs::DrawVerdict& out)
+{
+    return KillDrawDefinition(key.t, key.sub, key.b, out.rarity, out.tier, out.f40, out.f41);
+}
+
+// An entry that did not come off as it went on: counted on each feature the call carries.
+static void KillDrawAnomaly()
+{
+    if (g_KillDraw.mark1) g_M1Drop.core.NoteAnomaly();
+    if (g_KillDraw.elf) ++g_FlightDrop.anomalies;
+}
+
+// Takes the call's entries off every list they went onto - one ds_list_delete of the last entry
+// per entry that went onto it, only while that list's tail still holds exactly them - else leaves
+// the list as found, says so and counts it. True when every list came off clean. Never throws.
+static bool KillDrawRemove()
+{
+    KillDrawState& d = g_KillDraw;
+    if (!d.onLists) return true;
+    d.onLists = false;
+    bool clean = true;
+    for (int k = 0; k < M1dNs::kListCount; ++k) {
+        int perList = 0;
+        for (int n : d.on[(size_t)k]) perList += n;
+        if (perList <= 0) continue;
+        int len = -1;
+        bool tail = false;
+        try {
+            tail = Mark1ListTailHolds(d.subs[k], d.before[k], d.rows, d.on[(size_t)k], len);
+            if (tail) {
+                len = Mark1DropDeleteLast(d.subs[k], len, perList);
+                if (len == d.before[k]) continue;
+            }
+        } catch (...) {}
+        clean = false;
+        KillDrawAnomaly();
+        Out("kill draw: " + g_SigListName + "[" + std::to_string(k) + "] "
+            + (tail ? "kept entries after removal - size " + std::to_string(len) + ", expected " + std::to_string(d.before[k])
+                    : "changed during the DropItem call, left as found (size " + std::to_string(d.before[k]) + " + "
+                      + std::to_string(perList) + " pushed, now " + std::to_string(len) + ")"));
+    }
+    for (std::vector<int>& v : d.on) std::fill(v.begin(), v.end(), 0);
+    return clean;
+}
+
+// The held read-back, #74's: the variable read again by name off the first Controller_obj; each of
+// [0..5] must be the same ds_list and end with exactly what went on.
+static bool KillDrawHeldReadBack(std::string& seen)
+{
+    const KillDrawState& d = g_KillDraw;
+    seen = "nothing";
+    RValue subs[M1dNs::kListCount];
+    M1dNs::KillListKeys keys{};
+    std::string why;
+    if (!Mark1KillReadLists(subs, keys, why)) { seen = why; return false; }
+    for (int k = 0; k < M1dNs::kListCount; ++k) {
+        double want = -1.0;
+        if (!SigListHandle(d.subs[k], want, why)) { seen = "the list pushed onto: " + why; return false; }
+        if ((uint64_t)want != keys[(size_t)k].id) { seen = "another value at [" + std::to_string(k) + "]"; return false; }
+        int len = -1;
+        if (!Mark1ListTailHolds(d.subs[k], d.before[k], d.rows, d.on[(size_t)k], len)) {
+            seen = "[" + std::to_string(k) + "] with " + std::to_string(len) + " entries";
+            return false;
+        }
+    }
+    return true;
+}
+
+// The rows onto each of [0..5] (their sizes now are `before`), then the held read-back. False,
+// with what went on taken off again, when a push threw or a fresh read does not show it.
+static bool KillDrawPut(std::string& seen, bool& threw)
+{
+    KillDrawState& d = g_KillDraw;
+    threw = false;
+    seen = "nothing";
+    for (int k = 0; k < M1dNs::kListCount; ++k) {
+        d.on[(size_t)k].assign(d.rows.size(), 0);
+        try { d.before[k] = (int)g_Yytk->CallBuiltin("ds_list_size", { d.subs[k] }).ToDouble(); }
+        catch (...) { d.before[k] = -1; threw = true; }
+    }
+    if (threw) return false;
+    d.onLists = true;
+    for (int k = 0; k < M1dNs::kListCount && !threw; ++k) {
+        for (size_t e = 0; e < d.rows.size() && !threw; ++e) {
+            for (int n = 0; n < d.rows[e].copies && !threw; ++n) {
+                try {
+                    Mark1DropAddEntry(d.subs[k], d.rows[e].triple);
+                    ++d.on[(size_t)k][e];
+                } catch (...) { threw = true; }
+            }
+        }
+    }
+    if (!threw && KillDrawHeldReadBack(seen)) return true;
+    KillDrawRemove();
+    return false;
+}
+
+// One outermost call's push, outside the roll's scope: the six lists read lightly, each feature's
+// stand-ins resolved again when any list's id or length changed (every verdict read by name, never
+// counted as the draw's read), the plans, then the push. Nothing when the lists are unread or no
+// row is planned; a push that does not hold comes off again, is counted and logged once per change.
+static void KillDrawPush(bool mark1, bool elf)
+{
+    KillDrawState& d = g_KillDraw;
+    RValue subs[M1dNs::kListCount];
+    M1dNs::KillListKeys keys{};
+    std::string why;
+    if (!Mark1KillReadLists(subs, keys, why)) {
+        if (mark1) g_M1Drop.core.NoteDrawListsUnreadable();
+        if (elf) g_ElfDraw.NoteListsUnreadable();
+        return;
+    }
+    M1dNs::DrawPlan plan;
+    FcNs::DrawStandIn elfStandIn;
+    int elfCopies = 0;
+    {
+        KillDrawBusyScope busy;
+        FlightDropOutsideRoll outside;
+        M1dNs::KillLists lists;
+        bool read = false;
+        auto readLists = [&]() {
+            if (read) return;
+            read = true;
+            for (int k = 0; k < M1dNs::kListCount; ++k) lists[(size_t)k] = Mark1DropEntries(subs[k], keys[(size_t)k].length);
+        };
+        if (elf) {
+            FcNs::DrawListKeys elfKeys{};
+            for (int k = 0; k < M1dNs::kListCount; ++k)
+                elfKeys[(size_t)k] = FcNs::DrawListKey{ (double)keys[(size_t)k].id, keys[(size_t)k].length };
+            if (g_ElfDrawCache.Stale(elfKeys)) {
+                readLists();
+                FcNs::DrawLists elfLists;
+                for (int k = 0; k < M1dNs::kListCount; ++k)
+                    for (const M1dNs::ListEntry& e : lists[(size_t)k])
+                        if (e.triple) elfLists[(size_t)k].push_back(FcNs::UniqueEntry{ e.t, e.sub, e.b });
+                g_ElfDrawCache.Store(elfKeys, FcNs::ResolveElfDrawStandIn(elfLists, KillDrawElfVerdict));
+            }
+            if (const FcNs::ElfDrawResolution* r = g_ElfDrawCache.Find()) {
+                g_ElfDraw.NoteResolution(*r);
+                elfStandIn = r->standIn;
+                elfCopies = FcNs::ElfDrawCopies(elfStandIn, g_FlightDropCopies);
+            }
+        }
+        if (mark1) {
+            if (g_M1Drop.core.DrawCache().Stale(keys)) {
+                readLists();
+                g_M1Drop.core.DrawCache().Store(keys, M1dNs::ResolveDrawStandIns(lists, KillDrawPieceVerdict));
+            }
+            if (const M1dNs::DrawResolution* r = g_M1Drop.core.DrawCache().Find()) plan = g_M1Drop.core.PlanDrawFor(*r, g_Mark1DropCopies);
+        }
+    }
+    d.rows.clear();
+    if (elfCopies > 0)
+        d.rows.push_back(M1dNs::PushEntry{ M1sNs::Piece::Helmet, M1dNs::Triple{ elfStandIn.triple.t, elfStandIn.triple.sub, elfStandIn.triple.b },
+                                           0, elfCopies });
+    for (const M1dNs::DrawPushEntry& e : plan.entries) d.rows.push_back(M1dNs::PushEntry{ e.piece, e.triple, 0, e.copies });
+    if (d.rows.empty()) return;
+    for (int k = 0; k < M1dNs::kListCount; ++k) d.subs[k] = subs[k];
+    d.mark1 = !plan.entries.empty();
+    d.elf = elfCopies > 0;
+    std::string seen;
+    bool threw = false;
+    if (KillDrawPut(seen, threw)) {
+        d.pushDepth = d.depth;
+        d.heldMissLogged = false;
+        if (d.mark1) g_M1Drop.core.NoteDrawPushed(plan);
+        if (d.elf) {
+            g_ElfDraw.NotePushed(elfStandIn, elfCopies);
+            d.elfStandIn = elfStandIn;
+            d.elfCopies = elfCopies;
+            g_FlightDrop.injected += (long)elfCopies * M1dNs::kListCount;
+        }
+        return;
+    }
+    KillDrawAnomaly();
+    int pushed = 0;
+    for (const M1dNs::PushEntry& e : d.rows) pushed += e.copies * M1dNs::kListCount;
+    d.mark1 = d.elf = false;
+    d.rows.clear();
+    for (RValue& s : d.subs) s = RValue();
+    if (threw) { Out("kill draw: pushing a stand-in threw - this DropItem call carries none"); return; }
+    if (!d.heldMissLogged) {
+        d.heldMissLogged = true;
+        Out("kill draw: push not visible through Controller_obj." + g_SigListName + " (a fresh read holds " + seen + ", expected "
+            + std::to_string(pushed) + " pushed) - taken off again; DropItem calls carry no stand-in until a push reads back");
+    }
+}
+
+// The current hit settled: a hit that never reached the rewrite point is a refusal (and latches
+// its item off, as #74's); then its one line, and nothing of it is pending any more.
+static void KillDrawCloseHit()
+{
+    KillDrawState& d = g_KillDraw;
+    KillDrawHit h = d.hit;
+    d.hit = KillDrawHit{};
+    for (int& n : d.piecePending) n = 0;
+    d.elfPending = 0;
+    if (h.piece < 0 && !h.elf) return;
+    if (!h.atPoint) {
+        h.why = "CreateItemNew did not run for it during the DropItem call";
+        if (h.piece >= 0) {
+            g_M1Drop.hitWhy = h.why;
+            Mark1DropRefuse(h.piece, "<no record seen>");
+        } else {
+            g_FlightDrop.hitWhy = h.why;
+            FlightDropRefuse(static_cast<int>(FcNs::Charm::Elf), "<no record seen>");
+            g_ElfDraw.Settle(false);
+        }
+    }
+    std::string outcome;
+    if (!h.rewritten) outcome = h.who + " refused (" + h.why + "), the game placed its own stand-in";
+    else if (h.built) outcome = h.who + " built by the game";
+    else outcome = h.who + " handed to the game, not seen built during the DropItem call";
+    Out(std::string(h.piece >= 0 ? "mark1set drops hit: " : "flightcharm hit: ") + "kill draw -> " + outcome);
+}
+
+static std::string KillDrawWho(const std::string& name, long long t, long long sub, long long b, int n, int c, int k)
+{
+    return name + " (stand-in " + std::to_string(t) + "/" + std::to_string(sub) + "/" + std::to_string(b) + ", " + std::to_string(c)
+        + " in " + std::to_string(n + c) + ", k " + std::to_string(k) + ")";
+}
+
+// #74's GetUniqueRepoStruct detour, every call: in the draw's scope, the latest read.
+static void KillDrawNoteRead(int argc, RValue** A)
+{
+    if (!KillDrawScope()) return;
+    KillDrawState& d = g_KillDraw;
+    double t = 0.0, s = 0.0, b = 0.0;
+    try {
+        d.readSeen = argc > 2 && A && A[0] && A[1] && A[2] && SigNumber(*A[0], t) && SigNumber(*A[1], s) && SigNumber(*A[2], b);
+    } catch (...) { d.readSeen = false; }
+    if (d.readSeen) { d.readT = t; d.readSub = s; d.readB = b; }
+}
+
+// #74's CreateDefaultParams detour, before the game's call: in the draw's scope, whether the pick
+// is typed - its sub and b are the latest read's - and then that read is spent.
+static bool KillDrawTypePick(int argc, RValue** A)
+{
+    if (!KillDrawScope()) return false;
+    KillDrawState& d = g_KillDraw;
+    double sub = 0.0, b = 0.0;
+    bool ok = false;
+    try { ok = argc > 1 && A && A[0] && A[1] && SigNumber(*A[0], sub) && SigNumber(*A[1], b); } catch (...) { ok = false; }
+    if (!ok || !d.readSeen || d.readSub != sub || d.readB != b) return false;
+    d.picked = true;
+    d.pickT = d.readT;
+    d.pickSub = sub;
+    d.pickB = b;
+    d.readSeen = false;
+    return true;
+}
+
+// After the game's CreateDefaultParams returned a typed pick: the previous hit settled first, then
+// this one to the cores - a piece's stand-in on Mark 1's (c in n_k + c, or refused with no tier),
+// Pocket Elf's on its own - and ours handed to the rewrite point.
+static void KillDrawSettleHit()
+{
+    KillDrawState& d = g_KillDraw;
+    if (!d.picked) return;
+    d.picked = false;
+    if (!KillDrawScope()) return;
+    KillDrawCloseHit();
+    const int k = g_M1Drop.core.DrawTier();
+    if (d.mark1) {
+        const double u = std::uniform_real_distribution<double>(0.0, 1.0)(TyRng());
+        M1sNs::Piece piece = M1sNs::Piece::Helmet;
+        const M1dNs::DrawHit h = g_M1Drop.core.SettleDrawHit(d.pickT, d.pickSub, d.pickB, u, piece);
+        if (h == M1dNs::DrawHit::Ours) {
+            d.hit.piece = static_cast<int>(piece);
+            if (const M1dNs::DrawPlan* plan = g_M1Drop.core.PushedDrawPlan())
+                for (const M1dNs::DrawPushEntry& e : plan->entries)
+                    if (e.piece == piece)
+                        d.hit.who = KillDrawWho(std::string(M1sNs::RowOf(piece).name), e.triple.t, e.triple.sub, e.triple.b,
+                                                k >= 0 && k < M1dNs::kListCount ? e.counts[(size_t)k] : 0, e.copies, k);
+            return;
+        }
+        if (h == M1dNs::DrawHit::TierUnread) return;
+    }
+    if (d.elf) {
+        const double u = std::uniform_real_distribution<double>(0.0, 1.0)(TyRng());
+        if (g_ElfDraw.Hit(d.pickT, d.pickSub, d.pickB, u) == FcNs::DrawHit::Ours) {
+            const FcNs::DrawStandIn& s = d.elfStandIn;
+            d.hit.elf = true;
+            d.hit.who = KillDrawWho(std::string(FcNs::RowOf(FcNs::Charm::Elf).name), s.triple.t, s.triple.sub, s.triple.b,
+                                    k >= 0 && k < M1dNs::kListCount ? s.counts[(size_t)k] : 0, d.elfCopies, k);
+        }
+    }
+}
+
+// SignatureBeforeCreate, outside every roll (CreateItemNew's entry): the current hit, when it fell to
+// a piece or Pocket Elf, rewritten once to its own definition - a piece's by the core's RewriteFor,
+// Pocket Elf's as the flight charms' (type 10's base, a the seed of a uniformly drawn roll) - read
+// back by #74's SignatureRewriteParams; a refusal latches the item off. False: not the draw's.
+static bool KillDrawBeforeCreate(int argc, RValue** A)
+{
+    KillDrawState& d = g_KillDraw;
+    if (!KillDrawScope() || d.hit.atPoint || (d.hit.piece < 0 && !d.hit.elf)) return false;
+    const bool isPiece = d.hit.piece >= 0;
+    M1sNs::Piece piece = M1sNs::Piece::Helmet;
+    if (isPiece && !g_M1Drop.core.TakeDrawRewrite(piece)) return false;
+    if (!isPiece && !g_ElfDraw.HitPending()) return false;
+    d.hit.atPoint = true;
+    RValue record;
+    std::string missing;
+    try {
+        if (argc < 1 || !A || !A[0]) missing = "CreateItemNew had no item argument";
+        else record = g_Yytk->CallBuiltin("variable_struct_get", { *A[0], RValue("itemDefinitionStruct") });
+    } catch (...) { missing = "the item's itemDefinitionStruct could not be read"; }
+    std::string why = missing;
+    bool ok = false;
+    if (why.empty()) {
+        if (isPiece) {
+            const M1dNs::RewriteTarget t = M1dNs::RewriteFor(piece);
+            const SignatureItem item{ "Mark 1 piece", -1, t.itemType, (double)t.a, (double)t.b, nullptr };
+            ok = SignatureRewriteParams(record, item, why);
+        } else {
+            const double u = std::uniform_real_distribution<double>(0.0, 1.0)(TyRng());
+            const SignatureItem item{ "flight charm", -1, FcNs::kCharmTypeT, (double)FcNs::SeedFromUniform(FcNs::Charm::Elf, u),
+                                      (double)FcNs::kCharmBaseB, nullptr };
+            ok = SignatureRewriteParams(record, item, why);
+        }
+    }
+    d.hit.rewritten = ok;
+    if (!ok) d.hit.why = why;
+    const std::string shown = ok ? std::string() : (missing.empty() ? SigJson(record) : "<" + missing + ">");
+    if (isPiece) {
+        if (ok) ++d.piecePending[static_cast<int>(piece)];
+        else { g_M1Drop.hitWhy = why; Mark1DropRefuse(static_cast<int>(piece), shown); }
+    } else {
+        if (ok) ++d.elfPending;
+        else { g_FlightDrop.hitWhy = why; FlightDropRefuse(static_cast<int>(FcNs::Charm::Elf), shown); }
+        g_ElfDraw.Settle(ok);
+    }
+    return true;
+}
+
+// The forge's final pass (Mark1DropNoteBuilt, FlightDropNoteBuilt), outside every roll: a piece or
+// Pocket Elf the draw's rewrite made, counted built on the draw's own tally.
+static bool KillDrawNoteBuiltPiece(M1sNs::Piece piece)
+{
+    KillDrawState& d = g_KillDraw;
+    const int i = static_cast<int>(piece);
+    if (g_SigRollDepth > 0 || d.aside > 0 || i < 0 || i >= M1sNs::kPieceCount || d.piecePending[i] <= 0) return false;
+    --d.piecePending[i];
+    g_M1Drop.core.NoteBuilt(piece, M1dNs::Roll::Draw);
+    if (d.hit.piece == i) d.hit.built = true;
+    return true;
+}
+
+static bool KillDrawNoteBuiltElf()
+{
+    KillDrawState& d = g_KillDraw;
+    if (g_SigRollDepth > 0 || d.aside > 0 || d.elfPending <= 0) return false;
+    --d.elfPending;
+    g_ElfDraw.NoteBuilt();
+    if (d.hit.elf) d.hit.built = true;
+    return true;
+}
+
+// raredrop's LoadSatanicDropTier detour, after its lift: the tier for the innermost DropItem call in
+// progress (a whole number 0 to 5; anything else is none). Outside a DropItem call it is no one's.
+static void KillDrawNoteTier(const RValue& result)
+{
+    if (g_KillDraw.depth <= 0) return;
+    double v = 0.0;
+    bool ok = false;
+    try { ok = SigNumber(result, v); } catch (...) { ok = false; }
+    g_M1Drop.core.NoteDrawTier(ok, v);
+    long long k = -1;
+    g_ElfDraw.NoteTier(ok && M1sNs::AsWhole(v, k) && k >= 0 && k < FcNs::kDrawListCount ? (int)k : -1);
+}
+
+// KillDrawRollAside's two halves. The outermost roll nested in a pushing call takes the call's
+// entries off (when every list comes off clean they go back on when it returns, held read-back
+// again; otherwise the rest of the call carries none) and both cores set the call's hit state aside.
+static void KillDrawEnterRoll()
+{
+    try {
+        KillDrawState& d = g_KillDraw;
+        g_M1Drop.core.SetDrawAside();
+        g_ElfDraw.EnterRoll();
+        if (d.aside++ == 0 && d.pushDepth > 0 && d.onLists) d.offForRoll = KillDrawRemove();
+    } catch (...) {}
+}
+
+static void KillDrawLeaveRoll()
+{
+    try {
+        KillDrawState& d = g_KillDraw;
+        g_M1Drop.core.RestoreDraw();
+        g_ElfDraw.LeaveRoll();
+        if (d.aside > 0) --d.aside;
+        if (d.aside != 0 || !d.offForRoll) return;
+        d.offForRoll = false;
+        if (d.pushDepth <= 0) return;
+        std::string seen;
+        bool threw = false;
+        if (KillDrawPut(seen, threw)) return;
+        KillDrawAnomaly();
+        Out("kill draw: the stand-ins did not go back on after a nested roll (" + (threw ? std::string("a push threw") : seen)
+            + ") - the rest of this DropItem call carries none");
+    } catch (...) {}
+}
+
+// One DropItem call: begun before the game's call (counted by both cores, ` draw-calls=`, switch on
+// or off; the push for an outermost call either feature resolves), ended after it on every way out,
+// a throw from the game's DropItem included (the hit settled, the entries off, the cores' frames
+// closed).
+static void KillDrawBeginCall()
+{
+    KillDrawState& d = g_KillDraw;
+    ++d.depth;
+    const bool mark1 = g_M1Drop.core.BeginDrawCall(g_SigDetectNative, g_SigRollDepth + d.aside, g_FlightDrop.uniqueDepth, Mark1DropArtReady())
+        == M1dNs::CallAction::Resolve;
+    const bool elf = g_ElfDraw.BeginCall(KillDrawElfOn(), g_SigRollDepth + g_FlightDrop.uniqueDepth) == FcNs::DrawAction::Push;
+    if (!mark1 && !elf) return;
+    try { KillDrawPush(mark1, elf); } catch (...) {}
+}
+
+static void KillDrawEndCall()
+{
+    KillDrawState& d = g_KillDraw;
+    if (d.pushDepth > 0 && d.pushDepth == d.depth) {
+        try { KillDrawCloseHit(); } catch (...) {}
+        try { KillDrawRemove(); } catch (...) {}
+        d.pushDepth = 0;
+        d.offForRoll = false;
+        d.mark1 = d.elf = false;
+        d.rows.clear();
+        for (RValue& s : d.subs) s = RValue();
+        d.readSeen = d.picked = false;
+        d.elfCopies = 0;
+    }
+    g_M1Drop.core.EndDrawCall();
+    g_ElfDraw.EndCall();
+    if (d.depth > 0) --d.depth;
+}
+
+struct KillDrawCall {
+    KillDrawCall() { try { KillDrawBeginCall(); } catch (...) {} }
+    ~KillDrawCall() { try { KillDrawEndCall(); } catch (...) {} }
+    KillDrawCall(const KillDrawCall&) = delete;
+    KillDrawCall& operator=(const KillDrawCall&) = delete;
+};
+
+// DropManager's DropItem slot, spliced: Hook_DropItem calls this once per original call, and this
+// calls the trampoline with the same arguments, inside the call-out pair.
+static RValue& KillDrawDropItem(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    if (!g_KillDraw.orig) return R;
+    IncidentScope incidentScope(IncidentMod::drops);
+    KillDrawCall call;
+    return FP_GAME_ORIGINAL(g_KillDraw.orig(S, O, R, argc, A));
+}
+
+// The one install, from whichever comes first, the Mark 1 drops' (Mark1DropInstall) or `flightcharm
+// elf 1` (FlightDropSwitch): DropManager's DropItem detour alone (its other hooks stay out) with the
+// call-out pair spliced into its saved original, only over the trampoline, and raredrop's one
+// LoadSatanicDropTier detour. "" when both are inline; otherwise why the draw stays off, and the
+// caller turns its switch off. A hook that went in stays in.
+static std::string KillDrawInstall()
+{
+    KillDrawState& d = g_KillDraw;
+    if (!d.orig) {
+#ifndef FORGEPACT_RELEASE
+        std::string holder;
+        if (g_ApRollRows[kApRowDropItem].tramp) { holder = "angelicprobe's drop-item row"; d.route = "held-by-angelicprobe"; }
+        else if (g_GpScriptRows[kGpScript_DropItem].orig) { holder = "gambaprobe's DropItem row"; d.route = "held-by-gambaprobe"; }
+        else if (M1pDrawsHoldsDropItem()) { holder = "the `mark1probe draws` watch"; d.route = "held-by-mark1probe"; }
+        if (!holder.empty())
+            return holder + " holds DropItem's slot (a script takes one inline detour, and its saved original one splice); the kill"
+                   " draw stays off. Relaunch without it to use the kill draw.";
+#endif
+        d.route = ForgePact::DropManager::Instance().InstallDropItemHook();
+        PFUNC_YYGMLScript* slot = ForgePact::DropManager::Instance().DropItemOriginal();
+        if (d.route == "detoured" && slot && *slot) {
+            d.orig = *slot;
+            *slot = KillDrawDropItem;
+        }
+    }
+    InstallSatanicTierHook();
+    if (d.route == "not-found") return "DropItem was not found by name (see the hook line above)";
+    if (!d.orig)
+        return "DropItem went in " + d.route + " (no inline detour): the game's own calls from kills would pass it by";
+    if (g_SatTierRoute == "not-found") return "LoadSatanicDropTier was not found by name (see the hook line above)";
+    if (g_SatTierRoute != "detoured")
+        return "LoadSatanicDropTier went in " + g_SatTierRoute + " (no inline detour): the draw's tier would go unrecorded";
+    return "";
+}
+
+// The `elf-draw-` fields of `flightcharm stat`: ElfDraw's own, and the DropItem detour's route.
+static void KillDrawElfFillStat(FcNs::StatFields& s)
+{
+    g_ElfDraw.FillStat(s, g_FlightDrop.switches[static_cast<int>(FcNs::Charm::Elf)]);
+    s.elfDrawHook = g_KillDraw.route;
+}
+// ---- end of the kill draw ----------------------------------------------------------------
 
 #ifndef FORGEPACT_RELEASE
 // ---- mark1probe: the Mark 1 set's phase 1 instrument (ForgePact #166) ----
@@ -66573,6 +67291,7 @@ static bool M1pDrawsSplice(PFUNC_YYGMLScript* slot, PFUNC_YYGMLScript& saved, PF
 static std::string M1pDrawsDropItemRoute()
 {
     if (g_M1pDrawsDropItemOrig) return M1pNs::kDrawRouteDetoured;
+    if (KillDrawHoldsDropItem()) return "held-by-kill-draw";   // `mark1set drops 1` / `flightcharm elf 1` came first
     if (g_ApRollRows[kApRowDropItem].tramp) return "held-by-angelicprobe";
     if (g_GpScriptRows[kGpScript_DropItem].orig) return "held-by-gambaprobe";
     PFUNC_YYGMLScript* slot = GpDropItemHolder();
@@ -66850,7 +67569,8 @@ static RValue& M1pDrawsDropItem(CInstance* S, CInstance* O, RValue& R, int argc,
 // LoadSatanicDropTier's one detour, ReturnRandomSatanic's count-only hook, and the Heroic splice.
 static void M1pDrawsInstall()
 {
-    if (!g_M1pDrawsDropItemOrig && !g_ApRollRows[kApRowDropItem].tramp && !g_GpScriptRows[kGpScript_DropItem].orig) {
+    if (!g_M1pDrawsDropItemOrig && !g_ApRollRows[kApRowDropItem].tramp && !g_GpScriptRows[kGpScript_DropItem].orig
+        && !KillDrawHoldsDropItem()) {
         PFUNC_YYGMLScript* slot = GpDropItemHolder();
         if (slot && !*slot) ForgePact::DropManager::Instance().InstallHooks();   // at x1 a pass-through, as gambaprobe installs it
         M1pDrawsSplice(slot, g_M1pDrawsDropItemOrig, M1pDrawsDropItem);

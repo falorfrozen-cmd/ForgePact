@@ -39,6 +39,18 @@ and pins what neither can see:
   same install function (FlightDropInstallUnique), which hooks the script once
   a session; neither installs a second, and the research rows that hold
   DropUniqueItems refuse the drops and are refused by them, as for Pocket Elf.
+- draw_hook (the kill draw, DropItem's own unique draw, #166): DropItem's one
+  detour is DropManager's, installed alone (InstallDropItemHook) with the
+  draw's call-out pair spliced into its saved original over the trampoline
+  only; LoadSatanicDropTier's is raredrop's one shared install; the install
+  refuses whole unless both are inline, from the drops' install and
+  `flightcharm elf 1`; each original call is begun and ended on every way
+  out, counted before anything is read; #74's Angelic roll, the shared
+  DropUniqueItems detour and the Heroic hook each set the draw's entries aside
+  first; the tier, read, pick, rewrite and built call-outs sit in the existing
+  hooks; the push is the cores' plan on all six lists, held read-back and
+  tail-checked; the research instruments that hold DropItem's slot refuse the
+  draw and are refused by it, research-only.
 """
 import re
 import sys
@@ -50,6 +62,7 @@ from test_release_hook_contract import function_body, strip_comments, strip_rese
 
 ROOT = Path(__file__).resolve().parents[1]
 PLUGIN = ROOT / "plugin" / "ModuleMain.cpp"
+DROP_MANAGER = ROOT / "plugin" / "include" / "ForgePact" / "DropManager.hpp"
 SDK_SCRIPTS = ROOT.parent / "hs-game-sdk" / "cpp" / "include" / "hs_game_sdk" / "scripts.hpp"
 
 BLOCK_START = "// ---- Mark 1 set (Mark1Drops.hpp): the drop adapter"
@@ -194,15 +207,18 @@ class Mark1DropsContract(unittest.TestCase):
     def test_the_heroic_hook_decides_through_the_cores_begin_call_before_anything_is_read(self):
         lines = self.lines("hook")
         self.assertEqual(lines[0], "if (!g_Orig_Mark1DropHeroic) return R;")
-        self.assertEqual(lines[1], "double value = 0.0;")
-        self.assertEqual(lines[2], "const M1dNs::ArgKind kind = Mark1DropArgOf(argc, A, value);")
-        self.assertEqual(lines[3], "int index = M1dNs::kListRefused;")
-        self.assertEqual(lines[4], "const M1dNs::CallAction action = g_M1Drop.core.BeginCall(g_SigDetectNative, g_SigRollDepth, "
+        # #166's kill draw: inside a DropItem call the draw's entries come off for this roll, on every
+        # way out (test_draw_hook_nested_rolls_see_the_lists_as_before).
+        self.assertEqual(lines[1], "KillDrawRollAside drawAside;")
+        self.assertEqual(lines[2], "double value = 0.0;")
+        self.assertEqual(lines[3], "const M1dNs::ArgKind kind = Mark1DropArgOf(argc, A, value);")
+        self.assertEqual(lines[4], "int index = M1dNs::kListRefused;")
+        self.assertEqual(lines[5], "const M1dNs::CallAction action = g_M1Drop.core.BeginCall(g_SigDetectNative, g_SigRollDepth, "
                                    "Mark1DropArtReady(), kind, value, index);")
-        self.assertEqual(lines[5], "if (action != M1dNs::CallAction::Resolve) return g_Orig_Mark1DropHeroic(S, O, R, argc, A);")
+        self.assertEqual(lines[6], "if (action != M1dNs::CallAction::Resolve) return g_Orig_Mark1DropHeroic(S, O, R, argc, A);")
         # Nothing before the decision reaches the game: the argument's kind is read off the
         # RValue itself, and the art test is the core's on the adapter's own state.
-        for line in lines[:5]:
+        for line in lines[2:6]:
             for call in ("g_Yytk", "CallBuiltin", "CallGameScript", "Push(", "Resolve(", "Install"):
                 with self.subTest(line=line, call=call):
                     self.assertNotIn(call, line)
@@ -387,10 +403,13 @@ class Mark1DropsContract(unittest.TestCase):
         # in progress, the counter scope and the hit reset, the original, each feature's after-hit.
         lines = [l.strip() for l in self.body("shared_hook").split("\n") if l.strip()]
         self.assertEqual(lines[0], "if (!g_Orig_FlightDropUnique) return R;")
-        self.assertEqual(lines[1], "const bool mark1 = Mark1KillBeginCall(g_FlightDrop.uniqueDepth);")
-        self.assertEqual(lines[2], "const bool elf = g_SigRollDepth <= 0 && g_FlightDrop.uniqueDepth <= 0 && "
+        # #166's kill draw: inside a DropItem call the draw's entries come off for this roll, whether
+        # or not either feature takes it (test_draw_hook_nested_rolls_see_the_lists_as_before).
+        self.assertEqual(lines[1], "KillDrawRollAside drawAside;")
+        self.assertEqual(lines[2], "const bool mark1 = Mark1KillBeginCall(g_FlightDrop.uniqueDepth);")
+        self.assertEqual(lines[3], "const bool elf = g_SigRollDepth <= 0 && g_FlightDrop.uniqueDepth <= 0 && "
                                    "g_FlightDrop.switches[(int)FcNs::Charm::Elf];")
-        self.assertEqual(lines[3], "if (!elf && !mark1) return g_Orig_FlightDropUnique(S, O, R, argc, A);")
+        self.assertEqual(lines[4], "if (!elf && !mark1) return g_Orig_FlightDropUnique(S, O, R, argc, A);")
         hook = self.body("shared_hook")
         order = ["FlightUniqueDepthScope depth;", "FlightUniqueInjectGuard inject(elf);", "Mark1KillInjectGuard mark1Inject(mark1);",
                  "SignatureRollScope roll;", "FlightUniqueCounterScope counters;", "SignatureHitReset();",
@@ -485,6 +504,8 @@ class Mark1DropsContract(unittest.TestCase):
             "g_M1Drop.core.FillStat(f, g_SigDetectNative);",
             "f.hook = g_M1Drop.hookRoute;",
             "f.killHook = g_M1Drop.killRoute;",
+            "f.drawHook = KillDrawRoute();",
+            "f.tierHook = g_SatTierRoute;",
             "return M1dNs::DropStatLine(f);",
         ])
         self.assertIn("Out(M1dNs::DropsReply(g_M1Drop.core, g_SigDetectNative));", self.body("switch"))
@@ -501,6 +522,206 @@ class Mark1DropsContract(unittest.TestCase):
         self.assertIsNone(re.search(r"\(\s*char\s*\*\s*\)\s*\w+\s*[+-]", self.code))
         self.assertNotIn("GetModuleHandle", self.code)
         self.assertNotIn("reinterpret_cast<PFUNC", self.code)
+
+    # ---- the kill draw (#166): DropItem's own unique draw --------------------------------
+
+    def draw(self, signature):
+        return strip_comments(function_body(self.plugin, signature))
+
+    def test_draw_hook_is_dropmanagers_one_detour_and_raredrops_one_tier_detour(self):
+        # DropItem's one detour is DropManager's Hook_DropItem (by name, `bp_ditem`), installed alone by
+        # InstallDropItemHook, which InstallHooks() goes through too; the plugin never hooks DropItem
+        # itself. LoadSatanicDropTier's one detour is raredrop's, through the one shared install.
+        manager = DROP_MANAGER.read_text(encoding="utf-8").replace("\r\n", "\n")
+        self.assertEqual(manager.count('HookOneScript("DropItem",'), 1)
+        alone = strip_comments(function_body(manager, "std::string InstallDropItemHook()"))
+        self.assertIn("if (!m_DropItemTried) {", alone)
+        self.assertIn('HookOneScript("DropItem", "bp_ditem", (void*)Hook_DropItem, &m_Orig_DropItem, &native);', alone)
+        self.assertIn('m_DropItemRoute = !ok ? "not-found" : native ? "detoured" : "TABLE-ONLY";', alone)
+        self.assertIn("InstallDropItemHook();", strip_comments(function_body(manager, "void InstallHooks()")))
+        self.assertIn("FP_DROP_HOOK(DropItem)", manager)
+        self.assertNotIn("HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_DropItem)", self.whole)
+        self.assertNotIn('HookOneScript("DropItem"', self.whole)
+        self.assertEqual(self.whole.count("HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_LoadSatanicDropTier)"), 1)
+        install = self.draw("static std::string KillDrawInstall()")
+        self.assertIn("d.route = ForgePact::DropManager::Instance().InstallDropItemHook();", install)
+        self.assertIn("PFUNC_YYGMLScript* slot = ForgePact::DropManager::Instance().DropItemOriginal();", install)
+        # The call-out pair goes into the saved original only over the trampoline (the route read
+        # back detoured), once (KillDrawInstall runs its install only while nothing is spliced).
+        self.assertIn('if (d.route == "detoured" && slot && *slot) {', install)
+        self.assertIn("d.orig = *slot;", install)
+        self.assertIn("*slot = KillDrawDropItem;", install)
+        self.assertLess(install.index("if (!d.orig) {"), install.index("InstallDropItemHook()"))
+        self.assertIn("InstallSatanicTierHook();", install)
+        # Refused whole unless both are inline, each with its reason; "" only at the end.
+        for why in ('"DropItem was not found by name', '"DropItem went in " + d.route + " (no inline detour)',
+                    '"LoadSatanicDropTier was not found by name', '"LoadSatanicDropTier went in " + g_SatTierRoute + " (no inline detour)'):
+            self.assertIn(why, install)
+        self.assertTrue(install.rstrip().endswith('return "";'))
+        # Its two callers: the drops' install (refusing whole with its reason) and `flightcharm elf 1`.
+        self.assertEqual(len(re.findall(r"\bKillDrawInstall\(\)", self.whole)), 4)   # declaration, definition, two callers
+        drops = self.body("install")
+        self.assertIn("const std::string drawWhy = KillDrawInstall();", drops)
+        self.assertLess(drops.index("FlightDropInstallUnique();"), drops.index("KillDrawInstall()"))
+        self.assertIn("if (!drawWhy.empty()) return drawWhy;", drops)
+        self.assertIn("const std::string drawWhy = KillDrawInstall();", self.body("flight_switch"))
+
+    def test_draw_hook_call_out_pair_wraps_each_original_call(self):
+        # The splice: the call-out pair around the trampoline's call, the caller's own arguments, the
+        # game's call timed as the game's; with the pair begun and ended on every way out.
+        splice = self.draw("static RValue& KillDrawDropItem(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)")
+        lines = [l.strip() for l in splice.split("\n") if l.strip()]
+        self.assertEqual(lines, ["if (!g_KillDraw.orig) return R;", "IncidentScope incidentScope(IncidentMod::drops);",
+                                 "KillDrawCall call;", "return FP_GAME_ORIGINAL(g_KillDraw.orig(S, O, R, argc, A));"])
+        call = strip_comments(self.plugin[self.plugin.index("struct KillDrawCall {"):])
+        call = call[:call.index("\n};")]
+        self.assertRegex(call, r"KillDrawCall\(\)\s*\{\s*try \{ KillDrawBeginCall\(\); \} catch \(\.\.\.\) \{\}")
+        self.assertRegex(call, r"~KillDrawCall\(\)\s*\{\s*try \{ KillDrawEndCall\(\); \} catch \(\.\.\.\) \{\}")
+        # Every call is counted by both cores before anything is read; the push only for a call
+        # either feature resolves (the switch, the gate, the art, no roll or DropItem call in progress).
+        begin = self.draw("static void KillDrawBeginCall()")
+        self.assertIn("g_M1Drop.core.BeginDrawCall(g_SigDetectNative, g_SigRollDepth + d.aside, g_FlightDrop.uniqueDepth, "
+                      "Mark1DropArtReady())", begin)
+        self.assertIn("g_ElfDraw.BeginCall(KillDrawElfOn(), g_SigRollDepth + g_FlightDrop.uniqueDepth)", begin)
+        self.assertIn("if (!mark1 && !elf) return;", begin)
+        self.assertLess(begin.index("if (!mark1 && !elf) return;"), begin.index("KillDrawPush(mark1, elf)"))
+        for call_name in ("g_Yytk", "CallBuiltin", "CallGameScript"):
+            self.assertNotIn(call_name, begin)
+        end = self.draw("static void KillDrawEndCall()")
+        order = ["KillDrawCloseHit();", "KillDrawRemove();", "g_M1Drop.core.EndDrawCall();", "g_ElfDraw.EndCall();"]
+        for a, b in zip(order, order[1:]):
+            self.assertLess(end.index(a), end.index(b), a + " before " + b)
+        self.assertIn("if (d.pushDepth > 0 && d.pushDepth == d.depth) {", end)
+
+    def test_draw_hook_nested_rolls_see_the_lists_as_before(self):
+        # Each nested roll's hook declares the set-aside first, so its own entries come off before
+        # the draw's go back on; the guard is the two halves, the outermost roll taking the entries off
+        # whole and putting them back held read-back.
+        aside = strip_comments(self.plugin[self.plugin.index("struct KillDrawRollAside {"):])
+        aside = aside[:aside.index("\n};")]
+        self.assertRegex(aside, r"KillDrawRollAside\(\)\s*\{\s*KillDrawEnterRoll\(\);\s*\}")
+        self.assertRegex(aside, r"~KillDrawRollAside\(\)\s*\{\s*KillDrawLeaveRoll\(\);\s*\}")
+        angelic = strip_comments(function_body(strip_research_blocks(self.plugin), "static RValue& HookAngelicChance("))
+        for hook, first in ((angelic, "SignatureRollScope sigRoll;"), (self.body("shared_hook"), "FlightUniqueDepthScope depth;"),
+                            (self.body("hook"), "Mark1DropInjectGuard inject(index);")):
+            with self.subTest(first=first):
+                self.assertEqual(hook.count("KillDrawRollAside drawAside;"), 1)
+                self.assertLess(hook.index("KillDrawRollAside drawAside;"), hook.index(first))
+        self.assertLess(angelic.index("KillDrawRollAside drawAside;"), angelic.index("SignatureInjectGuard sigInject;"))
+        self.assertEqual(len(re.findall(r"\bKillDrawRollAside \w+;", self.whole)), 3)
+        enter = self.draw("static void KillDrawEnterRoll()")
+        self.assertIn("g_M1Drop.core.SetDrawAside();", enter)
+        self.assertIn("g_ElfDraw.EnterRoll();", enter)
+        self.assertIn("if (d.aside++ == 0 && d.pushDepth > 0 && d.onLists) d.offForRoll = KillDrawRemove();", enter)
+        leave = self.draw("static void KillDrawLeaveRoll()")
+        self.assertIn("g_M1Drop.core.RestoreDraw();", leave)
+        self.assertIn("g_ElfDraw.LeaveRoll();", leave)
+        self.assertLess(leave.index("if (d.aside != 0 || !d.offForRoll) return;"), leave.index("KillDrawPut(seen, threw)"))
+        # The draw's scope is outside every roll: #74's typing never runs there, so its counters
+        # cannot move.
+        scope = self.draw("static bool KillDrawScope()")
+        self.assertIn("d.aside == 0", scope)
+        self.assertIn("g_SigRollDepth <= 0", scope)
+        self.assertIn("!d.busy", scope)
+
+    def test_draw_hook_typing_tier_rewrite_and_built_call_outs(self):
+        # The tier after raredrop's lift, for the innermost DropItem call; the draw's latest read and
+        # typed pick in #74's two typing detours (the pick settled after the game built the params);
+        # the rewrite at CreateItemNew's entry before #74's own; the built count before the Heroic
+        # roll's and the DropUniqueItems route's.
+        tier = strip_comments(function_body(strip_research_blocks(self.plugin), "static RValue& HookSatanicTier("))
+        self.assertLess(tier.index("RValue& r = SatanicTierLift(S, O, R, argc, A);"), tier.index("KillDrawNoteTier(r);"))
+        repo = strip_comments(function_body(self.plugin, "static RValue& Hook_GetUniqueRepoStruct("))
+        self.assertIn("KillDrawNoteRead(argc, A);", repo)
+        self.assertLess(repo.index("KillDrawNoteRead(argc, A);"), repo.index("g_Orig_GetUniqueRepoStruct(S, O, R, argc, A)"))
+        cdp = self.body("cdp")
+        self.assertLess(cdp.index("const bool drawTyped = KillDrawTypePick(argc, A);"), cdp.index("g_Orig_CreateDefaultParams(S, O, R, argc, A)"))
+        self.assertLess(cdp.index("g_Orig_CreateDefaultParams(S, O, R, argc, A)"), cdp.index("KillDrawSettleHit();"))
+        before = self.body("sig_before_create")
+        self.assertEqual([l.strip() for l in before.split("\n") if l.strip()][0],
+                         "if (g_SigRollDepth <= 0 && KillDrawBeforeCreate(argc, A)) return;")
+        self.assertEqual([l.strip() for l in self.body("note_built").split("\n") if l.strip()][0],
+                         "if (KillDrawNoteBuiltPiece(piece)) return;")
+        settle = self.draw("static void KillDrawSettleHit()")
+        self.assertLess(settle.index("KillDrawCloseHit();"), settle.index("g_M1Drop.core.SettleDrawHit("))
+        self.assertIn("const int k = g_M1Drop.core.DrawTier();", settle)
+        rewrite = self.draw("static bool KillDrawBeforeCreate(int argc, RValue** A)")
+        self.assertIn("g_M1Drop.core.TakeDrawRewrite(piece)", rewrite)
+        self.assertIn("M1dNs::RewriteFor(piece)", rewrite)
+        self.assertIn("SignatureRewriteParams(record, item, why)", rewrite)
+        self.assertIn("Mark1DropRefuse(static_cast<int>(piece), shown);", rewrite)
+        built = self.draw("static bool KillDrawNoteBuiltPiece(M1sNs::Piece piece)")
+        self.assertIn("g_M1Drop.core.NoteBuilt(piece, M1dNs::Roll::Draw);", built)
+        self.assertIn("g_SigRollDepth > 0 || d.aside > 0", built)
+        close = self.draw("static void KillDrawCloseHit()")
+        self.assertIn('"mark1set drops hit: "', close)
+        self.assertIn('"kill draw -> "', close)
+        self.assertEqual(close.count("Out("), 1)
+
+    def test_draw_hook_push_is_the_cores_plan_on_all_six_lists_held_and_tail_checked(self):
+        push = self.draw("static void KillDrawPush(bool mark1, bool elf)")
+        self.assertIn("if (!Mark1KillReadLists(subs, keys, why)) {", push)
+        self.assertIn("g_M1Drop.core.NoteDrawListsUnreadable();", push)
+        self.assertIn("KillDrawBusyScope busy;", push)
+        self.assertIn("FlightDropOutsideRoll outside;", push)
+        self.assertIn("if (g_M1Drop.core.DrawCache().Stale(keys)) {", push)
+        self.assertIn("M1dNs::ResolveDrawStandIns(lists, KillDrawPieceVerdict)", push)
+        self.assertIn("plan = g_M1Drop.core.PlanDrawFor(*r, g_Mark1DropCopies);", push)
+        self.assertLess(push.index("KillDrawPut(seen, threw)"), push.index("g_M1Drop.core.NoteDrawPushed(plan);"))
+        put = self.draw("static bool KillDrawPut(std::string& seen, bool& threw)")
+        self.assertIn("for (int k = 0; k < M1dNs::kListCount && !threw; ++k) {", put)
+        self.assertLess(put.index("Mark1DropAddEntry(d.subs[k], d.rows[e].triple);"), put.index("KillDrawHeldReadBack(seen)"))
+        self.assertIn("KillDrawRemove();", put)
+        held = self.draw("static bool KillDrawHeldReadBack(std::string& seen)")
+        self.assertIn("Mark1KillReadLists(subs, keys, why)", held)
+        self.assertIn("Mark1ListTailHolds(d.subs[k], d.before[k], d.rows, d.on[(size_t)k], len)", held)
+        remove = self.draw("static bool KillDrawRemove()")
+        self.assertLess(remove.index("Mark1ListTailHolds("), remove.index("Mark1DropDeleteLast("))
+        self.assertIn("KillDrawAnomaly();", remove)
+        verdict = self.draw("static bool KillDrawDefinition(long long t, long long sub, long long b, int& rarity, int& tier, bool& f40, bool& f41)")
+        self.assertIn("g_Yytk->CallGameScript(HeroSiege::Scripts::gml_Script_GetUniqueRepoStruct,", verdict)
+        for field in ('"27"', '"32"', '"40"', '"41"'):
+            self.assertIn(field, verdict)
+
+    def test_draw_hook_research_holders_refuse_both_ways_in_the_research_build_only(self):
+        install = self.draw("static std::string KillDrawInstall()")
+        for holder in ("g_ApRollRows[kApRowDropItem].tramp", "g_GpScriptRows[kGpScript_DropItem].orig", "M1pDrawsHoldsDropItem()"):
+            self.assertIn(holder, install)
+            self.assertLess(install.index(holder), install.index("InstallDropItemHook()"))
+        shipped = strip_comments(function_body(strip_research_blocks(self.plugin), "static std::string KillDrawInstall()"))
+        for holder in ("g_ApRollRows", "g_GpScriptRows", "M1pDraws", "probe"):
+            self.assertNotIn(holder, shipped)
+        attach = self.body("ap_attach")
+        refusal = attach.index('std::string_view(r.id) == "drop-item" && KillDrawHoldsDropItem()')
+        self.assertLess(refusal, attach.index("GetNamedRoutinePointer"))
+        self.assertIn("kApRollBlocked", attach[refusal:attach.index("GetNamedRoutinePointer")])
+        self.assertIn("&t == &g_GpScriptRows[kGpScript_DropItem] && KillDrawHoldsDropItem()", self.body("gp_install"))
+        watch = strip_comments(function_body(self.plugin, "static void M1pDrawsInstall()"))
+        self.assertIn("&& !KillDrawHoldsDropItem()", watch)
+        self.assertIn('if (KillDrawHoldsDropItem()) return "held-by-kill-draw";',
+                      strip_comments(function_body(self.plugin, "static std::string M1pDrawsDropItemRoute()")))
+        self.assertIn("return g_KillDraw.orig != nullptr;", self.draw("static bool KillDrawHoldsDropItem()"))
+
+    def test_draw_hook_player_build_names_and_the_copies_lever(self):
+        start = self.plugin.index("// ---- the kill draw (#166): DropItem's own unique draw")
+        end = self.plugin.index("// ---- end of the kill draw")
+        block = self.plugin[start:end]
+        shipped = strip_research_blocks(block)
+        for word in ("mark1probe", "flightprobe", "angelicprobe", "gambaprobe", "M1p"):
+            self.assertNotIn(word, shipped)
+        code = strip_comments(shipped)
+        self.assertNotIn('"gml_Script_', code)
+        self.assertIsNone(re.search(r"\b\w*Rva\w*\b", code))
+        self.assertIsNone(re.search(r"\b0x[0-9A-Fa-f]{5,}\b", code))
+        self.assertNotIn("GetModuleHandle", code)
+        self.assertNotIn("HookOneScript(", code)
+        # The copies are each feature's own lever, a constexpr 1 in the player build.
+        self.assertIn("g_M1Drop.core.PlanDrawFor(*r, g_Mark1DropCopies)", code)
+        self.assertIn("FcNs::ElfDrawCopies(elfStandIn, g_FlightDropCopies)", code)
+        self.assertIn("static constexpr int g_FlightDropCopies = 1;", self.plugin)
+        # The `mark1set drops 1` reply carries the draw's gate (the core's DropsReply).
+        header = (ROOT / "plugin" / "include" / "ForgePact" / "Mark1Drops.hpp").read_text(encoding="utf-8")
+        self.assertIn('" draw-gate=" + std::string(GateName(d.DrawGateNow(detectionNative)))', header)
 
 
 if __name__ == "__main__":

@@ -649,16 +649,16 @@ int main()
         Drops r;
         r.SetEnabled(true);
         check("stat/reply_names_the_switch_the_install_and_the_gate",
-              DropsReply(r, true) == "mark1set: drops=on install=waiting-for-character gate=off kill-gate=off",
+              DropsReply(r, true) == "mark1set: drops=on install=waiting-for-character gate=off kill-gate=off draw-gate=off",
               DropsReply(r, true));
         Drops ri = installedOn();
         Drops rf;
         rf.SetEnabled(true);
         rf.NoteInstall(false, false);
         check("stat/reply_installed_and_refused",
-              DropsReply(ri, true) == "mark1set: drops=on install=installed gate=pending kill-gate=pending"
-              && DropsReply(ri, false) == "mark1set: drops=on install=installed gate=no-detection kill-gate=no-detection"
-              && DropsReply(rf, true) == "mark1set: drops=off install=refused gate=refused kill-gate=refused",
+              DropsReply(ri, true) == "mark1set: drops=on install=installed gate=pending kill-gate=pending draw-gate=pending"
+              && DropsReply(ri, false) == "mark1set: drops=on install=installed gate=no-detection kill-gate=no-detection draw-gate=no-detection"
+              && DropsReply(rf, true) == "mark1set: drops=off install=refused gate=refused kill-gate=refused draw-gate=refused",
               DropsReply(ri, true) + " | " + DropsReply(rf, true));
         check("stat/gate_names", GateName(Gate::Off) == "off" && GateName(Gate::On) == "on"
               && GateName(Gate::Refused) == "refused" && GateName(Gate::NotResolved) == "not-resolved"
@@ -881,7 +881,7 @@ int main()
                 || field(line, "kill-standin-" + std::string(row.key)) != "pending"
                 || field(line, "draw-standin-" + std::string(row.key)) != "pending") ok = false;
         check("pending/both_gates_and_stand_ins_pending_until_the_first_roll", ok
-              && DropsReply(d, true) == "mark1set: drops=on install=installed gate=pending kill-gate=pending", line);
+              && DropsReply(d, true) == "mark1set: drops=on install=installed gate=pending kill-gate=pending draw-gate=pending", line);
 
         // The Heroic roll resolves first: on, with its stand-ins; the kill route stays pending.
         FakeRepo hr;
@@ -905,7 +905,7 @@ int main()
         line = DropStatLine(fk);
         ok = field(line, "kill-gate") == "on" && field(line, "kill-standin-helmet") == "3:17@6x0"
             && field(line, "kill-standin-gloves") == "none" && field(line, "gate") == "on"
-            && DropsReply(d, true) == "mark1set: drops=on install=installed gate=on kill-gate=on";
+            && DropsReply(d, true) == "mark1set: drops=on install=installed gate=on kill-gate=on draw-gate=pending";
         check("pending/kill_resolves_to_on_and_a_class_with_none_reads_none", ok, line);
 
         // The kill route first, on its own, and a Heroic class with none.

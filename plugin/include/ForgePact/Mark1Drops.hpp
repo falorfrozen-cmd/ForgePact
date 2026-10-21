@@ -1392,12 +1392,16 @@ inline void SetSwitch(Drops& drops, Mark1Set::Bonus& set, bool on)
     set.NoteDropsSwitch(on);
 }
 
-// The reply to `mark1set drops 1|0`, after the adapter has tried its install.
+// The reply to `mark1set drops 1|0`, after the adapter has tried its install:
+// the switch, the install, and each route's gate (the Heroic roll, the
+// DropUniqueItems route, the kill draw), `pending` until that route's first
+// resolving call.
 inline std::string DropsReply(const Drops& d, bool detectionNative)
 {
     return "mark1set: drops=" + std::string(d.Enabled() ? "on" : "off") + " install=" + std::string(d.InstallStateName())
         + " gate=" + std::string(GateName(d.GateNow(detectionNative)))
-        + " kill-gate=" + std::string(GateName(d.KillGateNow(detectionNative)));
+        + " kill-gate=" + std::string(GateName(d.KillGateNow(detectionNative)))
+        + " draw-gate=" + std::string(GateName(d.DrawGateNow(detectionNative)));
 }
 
 } // namespace ForgePact::Mark1Drops

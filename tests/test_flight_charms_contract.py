@@ -1216,6 +1216,70 @@ class FlightCharmsDropContract(unittest.TestCase):
         self.assertNotIn("GetModuleHandle", self.code)
         self.assertNotIn("MmCreateHook", self.code)
 
+    # ---- Pocket Elf's kill route on DropItem's own draw (#166) ------------------------------
+    # The adapter is the kill draw's, shared with the Mark 1 drops (test_mark1_drops_contract.py's
+    # test_draw_hook_* pin its hooks); these pin Pocket Elf's part of it.
+
+    def test_elf_kill_draw_switch_installs_the_shared_draw_and_refuses_whole(self):
+        switch = self.body("switch")
+        self.assertLess(switch.index("FlightDropInstallUnique();"), switch.index("const std::string drawWhy = KillDrawInstall();"))
+        refusal = switch[switch.index("if (!drawWhy.empty()) {"):]
+        refusal = refusal[:refusal.index("return;")]
+        self.assertIn("g_FlightDrop.switches[i] = false;", refusal)
+        self.assertIn('Out(FcNs::RefusedLine("elf: " + drawWhy + " - Pocket Elf stays off"));', refusal)
+        self.assertLess(switch.index("KillDrawInstall()"), switch.index("FlightDropResolveElf();"))
+        # Only Pocket Elf's switch installs the draw; Gabriel Wings and Witch's Broomstick do not.
+        elf_branch = switch[switch.index("if (c == FcNs::Charm::Elf) {"):switch.index("} else {")]
+        self.assertIn("KillDrawInstall()", elf_branch)
+        self.assertEqual(switch.count("KillDrawInstall()"), 1)
+
+    def test_elf_kill_draw_part_is_its_switch_gate_and_the_cores_decisions(self):
+        elf_on = strip_comments(function_body(self.plugin, "static bool KillDrawElfOn()"))
+        for term in ("g_FlightDrop.switches[elf]", "!g_FlightDrop.refused[elf]", "g_SigDetectNative", "g_KillDraw.orig != nullptr"):
+            self.assertIn(term, elf_on)
+        begin = strip_comments(function_body(self.plugin, "static void KillDrawBeginCall()"))
+        self.assertIn("g_ElfDraw.BeginCall(KillDrawElfOn(), g_SigRollDepth + g_FlightDrop.uniqueDepth) == FcNs::DrawAction::Push", begin)
+        push = strip_comments(function_body(self.plugin, "static void KillDrawPush(bool mark1, bool elf)"))
+        self.assertIn("if (g_ElfDrawCache.Stale(elfKeys)) {", push)
+        self.assertIn("FcNs::ResolveElfDrawStandIn(elfLists, KillDrawElfVerdict)", push)
+        self.assertIn("elfCopies = FcNs::ElfDrawCopies(elfStandIn, g_FlightDropCopies);", push)
+        self.assertIn("g_ElfDraw.NotePushed(elfStandIn, elfCopies);", push)
+        # Pocket Elf's row goes on first, before the pieces'.
+        self.assertLess(push.index("if (elfCopies > 0)"), push.index("for (const M1dNs::DrawPushEntry& e : plan.entries)"))
+        tier = strip_comments(function_body(self.plugin, "static void KillDrawNoteTier(const RValue& result)"))
+        self.assertIn("g_ElfDraw.NoteTier(", tier)
+        settle = strip_comments(function_body(self.plugin, "static void KillDrawSettleHit()"))
+        self.assertIn("g_ElfDraw.Hit(d.pickT, d.pickSub, d.pickB, u) == FcNs::DrawHit::Ours", settle)
+        self.assertIn("g_ElfDraw.EnterRoll();", strip_comments(function_body(self.plugin, "static void KillDrawEnterRoll()")))
+        self.assertIn("g_ElfDraw.LeaveRoll();", strip_comments(function_body(self.plugin, "static void KillDrawLeaveRoll()")))
+
+    def test_elf_kill_draw_rewrite_built_and_line_are_the_flight_charms_own(self):
+        rewrite = strip_comments(function_body(self.plugin, "static bool KillDrawBeforeCreate(int argc, RValue** A)"))
+        self.assertIn("if (!isPiece && !g_ElfDraw.HitPending()) return false;", rewrite)
+        self.assertIn("FcNs::SeedFromUniform(FcNs::Charm::Elf, u)", rewrite)
+        self.assertIn("(double)FcNs::kCharmBaseB", rewrite)
+        self.assertIn("FlightDropRefuse(static_cast<int>(FcNs::Charm::Elf), shown);", rewrite)
+        self.assertIn("g_ElfDraw.Settle(ok);", rewrite)
+        note = self.body("note_built")
+        self.assertEqual([l.strip() for l in note.split("\n") if l.strip()][0],
+                         "if (charm == FcNs::Charm::Elf && KillDrawNoteBuiltElf()) return;")
+        built = strip_comments(function_body(self.plugin, "static bool KillDrawNoteBuiltElf()"))
+        self.assertIn("g_ElfDraw.NoteBuilt();", built)
+        self.assertIn("g_SigRollDepth > 0 || d.aside > 0", built)
+        self.assertNotIn("g_FlightDrop.tally", built)   # the DropUniqueItems route's tally is its own
+        close = strip_comments(function_body(self.plugin, "static void KillDrawCloseHit()"))
+        self.assertIn('"flightcharm hit: "', close)
+        self.assertIn("g_ElfDraw.Settle(false);", close)
+
+    def test_elf_kill_draw_stat_fields(self):
+        fields = strip_comments(function_body(self.plugin, SIGNATURES["stat_fields"]))
+        self.assertLess(fields.index("FlightDropFillStat(s);"), fields.index("KillDrawElfFillStat(s);"))
+        fill = strip_comments(function_body(self.plugin, "static void KillDrawElfFillStat(FcNs::StatFields& s)"))
+        self.assertIn("g_ElfDraw.FillStat(s, g_FlightDrop.switches[static_cast<int>(FcNs::Charm::Elf)]);", fill)
+        self.assertIn("s.elfDrawHook = g_KillDraw.route;", fill)
+        self.assertIn("static FcNs::ElfDraw g_ElfDraw;", self.shipped)
+        self.assertIn("static FcNs::ElfDrawCache g_ElfDrawCache;", self.shipped)
+
 
 # ---- the probe: the research build's `flightprobe` -------------------------------------------
 
