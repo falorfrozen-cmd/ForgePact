@@ -31,6 +31,18 @@ passes; the art-ready rule is the Heroic roll's; and the line gains the
 `kill-` fields. `pending` in the name (Live 1's `drops-on` fail): with the
 switch on and installed, each roll's gate and stand-in fields read `pending`
 until that roll's first resolving call.
+
+The kill draw (`draw` in the name, ForgePact #166 Mod live 7): a kill's unique
+comes from DropItem's own draw from lootListUnique[k], k the tier
+LoadSatanicDropTier answered in the call. `test_draw_baseline_*`: the switch
+off only counts the call, a call that pushed nothing leaves a nested roll
+untouched, and a call begun inside a roll passes. `test_draw_target_*`: the
+stand-in (a triple of the piece's class on any of the six lists that the draw
+keeps, rarity 6 with fields 40 and 41 clear; SS first, then the smallest
+largest count, then the lowest sub and b), the push onto each of [0..5], the
+coin c / (n_k + c) from the call's recorded k, a stand-in hit with no tier
+refused and counted, two hits in one call settled apart, a nested roll setting
+the call's entries and hit state aside, and the `draw-` fields of the line.
 """
 import os
 import re
@@ -274,6 +286,60 @@ class Mark1DropsBehaviorTests(unittest.TestCase):
         self.assertScenarios("pending/not_pending_while_off_waiting_no_detection_or_refused",
                              "pending/unreadable_before_the_first_roll_is_not_resolved",
                              "pending/switched_off_after_a_roll_reads_off")
+
+    # ---- draw: DropItem's own unique draw (the kill draw) ------------------------------
+
+    def test_draw_baseline_switch_off_pushes_nothing_and_only_counts_the_call(self):
+        self.assertScenarios("draw/baseline_switch_off_passes_and_only_counts_the_call",
+                             "draw/baseline_nothing_pushed_attributes_nothing")
+
+    def test_draw_baseline_a_nested_roll_passes_untouched(self):
+        self.assertScenarios("draw/baseline_a_nested_roll_with_nothing_pushed_passes_untouched",
+                             "draw/baseline_a_call_begun_inside_a_roll_passes_and_is_counted")
+
+    def test_draw_target_the_draws_filter_and_the_tier_preference(self):
+        self.assertScenarios("draw/target_the_draws_filter")
+        header = HEADER.read_text(encoding="utf-8")
+        self.assertRegex(header, r"inline constexpr int kDrawKeptRarity\s*=\s*6\s*;")
+        self.assertRegex(header, r"inline constexpr int kDrawSsTier\s*=\s*5\s*;")
+        # The owner's 2026-10-21 answer: SS first, one constant.
+        self.assertRegex(header, r"inline constexpr bool kDrawPrefersSs\s*=\s*true\s*;")
+
+    def test_draw_target_standin_choice(self):
+        self.assertScenarios("draw/target_standin_ss_preferred_over_a_smaller_count",
+                             "draw/target_standin_falls_back_below_ss_by_the_smaller_largest_count",
+                             "draw/target_standin_ties_by_the_lowest_sub_then_b",
+                             "draw/target_standin_fields_40_41_heroic_and_unread_never_stand_in",
+                             "draw/target_standin_a_class_with_none_leaves_the_others",
+                             "draw/target_standin_each_distinct_triple_asked_once_over_six_lists",
+                             "draw/target_standin_no_reader_is_unread",
+                             "draw/target_cache_resolves_again_when_any_list_changes")
+
+    def test_draw_target_push_onto_each_of_the_six_lists(self):
+        self.assertScenarios("draw/target_push_onto_each_of_the_six_lists_bounded_and_latched",
+                             "draw/target_refused_rewrite_latches_the_piece_on_the_draw")
+
+    def test_draw_target_coin_per_k(self):
+        self.assertScenarios("draw/target_coin_c_over_n_k_plus_c_for_every_k",
+                             "draw/target_the_tier_goes_to_the_innermost_call")
+
+    def test_draw_target_no_tier_means_refused(self):
+        self.assertScenarios("draw/target_no_tier_recorded_is_refused_and_counted")
+
+    def test_draw_target_two_hits_in_one_call_settled_apart(self):
+        self.assertScenarios("draw/target_two_hits_in_one_call_settled_apart")
+
+    def test_draw_target_a_nested_roll_sets_the_entries_aside(self):
+        self.assertScenarios("draw/target_a_nested_roll_sets_the_entries_and_the_hit_aside")
+
+    def test_draw_target_gate_and_passes(self):
+        self.assertScenarios("draw/target_gate_pending_then_on_or_not_resolved",
+                             "draw/target_no_detection_or_art_wait_passes",
+                             "pending/both_gates_and_stand_ins_pending_until_the_first_roll")
+
+    def test_draw_target_stat_fields(self):
+        self.assertScenarios("draw/target_stat_fields_filled", "draw/target_stand_in_text",
+                             "stat/fresh_line_exact", "stat/named_fields_in_order")
 
 
 if __name__ == "__main__":

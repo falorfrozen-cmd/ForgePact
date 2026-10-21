@@ -21,7 +21,12 @@
 // push onto each of [0..4], the coin with the common count, the cache over
 // all six lists, nested calls, the art-ready rule and the line's kill fields.
 // Each roll's gate and stand-ins read `pending` until that roll's first
-// resolving call (pending/*, Live 1's `drops-on`).
+// resolving call (pending/*, Live 1's `drops-on`). The kill draw, DropItem's own
+// unique draw (draw/*): the switch-off baseline, a call that pushed nothing and a
+// call begun inside a roll; the draw's filter and the SS-first stand-in rule over
+// the six lists, the push onto each of [0..5], the coin c / (n_k + c) from the
+// call's recorded k, no tier refused, two hits settled apart, a nested roll
+// setting the call aside, the tier going to the innermost call, and the line.
 #include <cmath>
 #include <cstdint>
 #include <iostream>
@@ -179,6 +184,93 @@ static KillListKeys keysOf(const KillLists& lists)
     return keys;
 }
 
+// The repository as the kill draw reads it: (type, sub, b) -> rarity, tier,
+// fields 40 and 41; a triple missing from it cannot be read. Counts every
+// question asked.
+struct FakeDrawRepo {
+    struct Row {
+        Triple   key;
+        DrawRead read;
+    };
+    std::vector<Row> rows;
+    int calls = 0;
+    std::vector<Triple> asked;
+    void add(long long t, long long sub, long long b, int rarity, int tier, bool f40 = false, bool f41 = false)
+    {
+        Triple k;
+        k.t = t;
+        k.sub = sub;
+        k.b = b;
+        DrawRead r;
+        r.rarity = rarity;
+        r.tier = tier;
+        r.f40 = f40;
+        r.f41 = f41;
+        rows.push_back(Row{ k, r });
+    }
+    DrawReadFn fn()
+    {
+        return [this](const Triple& key, DrawRead& out) {
+            ++calls;
+            asked.push_back(key);
+            for (const Row& r : rows) {
+                if (!(r.key == key)) continue;
+                out = r.read;
+                return true;
+            }
+            return false;
+        };
+    }
+};
+
+static bool isDraw(const DrawStandIn& s, long long t, long long sub, long long b)
+{
+    return s.resolved && s.triple.t == t && s.triple.sub == sub && s.triple.b == b;
+}
+
+static DrawCounts countsOf(int n0, int n1, int n2, int n3, int n4, int n5)
+{
+    return DrawCounts{ n0, n1, n2, n3, n4, n5 };
+}
+
+// The six lists as the kill draw reads them, among a charm on every list (never
+// asked about) and an entry that is not a triple:
+//   helmet: (0,3,17) SS, twice on each list; (0,1,2) tier 3, once on [5]: SS wins
+//           despite the larger count; (0,0,1) SS with field 40 set: never;
+//   body:   no SS candidate. (1,2,40) tier 4 at 1,0,2,0,0,0; (1,5,5) tier 2 once on
+//           each list: the smaller largest count wins below SS; (1,0,0) Heroic: never;
+//   boots:  (2,4,4) and (2,4,6) SS, once on [3] each: a tie, the lowest (sub, b);
+//           (2,1,8) SS with field 41 set: never;
+//   gloves: (4,0,5) Heroic, and (4,0,6) unreadable: none.
+static KillLists drawLists(FakeDrawRepo& repo)
+{
+    repo.add(0, 3, 17, 6, 5);
+    repo.add(0, 1, 2, 6, 3);
+    repo.add(0, 0, 1, 6, 5, true, false);
+    repo.add(1, 2, 40, 6, 4);
+    repo.add(1, 5, 5, 6, 2);
+    repo.add(1, 0, 0, 9, 5);
+    repo.add(2, 4, 4, 6, 5);
+    repo.add(2, 4, 6, 6, 5);
+    repo.add(2, 1, 8, 6, 5, false, true);
+    repo.add(4, 0, 5, 9, 5);
+    repo.add(10, 0, 47, 6, 5);
+    KillLists lists;
+    for (int k = 0; k < kDrawListCount; ++k)
+        lists[static_cast<size_t>(k)] = { entry(10, 0, 47), entry(0, 3, 17), entry(0, 3, 17), notATriple() };
+    auto add = [&lists](int k, std::initializer_list<ListEntry> more) {
+        std::vector<ListEntry>& l = lists[static_cast<size_t>(k)];
+        l.insert(l.end(), more.begin(), more.end());
+    };
+    add(0, { entry(1, 2, 40), entry(1, 5, 5), entry(1, 0, 0) });
+    add(1, { entry(1, 5, 5) });
+    add(2, { entry(1, 2, 40), entry(1, 2, 40), entry(1, 5, 5) });
+    add(3, { entry(1, 5, 5), entry(2, 4, 4), entry(2, 4, 6), entry(2, 1, 8) });
+    add(4, { entry(1, 5, 5), entry(4, 0, 5), entry(4, 0, 6) });
+    add(5, { entry(1, 5, 5), entry(0, 1, 2), entry(0, 0, 1) });
+    return lists;
+}
+
 static Drops installedOn()
 {
     Drops d;
@@ -188,6 +280,17 @@ static Drops installedOn()
 }
 
 static const std::array<bool, kPieceCount> kNoLatch{};
+
+// An installed core inside one DropItem call that pushed drawLists' plan.
+static Drops pushingCall(int copies = kPlayerCopies)
+{
+    Drops d = installedOn();
+    FakeDrawRepo repo;
+    const DrawResolution r = ResolveDrawStandIns(drawLists(repo), repo.fn());
+    d.BeginDrawCall(true, 0, 0, true);
+    d.NoteDrawPushed(d.PlanDrawFor(r, copies));
+    return d;
+}
 
 int main()
 {
@@ -493,7 +596,10 @@ int main()
             " anomalies=0 standin-helmet=none standin-body=none standin-boots=none standin-gloves=none"
             " list-refused=0 unread=0 kill-gate=off kill-hook=not-installed kill-calls=0 kill-pushed=0 kill-nested=0"
             " kill-helmet=0/0 kill-body=0/0 kill-boots=0/0 kill-gloves=0/0 kill-standin-helmet=none"
-            " kill-standin-body=none kill-standin-boots=none kill-standin-gloves=none";
+            " kill-standin-body=none kill-standin-boots=none kill-standin-gloves=none draw-gate=off draw-hook=not-installed"
+            " tier-hook=not-installed draw-calls=0 draw-pushed=0 draw-nested=0 tier-unread=0 draw-helmet=0/0 draw-body=0/0"
+            " draw-boots=0/0 draw-gloves=0/0 draw-standin-helmet=none draw-standin-body=none draw-standin-boots=none"
+            " draw-standin-gloves=none";
         check("stat/fresh_line_exact", fresh == expected, fresh);
         check("stat/fresh_line_begins_mark1set_drops", startsWith(fresh, "mark1set drops: drops=off"));
         Drops fd;
@@ -508,7 +614,9 @@ int main()
             "standin-helmet", "standin-body", "standin-boots", "standin-gloves", "list-refused", "unread",
             "kill-gate", "kill-hook", "kill-calls", "kill-pushed", "kill-nested", "kill-helmet", "kill-body",
             "kill-boots", "kill-gloves", "kill-standin-helmet", "kill-standin-body", "kill-standin-boots",
-            "kill-standin-gloves" };
+            "kill-standin-gloves", "draw-gate", "draw-hook", "tier-hook", "draw-calls", "draw-pushed", "draw-nested",
+            "tier-unread", "draw-helmet", "draw-body", "draw-boots", "draw-gloves", "draw-standin-helmet",
+            "draw-standin-body", "draw-standin-boots", "draw-standin-gloves" };
         check("stat/named_fields_in_order", names == order);
 
         // Filled: a session that pushed, hit, built and refused.
@@ -766,10 +874,12 @@ int main()
         DropStatFields f;
         d.FillStat(f, true);
         std::string line = DropStatLine(f);
-        bool ok = field(line, "gate") == "pending" && field(line, "kill-gate") == "pending";
+        bool ok = field(line, "gate") == "pending" && field(line, "kill-gate") == "pending"
+            && field(line, "draw-gate") == "pending";
         for (const PieceRow& row : M1s::kPieces)
             if (field(line, "standin-" + std::string(row.key)) != "pending"
-                || field(line, "kill-standin-" + std::string(row.key)) != "pending") ok = false;
+                || field(line, "kill-standin-" + std::string(row.key)) != "pending"
+                || field(line, "draw-standin-" + std::string(row.key)) != "pending") ok = false;
         check("pending/both_gates_and_stand_ins_pending_until_the_first_roll", ok
               && DropsReply(d, true) == "mark1set: drops=on install=installed gate=pending kill-gate=pending", line);
 
@@ -853,6 +963,307 @@ int main()
         line = DropStatLine(fo);
         check("pending/switched_off_after_a_roll_reads_off", field(line, "gate") == "off" && field(line, "kill-gate") == "off"
               && field(line, "standin-helmet") == "3:17@9x1" && field(line, "kill-standin-helmet") == "3:17@6x0", line);
+    }
+
+    // ---- draw: DropItem's own unique draw, the kill draw ------------------------------
+    {
+        // Baseline: the switch off is the game's own draw. The call is counted and
+        // nothing else: no push, no hit, no nested roll set aside.
+        Drops d;
+        Piece p = Piece::Helmet;
+        const CallAction a = d.BeginDrawCall(true, 0, 0, true);
+        d.NoteDrawTier(true, 3);
+        const bool asideOff = d.SetDrawAside();
+        const DrawHit hOff = d.SettleDrawHit(0, 3, 17, 0.0, p);
+        const bool takeOff = d.TakeDrawRewrite(p);
+        const bool restoreOff = d.RestoreDraw();
+        const bool endOff = d.EndDrawCall();
+        DropStatFields f;
+        d.FillStat(f, true);
+        Drops off = installedOn();
+        off.SetEnabled(false);
+        const CallAction b = off.BeginDrawCall(true, 0, 0, true);
+        off.EndDrawCall();
+        check("draw/baseline_switch_off_passes_and_only_counts_the_call",
+              a == CallAction::PassOff && !asideOff && hOff == DrawHit::NotInScope && !takeOff && !restoreOff && !endOff
+              && !d.DrawPushing() && d.DrawDepth() == 0 && f.drawCalls == 1 && f.drawPushedCalls == 0 && f.drawNested == 0
+              && f.tierUnread == 0 && f.injected == 0 && f.artWait == 0 && f.drawGate == Gate::Off && f.heroicCalls == 0
+              && f.killCalls == 0 && b == CallAction::PassOff && off.Installed() && off.DrawCalls() == 1
+              && off.DrawPushedCalls() == 0 && off.DrawDepth() == 0, DropStatLine(f));
+
+        // Baseline: a call that pushed nothing (no stand-in anywhere) leaves a
+        // nested roll untouched and settles no hit.
+        FakeDrawRepo none;
+        none.add(4, 0, 5, 9, 5);
+        KillLists nl;
+        for (auto& l : nl) l = { entry(4, 0, 5) };
+        Drops n = installedOn();
+        const CallAction na = n.BeginDrawCall(true, 0, 0, true);
+        const DrawPlan np = n.PlanDrawFor(ResolveDrawStandIns(nl, none.fn()), kPlayerCopies);
+        n.NoteDrawPushed(np);
+        const bool nAside = n.SetDrawAside();
+        const bool nRestore = n.RestoreDraw();
+        check("draw/baseline_a_nested_roll_with_nothing_pushed_passes_untouched",
+              na == CallAction::Resolve && np.entries.empty() && !n.DrawPushing() && !nAside && !nRestore
+              && n.SettleDrawHit(4, 0, 5, 0.0, p) == DrawHit::NotInScope && n.DrawNested() == 0 && n.DrawPushedCalls() == 0
+              && !n.EndDrawCall() && n.DrawGateNow(true) == Gate::NotResolved);
+
+        // Baseline: nothing pushed attributes nothing, whatever the k, the triple
+        // and the coin.
+        bool ok = PlanDrawPush(DrawResolution{}, kPlayerCopies, kNoLatch).entries.empty();
+        for (int k = -1; k <= kDrawListCount; ++k)
+            for (double u : { 0.0, 0.5, 0.999 })
+                if (AttributeDrawHit(DrawPlan{}, k, 0, 3, 17, u, p) != DrawHit::GameOwn) ok = false;
+        check("draw/baseline_nothing_pushed_attributes_nothing", ok);
+
+        // A call begun inside a roll in progress (#74's or the Heroic hook's, the
+        // shared DropUniqueItems detour's) passes, counted; so does one begun
+        // inside another DropItem call.
+        Drops r = installedOn();
+        ok = r.BeginDrawCall(true, 1, 0, true) == CallAction::PassNested;
+        r.EndDrawCall();
+        ok = ok && r.BeginDrawCall(true, 0, 1, true) == CallAction::PassNested;
+        r.EndDrawCall();
+        ok = ok && r.BeginDrawCall(true, 0, 0, true) == CallAction::Resolve
+            && r.BeginDrawCall(true, 0, 0, true) == CallAction::PassNested && r.DrawDepth() == 2;
+        r.EndDrawCall();
+        r.EndDrawCall();
+        check("draw/baseline_a_call_begun_inside_a_roll_passes_and_is_counted",
+              ok && r.DrawNested() == 3 && r.DrawCalls() == 4 && r.DrawDepth() == 0 && !r.DrawPushing());
+
+        // #74's detection not inline, or the art not ready: the game's own draw.
+        Drops g = installedOn();
+        const CallAction ga = g.BeginDrawCall(false, 0, 0, true);
+        g.EndDrawCall();
+        const CallAction gb = g.BeginDrawCall(true, 0, 0, ArtReady(true, 8, false));
+        g.EndDrawCall();
+        DropStatFields fg;
+        g.FillStat(fg, true);
+        check("draw/target_no_detection_or_art_wait_passes", ga == CallAction::PassGate && gb == CallAction::PassArtWait
+              && g.DrawGateNow(false) == Gate::NoDetection && fg.artWait == 1 && fg.drawPushedCalls == 0, DropStatLine(fg));
+
+        // The draw's filter: rarity 6, fields 40 and 41 clear; SS preferred.
+        DrawRead keep;
+        keep.rarity = 6;
+        DrawRead heroic = keep;
+        heroic.rarity = 9;
+        DrawRead f40 = keep;
+        f40.f40 = true;
+        DrawRead f41 = keep;
+        f41.f41 = true;
+        DrawRead below = keep;
+        below.rarity = 5;
+        check("draw/target_the_draws_filter", DrawKeeps(keep) && !DrawKeeps(heroic) && !DrawKeeps(f40) && !DrawKeeps(f41)
+              && !DrawKeeps(below) && kDrawKeptRarity == 6 && kDrawSsTier == 5 && kDrawPrefersSs && kDrawListCount == 6
+              && kDrawNoTier == -1);
+
+        // The stand-in rule over the six lists.
+        FakeDrawRepo repo;
+        const KillLists lists = drawLists(repo);
+        const DrawResolution res = ResolveDrawStandIns(lists, repo.fn());
+        check("draw/target_standin_ss_preferred_over_a_smaller_count",
+              isDraw(res.standIns[0], 0, 3, 17) && res.standIns[0].tier == 5 && res.standIns[0].rarity == 6
+              && res.standIns[0].counts == countsOf(2, 2, 2, 2, 2, 2) && res.candidates[0] == 2 && res.ss[0] == 1,
+              DrawStandInText(res.standIns[0]));
+        check("draw/target_standin_falls_back_below_ss_by_the_smaller_largest_count",
+              isDraw(res.standIns[1], 1, 5, 5) && res.standIns[1].tier == 2 && res.standIns[1].counts == countsOf(1, 1, 1, 1, 1, 1)
+              && res.candidates[1] == 2 && res.ss[1] == 0 && DrawStandInText(res.standIns[1]) == "5:5@6/2x1,1,1,1,1,1",
+              DrawStandInText(res.standIns[1]));
+        check("draw/target_standin_ties_by_the_lowest_sub_then_b",
+              isDraw(res.standIns[2], 2, 4, 4) && res.standIns[2].counts == countsOf(0, 0, 0, 1, 0, 0) && res.candidates[2] == 2
+              && res.ss[2] == 2, DrawStandInText(res.standIns[2]));
+        check("draw/target_standin_fields_40_41_heroic_and_unread_never_stand_in",
+              !res.standIns[3].resolved && res.candidates[3] == 0 && res.unread == 1);
+        // A class with none: gloves push nothing, the others still do.
+        const DrawPlan p1 = PlanDrawPush(res, kPlayerCopies, kNoLatch);
+        ok = res.AnyResolved() && p1.entries.size() == 3 && p1.PerListCount() == 3 && p1.EntryCount() == 18;
+        for (const DrawPushEntry& e : p1.entries)
+            if (e.piece == Piece::Gloves || e.copies != 1) ok = false;
+        check("draw/target_standin_a_class_with_none_leaves_the_others", ok, std::to_string(p1.EntryCount()));
+        // Each distinct triple of a piece class asked once, the charm never; the
+        // lengths of all six lists.
+        ok = repo.calls == 11 && res.lengths[0] == 7 && res.lengths[1] == 5 && res.lengths[2] == 7 && res.lengths[3] == 8
+            && res.lengths[4] == 7 && res.lengths[5] == 7;
+        for (const Triple& t : repo.asked)
+            if (t.t == 10) ok = false;
+        check("draw/target_standin_each_distinct_triple_asked_once_over_six_lists", ok, std::to_string(repo.calls));
+        // No reader: every triple unread, none chosen.
+        const DrawResolution rnull = ResolveDrawStandIns(lists, DrawReadFn{});
+        check("draw/target_standin_no_reader_is_unread", rnull.unread == 11 && !rnull.AnyResolved());
+
+        // Resolved again when any of [0..5]'s id or length changed.
+        DrawStandInCache cache;
+        const KillListKeys keys = keysOf(lists);
+        ok = cache.Stale(keys) && cache.Find() == nullptr;
+        cache.Store(keys, res);
+        ok = ok && !cache.Stale(keys) && cache.Find() != nullptr && cache.Find()->standIns[0].triple.b == 17;
+        for (size_t k = 0; k < keys.size(); ++k) {
+            KillListKeys id = keys;
+            ++id[k].id;
+            KillListKeys len = keys;
+            ++len[k].length;
+            if (!cache.Stale(id) || !cache.Stale(len)) ok = false;
+        }
+        check("draw/target_cache_resolves_again_when_any_list_changes", ok);
+
+        // The push: copies onto each of [0..5], bounded, latched pieces left out.
+        std::array<bool, kPieceCount> latch{};
+        latch[1] = true;
+        const DrawPlan p2 = PlanDrawPush(res, 2, latch);
+        ok = p2.entries.size() == 2 && p2.EntryCount() == 24 && PlanDrawPush(res, 0, kNoLatch).entries.empty()
+            && PlanDrawPush(res, -1, kNoLatch).EntryCount() == 0 && PlanDrawPush(res, 1000, kNoLatch).entries[0].copies == kMaxCopies;
+        for (const DrawPushEntry& e : p2.entries)
+            if (e.piece == Piece::Body || e.copies != 2) ok = false;
+        check("draw/target_push_onto_each_of_the_six_lists_bounded_and_latched", ok);
+
+        // The coin c / (n_k + c), for every k from 0 to 5; none for a k that
+        // names no list.
+        ok = true;
+        for (int k = 0; k < kDrawListCount; ++k) {
+            const double boots = k == 3 ? 0.5 : 1.0;
+            if (DrawCoinShare(p1.entries[0], k) != 1.0 / 3.0 || DrawCoinShare(p1.entries[1], k) != 0.5
+                || DrawCoinShare(p1.entries[2], k) != boots || DrawCoinShare(p2.entries[0], k) != 0.5) ok = false;
+            Piece q = Piece::Helmet;
+            if (AttributeDrawHit(p1, k, 2, 4, 4, 0.49, q) != DrawHit::Ours || q != Piece::Boots) ok = false;
+            if ((AttributeDrawHit(p1, k, 2, 4, 4, 0.5, q) == DrawHit::Ours) != (k != 3)) ok = false;
+            if (AttributeDrawHit(p1, k, 0, 3, 17, 0.33, q) != DrawHit::Ours || q != Piece::Helmet) ok = false;
+            if (AttributeDrawHit(p1, k, 0, 3, 17, 0.34, q) != DrawHit::GameOwn) ok = false;
+        }
+        ok = ok && DrawCoinShare(p1.entries[0], kDrawNoTier) == 0.0 && DrawCoinShare(p1.entries[0], 6) == 0.0
+            && AttributeDrawHit(p1, 0, 2, 4, 6, 0.0, p) == DrawHit::GameOwn     // on the lists, not the stand-in
+            && AttributeDrawHit(p1, 0, 0, 1, 2, 0.0, p) == DrawHit::GameOwn     // below SS, not chosen
+            && AttributeDrawHit(p1, 0, 0, 3, 17.5, 0.0, p) == DrawHit::GameOwn
+            && AttributeDrawHit(p1, 0, 0, 3, 17, 1.0, p) == DrawHit::GameOwn
+            && AttributeDrawHit(p1, 0, 0, 3, 17, std::nan(""), p) == DrawHit::GameOwn;
+        check("draw/target_coin_c_over_n_k_plus_c_for_every_k", ok);
+
+        // A stand-in's hit with no tier recorded is refused and counted; a game
+        // hit is not. A tier that names no list leaves the call with none.
+        Drops t = pushingCall();
+        ok = t.DrawPushing() && t.DrawTier() == kDrawNoTier
+            && t.SettleDrawHit(0, 3, 17, 0.0, p) == DrawHit::TierUnread
+            && t.SettleDrawHit(10, 0, 47, 0.0, p) == DrawHit::GameOwn && t.TierUnread() == 1 && !t.TakeDrawRewrite(p);
+        t.NoteDrawTier(true, 2.5);
+        ok = ok && t.DrawTier() == kDrawNoTier;
+        t.NoteDrawTier(true, 6);
+        ok = ok && t.DrawTier() == kDrawNoTier;
+        t.NoteDrawTier(false, 3);
+        ok = ok && t.DrawTier() == kDrawNoTier;
+        t.NoteDrawTier(true, 4);
+        ok = ok && t.DrawTier() == 4 && t.SettleDrawHit(0, 3, 17, 0.0, p) == DrawHit::Ours && p == Piece::Helmet
+            && t.TierUnread() == 1;
+        t.NoteDrawTier(true, -1);
+        ok = ok && t.DrawTier() == kDrawNoTier && t.SettleDrawHit(0, 3, 17, 0.0, p) == DrawHit::TierUnread && t.TierUnread() == 2;
+        check("draw/target_no_tier_recorded_is_refused_and_counted", ok);
+
+        // Two hits in one call, each settled before the next: each rewritten
+        // once, and a hit never rewritten does not leak into the next build.
+        Drops two = pushingCall();
+        two.NoteDrawTier(true, 0);
+        Piece first = Piece::Helmet;
+        Piece second = Piece::Helmet;
+        ok = two.SettleDrawHit(2, 4, 4, 0.9, p) == DrawHit::Ours && two.TakeDrawRewrite(first) && first == Piece::Boots
+            && !two.TakeDrawRewrite(first)
+            && two.SettleDrawHit(0, 3, 17, 0.1, p) == DrawHit::Ours && two.TakeDrawRewrite(second) && second == Piece::Helmet;
+        ok = ok && two.SettleDrawHit(1, 5, 5, 0.1, p) == DrawHit::Ours                // the body's, not rewritten
+            && two.SettleDrawHit(10, 0, 47, 0.0, p) == DrawHit::GameOwn && !two.TakeDrawRewrite(p)
+            && two.SettleDrawHit(1, 5, 5, 0.6, p) == DrawHit::GameOwn && !two.TakeDrawRewrite(p);   // lost on the coin
+        DropStatFields f2;
+        two.FillStat(f2, true);
+        check("draw/target_two_hits_in_one_call_settled_apart", ok && f2.drawPieces[0].ours == 1 && f2.drawPieces[1].ours == 1
+              && f2.drawPieces[2].ours == 1 && f2.drawPieces[3].ours == 0 && f2.drawPieces[0].built == 0, DropStatLine(f2));
+
+        // A roll run inside the call sets its entries and its hit state aside;
+        // both come back when that roll returns.
+        Drops nest = pushingCall();
+        nest.NoteDrawTier(true, 1);
+        ok = nest.SettleDrawHit(0, 3, 17, 0.1, p) == DrawHit::Ours;          // waiting for its rewrite
+        const bool outer = nest.SetDrawAside();
+        const bool inner = nest.SetDrawAside();
+        ok = ok && outer && !inner && nest.DrawAside() && nest.SettleDrawHit(0, 3, 17, 0.0, p) == DrawHit::NotInScope
+            && !nest.TakeDrawRewrite(p) && nest.PushedDrawPlan() != nullptr && nest.PushedDrawPlan()->EntryCount() == 18;
+        const bool innerBack = nest.RestoreDraw();
+        const bool outerBack = nest.RestoreDraw();
+        Piece back = Piece::Body;
+        ok = ok && !innerBack && outerBack && !nest.DrawAside() && !nest.RestoreDraw() && nest.TakeDrawRewrite(back)
+            && back == Piece::Helmet && nest.DrawNested() == 1 && nest.TierUnread() == 0;
+        DropStatFields fn;
+        nest.FillStat(fn, true);
+        check("draw/target_a_nested_roll_sets_the_entries_and_the_hit_aside", ok && fn.drawPieces[0].ours == 1
+              && fn.drawNested == 1, DropStatLine(fn));
+
+        // The tier goes to the innermost DropItem call in progress; the inner
+        // call's end leaves the pushing call's frame, its own ends it.
+        Drops in = pushingCall();
+        in.NoteDrawTier(true, 3);
+        ok = in.BeginDrawCall(true, 0, 0, true) == CallAction::PassNested && in.DrawTier() == kDrawNoTier;
+        in.NoteDrawTier(true, 5);
+        ok = ok && in.DrawTier() == 5 && in.SettleDrawHit(2, 4, 4, 0.9, p) == DrawHit::Ours   // n_5 0: every hit
+            && in.TakeDrawRewrite(p) && !in.EndDrawCall() && in.DrawPushing() && in.DrawTier() == 3
+            && in.SettleDrawHit(2, 4, 4, 0.9, p) == DrawHit::GameOwn                              // n_3 1: a half
+            && in.EndDrawCall() && !in.DrawPushing() && in.DrawDepth() == 0 && in.PushedDrawPlan() == nullptr
+            && in.SettleDrawHit(2, 4, 4, 0.0, p) == DrawHit::NotInScope && !in.EndDrawCall();
+        check("draw/target_the_tier_goes_to_the_innermost_call", ok);
+
+        // The gate: pending until the first resolving call, then on, or
+        // not-resolved with no stand-in or the lists unreadable.
+        Drops gt = installedOn();
+        ok = gt.DrawGateNow(true) == Gate::Pending && gt.GateNow(true) == Gate::Pending && gt.KillGateNow(true) == Gate::Pending;
+        gt.PlanDrawFor(ResolveDrawStandIns(nl, none.fn()), kPlayerCopies);
+        ok = ok && gt.DrawGateNow(true) == Gate::NotResolved;
+        FakeDrawRepo gr;
+        gt.PlanDrawFor(ResolveDrawStandIns(drawLists(gr), gr.fn()), kPlayerCopies);
+        ok = ok && gt.DrawGateNow(true) == Gate::On && gt.KillGateNow(true) == Gate::Pending && gt.GateNow(true) == Gate::Pending;
+        gt.NoteDrawListsUnreadable();
+        ok = ok && gt.DrawGateNow(true) == Gate::NotResolved && gt.DrawGateNow(false) == Gate::NoDetection;
+        gt.SetEnabled(false);
+        ok = ok && gt.DrawGateNow(true) == Gate::Off;
+        check("draw/target_gate_pending_then_on_or_not_resolved", ok);
+
+        // A refused rewrite latches the piece off on the draw too.
+        Drops lr = installedOn();
+        lr.NoteRewriteRefused(Piece::Boots);
+        const DrawPlan pl = lr.PlanDrawFor(res, kPlayerCopies);
+        ok = pl.entries.size() == 2;
+        for (const DrawPushEntry& e : pl.entries)
+            if (e.piece == Piece::Boots) ok = false;
+        check("draw/target_refused_rewrite_latches_the_piece_on_the_draw", ok);
+
+        // The line's draw fields, filled: a call pushed, hit, built; `injected=`
+        // counts the push; the other routes' fields stay theirs.
+        Drops s = pushingCall();
+        s.NoteDrawTier(true, 2);
+        s.SettleDrawHit(0, 3, 17, 0.0, p);
+        Piece built = Piece::Body;
+        s.TakeDrawRewrite(built);
+        s.NoteBuilt(built, Roll::Draw);
+        s.SettleDrawHit(2, 4, 4, 0.0, p);
+        s.SetDrawAside();
+        s.RestoreDraw();
+        s.EndDrawCall();
+        s.BeginDrawCall(true, 1, 0, true);
+        s.EndDrawCall();
+        s.BeginDrawCall(true, 0, 0, true);
+        s.SettleDrawHit(0, 3, 17, 0.0, p);   // after the call that pushed: not the draw's
+        s.EndDrawCall();
+        DropStatFields fs;
+        s.FillStat(fs, true);
+        fs.drawHook = "detoured";
+        fs.tierHook = "detoured";
+        const std::string line = DropStatLine(fs);
+        ok = field(line, "draw-gate") == "on" && field(line, "draw-hook") == "detoured" && field(line, "tier-hook") == "detoured"
+            && field(line, "draw-calls") == "3" && field(line, "draw-pushed") == "1" && field(line, "draw-nested") == "2"
+            && field(line, "tier-unread") == "0" && field(line, "draw-helmet") == "1/1" && field(line, "draw-boots") == "1/0"
+            && field(line, "draw-body") == "0/0" && field(line, "draw-gloves") == "0/0" && field(line, "injected") == "18"
+            && field(line, "draw-standin-helmet") == "3:17@6/5x2,2,2,2,2,2"
+            && field(line, "draw-standin-body") == "5:5@6/2x1,1,1,1,1,1"
+            && field(line, "draw-standin-boots") == "4:4@6/5x0,0,0,1,0,0" && field(line, "draw-standin-gloves") == "none"
+            && field(line, "helmet") == "0/0" && field(line, "kill-helmet") == "0/0" && field(line, "gate") == "pending"
+            && field(line, "kill-gate") == "pending" && field(line, "pushed-calls") == "0" && field(line, "kill-pushed") == "0";
+        check("draw/target_stat_fields_filled", ok, line);
+        check("draw/target_stand_in_text", DrawStandInText(DrawStandIn{}) == "none"
+              && DrawStandInField(Gate::Pending, res.standIns[0]) == "pending"
+              && DrawStandInField(Gate::On, res.standIns[3]) == "none");
     }
 
     std::cout << (failures ? "RESULT FAIL " + std::to_string(failures) : std::string("RESULT OK")) << std::endl;

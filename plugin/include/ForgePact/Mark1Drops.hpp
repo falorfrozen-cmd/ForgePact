@@ -48,6 +48,17 @@ namespace ForgePact::Mark1Drops {
 // and the `injected=`, `refused=`, `anomalies=` and `art-wait=` counters; each
 // has its own gate, stand-ins and tallies.
 //
+// Live 3 then measured that ordinary kills never reach `DropUniqueItems`: a
+// kill's unique comes from DropItem's own draw (Mod live 7 results). The kill
+// draw ("the kill draw" below) joins the pieces to that draw the same way,
+// through DropManager's one DropItem detour and raredrop's one
+// LoadSatanicDropTier detour: a stand-in of the piece's class the draw keeps,
+// pushed onto each of the six lists for the length of a DropItem call, the coin
+// c / (n_k + c) from the list k the call's tier names, and the same rewrite. It
+// shares the switch, the install, the art-ready rule, the latches and those
+// counters too, with its own gate, stand-ins and tallies. The Heroic and
+// DropUniqueItems routes stay as they are.
+//
 // This header decides; it never touches the game. Numbers and strings only,
 // never an instance or an RValue (the Mark1Set.hpp contract), so
 // tests/mark1_drops_harness.cpp compiles it whole. The adapter in ModuleMain.cpp
@@ -366,8 +377,9 @@ inline RewriteTarget RewriteFor(Piece p)
 // qualifies only when the five hold it equally often: then the coin c / (n + c)
 // is exact whichever list the call read (Pocket Elf's rule, FlightCharms.hpp).
 
-// Which roll a hit or a built piece came from: its tallies are its own.
-enum class Roll : int { Heroic, Kill };
+// Which roll a hit or a built piece came from: its tallies are its own. Draw
+// is DropItem's own unique draw ("the kill draw" below).
+enum class Roll : int { Heroic, Kill, Draw };
 
 // The sub-lists the ordinary roll reads (static reading; the model's
 // UNIQUE_SUB_LISTS). The kill route pushes onto each of them.
@@ -531,6 +543,243 @@ inline bool AttributeHit(const KillPushPlan& plan, double t, double sub, double 
     return AttributeHitAmong(plan.entries, t, sub, b, u, out);
 }
 
+// ---- the kill draw: DropItem's own unique draw ---------------------------------------
+//
+// A kill's unique is not built by DropUniqueItems (Live 3: type 45's gate stays
+// closed on ordinary kills) but by DropItem itself (the hub's RDM § 13.12; the
+// research doc's Mod live 7 results and Phase 4 decision). DropItem draws from
+// lootListUnique[k], k being what LoadSatanicDropTier answered in the same call
+// (measured: `tier-k: matches`). It keeps an entry whose definition reads
+// rarity 6 with fields 40 and 41 clear (static reading), and it keeps the first
+// such entry it draws (measured, thinly: `draw-mode: first-kept`). An SS (tier
+// 5) entry meets one more check; a pushed SS entry the draw picks is built, if
+// rarely (measured: `ss-build: seen`).
+//
+// So, with the switch on, for the length of each outermost DropItem call each
+// piece's draw stand-in goes onto every one of [0..5], `copies` times. A hit on
+// a stand-in's whole triple is the piece's with probability c / (n_k + c): k the
+// tier recorded in the innermost DropItem call in progress, n_k the stand-in's
+// own count on list k. With no tier recorded the hit is refused and counted
+// (` tier-unread=`). Each hit is settled before the next starts: a hit that is
+// the piece's waits for its rewrite at CreateItemNew's entry, and the next hit
+// drops it. A roll run inside the call (#74's Angelic roll, the shared
+// DropUniqueItems detour, the Heroic hook) sees the lists as before: the adapter
+// takes the call's entries off, and the core sets the call's hit state aside
+// until that roll returns. The DropUniqueItems and Heroic routes stay as built.
+
+// The draw reads one of [0..5].
+inline constexpr int kDrawListCount = kListCount;
+// The rarity the draw keeps, Satanic (static reading; `pool draw`'s rule).
+inline constexpr int kDrawKeptRarity = 6;
+// The SS tier (itemInfoStruct "32").
+inline constexpr int kDrawSsTier = 5;
+// The stand-in's tier preference (the owner, 2026-10-21, after Live 1b): SS
+// first, so each piece is as likely as any one SS unique on its list, as the
+// game's own SS set pieces are; below SS only for a class with no SS candidate.
+// Reversing it is this one constant; no save holds it.
+inline constexpr bool kDrawPrefersSs = true;
+// No tier recorded in the call (or one that names no list).
+inline constexpr int kDrawNoTier = -1;
+
+// A triple's repository fields as the draw reads them, by name outside a roll:
+// rarity (27), tier (32), and fields 40 and 41. False when they could not be
+// read; such a triple is counted (` unread`) and never a stand-in.
+struct DrawRead {
+    int  rarity = 0;
+    int  tier = kDrawNoTier;
+    bool f40 = false;
+    bool f41 = false;
+};
+using DrawReadFn = std::function<bool(const Triple& key, DrawRead& out)>;
+
+// Whether the draw keeps an entry as read: rarity 6, fields 40 and 41 clear.
+inline bool DrawKeeps(const DrawRead& r)
+{
+    return r.rarity == kDrawKeptRarity && !r.f40 && !r.f41;
+}
+
+using DrawCounts = std::array<int, kDrawListCount>;
+
+struct DrawStandIn {
+    bool       resolved = false;
+    Triple     triple;
+    int        rarity = 0;
+    int        tier = kDrawNoTier;
+    DrawCounts counts{};  // its entries on each of [0..5], repeats counted
+
+    int Most() const
+    {
+        int most = 0;
+        for (int n : counts) most = n > most ? n : most;
+        return most;
+    }
+    bool Ss() const { return tier == kDrawSsTier; }
+};
+
+// Whether `a` is the better stand-in: the preferred tier side first, then the
+// smaller largest count over the six lists (0 everywhere first), then the lower
+// (sub, b).
+inline bool DrawBetter(const DrawStandIn& a, const DrawStandIn& b)
+{
+    const bool pa = a.Ss() == kDrawPrefersSs;
+    const bool pb = b.Ss() == kDrawPrefersSs;
+    if (pa != pb) return pa;
+    if (a.Most() != b.Most()) return a.Most() < b.Most();
+    if (a.triple.sub != b.triple.sub) return a.triple.sub < b.triple.sub;
+    return a.triple.b < b.triple.b;
+}
+
+struct DrawResolution {
+    std::array<int, kDrawListCount>  lengths{};  // each list's entries, every kind
+    int                              unread = 0; // distinct triples of a piece class whose fields could not be read
+    std::array<DrawStandIn, kPieceCount> standIns{};
+    std::array<int, kPieceCount>     candidates{};  // per class: the distinct triples the draw keeps
+    std::array<int, kPieceCount>     ss{};          // of those, the SS ones
+
+    bool AnyResolved() const
+    {
+        for (const DrawStandIn& s : standIns)
+            if (s.resolved) return true;
+        return false;
+    }
+};
+
+// The draw's stand-in rule. For each piece's class: the distinct triples of
+// that class on any of [0..5] the draw keeps as read, each read once; the
+// choice is DrawBetter's. A class with no candidate has no draw stand-in: that
+// piece does not drop from the draw, and the others still do. There is no
+// equal-count rule: the coin uses the call's recorded k.
+inline DrawResolution ResolveDrawStandIns(const KillLists& lists, const DrawReadFn& read)
+{
+    DrawResolution r;
+    std::map<Triple, DrawCounts> counts;  // ordered by (type, sub, b)
+    for (int k = 0; k < kDrawListCount; ++k) {
+        const std::vector<ListEntry>& list = lists[static_cast<size_t>(k)];
+        r.lengths[static_cast<size_t>(k)] = static_cast<int>(list.size());
+        for (const ListEntry& e : list) {
+            if (!e.triple) continue;
+            Triple key;
+            Piece p = Piece::Helmet;
+            if (!Mark1Set::AsWhole(e.t, key.t) || !Mark1Set::AsWhole(e.sub, key.sub) || !Mark1Set::AsWhole(e.b, key.b)) continue;
+            if (!PieceOfClass(key.t, p)) continue;
+            ++counts[key][static_cast<size_t>(k)];  // zeros when new
+        }
+    }
+    for (const auto& [key, c] : counts) {
+        Piece p = Piece::Helmet;
+        PieceOfClass(key.t, p);
+        DrawRead v;
+        if (!read || !read(key, v)) {
+            ++r.unread;
+            continue;
+        }
+        if (!DrawKeeps(v)) continue;
+        const size_t i = static_cast<size_t>(p);
+        ++r.candidates[i];
+        DrawStandIn cand;
+        cand.resolved = true;
+        cand.triple = key;
+        cand.rarity = v.rarity;
+        cand.tier = v.tier;
+        cand.counts = c;
+        if (cand.Ss()) ++r.ss[i];
+        DrawStandIn& s = r.standIns[i];
+        if (!s.resolved || DrawBetter(cand, s)) s = cand;
+    }
+    return r;
+}
+
+// The draw's stand-ins, resolved again when any of [0..5] changed: another
+// array (its id) or another length.
+class DrawStandInCache {
+public:
+    bool Stale(const KillListKeys& keys) const
+    {
+        if (!have_) return true;
+        for (size_t k = 0; k < keys.size(); ++k)
+            if (keys[k].id != keys_[k].id || keys[k].length != keys_[k].length) return true;
+        return false;
+    }
+    void Store(const KillListKeys& keys, const DrawResolution& r)
+    {
+        have_ = true;
+        keys_ = keys;
+        resolution_ = r;
+    }
+    const DrawResolution* Find() const { return have_ ? &resolution_ : nullptr; }
+
+private:
+    bool           have_ = false;
+    KillListKeys   keys_{};
+    DrawResolution resolution_;
+};
+
+struct DrawPushEntry {
+    Piece      piece = Piece::Helmet;
+    Triple     triple;
+    DrawCounts counts{};  // the lists' own entries carrying the triple
+    int        copies = 0;
+};
+
+// What one DropItem call pushes: `copies` entries per piece that has a draw
+// stand-in and is not latched off, onto each of [0..5]. Copies below 1 push
+// nothing; above kMaxCopies push kMaxCopies.
+struct DrawPlan {
+    std::vector<DrawPushEntry> entries;  // each one goes onto every list, [0] to [5]
+
+    int PerListCount() const
+    {
+        int total = 0;
+        for (const DrawPushEntry& e : entries) total += e.copies;
+        return total;
+    }
+    int EntryCount() const { return PerListCount() * kDrawListCount; }
+};
+
+inline DrawPlan PlanDrawPush(const DrawResolution& r, int copies, const std::array<bool, kPieceCount>& latched)
+{
+    DrawPlan plan;
+    if (copies < 1) return plan;
+    if (copies > kMaxCopies) copies = kMaxCopies;
+    for (int i = 0; i < kPieceCount; ++i) {
+        const DrawStandIn& s = r.standIns[static_cast<size_t>(i)];
+        if (!s.resolved || latched[static_cast<size_t>(i)]) continue;
+        plan.entries.push_back(DrawPushEntry{ kPieces[i].piece, s.triple, s.counts, copies });
+    }
+    return plan;
+}
+
+// The share of a hit on list k that is the piece: c / (n_k + c); 0 when k names
+// no list.
+inline double DrawCoinShare(const DrawPushEntry& e, int k)
+{
+    if (k < 0 || k >= kDrawListCount) return 0.0;
+    return CoinShare(e.counts[static_cast<size_t>(k)], e.copies);
+}
+
+// What a typed hit in a pushing DropItem call is.
+enum class DrawHit : int {
+    NotInScope,  // no call pushed, or its hit state is set aside: not the draw's to settle
+    GameOwn,     // not a stand-in's triple, or lost on the coin
+    Ours,        // the piece's
+    TierUnread,  // a stand-in's triple with no tier recorded: refused, counted
+};
+
+// A typed hit among the entries a call pushed, with the call's recorded k.
+inline DrawHit AttributeDrawHit(const DrawPlan& plan, int k, double t, double sub, double b, double u, Piece& out)
+{
+    Triple key;
+    if (!Mark1Set::AsWhole(t, key.t) || !Mark1Set::AsWhole(sub, key.sub) || !Mark1Set::AsWhole(b, key.b)) return DrawHit::GameOwn;
+    for (const DrawPushEntry& e : plan.entries) {
+        if (!(e.triple == key)) continue;
+        if (k < 0 || k >= kDrawListCount) return DrawHit::TierUnread;
+        if (!(u >= 0.0 && u < 1.0) || !(u < DrawCoinShare(e, k))) return DrawHit::GameOwn;
+        out = e.piece;
+        return DrawHit::Ours;
+    }
+    return DrawHit::GameOwn;
+}
+
 // ---- the art: no roll builds a piece before the ground install was tried --------
 //
 // A piece built on the ground while the shared LootGroundInit route is still
@@ -585,10 +834,11 @@ struct DropTally {
 };
 
 // Every field of the line. A default DropStatFields prints the fresh
-// session's line; Drops::FillStat fills it but the two hook routes, which the
-// adapter sets. `art-wait=`, `injected=`, `refused=` and `anomalies=` count
-// both rolls; the rest are the Heroic roll's, and the `kill-` ones the kill
-// route's.
+// session's line; Drops::FillStat fills it but the four hook routes (`hook=`,
+// `kill-hook=`, `draw-hook=`, `tier-hook=`), which the adapter sets.
+// `art-wait=`, `injected=`, `refused=` and `anomalies=` count every route; the
+// rest are the Heroic roll's, the `kill-` ones the DropUniqueItems route's, and
+// the `draw-` ones and `tier-unread=` the kill draw's.
 struct DropStatFields {
     bool        drops = false;
     std::string install = "not-armed";
@@ -614,6 +864,16 @@ struct DropStatFields {
     uint64_t    killNested = 0;
     DropTally   killPieces[kPieceCount];
     std::array<StandIn, kPieceCount> killStandIns{};
+    // The kill draw.
+    Gate        drawGate = Gate::Off;
+    std::string drawHook = "not-installed";  // DropManager's one DropItem detour's route
+    std::string tierHook = "not-installed";  // raredrop's one LoadSatanicDropTier detour's route
+    uint64_t    drawCalls = 0;               // every DropItem call the detour saw, switch on or off
+    uint64_t    drawPushedCalls = 0;
+    uint64_t    drawNested = 0;
+    uint64_t    tierUnread = 0;              // stand-in hits refused with no tier recorded
+    DropTally   drawPieces[kPieceCount];
+    std::array<DrawStandIn, kPieceCount> drawStandIns{};
 };
 
 // A piece's stand-in as the line prints it: `<sub>:<b>@<rarity>x<n>`, or none.
@@ -628,6 +888,22 @@ inline std::string StandInText(const StandIn& s)
 inline std::string StandInField(Gate g, const StandIn& s)
 {
     return g == Gate::Pending ? std::string("pending") : StandInText(s);
+}
+
+// A draw stand-in as the line prints it, `<sub>:<b>@<rarity>/<tier>x<n0>,...,<n5>`
+// (`pool draw`'s form, so the tier it was picked at shows), or none.
+inline std::string DrawStandInText(const DrawStandIn& s)
+{
+    if (!s.resolved) return "none";
+    std::string counts;
+    for (size_t k = 0; k < s.counts.size(); ++k) counts += (k ? "," : "") + std::to_string(s.counts[k]);
+    return std::to_string(s.triple.sub) + ":" + std::to_string(s.triple.b) + "@" + std::to_string(s.rarity) + "/"
+        + std::to_string(s.tier) + "x" + counts;
+}
+
+inline std::string DrawStandInField(Gate g, const DrawStandIn& s)
+{
+    return g == Gate::Pending ? std::string("pending") : DrawStandInText(s);
 }
 
 // `mark1set stat`'s second line, after the set's own. It begins
@@ -663,6 +939,19 @@ inline std::string DropStatLine(const DropStatFields& f)
     for (int i = 0; i < kPieceCount; ++i)
         s += " kill-standin-" + std::string(kPieces[i].key) + "="
             + StandInField(f.killGate, f.killStandIns[static_cast<size_t>(i)]);
+    s += " draw-gate=" + std::string(GateName(f.drawGate));
+    s += " draw-hook=" + f.drawHook;
+    s += " tier-hook=" + f.tierHook;
+    s += " draw-calls=" + std::to_string(f.drawCalls);
+    s += " draw-pushed=" + std::to_string(f.drawPushedCalls);
+    s += " draw-nested=" + std::to_string(f.drawNested);
+    s += " tier-unread=" + std::to_string(f.tierUnread);
+    for (int i = 0; i < kPieceCount; ++i)
+        s += " draw-" + std::string(kPieces[i].key) + "=" + std::to_string(f.drawPieces[i].ours) + "/"
+            + std::to_string(f.drawPieces[i].built);
+    for (int i = 0; i < kPieceCount; ++i)
+        s += " draw-standin-" + std::string(kPieces[i].key) + "="
+            + DrawStandInField(f.drawGate, f.drawStandIns[static_cast<size_t>(i)]);
     return s;
 }
 
@@ -820,8 +1109,151 @@ public:
         injected_ += static_cast<uint64_t>(p.EntryCount());
     }
 
+    // ---- the kill draw, per DropItem call ---------------------------------------
+    // Every call DropManager's DropItem detour sees is begun here and ended by
+    // EndDrawCall when the original returns, whatever the answer (` draw-calls=`
+    // counts each, switch on or off). The core keeps one tier slot per call in
+    // progress, so LoadSatanicDropTier's answer goes to the innermost one.
+    // `rollDepth` is g_SigRollDepth (#74's Angelic roll and the Heroic hook);
+    // `uniqueDepth` the shared DropUniqueItems detour's. A call begun inside one
+    // of those, or inside another DropItem call, passes (` draw-nested=`): a
+    // DropItem call already in progress keeps the lists it pushed, and a hit in
+    // the inner call is settled with the inner call's own k. The art-ready rule is
+    // the Heroic roll's.
+    CallAction BeginDrawCall(bool detectionNative, int rollDepth, int uniqueDepth, bool artReady)
+    {
+        ++drawCalls_;
+        const bool inDraw = !drawKs_.empty();
+        drawKs_.push_back(kDrawNoTier);
+        if (!enabled_ || !installed_) return CallAction::PassOff;
+        if (!detectionNative) return CallAction::PassGate;
+        if (rollDepth > 0 || uniqueDepth > 0 || inDraw) {
+            ++drawNested_;
+            return CallAction::PassNested;
+        }
+        if (!artReady) {
+            ++artWait_;
+            return CallAction::PassArtWait;
+        }
+        return CallAction::Resolve;
+    }
+
+    DrawStandInCache&       DrawCache() { return drawCache_; }
+    const DrawStandInCache& DrawCache() const { return drawCache_; }
+
+    // The lists could not be read: nothing pushed, the draw gate reads
+    // not-resolved.
+    void NoteDrawListsUnreadable() { drawState_ = ListState::Unreadable; }
+
+    // The plan for a call whose lists resolved to `r`; it records the
+    // resolution the line prints.
+    DrawPlan PlanDrawFor(const DrawResolution& r, int copies)
+    {
+        lastDrawStandIns_ = r.standIns;
+        drawState_ = r.AnyResolved() ? ListState::Resolved : ListState::NoneResolved;
+        return PlanDrawPush(r, copies, latched_);
+    }
+
+    // The plan's entries went onto each of [0..5] and were held read-back: the
+    // call that began last is the one that pushed, and its hits are settled
+    // against `p` until it ends.
+    void NoteDrawPushed(const DrawPlan& p)
+    {
+        if (p.entries.empty() || drawKs_.empty() || frame_.active) return;
+        ++drawPushedCalls_;
+        injected_ += static_cast<uint64_t>(p.EntryCount());
+        frame_ = DrawFrame{};
+        frame_.active = true;
+        frame_.depth = drawKs_.size();
+        frame_.plan = p;
+    }
+
+    // A DropItem call in progress pushed: its plan, for the adapter's removal
+    // (the tail rule) before EndDrawCall, and to put the entries back after a
+    // nested roll.
+    bool            DrawPushing() const { return frame_.active; }
+    const DrawPlan* PushedDrawPlan() const { return frame_.active ? &frame_.plan : nullptr; }
+    size_t          DrawDepth() const { return drawKs_.size(); }
+
+    // LoadSatanicDropTier's answer (after raredrop's lift), for the innermost
+    // DropItem call in progress: a whole number 0 to 5 is that call's k; any
+    // other answer leaves it with none. Outside a DropItem call it is no one's.
+    void NoteDrawTier(bool numeric, double value)
+    {
+        if (drawKs_.empty()) return;
+        long long k = 0;
+        const bool whole = numeric && Mark1Set::AsWhole(value, k) && k >= 0 && k < kDrawListCount;
+        drawKs_.back() = whole ? static_cast<int>(k) : kDrawNoTier;
+    }
+    // The innermost call's k, or kDrawNoTier.
+    int DrawTier() const { return drawKs_.empty() ? kDrawNoTier : drawKs_.back(); }
+
+    // A roll begins inside a pushing call (#74's Angelic roll, the shared
+    // DropUniqueItems detour, the Heroic hook). True when the call's entries
+    // are to come off the lists now (the outermost such roll; counted in
+    // ` draw-nested=`). Until RestoreDraw, the call's hit state is set aside: no
+    // hit is the draw's, and a hit waiting for its rewrite keeps waiting.
+    bool SetDrawAside()
+    {
+        if (!frame_.active) return false;
+        if (++frame_.aside != 1) return false;
+        ++drawNested_;
+        return true;
+    }
+    // That roll returned. True when the entries are to go back on the lists
+    // now (the outermost such roll returned).
+    bool RestoreDraw()
+    {
+        if (!frame_.active || frame_.aside == 0) return false;
+        return --frame_.aside == 0;
+    }
+    bool DrawAside() const { return frame_.active && frame_.aside > 0; }
+
+    // A typed hit (a CreateDefaultParams call typed by the scope's latest
+    // repository read) in scope `draw`. It first settles the call's previous
+    // hit: a piece's hit that was never rewritten is dropped. A stand-in's hit
+    // with no tier recorded is refused (` tier-unread=`); one that falls the
+    // piece's is counted `ours` on the draw's tally and waits for
+    // TakeDrawRewrite.
+    DrawHit SettleDrawHit(double t, double sub, double b, double u, Piece& out)
+    {
+        if (!frame_.active || frame_.aside > 0) return DrawHit::NotInScope;
+        frame_.pending = false;
+        const DrawHit h = AttributeDrawHit(frame_.plan, DrawTier(), t, sub, b, u, out);
+        if (h == DrawHit::TierUnread) ++tierUnread_;
+        if (h == DrawHit::Ours) {
+            frame_.pending = true;
+            frame_.pendingPiece = out;
+            ++drawTally_[static_cast<size_t>(out)].ours;
+        }
+        return h;
+    }
+    // At CreateItemNew's entry: the piece the current hit is to be rewritten
+    // to, once; false when no hit of the draw's is waiting (or it is set aside).
+    bool TakeDrawRewrite(Piece& out)
+    {
+        if (!frame_.active || frame_.aside > 0 || !frame_.pending) return false;
+        out = frame_.pendingPiece;
+        frame_.pending = false;
+        return true;
+    }
+
+    // The call that began last returns. True when it was the call that
+    // pushed: its hit state ends here, and the adapter has taken its entries
+    // off before calling this.
+    bool EndDrawCall()
+    {
+        if (drawKs_.empty()) return false;
+        const size_t depth = drawKs_.size();
+        drawKs_.pop_back();
+        if (!frame_.active || depth != frame_.depth) return false;
+        frame_ = DrawFrame{};
+        return true;
+    }
+
     // A stand-in hit that became the piece, and the Custom Forge's final pass
-    // counting it built, on the roll it came from.
+    // counting it built, on the roll it came from. The draw's `ours` is
+    // counted by SettleDrawHit.
     void NoteOurs(Piece p, Roll roll = Roll::Heroic) { ++TallyOf(roll)[static_cast<size_t>(p)].ours; }
     void NoteBuilt(Piece p, Roll roll = Roll::Heroic) { ++TallyOf(roll)[static_cast<size_t>(p)].built; }
     // A refused rewrite latches that piece off for the session on both rolls,
@@ -837,8 +1269,17 @@ public:
     uint64_t PushedCalls() const { return pushedCalls_; }
     uint64_t KillCalls() const { return killCalls_; }
     uint64_t KillPushedCalls() const { return killPushedCalls_; }
+    uint64_t DrawCalls() const { return drawCalls_; }
+    uint64_t DrawPushedCalls() const { return drawPushedCalls_; }
+    uint64_t DrawNested() const { return drawNested_; }
+    uint64_t TierUnread() const { return tierUnread_; }
 
-    // Every field but `hook=` and `kill-hook=`, which the adapter sets.
+    // The ` draw-gate=` field (the kill draw), the same words: `pending` until
+    // the draw's first resolving call.
+    Gate DrawGateNow(bool detectionNative) const { return GateOf(drawState_, detectionNative); }
+
+    // Every field but `hook=`, `kill-hook=`, `draw-hook=` and `tier-hook=`, which
+    // the adapter sets.
     void FillStat(DropStatFields& f, bool detectionNative) const
     {
         f.drops = enabled_;
@@ -862,11 +1303,29 @@ public:
         f.killNested = killNested_;
         for (int i = 0; i < kPieceCount; ++i) f.killPieces[i] = killTally_[static_cast<size_t>(i)];
         f.killStandIns = lastKillStandIns_;
+        f.drawGate = DrawGateNow(detectionNative);
+        f.drawCalls = drawCalls_;
+        f.drawPushedCalls = drawPushedCalls_;
+        f.drawNested = drawNested_;
+        f.tierUnread = tierUnread_;
+        for (int i = 0; i < kPieceCount; ++i) f.drawPieces[i] = drawTally_[static_cast<size_t>(i)];
+        f.drawStandIns = lastDrawStandIns_;
     }
 
 private:
     // Unknown: the roll has had no resolving call yet (the gate reads pending).
     enum class ListState : int { Unknown, Resolved, NoneResolved, Unreadable };
+
+    // The DropItem call that pushed: its plan, the depth it began at, how many
+    // rolls inside it have set it aside, and the hit waiting for its rewrite.
+    struct DrawFrame {
+        bool     active = false;
+        size_t   depth = 0;
+        DrawPlan plan;
+        int      aside = 0;
+        bool     pending = false;
+        Piece    pendingPiece = Piece::Helmet;
+    };
 
     Gate GateOf(ListState state, bool detectionNative) const
     {
@@ -877,7 +1336,12 @@ private:
         if (state == ListState::NoneResolved || state == ListState::Unreadable) return Gate::NotResolved;
         return Gate::On;
     }
-    std::array<DropTally, kPieceCount>& TallyOf(Roll roll) { return roll == Roll::Kill ? killTally_ : tally_; }
+    std::array<DropTally, kPieceCount>& TallyOf(Roll roll)
+    {
+        if (roll == Roll::Kill) return killTally_;
+        if (roll == Roll::Draw) return drawTally_;
+        return tally_;
+    }
 
     bool         enabled_ = false;
     bool         installed_ = false;
@@ -906,6 +1370,17 @@ private:
     uint64_t     killCalls_ = 0;
     uint64_t     killPushedCalls_ = 0;
     uint64_t     killNested_ = 0;
+    // The kill draw.
+    ListState    drawState_ = ListState::Unknown;
+    std::array<DrawStandIn, kPieceCount> lastDrawStandIns_{};
+    std::array<DropTally, kPieceCount>   drawTally_{};
+    DrawStandInCache drawCache_;
+    std::vector<int> drawKs_;   // one tier slot per DropItem call in progress, innermost last
+    DrawFrame    frame_;
+    uint64_t     drawCalls_ = 0;
+    uint64_t     drawPushedCalls_ = 0;
+    uint64_t     drawNested_ = 0;
+    uint64_t     tierUnread_ = 0;
 };
 
 // `mark1set drops 1|0`: the drops switch, and on a switch-on the pieces' art,
