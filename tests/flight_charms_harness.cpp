@@ -2288,11 +2288,13 @@ int main()
         StatFields s;
         d.FillStat(s, true);
         s.elfDrawHook = "detoured";
-        s.elfDrawTyped = DrawTypedCounts{ 1, 5, 2, 3, 1, 0, 2, 0 };   // the adapter's typed-build counters
+        // The adapter's typed-build counters, then its class fields (#166 replan 1).
+        s.elfDrawTyped = DrawTypedCounts{ 1, 5, 2, 3, 1, 0, 2, 0, 6, 2, 2, 0, 1, 0, 9, 1, 1 };
         const std::string line = StatLine(s);
         const std::string tail = " standin-elf=none elf-draw-hook=detoured elf-draw-calls=2 elf-draw-pushed=1 elf-draw=1/1 "
                                  "elf-draw-standin=0:20@6/5x0,0,1,1,0,0 elf-draw-typed=1/5 elf-draw-untyped=2 elf-draw-normal=3 "
-                                 "elf-draw-outside=busy:1,aside:0,lists:2,roll:0";
+                                 "elf-draw-outside=busy:1,aside:0,lists:2,roll:0 elf-draw-class=bool:6/2,num:2/0,none:1,other:0 "
+                                 "elf-draw-class-check=9/1/1";
         check("elf_draw/target_the_stat_fields_after_use",
             line.size() > tail.size() && line.compare(line.size() - tail.size(), tail.size(), tail) == 0, line);
     }
@@ -2360,7 +2362,8 @@ int main()
                                   "guard kept=0 failed=0 | drops gate=off elf=0/0 wings=0/0 broom=0/0 injected=0 refused=0 "
                                   "anomalies=0 standin-elf=none elf-draw-hook=not-installed elf-draw-calls=0 "
                                   "elf-draw-pushed=0 elf-draw=0/0 elf-draw-standin=none elf-draw-typed=0/0 elf-draw-untyped=0 "
-                                  "elf-draw-normal=0 elf-draw-outside=busy:0,aside:0,lists:0,roll:0";
+                                  "elf-draw-normal=0 elf-draw-outside=busy:0,aside:0,lists:0,roll:0 "
+                                  "elf-draw-class=bool:0/0,num:0/0,none:0,other:0 elf-draw-class-check=0/0/0";
         Flight f;
         SizeGuard<Pending> g;
         ElfDraw e;
@@ -2404,7 +2407,8 @@ int main()
                                 "guard kept=1 failed=0 | drops gate=on elf=1/2 wings=0/0 broom=4/5 injected=12 refused=1 "
                                 "anomalies=0 standin-elf=aimbot elf-draw-hook=not-installed elf-draw-calls=0 "
                                 "elf-draw-pushed=0 elf-draw=0/0 elf-draw-standin=none elf-draw-typed=0/0 elf-draw-untyped=0 "
-                                "elf-draw-normal=0 elf-draw-outside=busy:0,aside:0,lists:0,roll:0";
+                                "elf-draw-normal=0 elf-draw-outside=busy:0,aside:0,lists:0,roll:0 "
+                                "elf-draw-class=bool:0/0,num:0/0,none:0,other:0 elf-draw-class-check=0/0/0";
         const bool gates = GateName(Gate::Off) == "off" && GateName(Gate::On) == "on" && GateName(Gate::Refused) == "refused"
             && GateName(Gate::NotResolved) == "not-resolved" && GateName(Gate::NoDetection) == "no-detection";
         const bool equipped = EquippedText(0) == "none" && EquippedText(kAllCharmBits) == "elf+wings+broom"

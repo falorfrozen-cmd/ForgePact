@@ -104,6 +104,9 @@ static RValue makeArray(std::vector<RValue> values) {
 static RValue makeStruct(std::map<std::string, RValue> values) {
     RValue r; r.m_Kind = VALUE_OBJECT; r.fields = std::make_shared<std::map<std::string, RValue>>(std::move(values)); return r;
 }
+// A VALUE_BOOL, as the runtime's bool constructor makes one (#166 replan 1: DropItem passes its
+// builds' class this way). ToDouble refuses it like every other non-numeric kind; ToBoolean reads it.
+static RValue makeBool(bool v) { RValue r; r.m_Kind = VALUE_BOOL; r.number = v ? 1.0 : 0.0; return r; }
 using Triple = std::array<double, 3>;
 static RValue makeEntry(const Triple& t) { return makeArray({ RValue(t[0]), RValue(t[1]), RValue(t[2]) }); }
 static Triple tripleOf(const RValue& entry) {
@@ -593,6 +596,7 @@ static std::string g_SatTierRoute = "not-installed";
 // declares them.
 static void KillDrawNoteRead(int argc, RValue** A);
 static bool KillDrawTypePick(int argc, RValue** A);
+static void KillDrawCheckClass(const RValue& made);
 static void KillDrawSettleHit();
 static void KillDrawNoteTier(const RValue& result);
 static bool KillDrawBeforeCreate(int argc, RValue** A);
@@ -679,8 +683,27 @@ static FcNs::ElfDrawCache g_ElfDrawCache;
 
 // ---- the game: CreateDefaultParams, the item builder, the script table, DropItemAngelicChance ---
 // CreateDefaultParams(sub, b, c) returns the struct Live 2 measured, {"b":51.0,"j":0.0,"c":1.0}:
-// `j` the first argument, `b` the second, `c` the third, and no field a and no w. The built
-// item's `a` is LootGroundCreate's, below.
+// `j` the first argument, `b` the second, and `c` a real 1 or 0, the runner's truth test of the
+// third (absent or undefined counts as 0; #166 replan 1's static reading, hub RDM § 13.12), never
+// the argument itself; no field a and no w. The built item's `a` is LootGroundCreate's, below.
+// The runner's truth test: a real or a bool true above 0.5, an int32 or a reference above 0, an
+// int64 above 0, a pointer when non-zero, undefined false. A string or another kind is a runner
+// error in the game; the model reads it as false and counts it apart from refusedConversions,
+// which counts the plugin's own conversions.
+static int gameTruthErrors = 0;
+static bool gameTruth(const RValue& v) {
+    switch (v.m_Kind) {
+    case VALUE_REAL: case VALUE_BOOL: return v.number > 0.5;
+    case VALUE_INT32: case VALUE_INT64: case VALUE_REF: return v.number > 0;
+    case VALUE_PTR: return v.number != 0;
+    case VALUE_UNDEFINED: case VALUE_UNSET: return false;
+    default: ++gameTruthErrors; return false;
+    }
+}
+// What a scenario makes the fake game store as `c`: the truth of the argument (the game's own), its
+// opposite, or no `c` at all (the class check's disagree and unread cases).
+enum class CdpClassStore { Truth, Opposite, Missing };
+static CdpClassStore cdpClassStore = CdpClassStore::Truth;
 static int gameCdpCalls = 0;
 static bool paramsLackJ = false;   // a CreateDefaultParams whose struct has no `j`
 static std::vector<std::string> lastParamsFields;   // the field names the last call returned
@@ -689,7 +712,8 @@ static RValue& gameCreateDefaultParams(CInstance*, CInstance*, RValue& result, i
     std::map<std::string, RValue> f;
     if (argc > 0 && !paramsLackJ) f["j"] = *A[0];
     if (argc > 1) f["b"] = *A[1];
-    if (argc > 2) f["c"] = *A[2];
+    const bool truth = argc > 2 && A[2] && gameTruth(*A[2]);
+    if (cdpClassStore != CdpClassStore::Missing) f["c"] = RValue((truth != (cdpClassStore == CdpClassStore::Opposite)) ? 1.0 : 0.0);
     lastParamsFields.clear();
     for (const auto& kv : f) lastParamsFields.push_back(kv.first);
     result = makeStruct(std::move(f));
@@ -982,16 +1006,24 @@ static PFUNC_YYGMLScript satTierEntry = gameLoadSatanicDropTier;
 // `outcomes`, and DropUniqueItems); then `dropItemDraws` unique draws from lootListUnique[k], k the
 // tier (0 when it is not a number): an index drawn (pickPolicy), drawn again unless the entry is an
 // array, its definition read through GetUniqueRepoStruct by direct call, drawn again on a set field
-// 40 or 41 or a rarity other than Satanic (6), at most 500 draws; then CreateDefaultParams(sub, b, 1)
+// 40 or 41 or a rarity other than Satanic (6), at most 500 draws; then CreateDefaultParams(sub, b, true)
 // and the placement under the entry's type. The layout each draw reads is recorded. A scenario can
 // also have a kept pick's own pair built as an ordinary item first (`dropItemNormalAtPick`:
-// CreateDefaultParams(sub, b, 0) between the pick's read and its unique build), the worst case of
-// a normal build that matches the latest unique read.
+// CreateDefaultParams(sub, b, false) between the pick's read and its unique build), the worst case
+// of a normal build that matches the latest unique read. The class is a VALUE_BOOL on every build,
+// true on the unique one and false on the normal one (#166 replan 1's static reading, hub RDM §
+// 13.12); `dropItemUniqueClass` / `dropItemUniqueArgc` let a scenario pass the unique build's class
+// as another kind, or not at all, and `cdpReturnedOther` counts a unique build whose
+// CreateDefaultParams handed back anything but the record the game's own call made.
 static int dropItemCalls = 0;
 static bool dropItemThrows = false;
 static int dropItemDraws = 1;
 static bool dropItemNormal = false;
 static bool dropItemNormalAtPick = false;
+static RValue dropItemUniqueClass = makeBool(true);
+static RValue dropItemNormalClass = makeBool(false);
+static int dropItemUniqueArgc = 3;
+static int cdpReturnedOther = 0;
 static bool dropItemNestsAngelic = false, dropItemNestsUnique = false;
 static PFUNC_YYGMLScript angelicEntry = nullptr;   // the game's calls to DropItemAngelicChance: HookAngelicChance (set in reset)
 static int dropItemArgcSeen = -1;
@@ -1011,7 +1043,7 @@ static RValue& gameDropItem(CInstance* self, CInstance* other, RValue&, int argc
     const size_t k = tier.m_Kind == VALUE_REAL && tier.number >= 0 && tier.number < 6 ? (size_t)tier.number : 0;
     dropItemTiers.push_back((int)k);
     if (dropItemNormal) {
-        RValue sub(0.0), b(900.0), c(0.0), params;
+        RValue sub(0.0), b(900.0), c = dropItemNormalClass, params;
         RValue* args[] = { &sub, &b, &c };
         RValue& made = cdpEntry(self, other, params, 3, args);
         gameLootGroundCreate(6, made);
@@ -1048,14 +1080,15 @@ static RValue& gameDropItem(CInstance* self, CInstance* other, RValue&, int argc
             if (info["40"].number != 0.0 || (info.count("41") && info["41"].number != 0.0) || info["27"].number != 6.0) continue;
             if (repoRead == RepoRead::PickedThenOther) readDefinition(self, other, kOtherRead);   // a read the pick cannot be typed from
             if (dropItemNormalAtPick) {
-                RValue normalC(0.0), normalParams;
+                RValue normalC = dropItemNormalClass, normalParams;
                 RValue* normalArgs[] = { &sub, &b, &normalC };
                 RValue& normal = cdpEntry(self, other, normalParams, 3, normalArgs);
                 gameLootGroundCreate(6, normal);
             }
-            RValue c(1.0), params;
+            RValue c = dropItemUniqueClass, params;
             RValue* args[] = { &sub, &b, &c };
-            RValue& made = cdpEntry(self, other, params, 3, args);
+            RValue& made = cdpEntry(self, other, params, dropItemUniqueArgc, args);
+            if (&made != &params) ++cdpReturnedOther;
             gameLootGroundCreate(picked[0], made);
             break;
         }
@@ -1246,6 +1279,8 @@ static void reset() {
     // raredrop's one tier detour not tried.
     satTierAnswer = RValue(3.0); satTierCalls = 0; satTierEntry = gameLoadSatanicDropTier;
     dropItemCalls = 0; dropItemThrows = false; dropItemDraws = 1; dropItemNormal = false; dropItemNormalAtPick = false;
+    dropItemUniqueClass = makeBool(true); dropItemNormalClass = makeBool(false); dropItemUniqueArgc = 3; cdpReturnedOther = 0;
+    cdpClassStore = CdpClassStore::Truth; gameTruthErrors = 0;
     dropItemNestsAngelic = false; dropItemNestsUnique = false; dropItemArgcSeen = -1; dropItemArgsSeen.clear();
     dropItemTiers.clear(); dropItemLayoutAtDraw.clear();
     g_OrigSatTier = nullptr; g_SatanicMult = 1.0; g_SatTierHits = 0; g_SatTierTried = false; g_SatTierRoute = "not-installed";
@@ -1568,15 +1603,17 @@ static const char* const kFreshDropsLine =
     " draw-gate=off draw-hook=not-installed tier-hook=not-installed draw-calls=0 draw-pushed=0 draw-nested=0 tier-unread=0"
     " draw-helmet=0/0 draw-body=0/0 draw-boots=0/0 draw-gloves=0/0 draw-standin-helmet=none draw-standin-body=none"
     " draw-standin-boots=none draw-standin-gloves=none"
-    " draw-typed=0/0 draw-untyped=0 draw-normal=0 draw-outside=busy:0,aside:0,lists:0,roll:0";
+    " draw-typed=0/0 draw-untyped=0 draw-normal=0 draw-outside=busy:0,aside:0,lists:0,roll:0"
+    " draw-class=bool:0/0,num:0/0,none:0,other:0 draw-class-check=0/0/0";
 
 static const char* const kFreshFlightLine =
     "flightcharm: switches elf=off wings=off broom=off | flight install=not-armed state=off equipped=none answered=0 excluded=0"
     " outside-room=0 depth=0 | icons=not-loaded ground=0 | guard kept=0 failed=0 | drops gate=off elf=0/0 wings=0/0 broom=0/0"
     " injected=0 refused=0 anomalies=0 standin-elf=none elf-draw-hook=not-installed elf-draw-calls=0 elf-draw-pushed=0"
     " elf-draw=0/0 elf-draw-standin=none"
-    " elf-draw-typed=0/0 elf-draw-untyped=0 elf-draw-normal=0 elf-draw-outside=busy:0,aside:0,lists:0,roll:0";
-// The typed-build fields (#166's draw control) as each line ends with them.
+    " elf-draw-typed=0/0 elf-draw-untyped=0 elf-draw-normal=0 elf-draw-outside=busy:0,aside:0,lists:0,roll:0"
+    " elf-draw-class=bool:0/0,num:0/0,none:0,other:0 elf-draw-class-check=0/0/0";
+// The typed-build fields (#166's draw control) as each line has them, before the class fields.
 static std::string drawTypedTail(int standIn, int natural, int untyped, int normal, int busy, int aside, int lists, int roll,
                                  const char* prefix = "draw-") {
     const std::string p = std::string(" ") + prefix;
@@ -1584,8 +1621,54 @@ static std::string drawTypedTail(int standIn, int natural, int untyped, int norm
         + p + "normal=" + std::to_string(normal) + p + "outside=busy:" + std::to_string(busy) + ",aside:" + std::to_string(aside)
         + ",lists:" + std::to_string(lists) + ",roll:" + std::to_string(roll);
 }
+// The class fields (#166 replan 1) as each line ends with them: the in-scope builds by the kind and
+// truth of their third argument, and the class check against the `c` the game's call stored.
+struct ClassCounts { int boolTrue = 0, boolFalse = 0, numTrue = 0, numFalse = 0, none = 0, other = 0, agree = 0, disagree = 0, unread = 0; };
+static std::string drawClassTail(const ClassCounts& c, const char* prefix = "draw-") {
+    const std::string p = std::string(" ") + prefix;
+    return p + "class=bool:" + std::to_string(c.boolTrue) + "/" + std::to_string(c.boolFalse) + ",num:" + std::to_string(c.numTrue) + "/"
+        + std::to_string(c.numFalse) + ",none:" + std::to_string(c.none) + ",other:" + std::to_string(c.other) + p + "class-check="
+        + std::to_string(c.agree) + "/" + std::to_string(c.disagree) + "/" + std::to_string(c.unread);
+}
+static ClassCounts boolAgree(int t, int f = 0) { ClassCounts c; c.boolTrue = t; c.boolFalse = f; c.agree = t + f; return c; }
 static bool lineEndsWith(const std::string& line, const std::string& tail) {
     return line.size() >= tail.size() && line.compare(line.size() - tail.size(), tail.size(), tail) == 0;
+}
+// A field's value on a stat line (" <key>=<value>"), "" when the line has none.
+static std::string statField(const std::string& line, const std::string& key) {
+    const std::string at = " " + key + "=";
+    const size_t i = line.find(at);
+    if (i == std::string::npos) return std::string();
+    const size_t from = i + at.size();
+    return line.substr(from, line.find(' ', from) == std::string::npos ? std::string::npos : line.find(' ', from) - from);
+}
+// The numbers in a field's value, in order ("bool:3/1,num:0/0,none:2,other:0" -> 3 1 0 0 2 0).
+static std::vector<long long> statNumbers(const std::string& value) {
+    std::vector<long long> out;
+    for (size_t i = 0; i < value.size();) {
+        if (!std::isdigit((unsigned char)value[i])) { ++i; continue; }
+        size_t end = i;
+        while (end < value.size() && std::isdigit((unsigned char)value[end])) ++end;
+        out.push_back(std::stoll(value.substr(i, end - i)));
+        i = end;
+    }
+    return out;
+}
+// The class fields' sums, on a line (prefix "draw-" or "elf-draw-"): the bool, num, none and other
+// counts sum to typed (both halves) + untyped + normal, the true halves of bool and num to typed +
+// untyped, and every in-scope build is checked once (agree + disagree + unread).
+static void requireClassSums(const std::string& line, const std::string& prefix) {
+    const std::vector<long long> typed = statNumbers(statField(line, prefix + "typed"));
+    const std::vector<long long> untyped = statNumbers(statField(line, prefix + "untyped"));
+    const std::vector<long long> normal = statNumbers(statField(line, prefix + "normal"));
+    const std::vector<long long> cls = statNumbers(statField(line, prefix + "class"));
+    const std::vector<long long> check = statNumbers(statField(line, prefix + "class-check"));
+    require(typed.size() == 2 && untyped.size() == 1 && normal.size() == 1 && cls.size() == 6 && check.size() == 3,
+            "the line lacks a typed or class field: " + line);
+    const long long scope = typed[0] + typed[1] + untyped[0] + normal[0];
+    require(cls[0] + cls[1] + cls[2] + cls[3] + cls[4] + cls[5] == scope, "the class counts do not sum to the in-scope builds: " + line);
+    require(cls[0] + cls[2] == typed[0] + typed[1] + untyped[0], "the true halves do not sum to typed + untyped: " + line);
+    require(check[0] + check[1] + check[2] == scope, "the class check did not see every in-scope build once: " + line);
 }
 
 // ---- the kill draw (#166): DropItem's own unique draw ---------------------------------------------
@@ -3905,9 +3988,9 @@ int main(int argc, char** argv) {
             // A fresh session: `mark1set stat`'s drops line and `flightcharm stat` each end with their
             // typed-build fields, every one 0, after the line's last field before them.
             const std::string drops = dropsStatLine(), flight = flightStatLine();
-            require(lineEndsWith(drops, " draw-standin-gloves=none" + drawTypedTail(0, 0, 0, 0, 0, 0, 0, 0)),
+            require(lineEndsWith(drops, " draw-standin-gloves=none" + drawTypedTail(0, 0, 0, 0, 0, 0, 0, 0) + drawClassTail({})),
                     "the fresh drops line does not end with the zeroed typed fields: " + drops);
-            require(lineEndsWith(flight, " elf-draw-standin=none" + drawTypedTail(0, 0, 0, 0, 0, 0, 0, 0, "elf-draw-")),
+            require(lineEndsWith(flight, " elf-draw-standin=none" + drawTypedTail(0, 0, 0, 0, 0, 0, 0, 0, "elf-draw-") + drawClassTail({}, "elf-draw-")),
                     "the fresh flight line does not end with the zeroed typed fields: " + flight);
         } else if (test == "draw_typed_switches_off_counts_nothing") {
             // Both features on and off again (the draw's hooks stay in): DropItem calls that build the
@@ -3933,8 +4016,8 @@ int main(int argc, char** argv) {
                 else { ++normal; require(b.c == 0.0 && b.j == 0 && b.b == 900 && b.a == kLootGroundSeed, "switched off, the normal item was changed"); }
             }
             require(normal == 3 && unique == 3, "switched off, not one unique and one normal item per call");
-            require(lineEndsWith(dropsStatLine(), drawTypedTail(0, 0, 0, 0, 0, 0, 0, 0)), "switched off, the drops line's typed fields moved: " + dropsStatLine());
-            require(lineEndsWith(flightStatLine(), drawTypedTail(0, 0, 0, 0, 0, 0, 0, 0, "elf-draw-")),
+            require(lineEndsWith(dropsStatLine(), drawTypedTail(0, 0, 0, 0, 0, 0, 0, 0) + drawClassTail({})), "switched off, the drops line's typed fields moved: " + dropsStatLine());
+            require(lineEndsWith(flightStatLine(), drawTypedTail(0, 0, 0, 0, 0, 0, 0, 0, "elf-draw-") + drawClassTail({}, "elf-draw-")),
                     "switched off, the flight line's typed fields moved: " + flightStatLine());
 #else
             require(false, "this source has no kill draw");
@@ -3954,8 +4037,8 @@ int main(int argc, char** argv) {
             require(layoutsCarry(0, true, true), "the draw did not read the lists carrying both features' entries");
             require(builds.size() == 1 && builds[0].t == 3 && builds[0].j == 2 && builds[0].b == 90 && builds[0].c == 1.0,
                     "the draw did not build the game's own unique");
-            require(lineEndsWith(dropsStatLine(), drawTypedTail(0, 1, 0, 0, 0, 0, 0, 0)), "the drops line's typed fields: " + dropsStatLine());
-            require(lineEndsWith(flightStatLine(), drawTypedTail(0, 1, 0, 0, 0, 0, 0, 0, "elf-draw-")),
+            require(lineEndsWith(dropsStatLine(), drawTypedTail(0, 1, 0, 0, 0, 0, 0, 0) + drawClassTail(boolAgree(1))), "the drops line's typed fields: " + dropsStatLine());
+            require(lineEndsWith(flightStatLine(), drawTypedTail(0, 1, 0, 0, 0, 0, 0, 0, "elf-draw-") + drawClassTail(boolAgree(1), "elf-draw-")),
                     "the flight line's typed fields: " + flightStatLine());
 #else
             require(false, "this source has no kill draw");
@@ -3975,17 +4058,17 @@ int main(int argc, char** argv) {
             const long long ours = (long long)dropsFields().drawPieces[1].ours;
             require(ours >= 50 && ours <= 150, "a body armor pick at k 2 was not ours about 1 in 3: " + std::to_string(ours));
             require(countFlightBuilds(-1) == 0, "a piece's stand-in was built as a charm");
-            require(lineEndsWith(dropsStatLine(), drawTypedTail(300, 0, 0, 0, 0, 0, 0, 0)),
+            require(lineEndsWith(dropsStatLine(), drawTypedTail(300, 0, 0, 0, 0, 0, 0, 0) + drawClassTail(boolAgree(300))),
                     "every typed body armor pick is not Mark 1's stand-in: " + dropsStatLine());
-            require(lineEndsWith(flightStatLine(), drawTypedTail(0, 300, 0, 0, 0, 0, 0, 0, "elf-draw-")),
+            require(lineEndsWith(flightStatLine(), drawTypedTail(0, 300, 0, 0, 0, 0, 0, 0, "elf-draw-") + drawClassTail(boolAgree(300), "elf-draw-")),
                     "every typed body armor pick is not Pocket Elf's natural: " + flightStatLine());
             pickTriples = { kElfDrawSs };
             satTierAnswer = RValue(3.0);
             for (int i = 0; i < 5; ++i) dropItem(monster);
             require(countFlightBuilds((int)FcNs::Charm::Elf) == 5 && (long long)dropsFields().drawPieces[1].ours == ours,
                     "Aimbot.exe picks were not Pocket Elf's alone");
-            require(lineEndsWith(dropsStatLine(), drawTypedTail(300, 5, 0, 0, 0, 0, 0, 0)), "Pocket Elf's stand-in is not Mark 1's natural: " + dropsStatLine());
-            require(lineEndsWith(flightStatLine(), drawTypedTail(5, 300, 0, 0, 0, 0, 0, 0, "elf-draw-")),
+            require(lineEndsWith(dropsStatLine(), drawTypedTail(300, 5, 0, 0, 0, 0, 0, 0) + drawClassTail(boolAgree(305))), "Pocket Elf's stand-in is not Mark 1's natural: " + dropsStatLine());
+            require(lineEndsWith(flightStatLine(), drawTypedTail(5, 300, 0, 0, 0, 0, 0, 0, "elf-draw-") + drawClassTail(boolAgree(305), "elf-draw-")),
                     "Pocket Elf's stand-in is not its own line's stand-in: " + flightStatLine());
 #else
             require(false, "this source has no kill draw");
@@ -4004,8 +4087,8 @@ int main(int argc, char** argv) {
             dropItem(monster);
             require(originalCalls == 1 && gameCdpCalls == 1 && builds.size() == 1, "the nested Angelic roll did not build its hit once");
             require(countPieceBuilds(-1) == 0 && countFlightBuilds(-1) == 0, "the nested roll's hit was taken for ours");
-            require(lineEndsWith(dropsStatLine(), drawTypedTail(0, 0, 0, 0, 0, 1, 0, 0)), "the drops line's typed fields: " + dropsStatLine());
-            require(lineEndsWith(flightStatLine(), drawTypedTail(0, 0, 0, 0, 0, 1, 0, 0, "elf-draw-")),
+            require(lineEndsWith(dropsStatLine(), drawTypedTail(0, 0, 0, 0, 0, 1, 0, 0) + drawClassTail({})), "the drops line's typed fields: " + dropsStatLine());
+            require(lineEndsWith(flightStatLine(), drawTypedTail(0, 0, 0, 0, 0, 1, 0, 0, "elf-draw-") + drawClassTail({}, "elf-draw-")),
                     "the flight line's typed fields: " + flightStatLine());
             require(layoutNow() == vanillaLayout && g_KillDraw.aside == 0, "the lists or the state were left changed");
 #else
@@ -4034,8 +4117,8 @@ int main(int argc, char** argv) {
             require(countPieceBuilds(2) == 3 && dropsFields().drawPieces[2].ours == 3 && dropsFields().drawPieces[2].built == 3,
                     "the unique builds were not each the boots'");
             require(linesStartingWith("mark1set drops hit:") == 3, "a normal build raised a hit: " + lastLine("mark1set drops hit:"));
-            require(lineEndsWith(dropsStatLine(), drawTypedTail(3, 0, 0, 3, 0, 0, 0, 0)), "the drops line's typed fields: " + dropsStatLine());
-            require(lineEndsWith(flightStatLine(), drawTypedTail(0, 0, 0, 0, 0, 0, 0, 0, "elf-draw-")),
+            require(lineEndsWith(dropsStatLine(), drawTypedTail(3, 0, 0, 3, 0, 0, 0, 0) + drawClassTail(boolAgree(3, 3))), "the drops line's typed fields: " + dropsStatLine());
+            require(lineEndsWith(flightStatLine(), drawTypedTail(0, 0, 0, 0, 0, 0, 0, 0, "elf-draw-") + drawClassTail({}, "elf-draw-")),
                     "Pocket Elf off, its typed fields moved: " + flightStatLine());
             require(layoutNow() == vanillaLayout, "the lists are not the game's own after the calls");
 #else
@@ -4053,7 +4136,197 @@ int main(int argc, char** argv) {
             require(builds.size() == 3 && countPieceBuilds(-1) == 0, "an untyped build was taken for a piece");
             for (const auto& b : builds) require(b.t == 2 && b.j == 14 && b.b == 70 && b.c == 1.0 && b.a == kLootGroundSeed, "the game's own stand-in was rewritten");
             require(linesStartingWith("mark1set drops hit:") == 0, "an untyped build raised a hit");
-            require(lineEndsWith(dropsStatLine(), drawTypedTail(0, 0, 3, 0, 0, 0, 0, 0)), "the drops line's typed fields: " + dropsStatLine());
+            require(lineEndsWith(dropsStatLine(), drawTypedTail(0, 0, 3, 0, 0, 0, 0, 0) + drawClassTail(boolAgree(3))), "the drops line's typed fields: " + dropsStatLine());
+#else
+            require(false, "this source has no kill draw");
+#endif
+        // ---- the kill draw's class read (#166 replan 1): baseline ----
+        } else if (test == "draw_class_fresh_lines_end_zeroed") {
+            // A fresh session: each stat line ends with its typed-build fields and then its two class
+            // fields, every one 0, exactly as the procedure and the guide quote them.
+            const std::string drops = dropsStatLine(), flight = flightStatLine();
+            require(lineEndsWith(drops, " draw-outside=busy:0,aside:0,lists:0,roll:0 draw-class=bool:0/0,num:0/0,none:0,other:0"
+                                        " draw-class-check=0/0/0"),
+                    "the fresh drops line does not end with the zeroed class fields: " + drops);
+            require(lineEndsWith(flight, " elf-draw-outside=busy:0,aside:0,lists:0,roll:0 elf-draw-class=bool:0/0,num:0/0,none:0,other:0"
+                                         " elf-draw-class-check=0/0/0"),
+                    "the fresh flight line does not end with the zeroed class fields: " + flight);
+        } else if (test == "draw_class_switches_off_bool_class_counts_nothing") {
+            // The game as the static reading has it: DropItem's unique build passes a bool true and its
+            // normal build a bool false, and the record CreateDefaultParams returns reads `c` 1.0 and 0.0.
+            // Neither switch touched (nothing hooked), every field of both lines stays the fresh one;
+            // both on and off again (the draw's hooks stay in), no typed or class field moves.
+#ifdef HAS_KILLDRAWSTATE
+            flightRepo();
+            setDrawLayout();
+            dropItemNormal = true;
+            pickPolicy = Pick::First;
+            const long conversions = refusedConversions;
+            auto twoBuildsEach = [&](size_t from, const char* when) {
+                require(builds.size() == from + 6, std::string(when) + ", not two builds per call");
+                int normal = 0, unique = 0;
+                for (size_t i = from; i < builds.size(); ++i) {
+                    const BuildRecord& b = builds[i];
+                    if (b.c == 1.0) { ++unique; require(b.t == 3 && b.j == 2 && b.b == 90 && b.a == kLootGroundSeed, std::string(when) + ", the game's own unique was changed"); }
+                    else { ++normal; require(b.c == 0.0 && b.j == 0 && b.b == 900 && b.a == kLootGroundSeed, std::string(when) + ", the normal item was changed"); }
+                }
+                require(normal == 3 && unique == 3, std::string(when) + ", the records did not read c 1.0 and 0.0, one each per call");
+            };
+            for (int i = 0; i < 3; ++i) dropItem(monster);
+            twoBuildsEach(0, "untouched");
+            require(dropsStatLine() == kFreshDropsLine, "untouched, a drops field moved: " + dropsStatLine());
+            require(flightStatLine() == kFreshFlightLine, "untouched, a flight field moved: " + flightStatLine());
+            dropsSwitch(true);
+            flightSwitch(FcNs::Charm::Elf, true);
+            dropsSwitch(false);
+            flightSwitch(FcNs::Charm::Elf, false);
+            for (int i = 0; i < 3; ++i) dropItem(monster);
+            twoBuildsEach(6, "switched off");
+            require(countPieceBuilds(-1) == 0 && countFlightBuilds(-1) == 0, "switched off, a piece or a charm was built");
+            require(lineEndsWith(dropsStatLine(), drawTypedTail(0, 0, 0, 0, 0, 0, 0, 0) + drawClassTail({})),
+                    "switched off, the drops line's typed or class fields moved: " + dropsStatLine());
+            require(lineEndsWith(flightStatLine(), drawTypedTail(0, 0, 0, 0, 0, 0, 0, 0, "elf-draw-") + drawClassTail({}, "elf-draw-")),
+                    "switched off, the flight line's typed or class fields moved: " + flightStatLine());
+            require(refusedConversions == conversions, "a bool class was converted (" + std::to_string(refusedConversions - conversions) + " refused)");
+#else
+            require(false, "this source has no kill draw");
+#endif
+        // ---- the kill draw's class read (#166 replan 1): target; the bool-true builds fail before it ----
+        } else if (test == "draw_class_bool_true_is_typed") {
+            // Both on: the game's own Satanic unique built with a bool true class is typed, a natural
+            // pick on both lines, its class `bool:1/0` and the record's `c` agreeing with the verdict.
+#ifdef HAS_KILLDRAWSTATE
+            flightRepo();
+            setDrawLayout();
+            dropsSwitch(true);
+            flightSwitch(FcNs::Charm::Elf, true);
+            pickPolicy = Pick::First;
+            const long conversions = refusedConversions;
+            dropItem(monster);
+            require(builds.size() == 1 && builds[0].t == 3 && builds[0].j == 2 && builds[0].b == 90 && builds[0].c == 1.0,
+                    "the draw did not build the game's own unique");
+            require(lineEndsWith(dropsStatLine(), drawTypedTail(0, 1, 0, 0, 0, 0, 0, 0) + drawClassTail(boolAgree(1))),
+                    "a bool true build was not typed on the drops line: " + dropsStatLine());
+            require(lineEndsWith(flightStatLine(), drawTypedTail(0, 1, 0, 0, 0, 0, 0, 0, "elf-draw-") + drawClassTail(boolAgree(1), "elf-draw-")),
+                    "a bool true build was not typed on the flight line: " + flightStatLine());
+            requireClassSums(dropsStatLine(), "draw-");
+            requireClassSums(flightStatLine(), "elf-draw-");
+            require(refusedConversions == conversions, "the bool class was converted");
+#else
+            require(false, "this source has no kill draw");
+#endif
+        } else if (test == "draw_class_bool_true_standin_hits_at_copies_400") {
+            // Both on at copies 400: a bool true pick of the boots' stand-in (n_3 0, every one ours) is
+            // the piece's hit, rewritten and built by the game; a bool true pick of Pocket Elf's stand-in
+            // is Pocket Elf's, built as the charm. Each is its own line's stand-in, the other's natural.
+#ifdef HAS_KILLDRAWSTATE
+            flightRepo();
+            setDrawLayout();
+            g_Mark1DropCopies = 400;
+            g_FlightDropCopies = 400;
+            dropsSwitch(true);
+            flightSwitch(FcNs::Charm::Elf, true);
+            pickPolicy = Pick::Among; pickTriples = { kBootsDrawSs };
+            for (int i = 0; i < 3; ++i) dropItem(monster);
+            require(countPieceBuilds(2) == 3 && dropsFields().drawPieces[2].ours == 3 && dropsFields().drawPieces[2].built == 3,
+                    "a bool true pick of the boots' stand-in was not the piece's, built");
+            require(linesStartingWith("mark1set drops hit:") == 3 && lineHas(lastLine("mark1set drops hit:"), "kill draw -> Mark 1 Boots (stand-in 2/14/70, ")
+                        && lineHas(lastLine("mark1set drops hit:"), ") built by the game"),
+                    "the boots' hit line: " + lastLine("mark1set drops hit:"));
+            pickTriples = { kElfDrawSs };
+            for (int i = 0; i < 3; ++i) dropItem(monster);
+            require(countFlightBuilds((int)FcNs::Charm::Elf) == 3 && countPieceBuilds(-1) == 3, "a bool true pick of Aimbot.exe was not Pocket Elf's, built");
+            require(lineEndsWith(dropsStatLine(), drawTypedTail(3, 3, 0, 0, 0, 0, 0, 0) + drawClassTail(boolAgree(6))), "the drops line: " + dropsStatLine());
+            require(lineEndsWith(flightStatLine(), drawTypedTail(3, 3, 0, 0, 0, 0, 0, 0, "elf-draw-") + drawClassTail(boolAgree(6), "elf-draw-")),
+                    "the flight line: " + flightStatLine());
+            requireClassSums(dropsStatLine(), "draw-");
+            requireClassSums(flightStatLine(), "elf-draw-");
+            require(layoutNow() == vanillaLayout && g_KillDraw.pushDepth == 0, "the lists or the state were left changed");
+#else
+            require(false, "this source has no kill draw");
+#endif
+        } else if (test == "draw_class_real_numbers_by_the_truth_rule") {
+            // A real class is read by the runner's truth rule: 1.0 and 0.6 are unique (typed), 0.4 and
+            // 0 are not (normal), counted under `num`, and the record's `c` agrees each time.
+#ifdef HAS_KILLDRAWSTATE
+            setDrawLayout();
+            dropsSwitch(true);
+            pickPolicy = Pick::First;
+            const long conversions = refusedConversions;
+            const double classes[] = { 1.0, 0.6, 0.4, 0.0 };
+            for (double c : classes) { dropItemUniqueClass = RValue(c); dropItem(monster); }
+            require(builds.size() == 4 && builds[0].c == 1.0 && builds[1].c == 1.0 && builds[2].c == 0.0 && builds[3].c == 0.0,
+                    "the game's records did not read c by the truth rule");
+            ClassCounts want; want.numTrue = 2; want.numFalse = 2; want.agree = 4;
+            require(lineEndsWith(dropsStatLine(), drawTypedTail(0, 2, 0, 2, 0, 0, 0, 0) + drawClassTail(want)), "the drops line: " + dropsStatLine());
+            requireClassSums(dropsStatLine(), "draw-");
+            requireClassSums(flightStatLine(), "elf-draw-");
+            require(countPieceBuilds(-1) == 0 && refusedConversions == conversions, "a piece was built, or a class was refused a conversion");
+#else
+            require(false, "this source has no kill draw");
+#endif
+        } else if (test == "draw_class_bool_false_at_the_read_is_normal") {
+            // The negative control: a normal build with a bool false class whose sub and b are the
+            // boots' stand-in, the latest read, is `normal` (`bool:0/1`), raises no hit and is never
+            // rewritten into a piece; the read it left types the bool true build after it.
+#ifdef HAS_KILLDRAWSTATE
+            setDrawLayout();
+            dropsSwitch(true);
+            dropItemNormalAtPick = true;
+            pickPolicy = Pick::Last;
+            dropItem(monster);
+            require(builds.size() == 2, "not one normal and one unique build");
+            require(builds[0].t == 6 && builds[0].c == 0.0 && builds[0].j == 14 && builds[0].b == 70 && builds[0].a == kLootGroundSeed,
+                    "the bool false build matching the read was rewritten");
+            require(countPieceBuilds(2) == 1 && builds[1].t == 2 && builds[1].j == 0, "the bool true build after it was not Mark 1 Boots");
+            require(linesStartingWith("mark1set drops hit:") == 1, "the bool false build raised a hit");
+            require(lineEndsWith(dropsStatLine(), drawTypedTail(1, 0, 0, 1, 0, 0, 0, 0) + drawClassTail(boolAgree(1, 1))), "the drops line: " + dropsStatLine());
+            requireClassSums(dropsStatLine(), "draw-");
+#else
+            require(false, "this source has no kill draw");
+#endif
+        } else if (test == "draw_class_absent_undefined_string_are_not_unique") {
+            // The boots' stand-in picked each time, so a class misread as unique would hit: a real 0 is
+            // `num:0/1`, an absent (argc 2) and an undefined third argument are `none`, a string is
+            // `other`; each is normal, no hit, the game's own stand-in, and none is converted.
+#ifdef HAS_KILLDRAWSTATE
+            setDrawLayout();
+            dropsSwitch(true);
+            pickPolicy = Pick::Last;
+            const long conversions = refusedConversions;
+            dropItemUniqueClass = RValue(0.0); dropItem(monster);
+            dropItemUniqueClass = makeBool(true); dropItemUniqueArgc = 2; dropItem(monster);
+            dropItemUniqueArgc = 3; dropItemUniqueClass = RValue(); dropItem(monster);
+            dropItemUniqueClass = RValue("1"); dropItem(monster);
+            require(refusedConversions == conversions, "the gate converted a class (" + std::to_string(refusedConversions - conversions) + " refused)");
+            require(builds.size() == 4 && countPieceBuilds(-1) == 0 && linesStartingWith("mark1set drops hit:") == 0, "a build that is not unique raised a hit");
+            for (const auto& b : builds) require(b.t == 2 && b.j == 14 && b.b == 70 && b.c == 0.0 && b.a == kLootGroundSeed, "the game's own stand-in was rewritten");
+            ClassCounts want; want.numFalse = 1; want.none = 2; want.other = 1; want.agree = 4;
+            require(lineEndsWith(dropsStatLine(), drawTypedTail(0, 0, 0, 4, 0, 0, 0, 0) + drawClassTail(want)), "the drops line: " + dropsStatLine());
+            requireClassSums(dropsStatLine(), "draw-");
+#else
+            require(false, "this source has no kill draw");
+#endif
+        } else if (test == "draw_class_check_disagrees_with_an_opposite_c" || test == "draw_class_check_unread_without_c") {
+            // The fake game stores a `c` opposite to the argument's truth, or none: the check reads
+            // `0/1/0` or `0/0/1`, and the typing, the hit, the built piece and the record handed back
+            // are as without the check.
+#ifdef HAS_KILLDRAWSTATE
+            const bool opposite = test == "draw_class_check_disagrees_with_an_opposite_c";
+            setDrawLayout();
+            dropsSwitch(true);
+            cdpClassStore = opposite ? CdpClassStore::Opposite : CdpClassStore::Missing;
+            pickPolicy = Pick::Last;
+            for (int i = 0; i < 2; ++i) dropItem(monster);
+            require(cdpReturnedOther == 0, "CreateDefaultParams handed back something other than the game's record");
+            require(countPieceBuilds(2) == 2 && dropsFields().drawPieces[2].ours == 2 && dropsFields().drawPieces[2].built == 2,
+                    "the boots' picks were not typed, hit and built as without the check");
+            require(linesEndingWith("mark1set drops hit:", "kill draw -> Mark 1 Boots (stand-in 2/14/70, 1 in 1, k 3) built by the game") == 2,
+                    "the hit line: " + lastLine("mark1set drops hit:"));
+            ClassCounts want; want.boolTrue = 2;
+            (opposite ? want.disagree : want.unread) = 2;
+            require(lineEndsWith(dropsStatLine(), drawTypedTail(2, 0, 0, 0, 0, 0, 0, 0) + drawClassTail(want)), "the drops line: " + dropsStatLine());
+            requireClassSums(dropsStatLine(), "draw-");
 #else
             require(false, "this source has no kill draw");
 #endif

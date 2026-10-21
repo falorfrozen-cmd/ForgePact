@@ -649,14 +649,36 @@ class Mark1DropsContract(unittest.TestCase):
         self.assertIn("const int k = g_M1Drop.core.DrawTier();", settle)
         # Pocket Elf's hit line takes its k from Pocket Elf's own recorded tier.
         self.assertIn("const int ek = g_ElfDraw.Tier();", settle)
-        # The class gate: only a unique build (the third argument read as 1) is typed, and every build
-        # of a call carrying entries is counted on the typed-build fields before the pick is typed.
+        # The class gate (#166 replan 1): only a unique build is typed, its third argument read the way
+        # the game reads it - a bool by its truth, never through SigNumber, which refuses a bool and
+        # filed every one of Live 2's unique builds as normal - and every build of a call carrying
+        # entries is counted on the typed-build and class fields before the pick is typed.
+        cls = self.draw("static int KillDrawClassOf(int argc, RValue** A)")
+        self.assertIn("if (v.m_Kind == VALUE_BOOL) return v.ToBoolean() ? 0 : 1;", cls)
+        self.assertIn("(v.m_Kind == VALUE_REAL ? x > 0.5 : x > 0.0) ? 2 : 3", cls)
+        self.assertNotIn("SigNumber", cls)
+        self.assertLess(cls.index("VALUE_BOOL"), cls.index("v.ToDouble()"))
         pick = self.draw("static bool KillDrawTypePick(int argc, RValue** A)")
-        self.assertIn("SigNumber(*A[2], cls) && cls == 1.0", pick)
+        self.assertNotIn("SigNumber(*A[2]", pick)
+        self.assertIn("const int cls = KillDrawClassOf(argc, A);", pick)
+        self.assertIn("const bool unique = cls == 0 || cls == 2;", pick)
+        self.assertLess(pick.index("&c.boolTrue, &c.boolFalse, &c.numTrue, &c.numFalse, &c.none, &c.other"), pick.index("d.picked = true;"))
         self.assertLess(pick.index("if (!unique) { count([](auto& c) { ++c.normal; }); return false; }"), pick.index("d.picked = true;"))
         self.assertLess(pick.index("++c.untyped;"), pick.index("d.readSeen = false;"))
         for field in ("++c.busy;", "++c.aside;", "++c.lists;", "++c.roll;"):
-            self.assertLess(pick.index(field), pick.index("double sub = 0.0, b = 0.0, cls = 0.0;"))
+            self.assertLess(pick.index(field), pick.index("const int cls = KillDrawClassOf(argc, A);"))
+        # The class check reads the returned record's `c` after the game's call, only for the in-scope
+        # call the gate counted, and is outside the release-only blocks (both builds carry it).
+        self.assertLess(cdp.index("g_Orig_CreateDefaultParams(S, O, R, argc, A)"), cdp.index("KillDrawCheckClass(r);"))
+        self.assertLess(cdp.index("KillDrawCheckClass(r);"), cdp.index("KillDrawSettleHit();"))
+        released = strip_comments(function_body(strip_research_blocks(self.plugin), "static RValue& Hook_CreateDefaultParams("))
+        self.assertIn("KillDrawCheckClass(r);", released)
+        self.assertIn("static void KillDrawCheckClass(const RValue& made)\n{", strip_research_blocks(self.plugin))
+        check =self.draw("static void KillDrawCheckClass(const RValue& made)")
+        self.assertLess(check.index("if (!d.classPending) return;"), check.index("variable_struct_get"))
+        self.assertIn("KillDrawScope() && made.m_Kind == VALUE_OBJECT", check)
+        self.assertIn('RValue("c")', check)
+        self.assertNotIn("variable_struct_set", check)
         rewrite = self.draw("static bool KillDrawBeforeCreate(int argc, RValue** A)")
         self.assertIn("g_M1Drop.core.TakeDrawRewrite(piece)", rewrite)
         self.assertIn("M1dNs::RewriteFor(piece)", rewrite)

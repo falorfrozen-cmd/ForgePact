@@ -518,12 +518,14 @@ static void SignatureNoteBuilt(const std::map<std::string, double>& selector);
 static void SignatureBeforeCreate(int argc, RValue** A);
 // #166: the Mark 1 drops' and Pocket Elf's kill draw (DropItem's own unique draw), defined with its
 // adapter after the Mark 1 drop adapter. Its call-outs in hooks defined before it: the draw scope's
-// repository read and typed pick (#74's two typing detours), the tier LoadSatanicDropTier answered
-// (raredrop's one detour), the rewrite at CreateItemNew's entry (SignatureBeforeCreate's draw half),
-// the nested rolls that see the lists as before (KillDrawRollAside), and whether its call-out pair
-// holds DropItem's slot (the research build's probe rows ask before they take it).
+// repository read, typed pick and class check (#74's two typing detours), the tier
+// LoadSatanicDropTier answered (raredrop's one detour), the rewrite at CreateItemNew's entry
+// (SignatureBeforeCreate's draw half), the nested rolls that see the lists as before
+// (KillDrawRollAside), and whether its call-out pair holds DropItem's slot (the research build's
+// probe rows ask before they take it).
 static void KillDrawNoteRead(int argc, RValue** A);
 static bool KillDrawTypePick(int argc, RValue** A);
+static void KillDrawCheckClass(const RValue& made);
 static void KillDrawSettleHit();
 static void KillDrawNoteTier(const RValue& result);
 static bool KillDrawBeforeCreate(int argc, RValue** A);
@@ -14397,6 +14399,8 @@ static RValue& Hook_CreateDefaultParams(CInstance* S, CInstance* O, RValue& R, i
     // pick typed by the scope's latest repository read; settled after the game built the params.
     const bool drawTyped = KillDrawTypePick(argc, A);
     RValue& r = g_Orig_CreateDefaultParams ? g_Orig_CreateDefaultParams(S, O, R, argc, A) : R;
+    // #166: the class check of that in-scope call, against the `c` the game's call stored.
+    try { KillDrawCheckClass(r); } catch (...) {}
     if (drawTyped) {
         try { KillDrawSettleHit(); } catch (...) {}
     }
@@ -65394,9 +65398,13 @@ struct KillDrawState {
     int               elfPending = 0;
     // The typed-build counters of each stat line (`draw-typed=` and the rest, `elf-draw-typed=` and
     // the rest), for the session: KillDrawTypePick counts every CreateDefaultParams call of a call
-    // carrying that feature's entries.
+    // carrying that feature's entries, and KillDrawCheckClass the class check of each in-scope one.
     M1dNs::DrawTypedCounts mark1Typed;
     FcNs::DrawTypedCounts  elfTyped;
+    // The in-scope CreateDefaultParams call in progress, whose class verdict KillDrawCheckClass
+    // checks against the record the game's call returns.
+    bool              classPending = false;
+    bool              classUnique = false;
 };
 static KillDrawState g_KillDraw;
 static FcNs::ElfDraw g_ElfDraw;
@@ -65693,15 +65701,40 @@ static void KillDrawNoteRead(int argc, RValue** A)
     if (d.readSeen) { d.readT = t; d.readSub = s; d.readB = b; }
 }
 
+// The class of a CreateDefaultParams call's third argument, read the way the game reads it (hub RDM
+// § 13.12, static reading): CreateDefaultParams stores the record's `c` as 1 when the runner's own
+// truth test passes on that argument, and DropItem passes it as a bool. A bool is unique when true,
+// a real above 0.5, an int32 or int64 above 0; absent, undefined or unset is not (`none`), nor is any
+// other kind (`other`: the game would read a non-zero pointer as true, but no DropItem call passes
+// one, and `draw-class-check=` shows a disagreement if one ever does). A kind that is not numeric is
+// never converted. The slot it fills: 0 bool true, 1 bool false, 2 a number true, 3 a number false,
+// 4 none, 5 other.
+static int KillDrawClassOf(int argc, RValue** A)
+{
+    if (argc < 3 || !A || !A[2]) return 4;
+    const RValue& v = *A[2];
+    try {
+        if (v.m_Kind == VALUE_BOOL) return v.ToBoolean() ? 0 : 1;
+        if (v.m_Kind == VALUE_REAL || v.m_Kind == VALUE_INT32 || v.m_Kind == VALUE_INT64) {
+            const double x = v.ToDouble();
+            return (v.m_Kind == VALUE_REAL ? x > 0.5 : x > 0.0) ? 2 : 3;
+        }
+        if (v.m_Kind == VALUE_UNDEFINED || v.m_Kind == VALUE_UNSET) return 4;
+    } catch (...) {}
+    return 5;
+}
+
 // #74's CreateDefaultParams detour, before the game's call. In a DropItem call carrying a feature's
 // entries every call is counted on that feature's line, here where the scope is decided and so
 // before either coin: outside the scope under its first false condition (busy, aside, lists - the
-// entries off them - then roll). In the scope only a unique build is typed - the third argument,
-// the repository selector, reads as 1 (RDM 13.4) - when its sub and b are the scope's latest read,
-// and then that read is spent. A normal build is never typed and leaves the read for the next one.
+// entries off them - then roll). In the scope each call is counted by its class (KillDrawClassOf)
+// and its verdict kept for KillDrawCheckClass; only a unique build is typed, when its sub and b are
+// the scope's latest read, and then that read is spent. A normal build is never typed and leaves the
+// read for the next one.
 static bool KillDrawTypePick(int argc, RValue** A)
 {
     KillDrawState& d = g_KillDraw;
+    d.classPending = false;
     if (d.pushDepth <= 0 || (!d.mark1 && !d.elf)) return false;
     auto count = [&](auto&& bump) {
         if (d.mark1) bump(d.mark1Typed);
@@ -65716,12 +65749,19 @@ static bool KillDrawTypePick(int argc, RValue** A)
         });
         return false;
     }
-    double sub = 0.0, b = 0.0, cls = 0.0;
-    bool ok = false, unique = false;
+    const int cls = KillDrawClassOf(argc, A);
+    const bool unique = cls == 0 || cls == 2;
+    count([&](auto& c) {
+        uint64_t* const slots[] = { &c.boolTrue, &c.boolFalse, &c.numTrue, &c.numFalse, &c.none, &c.other };
+        ++*slots[cls];
+    });
+    d.classPending = true;
+    d.classUnique = unique;
+    double sub = 0.0, b = 0.0;
+    bool ok = false;
     try {
         ok = argc > 1 && A && A[0] && A[1] && SigNumber(*A[0], sub) && SigNumber(*A[1], b);
-        unique = argc > 2 && A && A[2] && SigNumber(*A[2], cls) && cls == 1.0;
-    } catch (...) { ok = unique = false; }
+    } catch (...) { ok = false; }
     if (!unique) { count([](auto& c) { ++c.normal; }); return false; }
     if (!ok || !d.readSeen || d.readSub != sub || d.readB != b) { count([](auto& c) { ++c.untyped; }); return false; }
     d.picked = true;
@@ -65742,6 +65782,31 @@ static bool KillDrawTypePick(int argc, RValue** A)
         ++(own ? d.elfTyped.standIn : d.elfTyped.natural);
     }
     return true;
+}
+
+// #74's CreateDefaultParams detour, after the game's call, for the in-scope call KillDrawTypePick
+// counted (`draw-class-check=`, `elf-draw-class-check=`): the returned record's `c`, read by name,
+// against the verdict the gate took - agree when it reads as a number and (`c` is 1) is that
+// verdict, disagree when it reads as a number and is not, unread when it is missing or not a number
+// (or the scope ended, when nothing is read). An independent positive control on the class read;
+// it never changes the typing, the hit or what the game's call returned.
+static void KillDrawCheckClass(const RValue& made)
+{
+    KillDrawState& d = g_KillDraw;
+    if (!d.classPending) return;
+    d.classPending = false;
+    int verdict = 2;
+    if (KillDrawScope() && made.m_Kind == VALUE_OBJECT) {
+        try {
+            double c = 0.0;
+            if (g_Yytk->CallBuiltin("variable_struct_exists", { made, RValue("c") }).ToBoolean()
+                && SigNumber(g_Yytk->CallBuiltin("variable_struct_get", { made, RValue("c") }), c))
+                verdict = (c == 1.0) == d.classUnique ? 0 : 1;
+        } catch (...) { verdict = 2; }
+    }
+    auto bump = [&](auto& t) { ++(verdict == 0 ? t.checkAgree : verdict == 1 ? t.checkDisagree : t.checkUnread); };
+    if (d.mark1) bump(d.mark1Typed);
+    if (d.elf) bump(d.elfTyped);
 }
 
 // After the game's CreateDefaultParams returned a typed pick: the previous hit settled first, then
@@ -65924,7 +65989,7 @@ static void KillDrawEndCall()
         d.mark1 = d.elf = false;
         d.rows.clear();
         for (RValue& s : d.subs) s = RValue();
-        d.readSeen = d.picked = false;
+        d.readSeen = d.picked = d.classPending = false;
         d.elfCopies = 0;
     }
     g_M1Drop.core.EndDrawCall();

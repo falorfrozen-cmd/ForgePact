@@ -243,7 +243,9 @@ PRODUCTION = (
     'static void KillDrawCloseHit(',
     'static std::string KillDrawWho(',
     'static void KillDrawNoteRead(',
+    'static int KillDrawClassOf(',
     'static bool KillDrawTypePick(',
+    'static void KillDrawCheckClass(',
     'static void KillDrawSettleHit(',
     'static bool KillDrawBeforeCreate(',
     'static bool KillDrawNoteBuiltPiece(',
@@ -612,6 +614,28 @@ class AngelicHitBehaviorTests(unittest.TestCase):
             'draw_typed_natural_counts_on_both_lines', 'draw_typed_standin_counts_on_its_own_line',
             'draw_typed_nested_angelic_counts_aside', 'draw_typed_normal_build_is_not_typed',
             'draw_typed_untyped_unique_build',
+        ))
+
+    def test_draw_class_baseline(self):
+        # #166 replan 1, the game as the static reading has it: DropItem's unique build passes its
+        # class as a bool true and its normal build as a bool false, and CreateDefaultParams stores `c`
+        # as a real 1 or 0. With neither switch on (and with both on and off again) those builds move no
+        # draw field, old or new, and the records read c 1.0 and 0.0; a fresh session's lines end with
+        # the class fields, all 0.
+        self.run_scenarios(('draw_class_fresh_lines_end_zeroed', 'draw_class_switches_off_bool_class_counts_nothing'))
+
+    def test_draw_class_target(self):
+        # #166 replan 1: the class read as the game reads it. A bool true build is typed (Live 2's gate
+        # filed every one as normal), a stand-in's pick hits and is built at copies 400, a real is
+        # unique above 0.5, a bool false build at the read is the negative control (normal, no hit, the
+        # read kept), an absent, undefined or string class is normal and never converted, and the class
+        # check against the record's `c` reads agree, disagree or unread without changing the typing,
+        # the hit or the return. In each, the class counts sum to the in-scope builds.
+        self.run_scenarios((
+            'draw_class_bool_true_is_typed', 'draw_class_bool_true_standin_hits_at_copies_400',
+            'draw_class_real_numbers_by_the_truth_rule', 'draw_class_bool_false_at_the_read_is_normal',
+            'draw_class_absent_undefined_string_are_not_unique', 'draw_class_check_disagrees_with_an_opposite_c',
+            'draw_class_check_unread_without_c',
         ))
 
 

@@ -578,8 +578,9 @@ struct DropTally {
 // control, #166), over the CreateDefaultParams calls made in DropItem calls
 // that carry its entry, each counted once before any coin: a typed pick
 // (`standIn`, its whole triple Pocket Elf's stand-in; `natural`, every other),
-// a unique build no read matched (`untyped`), a build whose third argument is
-// not 1 (`normal`, never typed), and a build while the draw's scope was false,
+// a unique build no read matched (`untyped`), a build whose third argument
+// does not read as true the way the game reads it (`normal`, never typed), and
+// a build while the draw's scope was false,
 // under its first false condition (busy, aside, lists, roll).
 struct DrawTypedCounts {
     uint64_t standIn = 0;
@@ -590,6 +591,21 @@ struct DrawTypedCounts {
     uint64_t aside = 0;
     uint64_t lists = 0;
     uint64_t roll = 0;
+    // The class fields (#166 replan 1), over the same in-scope builds as
+    // typed, untyped and normal: the third argument's kind and truth as the
+    // runner's truth rule reads it (`bool`, `num` - real, int32 and int64 -
+    // each true / false; `none` absent, undefined or unset; `other` any other
+    // kind), and the check of the gate's verdict against the `c` the game's
+    // CreateDefaultParams stored (agree, disagree, unread).
+    uint64_t boolTrue = 0;
+    uint64_t boolFalse = 0;
+    uint64_t numTrue = 0;
+    uint64_t numFalse = 0;
+    uint64_t none = 0;
+    uint64_t other = 0;
+    uint64_t checkAgree = 0;
+    uint64_t checkDisagree = 0;
+    uint64_t checkUnread = 0;
 };
 
 // Every field of the line. A default StatFields prints the fresh session's
@@ -667,6 +683,11 @@ inline std::string StatLine(const StatFields& f)
     s += " elf-draw-normal=" + std::to_string(t.normal);
     s += " elf-draw-outside=busy:" + std::to_string(t.busy) + ",aside:" + std::to_string(t.aside) + ",lists:"
         + std::to_string(t.lists) + ",roll:" + std::to_string(t.roll);
+    s += " elf-draw-class=bool:" + std::to_string(t.boolTrue) + "/" + std::to_string(t.boolFalse) + ",num:"
+        + std::to_string(t.numTrue) + "/" + std::to_string(t.numFalse) + ",none:" + std::to_string(t.none) + ",other:"
+        + std::to_string(t.other);
+    s += " elf-draw-class-check=" + std::to_string(t.checkAgree) + "/" + std::to_string(t.checkDisagree) + "/"
+        + std::to_string(t.checkUnread);
     return s;
 }
 
