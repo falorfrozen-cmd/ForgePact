@@ -257,6 +257,7 @@ PRODUCTION = (
     'static RValue& KillDrawDropItem(',
     'static std::string KillDrawInstall(',
     'static void KillDrawElfFillStat(',
+    'static void KillDrawMark1FillStat(',         # the typed-build fields of the drops line
 )
 
 # The real DropManager.hpp, spliced at `// PRODUCTION_DROPMANAGER` without its #pragma and #include
@@ -593,6 +594,24 @@ class AngelicHitBehaviorTests(unittest.TestCase):
         self.run_scenarios((
             'flight_draw_hit_builds_pocket_elf', 'flight_draw_and_mark1_each_hit_their_own',
             'flight_draw_nested_angelic_sees_the_lists_as_before', 'flight_draw_refuses_whole_when_not_inline',
+        ))
+
+    def test_draw_typed_baseline(self):
+        # #166's draw control: a fresh session's `mark1set stat` and `flightcharm stat` lines end with
+        # the typed-build fields, all 0; with both switches on and off again, DropItem calls that build
+        # the game's own unique and a normal item run as the game's own and move none of them.
+        self.run_scenarios(('draw_typed_fresh_lines_end_zeroed', 'draw_typed_switches_off_counts_nothing'))
+
+    def test_draw_typed_target(self):
+        # #166's draw control: in a DropItem call carrying a feature's entries, each build is counted on
+        # that feature's line before any coin - a typed pick as its own stand-in or natural, a unique
+        # build no read matches as untyped, a build whose third argument is not 1 as normal (never
+        # typed: no hit, no piece, the read left for the unique build after it), and a build while the
+        # scope is false under its first false condition (a nested Angelic roll's under `aside`).
+        self.run_scenarios((
+            'draw_typed_natural_counts_on_both_lines', 'draw_typed_standin_counts_on_its_own_line',
+            'draw_typed_nested_angelic_counts_aside', 'draw_typed_normal_build_is_not_typed',
+            'draw_typed_untyped_unique_build',
         ))
 
 

@@ -604,6 +604,7 @@ static std::string KillDrawInstall();
 static void KillDrawElfFillStat(FcNs::StatFields& s);
 static bool KillDrawNoteBuiltPiece(M1sNs::Piece piece);
 static std::string KillDrawRoute();
+static void KillDrawMark1FillStat(M1dNs::DropStatFields& f);
 
 // PRODUCTION_TYPES
 
@@ -982,11 +983,15 @@ static PFUNC_YYGMLScript satTierEntry = gameLoadSatanicDropTier;
 // tier (0 when it is not a number): an index drawn (pickPolicy), drawn again unless the entry is an
 // array, its definition read through GetUniqueRepoStruct by direct call, drawn again on a set field
 // 40 or 41 or a rarity other than Satanic (6), at most 500 draws; then CreateDefaultParams(sub, b, 1)
-// and the placement under the entry's type. The layout each draw reads is recorded.
+// and the placement under the entry's type. The layout each draw reads is recorded. A scenario can
+// also have a kept pick's own pair built as an ordinary item first (`dropItemNormalAtPick`:
+// CreateDefaultParams(sub, b, 0) between the pick's read and its unique build), the worst case of
+// a normal build that matches the latest unique read.
 static int dropItemCalls = 0;
 static bool dropItemThrows = false;
 static int dropItemDraws = 1;
 static bool dropItemNormal = false;
+static bool dropItemNormalAtPick = false;
 static bool dropItemNestsAngelic = false, dropItemNestsUnique = false;
 static PFUNC_YYGMLScript angelicEntry = nullptr;   // the game's calls to DropItemAngelicChance: HookAngelicChance (set in reset)
 static int dropItemArgcSeen = -1;
@@ -1042,6 +1047,12 @@ static RValue& gameDropItem(CInstance* self, CInstance* other, RValue&, int argc
             auto& info = obj((*def.fields)["itemBaseInfoStruct"]);
             if (info["40"].number != 0.0 || (info.count("41") && info["41"].number != 0.0) || info["27"].number != 6.0) continue;
             if (repoRead == RepoRead::PickedThenOther) readDefinition(self, other, kOtherRead);   // a read the pick cannot be typed from
+            if (dropItemNormalAtPick) {
+                RValue normalC(0.0), normalParams;
+                RValue* normalArgs[] = { &sub, &b, &normalC };
+                RValue& normal = cdpEntry(self, other, normalParams, 3, normalArgs);
+                gameLootGroundCreate(6, normal);
+            }
             RValue c(1.0), params;
             RValue* args[] = { &sub, &b, &c };
             RValue& made = cdpEntry(self, other, params, 3, args);
@@ -1234,7 +1245,7 @@ static void reset() {
     // The kill draw (#166): the game's own DropItem and LoadSatanicDropTier, every lever off, and
     // raredrop's one tier detour not tried.
     satTierAnswer = RValue(3.0); satTierCalls = 0; satTierEntry = gameLoadSatanicDropTier;
-    dropItemCalls = 0; dropItemThrows = false; dropItemDraws = 1; dropItemNormal = false;
+    dropItemCalls = 0; dropItemThrows = false; dropItemDraws = 1; dropItemNormal = false; dropItemNormalAtPick = false;
     dropItemNestsAngelic = false; dropItemNestsUnique = false; dropItemArgcSeen = -1; dropItemArgsSeen.clear();
     dropItemTiers.clear(); dropItemLayoutAtDraw.clear();
     g_OrigSatTier = nullptr; g_SatanicMult = 1.0; g_SatTierHits = 0; g_SatTierTried = false; g_SatTierRoute = "not-installed";
@@ -1556,13 +1567,26 @@ static const char* const kFreshDropsLine =
     " kill-standin-helmet=none kill-standin-body=none kill-standin-boots=none kill-standin-gloves=none"
     " draw-gate=off draw-hook=not-installed tier-hook=not-installed draw-calls=0 draw-pushed=0 draw-nested=0 tier-unread=0"
     " draw-helmet=0/0 draw-body=0/0 draw-boots=0/0 draw-gloves=0/0 draw-standin-helmet=none draw-standin-body=none"
-    " draw-standin-boots=none draw-standin-gloves=none";
+    " draw-standin-boots=none draw-standin-gloves=none"
+    " draw-typed=0/0 draw-untyped=0 draw-normal=0 draw-outside=busy:0,aside:0,lists:0,roll:0";
 
 static const char* const kFreshFlightLine =
     "flightcharm: switches elf=off wings=off broom=off | flight install=not-armed state=off equipped=none answered=0 excluded=0"
     " outside-room=0 depth=0 | icons=not-loaded ground=0 | guard kept=0 failed=0 | drops gate=off elf=0/0 wings=0/0 broom=0/0"
     " injected=0 refused=0 anomalies=0 standin-elf=none elf-draw-hook=not-installed elf-draw-calls=0 elf-draw-pushed=0"
-    " elf-draw=0/0 elf-draw-standin=none";
+    " elf-draw=0/0 elf-draw-standin=none"
+    " elf-draw-typed=0/0 elf-draw-untyped=0 elf-draw-normal=0 elf-draw-outside=busy:0,aside:0,lists:0,roll:0";
+// The typed-build fields (#166's draw control) as each line ends with them.
+static std::string drawTypedTail(int standIn, int natural, int untyped, int normal, int busy, int aside, int lists, int roll,
+                                 const char* prefix = "draw-") {
+    const std::string p = std::string(" ") + prefix;
+    return p + "typed=" + std::to_string(standIn) + "/" + std::to_string(natural) + p + "untyped=" + std::to_string(untyped)
+        + p + "normal=" + std::to_string(normal) + p + "outside=busy:" + std::to_string(busy) + ",aside:" + std::to_string(aside)
+        + ",lists:" + std::to_string(lists) + ",roll:" + std::to_string(roll);
+}
+static bool lineEndsWith(const std::string& line, const std::string& tail) {
+    return line.size() >= tail.size() && line.compare(line.size() - tail.size(), tail.size(), tail) == 0;
+}
 
 // ---- the kill draw (#166): DropItem's own unique draw ---------------------------------------------
 // lootListUnique[0..4]: setUniqueLayout's twenty ordinary uniques each (class 4, rarity 3: the draw
@@ -3873,6 +3897,163 @@ int main(int argc, char** argv) {
             pickPolicy = Pick::Last;
             dropItem(monster);
             require(dropItemLayoutAtDraw[0] == vanillaLayout && countFlightBuilds(-1) == 0, "a table-only hook changed the draw");
+#else
+            require(false, "this source has no kill draw");
+#endif
+        // ---- the kill draw's typed-build counters (#166, the draw's positive control): baseline ----
+        } else if (test == "draw_typed_fresh_lines_end_zeroed") {
+            // A fresh session: `mark1set stat`'s drops line and `flightcharm stat` each end with their
+            // typed-build fields, every one 0, after the line's last field before them.
+            const std::string drops = dropsStatLine(), flight = flightStatLine();
+            require(lineEndsWith(drops, " draw-standin-gloves=none" + drawTypedTail(0, 0, 0, 0, 0, 0, 0, 0)),
+                    "the fresh drops line does not end with the zeroed typed fields: " + drops);
+            require(lineEndsWith(flight, " elf-draw-standin=none" + drawTypedTail(0, 0, 0, 0, 0, 0, 0, 0, "elf-draw-")),
+                    "the fresh flight line does not end with the zeroed typed fields: " + flight);
+        } else if (test == "draw_typed_switches_off_counts_nothing") {
+            // Both features on and off again (the draw's hooks stay in): DropItem calls that build the
+            // game's own unique and a normal item run as the game's own - each call, its tier and both
+            // CreateDefaultParams once, the lists unchanged, nothing rewritten - and no typed field moves.
+#ifdef HAS_KILLDRAWSTATE
+            flightRepo();
+            setDrawLayout();
+            dropsSwitch(true);
+            flightSwitch(FcNs::Charm::Elf, true);
+            require(installs["DropItem"] == 1 && installs["LoadSatanicDropTier"] == 1, "the switch-on did not hook the draw");
+            dropsSwitch(false);
+            flightSwitch(FcNs::Charm::Elf, false);
+            dropItemNormal = true;
+            pickPolicy = Pick::First;
+            for (int i = 0; i < 3; ++i) dropItem(monster);
+            require(dropItemCalls == 3 && satTierCalls == 3 && gameCdpCalls == 6, "switched off, DropItem, its tier or its two builds did not run once each");
+            for (const auto& seen : dropItemLayoutAtDraw) require(seen == vanillaLayout, "switched off, the draw read a changed list");
+            require(builds.size() == 6 && countPieceBuilds(-1) == 0 && countFlightBuilds(-1) == 0, "switched off, a piece or a charm was built");
+            int normal = 0, unique = 0;
+            for (const auto& b : builds) {
+                if (b.c == 1.0) { ++unique; require(b.t == 3 && b.j == 2 && b.b == 90 && b.a == kLootGroundSeed, "switched off, the game's own unique was changed"); }
+                else { ++normal; require(b.c == 0.0 && b.j == 0 && b.b == 900 && b.a == kLootGroundSeed, "switched off, the normal item was changed"); }
+            }
+            require(normal == 3 && unique == 3, "switched off, not one unique and one normal item per call");
+            require(lineEndsWith(dropsStatLine(), drawTypedTail(0, 0, 0, 0, 0, 0, 0, 0)), "switched off, the drops line's typed fields moved: " + dropsStatLine());
+            require(lineEndsWith(flightStatLine(), drawTypedTail(0, 0, 0, 0, 0, 0, 0, 0, "elf-draw-")),
+                    "switched off, the flight line's typed fields moved: " + flightStatLine());
+#else
+            require(false, "this source has no kill draw");
+#endif
+        // ---- the kill draw's typed-build counters (#166): target, every scenario fails before them ----
+        } else if (test == "draw_typed_natural_counts_on_both_lines") {
+            // Both on: the draw reads the twenty ordinary uniques on [3], refuses each and keeps the
+            // game's own Satanic unique, a typed natural pick on both lines (`draw-typed=0/1`,
+            // `elf-draw-typed=0/1`), built as the game's own.
+#ifdef HAS_KILLDRAWSTATE
+            flightRepo();
+            setDrawLayout();
+            dropsSwitch(true);
+            flightSwitch(FcNs::Charm::Elf, true);
+            pickPolicy = Pick::First;
+            dropItem(monster);
+            require(layoutsCarry(0, true, true), "the draw did not read the lists carrying both features' entries");
+            require(builds.size() == 1 && builds[0].t == 3 && builds[0].j == 2 && builds[0].b == 90 && builds[0].c == 1.0,
+                    "the draw did not build the game's own unique");
+            require(lineEndsWith(dropsStatLine(), drawTypedTail(0, 1, 0, 0, 0, 0, 0, 0)), "the drops line's typed fields: " + dropsStatLine());
+            require(lineEndsWith(flightStatLine(), drawTypedTail(0, 1, 0, 0, 0, 0, 0, 0, "elf-draw-")),
+                    "the flight line's typed fields: " + flightStatLine());
+#else
+            require(false, "this source has no kill draw");
+#endif
+        } else if (test == "draw_typed_standin_counts_on_its_own_line") {
+            // A typed pick of a piece's stand-in is Mark 1's <standin> and Pocket Elf's <natural>, every
+            // pick, whatever Mark 1's coin says (the body armor at k 2 is the piece's 1 in 3); a typed
+            // pick of Pocket Elf's stand-in is the reverse, Mark 1's coin taking no hit.
+#ifdef HAS_KILLDRAWSTATE
+            flightRepo();
+            setDrawLayout();
+            dropsSwitch(true);
+            flightSwitch(FcNs::Charm::Elf, true);
+            pickPolicy = Pick::Among; pickTriples = { kBodyDrawSs };
+            satTierAnswer = RValue(2.0);
+            for (int i = 0; i < 300; ++i) dropItem(monster);
+            const long long ours = (long long)dropsFields().drawPieces[1].ours;
+            require(ours >= 50 && ours <= 150, "a body armor pick at k 2 was not ours about 1 in 3: " + std::to_string(ours));
+            require(countFlightBuilds(-1) == 0, "a piece's stand-in was built as a charm");
+            require(lineEndsWith(dropsStatLine(), drawTypedTail(300, 0, 0, 0, 0, 0, 0, 0)),
+                    "every typed body armor pick is not Mark 1's stand-in: " + dropsStatLine());
+            require(lineEndsWith(flightStatLine(), drawTypedTail(0, 300, 0, 0, 0, 0, 0, 0, "elf-draw-")),
+                    "every typed body armor pick is not Pocket Elf's natural: " + flightStatLine());
+            pickTriples = { kElfDrawSs };
+            satTierAnswer = RValue(3.0);
+            for (int i = 0; i < 5; ++i) dropItem(monster);
+            require(countFlightBuilds((int)FcNs::Charm::Elf) == 5 && (long long)dropsFields().drawPieces[1].ours == ours,
+                    "Aimbot.exe picks were not Pocket Elf's alone");
+            require(lineEndsWith(dropsStatLine(), drawTypedTail(300, 5, 0, 0, 0, 0, 0, 0)), "Pocket Elf's stand-in is not Mark 1's natural: " + dropsStatLine());
+            require(lineEndsWith(flightStatLine(), drawTypedTail(5, 300, 0, 0, 0, 0, 0, 0, "elf-draw-")),
+                    "Pocket Elf's stand-in is not its own line's stand-in: " + flightStatLine());
+#else
+            require(false, "this source has no kill draw");
+#endif
+        } else if (test == "draw_typed_nested_angelic_counts_aside") {
+            // #74's Angelic roll nested in a pushing DropItem call builds its hit while the call's entries
+            // are set aside: counted `outside` under `aside` on both lines, and no typed field moves.
+#ifdef HAS_KILLDRAWSTATE
+            flightRepo();
+            setDrawLayout();
+            dropsSwitch(true);
+            flightSwitch(FcNs::Charm::Elf, true);
+            dropItemNestsAngelic = true;
+            outcomes.assign({ true });
+            dropItemDraws = 0;
+            dropItem(monster);
+            require(originalCalls == 1 && gameCdpCalls == 1 && builds.size() == 1, "the nested Angelic roll did not build its hit once");
+            require(countPieceBuilds(-1) == 0 && countFlightBuilds(-1) == 0, "the nested roll's hit was taken for ours");
+            require(lineEndsWith(dropsStatLine(), drawTypedTail(0, 0, 0, 0, 0, 1, 0, 0)), "the drops line's typed fields: " + dropsStatLine());
+            require(lineEndsWith(flightStatLine(), drawTypedTail(0, 0, 0, 0, 0, 1, 0, 0, "elf-draw-")),
+                    "the flight line's typed fields: " + flightStatLine());
+            require(layoutNow() == vanillaLayout && g_KillDraw.aside == 0, "the lists or the state were left changed");
+#else
+            require(false, "this source has no kill draw");
+#endif
+        } else if (test == "draw_typed_normal_build_is_not_typed") {
+            // The draw reads the boots' stand-in, then the call builds a normal item (third argument 0)
+            // from that same pair before the unique build: the normal build is `draw-normal=`, gives no
+            // hit and is never rewritten into a piece, and the read it left types the unique build after
+            // it (the boots at n_3 0, every one ours). Pocket Elf is off, so its line does not move.
+#ifdef HAS_KILLDRAWSTATE
+            flightRepo();
+            setDrawLayout();
+            dropsSwitch(true);
+            dropItemNormalAtPick = true;
+            pickPolicy = Pick::Last;
+            for (int i = 0; i < 3; ++i) dropItem(monster);
+            require(builds.size() == 6, "not one normal and one unique build per call");
+            for (size_t i = 0; i + 1 < builds.size(); i += 2) {
+                const BuildRecord& normal = builds[i];
+                const BuildRecord& unique = builds[i + 1];
+                require(normal.t == 6 && normal.c == 0.0 && normal.j == 14 && normal.b == 70 && normal.a == kLootGroundSeed,
+                        "a normal build matching the read was rewritten into a piece");
+                require(unique.t == 2 && unique.c == 0.0 && unique.j == 0, "the unique build after it was not Mark 1 Boots: the normal build spent the read");
+            }
+            require(countPieceBuilds(2) == 3 && dropsFields().drawPieces[2].ours == 3 && dropsFields().drawPieces[2].built == 3,
+                    "the unique builds were not each the boots'");
+            require(linesStartingWith("mark1set drops hit:") == 3, "a normal build raised a hit: " + lastLine("mark1set drops hit:"));
+            require(lineEndsWith(dropsStatLine(), drawTypedTail(3, 0, 0, 3, 0, 0, 0, 0)), "the drops line's typed fields: " + dropsStatLine());
+            require(lineEndsWith(flightStatLine(), drawTypedTail(0, 0, 0, 0, 0, 0, 0, 0, "elf-draw-")),
+                    "Pocket Elf off, its typed fields moved: " + flightStatLine());
+            require(layoutNow() == vanillaLayout, "the lists are not the game's own after the calls");
+#else
+            require(false, "this source has no kill draw");
+#endif
+        } else if (test == "draw_typed_untyped_unique_build") {
+            // The draw reads its pick and then another definition before the unique build: no read
+            // matches the build, which is `draw-untyped=`, no hit, and the game's own stand-in.
+#ifdef HAS_KILLDRAWSTATE
+            setDrawLayout();
+            dropsSwitch(true);
+            repoRead = RepoRead::PickedThenOther;
+            pickPolicy = Pick::Last;
+            for (int i = 0; i < 3; ++i) dropItem(monster);
+            require(builds.size() == 3 && countPieceBuilds(-1) == 0, "an untyped build was taken for a piece");
+            for (const auto& b : builds) require(b.t == 2 && b.j == 14 && b.b == 70 && b.c == 1.0 && b.a == kLootGroundSeed, "the game's own stand-in was rewritten");
+            require(linesStartingWith("mark1set drops hit:") == 0, "an untyped build raised a hit");
+            require(lineEndsWith(dropsStatLine(), drawTypedTail(0, 0, 3, 0, 0, 0, 0, 0)), "the drops line's typed fields: " + dropsStatLine());
 #else
             require(false, "this source has no kill draw");
 #endif

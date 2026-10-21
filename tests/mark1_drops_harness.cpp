@@ -599,7 +599,7 @@ int main()
             " kill-standin-body=none kill-standin-boots=none kill-standin-gloves=none draw-gate=off draw-hook=not-installed"
             " tier-hook=not-installed draw-calls=0 draw-pushed=0 draw-nested=0 tier-unread=0 draw-helmet=0/0 draw-body=0/0"
             " draw-boots=0/0 draw-gloves=0/0 draw-standin-helmet=none draw-standin-body=none draw-standin-boots=none"
-            " draw-standin-gloves=none";
+            " draw-standin-gloves=none draw-typed=0/0 draw-untyped=0 draw-normal=0 draw-outside=busy:0,aside:0,lists:0,roll:0";
         check("stat/fresh_line_exact", fresh == expected, fresh);
         check("stat/fresh_line_begins_mark1set_drops", startsWith(fresh, "mark1set drops: drops=off"));
         Drops fd;
@@ -616,7 +616,8 @@ int main()
             "kill-boots", "kill-gloves", "kill-standin-helmet", "kill-standin-body", "kill-standin-boots",
             "kill-standin-gloves", "draw-gate", "draw-hook", "tier-hook", "draw-calls", "draw-pushed", "draw-nested",
             "tier-unread", "draw-helmet", "draw-body", "draw-boots", "draw-gloves", "draw-standin-helmet",
-            "draw-standin-body", "draw-standin-boots", "draw-standin-gloves" };
+            "draw-standin-body", "draw-standin-boots", "draw-standin-gloves", "draw-typed", "draw-untyped", "draw-normal",
+            "draw-outside" };
         check("stat/named_fields_in_order", names == order);
 
         // Filled: a session that pushed, hit, built and refused.
@@ -1250,6 +1251,7 @@ int main()
         s.FillStat(fs, true);
         fs.drawHook = "detoured";
         fs.tierHook = "detoured";
+        fs.drawTyped = DrawTypedCounts{ 2, 7, 1, 4, 0, 3, 0, 1 };   // the adapter's typed-build counters
         const std::string line = DropStatLine(fs);
         ok = field(line, "draw-gate") == "on" && field(line, "draw-hook") == "detoured" && field(line, "tier-hook") == "detoured"
             && field(line, "draw-calls") == "3" && field(line, "draw-pushed") == "1" && field(line, "draw-nested") == "2"
@@ -1259,7 +1261,9 @@ int main()
             && field(line, "draw-standin-body") == "5:5@6/2x1,1,1,1,1,1"
             && field(line, "draw-standin-boots") == "4:4@6/5x0,0,0,1,0,0" && field(line, "draw-standin-gloves") == "none"
             && field(line, "helmet") == "0/0" && field(line, "kill-helmet") == "0/0" && field(line, "gate") == "pending"
-            && field(line, "kill-gate") == "pending" && field(line, "pushed-calls") == "0" && field(line, "kill-pushed") == "0";
+            && field(line, "kill-gate") == "pending" && field(line, "pushed-calls") == "0" && field(line, "kill-pushed") == "0"
+            && field(line, "draw-typed") == "2/7" && field(line, "draw-untyped") == "1" && field(line, "draw-normal") == "4"
+            && field(line, "draw-outside") == "busy:0,aside:3,lists:0,roll:1";
         check("draw/target_stat_fields_filled", ok, line);
         check("draw/target_stand_in_text", DrawStandInText(DrawStandIn{}) == "none"
               && DrawStandInField(Gate::Pending, res.standIns[0]) == "pending"

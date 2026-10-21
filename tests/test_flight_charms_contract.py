@@ -1250,6 +1250,8 @@ class FlightCharmsDropContract(unittest.TestCase):
         self.assertIn("g_ElfDraw.NoteTier(", tier)
         settle = strip_comments(function_body(self.plugin, "static void KillDrawSettleHit()"))
         self.assertIn("g_ElfDraw.Hit(d.pickT, d.pickSub, d.pickB, u) == FcNs::DrawHit::Ours", settle)
+        # The hit line's k is Pocket Elf's own recorded tier, the one its coin read.
+        self.assertIn("const int ek = g_ElfDraw.Tier();", settle)
         self.assertIn("g_ElfDraw.EnterRoll();", strip_comments(function_body(self.plugin, "static void KillDrawEnterRoll()")))
         self.assertIn("g_ElfDraw.LeaveRoll();", strip_comments(function_body(self.plugin, "static void KillDrawLeaveRoll()")))
 
@@ -1277,6 +1279,7 @@ class FlightCharmsDropContract(unittest.TestCase):
         fill = strip_comments(function_body(self.plugin, "static void KillDrawElfFillStat(FcNs::StatFields& s)"))
         self.assertIn("g_ElfDraw.FillStat(s, g_FlightDrop.switches[static_cast<int>(FcNs::Charm::Elf)]);", fill)
         self.assertIn("s.elfDrawHook = g_KillDraw.route;", fill)
+        self.assertIn("s.elfDrawTyped = g_KillDraw.elfTyped;", fill)
         self.assertIn("static FcNs::ElfDraw g_ElfDraw;", self.shipped)
         self.assertIn("static FcNs::ElfDrawCache g_ElfDrawCache;", self.shipped)
 

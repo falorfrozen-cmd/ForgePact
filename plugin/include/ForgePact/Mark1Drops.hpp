@@ -833,9 +833,28 @@ struct DropTally {
     uint64_t built = 0;
 };
 
+// The kill draw's typed-build counters (the draw's positive control), over
+// the CreateDefaultParams calls made in DropItem calls that carry the pieces'
+// entries, each counted once before any coin: a typed pick (`standIn`, its
+// whole triple a piece's own stand-in; `natural`, every other), a unique
+// build no read matched (`untyped`), a build whose third argument is not 1
+// (`normal`, never typed), and a build while the draw's scope was false,
+// under its first false condition (busy, aside, lists, roll).
+struct DrawTypedCounts {
+    uint64_t standIn = 0;
+    uint64_t natural = 0;
+    uint64_t untyped = 0;
+    uint64_t normal = 0;
+    uint64_t busy = 0;
+    uint64_t aside = 0;
+    uint64_t lists = 0;
+    uint64_t roll = 0;
+};
+
 // Every field of the line. A default DropStatFields prints the fresh
 // session's line; Drops::FillStat fills it but the four hook routes (`hook=`,
-// `kill-hook=`, `draw-hook=`, `tier-hook=`), which the adapter sets.
+// `kill-hook=`, `draw-hook=`, `tier-hook=`) and the typed-build counters,
+// which the adapter sets.
 // `art-wait=`, `injected=`, `refused=` and `anomalies=` count every route; the
 // rest are the Heroic roll's, the `kill-` ones the DropUniqueItems route's, and
 // the `draw-` ones and `tier-unread=` the kill draw's.
@@ -874,6 +893,7 @@ struct DropStatFields {
     uint64_t    tierUnread = 0;              // stand-in hits refused with no tier recorded
     DropTally   drawPieces[kPieceCount];
     std::array<DrawStandIn, kPieceCount> drawStandIns{};
+    DrawTypedCounts drawTyped;               // the adapter's typed-build counters
 };
 
 // A piece's stand-in as the line prints it: `<sub>:<b>@<rarity>x<n>`, or none.
@@ -952,6 +972,12 @@ inline std::string DropStatLine(const DropStatFields& f)
     for (int i = 0; i < kPieceCount; ++i)
         s += " draw-standin-" + std::string(kPieces[i].key) + "="
             + DrawStandInField(f.drawGate, f.drawStandIns[static_cast<size_t>(i)]);
+    const DrawTypedCounts& t = f.drawTyped;
+    s += " draw-typed=" + std::to_string(t.standIn) + "/" + std::to_string(t.natural);
+    s += " draw-untyped=" + std::to_string(t.untyped);
+    s += " draw-normal=" + std::to_string(t.normal);
+    s += " draw-outside=busy:" + std::to_string(t.busy) + ",aside:" + std::to_string(t.aside) + ",lists:"
+        + std::to_string(t.lists) + ",roll:" + std::to_string(t.roll);
     return s;
 }
 

@@ -65303,7 +65303,9 @@ static void Mark1DropsSwitch(bool on)
 // `mark1set stat`'s second line: every field the core's FillStat, `hook=` the DropItemHeroic
 // route this adapter got, `kill-hook=` the shared DropUniqueItems detour's as its install read it,
 // and the kill draw's `draw-hook=` (DropManager's DropItem detour) and `tier-hook=` (raredrop's one
-// LoadSatanicDropTier detour).
+// LoadSatanicDropTier detour), then the kill draw's typed-build counters (KillDrawMark1FillStat,
+// defined with the kill draw).
+static void KillDrawMark1FillStat(M1dNs::DropStatFields& f);
 static std::string Mark1DropStatLine()
 {
     M1dNs::DropStatFields f;
@@ -65312,6 +65314,7 @@ static std::string Mark1DropStatLine()
     f.killHook = g_M1Drop.killRoute;
     f.drawHook = KillDrawRoute();
     f.tierHook = g_SatTierRoute;
+    KillDrawMark1FillStat(f);
     return M1dNs::DropStatLine(f);
 }
 // ---- end of the Mark 1 drop adapter ----------------------------------------------
@@ -65389,6 +65392,11 @@ struct KillDrawState {
     KillDrawHit       hit;
     int               piecePending[M1sNs::kPieceCount] = { 0, 0, 0, 0 };   // rewritten, not yet seen built
     int               elfPending = 0;
+    // The typed-build counters of each stat line (`draw-typed=` and the rest, `elf-draw-typed=` and
+    // the rest), for the session: KillDrawTypePick counts every CreateDefaultParams call of a call
+    // carrying that feature's entries.
+    M1dNs::DrawTypedCounts mark1Typed;
+    FcNs::DrawTypedCounts  elfTyped;
 };
 static KillDrawState g_KillDraw;
 static FcNs::ElfDraw g_ElfDraw;
@@ -65685,21 +65693,54 @@ static void KillDrawNoteRead(int argc, RValue** A)
     if (d.readSeen) { d.readT = t; d.readSub = s; d.readB = b; }
 }
 
-// #74's CreateDefaultParams detour, before the game's call: in the draw's scope, whether the pick
-// is typed - its sub and b are the latest read's - and then that read is spent.
+// #74's CreateDefaultParams detour, before the game's call. In a DropItem call carrying a feature's
+// entries every call is counted on that feature's line, here where the scope is decided and so
+// before either coin: outside the scope under its first false condition (busy, aside, lists - the
+// entries off them - then roll). In the scope only a unique build is typed - the third argument,
+// the repository selector, reads as 1 (RDM 13.4) - when its sub and b are the scope's latest read,
+// and then that read is spent. A normal build is never typed and leaves the read for the next one.
 static bool KillDrawTypePick(int argc, RValue** A)
 {
-    if (!KillDrawScope()) return false;
     KillDrawState& d = g_KillDraw;
-    double sub = 0.0, b = 0.0;
-    bool ok = false;
-    try { ok = argc > 1 && A && A[0] && A[1] && SigNumber(*A[0], sub) && SigNumber(*A[1], b); } catch (...) { ok = false; }
-    if (!ok || !d.readSeen || d.readSub != sub || d.readB != b) return false;
+    if (d.pushDepth <= 0 || (!d.mark1 && !d.elf)) return false;
+    auto count = [&](auto&& bump) {
+        if (d.mark1) bump(d.mark1Typed);
+        if (d.elf) bump(d.elfTyped);
+    };
+    if (!KillDrawScope()) {
+        count([&](auto& c) {
+            if (d.busy) ++c.busy;
+            else if (d.aside > 0) ++c.aside;
+            else if (!d.onLists) ++c.lists;
+            else ++c.roll;
+        });
+        return false;
+    }
+    double sub = 0.0, b = 0.0, cls = 0.0;
+    bool ok = false, unique = false;
+    try {
+        ok = argc > 1 && A && A[0] && A[1] && SigNumber(*A[0], sub) && SigNumber(*A[1], b);
+        unique = argc > 2 && A && A[2] && SigNumber(*A[2], cls) && cls == 1.0;
+    } catch (...) { ok = unique = false; }
+    if (!unique) { count([](auto& c) { ++c.normal; }); return false; }
+    if (!ok || !d.readSeen || d.readSub != sub || d.readB != b) { count([](auto& c) { ++c.untyped; }); return false; }
     d.picked = true;
     d.pickT = d.readT;
     d.pickSub = sub;
     d.pickB = b;
     d.readSeen = false;
+    if (d.mark1) {
+        bool own = false;
+        if (const M1dNs::DrawPlan* plan = g_M1Drop.core.PushedDrawPlan())
+            for (const M1dNs::DrawPushEntry& e : plan->entries)
+                own = own || ((double)e.triple.t == d.pickT && (double)e.triple.sub == sub && (double)e.triple.b == b);
+        ++(own ? d.mark1Typed.standIn : d.mark1Typed.natural);
+    }
+    if (d.elf) {
+        const FcNs::DrawStandIn& s = d.elfStandIn;
+        const bool own = (double)s.triple.t == d.pickT && (double)s.triple.sub == sub && (double)s.triple.b == b;
+        ++(own ? d.elfTyped.standIn : d.elfTyped.natural);
+    }
     return true;
 }
 
@@ -65732,10 +65773,12 @@ static void KillDrawSettleHit()
     if (d.elf) {
         const double u = std::uniform_real_distribution<double>(0.0, 1.0)(TyRng());
         if (g_ElfDraw.Hit(d.pickT, d.pickSub, d.pickB, u) == FcNs::DrawHit::Ours) {
+            // Pocket Elf's own recorded tier, the one its coin read.
+            const int ek = g_ElfDraw.Tier();
             const FcNs::DrawStandIn& s = d.elfStandIn;
             d.hit.elf = true;
             d.hit.who = KillDrawWho(std::string(FcNs::RowOf(FcNs::Charm::Elf).name), s.triple.t, s.triple.sub, s.triple.b,
-                                    k >= 0 && k < M1dNs::kListCount ? s.counts[(size_t)k] : 0, d.elfCopies, k);
+                                    ek >= 0 && ek < FcNs::kDrawListCount ? s.counts[(size_t)ek] : 0, d.elfCopies, ek);
         }
     }
 }
@@ -65941,11 +65984,20 @@ static std::string KillDrawInstall()
     return "";
 }
 
-// The `elf-draw-` fields of `flightcharm stat`: ElfDraw's own, and the DropItem detour's route.
+// The `elf-draw-` fields of `flightcharm stat`: ElfDraw's own, and the DropItem detour's route and
+// typed-build counters.
 static void KillDrawElfFillStat(FcNs::StatFields& s)
 {
     g_ElfDraw.FillStat(s, g_FlightDrop.switches[static_cast<int>(FcNs::Charm::Elf)]);
     s.elfDrawHook = g_KillDraw.route;
+    s.elfDrawTyped = g_KillDraw.elfTyped;
+}
+
+// The drops line's typed-build fields (`draw-typed=` and the rest), as Mark1DropStatLine sets
+// `draw-hook=`.
+static void KillDrawMark1FillStat(M1dNs::DropStatFields& f)
+{
+    f.drawTyped = g_KillDraw.mark1Typed;
 }
 // ---- end of the kill draw ----------------------------------------------------------------
 

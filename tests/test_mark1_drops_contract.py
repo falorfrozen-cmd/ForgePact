@@ -506,8 +506,10 @@ class Mark1DropsContract(unittest.TestCase):
             "f.killHook = g_M1Drop.killRoute;",
             "f.drawHook = KillDrawRoute();",
             "f.tierHook = g_SatTierRoute;",
+            "KillDrawMark1FillStat(f);",
             "return M1dNs::DropStatLine(f);",
         ])
+        self.assertIn("f.drawTyped = g_KillDraw.mark1Typed;", self.draw("static void KillDrawMark1FillStat(M1dNs::DropStatFields& f)"))
         self.assertIn("Out(M1dNs::DropsReply(g_M1Drop.core, g_SigDetectNative));", self.body("switch"))
 
     # ---- game names -----------------------------------------------------------------------
@@ -645,6 +647,16 @@ class Mark1DropsContract(unittest.TestCase):
         settle = self.draw("static void KillDrawSettleHit()")
         self.assertLess(settle.index("KillDrawCloseHit();"), settle.index("g_M1Drop.core.SettleDrawHit("))
         self.assertIn("const int k = g_M1Drop.core.DrawTier();", settle)
+        # Pocket Elf's hit line takes its k from Pocket Elf's own recorded tier.
+        self.assertIn("const int ek = g_ElfDraw.Tier();", settle)
+        # The class gate: only a unique build (the third argument read as 1) is typed, and every build
+        # of a call carrying entries is counted on the typed-build fields before the pick is typed.
+        pick = self.draw("static bool KillDrawTypePick(int argc, RValue** A)")
+        self.assertIn("SigNumber(*A[2], cls) && cls == 1.0", pick)
+        self.assertLess(pick.index("if (!unique) { count([](auto& c) { ++c.normal; }); return false; }"), pick.index("d.picked = true;"))
+        self.assertLess(pick.index("++c.untyped;"), pick.index("d.readSeen = false;"))
+        for field in ("++c.busy;", "++c.aside;", "++c.lists;", "++c.roll;"):
+            self.assertLess(pick.index(field), pick.index("double sub = 0.0, b = 0.0, cls = 0.0;"))
         rewrite = self.draw("static bool KillDrawBeforeCreate(int argc, RValue** A)")
         self.assertIn("g_M1Drop.core.TakeDrawRewrite(piece)", rewrite)
         self.assertIn("M1dNs::RewriteFor(piece)", rewrite)

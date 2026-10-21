@@ -2288,9 +2288,11 @@ int main()
         StatFields s;
         d.FillStat(s, true);
         s.elfDrawHook = "detoured";
+        s.elfDrawTyped = DrawTypedCounts{ 1, 5, 2, 3, 1, 0, 2, 0 };   // the adapter's typed-build counters
         const std::string line = StatLine(s);
         const std::string tail = " standin-elf=none elf-draw-hook=detoured elf-draw-calls=2 elf-draw-pushed=1 elf-draw=1/1 "
-                                 "elf-draw-standin=0:20@6/5x0,0,1,1,0,0";
+                                 "elf-draw-standin=0:20@6/5x0,0,1,1,0,0 elf-draw-typed=1/5 elf-draw-untyped=2 elf-draw-normal=3 "
+                                 "elf-draw-outside=busy:1,aside:0,lists:2,roll:0";
         check("elf_draw/target_the_stat_fields_after_use",
             line.size() > tail.size() && line.compare(line.size() - tail.size(), tail.size(), tail) == 0, line);
     }
@@ -2357,7 +2359,8 @@ int main()
                                   "equipped=none answered=0 excluded=0 outside-room=0 depth=0 | icons=not-loaded ground=0 | "
                                   "guard kept=0 failed=0 | drops gate=off elf=0/0 wings=0/0 broom=0/0 injected=0 refused=0 "
                                   "anomalies=0 standin-elf=none elf-draw-hook=not-installed elf-draw-calls=0 "
-                                  "elf-draw-pushed=0 elf-draw=0/0 elf-draw-standin=none";
+                                  "elf-draw-pushed=0 elf-draw=0/0 elf-draw-standin=none elf-draw-typed=0/0 elf-draw-untyped=0 "
+                                  "elf-draw-normal=0 elf-draw-outside=busy:0,aside:0,lists:0,roll:0";
         Flight f;
         SizeGuard<Pending> g;
         ElfDraw e;
@@ -2400,7 +2403,8 @@ int main()
                                 "equipped=wings+broom answered=1 excluded=1 outside-room=1 depth=1 | icons=loaded ground=3 | "
                                 "guard kept=1 failed=0 | drops gate=on elf=1/2 wings=0/0 broom=4/5 injected=12 refused=1 "
                                 "anomalies=0 standin-elf=aimbot elf-draw-hook=not-installed elf-draw-calls=0 "
-                                "elf-draw-pushed=0 elf-draw=0/0 elf-draw-standin=none";
+                                "elf-draw-pushed=0 elf-draw=0/0 elf-draw-standin=none elf-draw-typed=0/0 elf-draw-untyped=0 "
+                                "elf-draw-normal=0 elf-draw-outside=busy:0,aside:0,lists:0,roll:0";
         const bool gates = GateName(Gate::Off) == "off" && GateName(Gate::On) == "on" && GateName(Gate::Refused) == "refused"
             && GateName(Gate::NotResolved) == "not-resolved" && GateName(Gate::NoDetection) == "no-detection";
         const bool equipped = EquippedText(0) == "none" && EquippedText(kAllCharmBits) == "elf+wings+broom"

@@ -574,6 +574,24 @@ struct DropTally {
     uint64_t built = 0;
 };
 
+// Pocket Elf's typed-build counters on the kill draw (the draw's positive
+// control, #166), over the CreateDefaultParams calls made in DropItem calls
+// that carry its entry, each counted once before any coin: a typed pick
+// (`standIn`, its whole triple Pocket Elf's stand-in; `natural`, every other),
+// a unique build no read matched (`untyped`), a build whose third argument is
+// not 1 (`normal`, never typed), and a build while the draw's scope was false,
+// under its first false condition (busy, aside, lists, roll).
+struct DrawTypedCounts {
+    uint64_t standIn = 0;
+    uint64_t natural = 0;
+    uint64_t untyped = 0;
+    uint64_t normal = 0;
+    uint64_t busy = 0;
+    uint64_t aside = 0;
+    uint64_t lists = 0;
+    uint64_t roll = 0;
+};
+
 // Every field of the line. A default StatFields prints the fresh session's
 // line; Flight::FillStat and SizeGuard::FillStat fill their parts, and the
 // adapter the rest.
@@ -600,6 +618,7 @@ struct StatFields {
     uint64_t       elfDrawPushed = 0;
     DropTally      elfDraw;
     std::string    elfDrawStandIn = "none";
+    DrawTypedCounts elfDrawTyped;   // the adapter sets these
 };
 
 // The worn charms' keys, in table order, joined by `+`; `none` for none. Keys,
@@ -642,6 +661,12 @@ inline std::string StatLine(const StatFields& f)
     s += " elf-draw-pushed=" + std::to_string(f.elfDrawPushed);
     s += " elf-draw=" + std::to_string(f.elfDraw.ours) + "/" + std::to_string(f.elfDraw.built);
     s += " elf-draw-standin=" + f.elfDrawStandIn;
+    const DrawTypedCounts& t = f.elfDrawTyped;
+    s += " elf-draw-typed=" + std::to_string(t.standIn) + "/" + std::to_string(t.natural);
+    s += " elf-draw-untyped=" + std::to_string(t.untyped);
+    s += " elf-draw-normal=" + std::to_string(t.normal);
+    s += " elf-draw-outside=busy:" + std::to_string(t.busy) + ",aside:" + std::to_string(t.aside) + ",lists:"
+        + std::to_string(t.lists) + ",roll:" + std::to_string(t.roll);
     return s;
 }
 
@@ -1943,6 +1968,9 @@ public:
     uint64_t TierUnread() const { return tierUnread_; }
     uint64_t Ours() const { return ours_; }
     uint64_t Built() const { return built_; }
+    // The tier NoteTier recorded for the innermost call in progress (the one
+    // Hit reads), -1 for none: the k on Pocket Elf's hit line.
+    int Tier() const { return frames_.empty() ? -1 : frames_.back().tier; }
 
     // Every `elf-draw-` field but the hook's route, which the adapter sets.
     void FillStat(StatFields& s, bool on) const
