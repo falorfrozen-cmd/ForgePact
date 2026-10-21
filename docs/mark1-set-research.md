@@ -2962,10 +2962,26 @@ and what lands on the ground, each with a control in the same session.
   `flightcharm stat`, then up to 4 operator kill batches at copies 1; if
   `draw-typed=` has not risen after them, the owner plays until it does.
   `draw-calls=`, `draw-pushed=`, `draw-typed=` (either half) and
-  `elf-draw-typed=` (either half) each rise by at least 1
-  (`draw-control`). This is a session-validity check: with a typed build
-  counted, the kill draw's hit typing is shown to run in this session, so
-  a later miss can be read as one.
+  `elf-draw-typed=` (either half) each rise by at least 1, while the
+  second number of `draw-class-check=` and of `elf-draw-class-check=`, the
+  disagreements, is still 0 (`draw-control`). Every read records
+  `draw-class=` and `draw-class-check=` and their twins `elf-draw-class=`
+  and `elf-draw-class-check=` beside the typed fields. This is a
+  session-validity check: with a typed build counted and the class read
+  agreeing with the game's own, the kill draw's hit typing is shown to run
+  in this session, so a later miss can be read as one. `draw-control`
+  fails, and the session goes straight to L8 with the reads recorded, at
+  the first read where either line's `draw-class-check=` counts a
+  disagreement (the class read is wrong), or where the true halves of
+  `draw-class=` (`bool` and `num` together) have risen by 5 or more while
+  `draw-typed=` has not risen (the class is read but the read match fails,
+  and `draw-untyped=` carries those builds).
+- Expected class, a static reading and not a measurement: on this game
+  build `DropItem` passes its third argument as a bool (hub
+  `docs/RUNTIME_DATA_MODELS.md` § 13.12), so `draw-class=` and
+  `elf-draw-class=` rise in their `bool` halves only, and
+  `draw-class-check=` and `elf-draw-class-check=` only in their first
+  number, the agreements.
 - L4: `raredrop ceiling 10` (as in Mod live procedure 7's H4b),
   `mark1probe copies 400` and `flightprobe copies 400`, then kill batches,
   the operator's first and then the owner's play, until each of the four
@@ -2977,9 +2993,10 @@ and what lands on the ground, each with a control in the same session.
   <outcome>` and `flightcharm hit: kill draw -> <outcome>` line,
   `tier-unread=`, `draw-nested=`, and each `draw-standin-<key>=` and
   `elf-draw-standin=` as read. At every read, record `draw-typed=`,
-  `draw-untyped=`, `draw-normal=` and `draw-outside=`, and their twins
-  `elf-draw-typed=`, `elf-draw-untyped=`, `elf-draw-normal=` and
-  `elf-draw-outside=`, and set the rise of `draw-typed=` and
+  `draw-untyped=`, `draw-normal=`, `draw-outside=`, `draw-class=` and
+  `draw-class-check=`, and their twins `elf-draw-typed=`,
+  `elf-draw-untyped=`, `elf-draw-normal=`, `elf-draw-outside=`,
+  `elf-draw-class=` and `elf-draw-class-check=`, and set the rise of `draw-typed=` and
   `elf-draw-typed=` beside the model figures under *Expected hits per
   typed build* below.
 - L5: `sigdrop status` matches L3's. `mark1probe pool kill` reads lengths
@@ -2993,7 +3010,8 @@ and what lands on the ground, each with a control in the same session.
   `raredrop ceiling 1`, `mark1set drops 0` and `flightcharm elf 0`; then one
   kill batch. `draw-calls=` rises and `draw-pushed=`, `draw-typed=` and
   `elf-draw-typed=` are unchanged, with no piece and no Pocket Elf built
-  (`drop-off`). Then `stat magicfind 1`.
+  (`drop-off`); the read also records `draw-class=`, `draw-class-check=`,
+  `elf-draw-class=` and `elf-draw-class-check=`. Then `stat magicfind 1`.
 - L8: teardown as in Mod live procedure 7's H9: stop the game, inspect and
   restore the saves.
 
@@ -3003,9 +3021,10 @@ and what lands on the ground, each with a control in the same session.
 `unique-still` and `drop-off`. Research, never required and recorded as
 read: `natural-draw`, a piece or Pocket Elf built at copies 1 if one is
 seen, with its hit line; and `draw-scope`, `draw-untyped=`,
-`draw-normal=` and `draw-outside=` and their `elf-` twins
-(`elf-draw-untyped=`, `elf-draw-normal=`, `elf-draw-outside=`) as read at
-each of L3, L4 and L7.
+`draw-normal=`, `draw-outside=`, `draw-class=` and `draw-class-check=` and
+their `elf-` twins (`elf-draw-untyped=`, `elf-draw-normal=`,
+`elf-draw-outside=`, `elf-draw-class=`, `elf-draw-class-check=`) as read
+at each of L3, L4 and L7.
 
 **Expected hits per typed build.** These are model figures, not
 measurements: hub `hs_game_sdk.unique_pick_model.draw_share` under
