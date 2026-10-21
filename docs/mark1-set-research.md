@@ -2656,3 +2656,255 @@ with fewer than 3 natural `draw` builds or with s = 0. Only the first three
 gate the move onto the draw (`satanic-draw`, `matches`, `seen`); the draw
 mode decides only the share the player text may claim. Any other route
 value sends the move back to planning.
+
+### Mod live 7 results
+
+Mod live procedure 7 ran as three sessions, and this one record covers all
+three. Each ran on save slot 14, "Sorak", in Hell, with every Mark 1 and
+flight switch off, and each restored its saves clean at the end. The
+captures are the uniques workorder's
+`forgepact-166-mark1-set-uniques-live-1.md` (Live 1, 2026-10-20, 21:48 to
+22:06 UTC), `forgepact-166-mark1-set-uniques-live-1b.md` (Live 1b,
+2026-10-21, 08:37 to 09:19 UTC) and
+`forgepact-166-mark1-set-uniques-live-1c.md` (Live 1c, 2026-10-21, 09:51 to
+10:24 UTC), kept with the hub's workorder files and not tracked. The game
+build was `498d5885…` in all three.
+
+- **Live 1** ran the procedure above on the research build from ForgePact
+  c45f940 (SHA-256 `8aef7ec5…3884c`), with the debugger attached.
+- **Live 1b** answered the question Live 1 left open, `push-sees`, in the
+  setting where Live 1 saw draw builds: the owner's own play at normal fps.
+  It ran on the build from ForgePact 501a928 (`b46e5ab3…1f85`), which adds
+  the push's own counters (`push-held=`, `push-skipped=`, `pushed-reads=`)
+  and its side argument (`mark1probe draws push <c> ss|below`). The window
+  ran in two halves, below SS first and SS second, each with c = 25, and no
+  debugger.
+- **Live 1c** asked whether a pushed SS stand-in that the draw picks is ever
+  built. It ran on Live 1b's build, at magic find x10 (`stat magicfind 10`),
+  with the debugger attached. It ran its SS half only: the owner closed the
+  session once `ss-build` read seen, so the below control half was not run.
+
+`tools/live_checks.py` reads 18 checks from Live 1 (16 pass, 2 not
+observed), 9 from Live 1b (8 pass, 1 fail) and 15 from Live 1c (12 pass,
+1 fail, 1 not observed, 1 not run). Every session-validity check passed in
+all three.
+
+How to read a built line: `t=` is the item class and `b=` the base. The line
+does not print the sub, so a stand-in is matched on its class, base, tier
+and list counts together. `k=` is the call's `LoadSatanicDropTier` answer.
+`lists=` is the triple's count on lists 0 to 5 without the pushed copies:
+a stand-in built during the push still reads its natural count.
+`reads=` is the `GetUniqueRepoStruct` reads in that scope since the last
+build.
+
+**Live 1: operator kills, then the owner's window.**
+
+| Check | Verdict | What it showed |
+|---|---|---|
+| `dll-hash` | pass | The installed DLL hashed `8aef7ec5…3884c`, the research build. |
+| `control` | pass | `pong (YYTK 4.0.1)`; `mark1probe: research build`, `rows=20 hooked=0 held=0`. |
+| `marker` | pass | `playerwarp` to (1412, 822), free on every test, 557 px from the waypoint. |
+| `dbg-control` | pass | It logged from before the first candidate to after the window. The debugger's control hold proved the instrument by the game's frame counter. |
+| `draws-on` | pass | `watch=on dropitem=detoured sattier=detoured retsat=detoured`. |
+| `kill-control` | pass | `mark1probe unique 10` placed 10 uniques by name. `dropunique=` rose by 10; `draw=`, `calls=`, `dbg-draw` and `dbg-draw-build` each rose by 0. |
+| `kill-normal` | pass | One operator batch in Outskirts of Inoya, zone level 243. `calls=` went 0 to 40 and `normal=` 0 to 13. `reads=` rose 276, equal to `dbg-draw`'s 276. `tiers=0,2,1,0,12,19`, `arg7=undefined:12,list:28`, and no unique was built. |
+| `push-off` | pass | After `push off`, `picks=` stayed 0 and `anomalies=0`. The kill lists read 50, 61, 79, 152 and 221, and list 5 read 380. |
+| `push-sees` | not observed | With `push 100`, s = 4: the SS stand-ins 0:15, 0:1, 0:9 and 0:16, all tier 5. Over 8 operator batches (`calls=` 176 to 346) `draw=` stayed 0, so the lever had no draw to land in, and `picks=` and `pick-builds=` stayed 0. Live 1b read it again. |
+| `pool-draw` | pass | Candidates, SS candidates and best SS entry per class: helmet 73, 7, 0:15; body 84, 12, 0:1; boots 60, 5, 0:9; gloves 46, 5, 0:16; Pocket Elf's class 10: 51, 24, 0:1. Every best SS entry is tier 5 and sits on list 5 only. The best entry below SS was 0:0 in every class, at tiers 4, 4, 1, 2 and 4. |
+| `vanilla-route` | pass | The owner's window, about 10 minutes in Fields of Battle, built 4 uniques, all in scope `draw` (table below). `dropunique=`, `kill-calls=`, `retsat-calls=` and `outside=` each rose by 0. |
+| `tier-k` | pass | `on-k=4` and `off-k=0` over H4, H4b and the window. H4 and H4b built nothing through the draw. |
+| `draw-reads` | pass | `reads=` 28, 9, 19 and 85 for the window's four draw builds. |
+| `arg7` | pass | `arg7=undefined:105,list:392,other:0` over 497 calls, each with 12 arguments. Most calls pass a list in argument 7. |
+| `retsat` | not observed | `retsat-calls=0` all session. There was no positive control for `ReturnRandomSatanic`. |
+| `dbg-draw` | pass | 276 hits in H4's single batch, equal to the `reads=` rise. That is over 200 in one batch, so it was disabled as `hot` and not counted after H4. |
+| `dbg-draw-build` | pass | 0 from H3 to H7, then +4 in the window, equal to `draw=`'s +4. |
+| `dbg-arglist` | pass | 0 from H3 to H7, then +49 in the window: the argument-7 draw's lookup ran on the owner's kills. |
+
+| Unique (owner's window) | t, b | Rarity, tier | Scope | k | `lists=` | `reads=` | Owner |
+|---|---|---|---|---|---|---|---|
+| Unearthed Esoteric Panoply | 1, 63 | 6, 1 | draw | 1 | 0,1,0,0,0,0 | 28 | named, "C tier" |
+| Elder's Heart | 5, 14 | 6, 2 | draw | 2 | 0,0,1,0,0,0 | 9 | not named |
+| Thunderstone Amulet | 5, 41 | 6, 4 | draw | 4 | 0,0,0,0,1,0 | 19 | named, "S tier" |
+| Crystal Infused Shield | 6, 16 | 6, 2 | draw | 2 | 0,0,1,0,0,0 | 85 | not named |
+
+The operator's kills built no unique through the draw: 0 draw builds over
+the 345 calls of H4 to H6. H4b and H5 ran at `raredrop ceiling 10`. Over
+the window `calls=` rose by 112, `reads=` by 2590, and `arg7=` by 88 lists
+and 24 undefined. The session's final `tiers=` read
+`0,12,14,9,99,733`, or `0,9,11,6,73,81` over the window alone. These are
+`LoadSatanicDropTier`'s answers, and in Live 1 they outnumber `calls=`
+(867 against 497); why is not established.
+
+**Live 1b: the lever in the owner's play, in two halves.**
+
+| Check | Verdict | What it showed |
+|---|---|---|
+| `dll-hash` | pass | `b46e5ab3…1f85`, as recorded for the build. |
+| `control` | pass | `pong (YYTK 4.0.1)`; `mark1probe: research build`. |
+| `draws-on` | pass | `watch=on dropitem=detoured sattier=detoured retsat=detoured`. |
+| `push-standins` | pass | s(below) = 4: helmet, body, boots and gloves 0:0, at tiers 4, 4, 1 and 2, each on its own tier's list. s(ss) = 4: 0:15, 0:1, 0:9 and 0:16, all tier 5 and on list 5 only. No class was refused. |
+| `push-held` | pass | `push-held=` +971 below and +2336 SS, equal to each half's `calls=` rise. `push-skipped=` rose by 0 in both. |
+| `window-draw` | pass | `draw=` +3 below and +6 SS. The half's n, its typed draw builds, was 3 below and 6 SS. |
+| `push-kept-below` | pass | Below half: `picks=` 0 to 1 and `pick-builds=` 0 to 1. |
+| `push-sees` | fail | SS half: `picks=` +13 and `pick-builds=` +0. All 6 `draw` builds were at k = 4, and none was an SS stand-in. If Pitfiend's Thorn counts to the below half, as the owner says, the SS n is 5 and this reads not observed (n = 5 draw builds, too few for a zero). |
+| `push-off` | pass | `push: off`. `picks=` stayed 14 over 237 calls after it, with `anomalies=0`. The lengths equal the start's: 50, 61, 79, 152, 221 and 380. |
+
+| Half | Time (UTC) | `calls=` | `reads=` | `draw=` | `on-k=` | `off-k=` | `picks=` | `pick-builds=` | `push-held=` | `push-skipped=` | `pushed-reads=` | `dropunique=` | n |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| below, c = 25 | about 08:38 to 09:12 | +971 | +8562 | +3 | +2 | +0 | +1 | +1 | +971 | +0 | +1943 | +2 | 3 |
+| SS, c = 25 | 09:12 to 09:17:53 | +2336 | +20113 | +6 | +6 | +0 | +13 | +0 | +2336 | +0 | +4538 | +0 | 6 |
+
+The below half's built lines:
+
+- `draw` builds:
+  - Shadow's Grasp: 4, 0, tier 2, k = 5, lists 0,0,1,0,0,0, reads 4. This is the gloves below-SS stand-in: the same class, base, tier and list counts. It was built at k = 5, where no natural copy sits, and the watch typed it as the half's one pick-build. The capture's own check line missed it, because it compared built lines with the stand-ins' sub:b. That is this record's reading of the capture.
+  - Veil of Consecration: 0, 87, tier 4, k = 4, reads 4.
+  - Treasure Hunter's Boots: 2, 14, tier 4, k = 4, reads 2.
+- `dropunique` builds, inside the nested `DropUniqueItems` roll:
+  - Knight's Girdle: 8, 18, tier 4, k = 5, reads 2.
+  - Darkhide Boots: 2, 0, tier 1, k = 4, lists 0,1,0,0,0,0, reads 2. It has the boots below-SS stand-in's class, base, tier and list counts. Whether the roll drew a pushed copy or its natural one is not established.
+
+The SS half's six `draw` builds were all tier 4 at k = 4: Pitfiend's Thorn
+(6, 35, reads 5), Cocoon of the Berserker (1, 54, reads 3), Deep Sea Glaive
+(3, 10, reads 2), Masamune (3, 19, reads 2), Lancer's Glory (3, 10, reads
+4) and Odin's Battle Axe (3, 2, reads 3). The owner named every unique of
+both halves. Pitfiend's Thorn is the one disagreement. He named it as the
+below half's last drop, but its line sits in out.txt at the byte offset the
+SS-half baseline batch ended on, and its `draw=` and `on-k=` rises landed in
+the SS half. The plugin's offsets are what the counters above follow.
+
+The mean list-k length over the `draw` builds was 274.0 in the below half
+(k = 5, 4, 4) and 221 in the SS half. `ss-share`, the SS half's picks per
+typed draw build, is 13 / 6 = 2.17, or 13 / 5 = 2.6 with the owner's
+attribution. It is kept apart from `draw-mode`: the SS half's picks ran
+ahead of its builds, and none of the 13 was built. `incident` recorded one
+episode, a 405 ms hitch in town during the below half.
+
+**Live 1c: the SS half at magic find x10, with the debugger.**
+
+| Check | Verdict | What it showed |
+|---|---|---|
+| `dll-hash` | pass | `b46e5ab3…1f85`. |
+| `control` | pass | `pong (YYTK 4.0.1)`; `mark1probe: research build`. |
+| `switches-off` | pass | `bonus=off`, `drops=off` and `elf=off wings=off broom=off`, at the start and the end. |
+| `draws-on` | pass | `watch=on dropitem=detoured sattier=detoured retsat=detoured`. |
+| `mf-on` | pass | `stat StatMagicFind -> x10.00`, and the row read `kanca kurulu`. `cagri=` went 0 to 1835 to 12221. |
+| `push-held` | pass, SS half only | `push-held=` 0 to 8146, equal to `calls=`. `push-skipped=` stayed 0. |
+| `push-off` | pass | `push: off`. `picks=` stayed 47 and `anomalies=0`. The lengths equal the start's. |
+| `dbg-control` | pass, C14 not run | It logged before the SS half and again at its close. |
+| `ss-picks` | pass, recorded | Numbers below. |
+| `ss-build` | pass | `pick-builds=` 0 to 2. Two `draw` lines name SS stand-ins at k 0 to 4. "Pirate Captain's Hat": 0, 15, rarity 6, tier 5, k = 2, lists 0,0,0,0,0,1, reads 129, the helmet stand-in. "Pirate Captain's Boots": 2, 9, rarity 6, tier 5, k = 4, lists 0,0,0,0,0,1, reads 5, the boots stand-in. The owner named both. |
+| `ss-native` | not observed | No natural rarity-6, tier-5 unique was built in scope `draw`. The only natural tier-5 `draw` builds were at k = 5 and not rarity 6: "The Dawn Bringer" (3, 18, rarity 7, reads 4; the owner calls it Angelic), "Arachno Phobia" (3, 15, rarity 9, reads 219; Heroic) and "Arcanum Asphyxiators" (4, 54, rarity 9, reads 3). These meet the check's literal wording but not its intent. Aimbot.exe (10, 76, rarity 6, tier 5) was built 8 times, all in scope `outside`, with no `DropItem` call in progress. |
+| `below-builds` | not run | The owner closed the session after `ss-build` read seen, so C12 to C14 were skipped. |
+| `dbg-ss75-a` | pass, SS half only | The first slot-75 read site was reached. Its last logged counter was 25600 over `calls=8146`, at least 3.1 hits a call. |
+| `dbg-ss75-b` | pass, SS half only | The second site was reached. Its last logged counter was 12800, at least 1.57 hits a call. |
+| `dbg-draw-build` | fail | 105 hits, equal to `draw=`'s +105, but short of `draw=` plus `picks=` (152). The pair it read matched no built pair (the numbers below). |
+
+The SS half ran from 09:54 to about 10:22 UTC, about 28 minutes. It
+closed with the owner standing still and two reads 10 s apart that matched.
+
+- **Counter rises:** `calls=` +8146, `reads=` +71988, `builds=` +2317,
+  `normal=` +2199, `draw=` +105, `dropunique=` +2, `outside=` +11,
+  `angelic=` and `heroic=` +0, `on-k=` +103, `off-k=` +0, `picks=` +47,
+  `pick-builds=` +2, `pushed-reads=` +14729 and `anomalies=0`.
+- **Other counters:** `tiers=0,405,401,410,3449,3432`, about one answer a
+  call here, and `arg7=undefined:1212,list:6934`.
+- **Rates:** typed draw builds (`on-k=` + `off-k=` + `pick-builds=`) came to
+  105. That is about 3.75 `draw=` and 1.7 `picks=` a minute at magic
+  find x10.
+- **Picks against draw builds, read interval by read interval:** 10 against
+  12 (09:54 to 09:58:41), 7 against 20 (to 10:00:10), 30 against 73 (to
+  10:20:37), and 0 against 0 (to the close).
+- **The 60-pick threshold** was not reached (47). It decides only a
+  `rejected` reading, and the result was `seen`.
+- **Live 1b's 13 SS picks are not pooled with these**, because magic find
+  differed.
+
+The built lines: 118 since load, the cap of 200 not reached.
+
+- 105 in scope `draw`: the two stand-ins above and 103 natural uniques, each
+  built at the k its triple sits on (k = 1: 22, k = 2: 5, k = 3: 14, k = 4:
+  59, k = 5: 3).
+- Every natural draw build's tier equals its k. The k = 5 ones are the three
+  rarity-7 and rarity-9 builds named under `ss-native`, and every other draw
+  build is rarity 6. Their `reads=` run from 2 to 249, with a median of 3.
+- 2 in scope `dropunique`: Juggernaut's Siege Helm (0, 36, tier 3) and
+  Marksman's Quiver (10, 16, tier 4), both at k = 4.
+- 11 in scope `outside`: the eight Aimbot.exe lines, and Imperial Glaive,
+  Lost Wizard's Barrier and Earth Shaper's Talons once each.
+
+The capture lists every line.
+
+What the debugger logged:
+
+- **The slot-75 sites:** every one of the 139 logged lines at the two sites
+  carried the same value, 75.0 (a real). The log condition's literals were
+  read as hexadecimal, so lines were logged up to hit 32 and then every
+  512th hit. The counters jumped by 512 between logged lines, which confirms
+  that the hit counter rises on hits whose condition is false. Hit counts
+  are known only to the nearest 512.
+- **`dbg-draw-build`:** the 105 hits equal the 105 `draw` builds, the two
+  stand-ins among them. So the 45 picks that were not built never reached
+  the draw's build call.
+- **The pair `dbg-draw-build` read at that call:** it never matched a built
+  line's pair. Most hits read one repeated value. A few carried small
+  integers as reals with a repeated second value, and hits 103 and 105 read
+  zero for both values. `pick-builds=` is 2 too, but that is not interpreted.
+  The pair read is not the entry's.
+
+`incident` read 41 episodes and 437 slow judged frames at the close, with
+the debugger attached and magic find at x10. Which of the two caused them
+was not separated.
+
+### Phase 4 decision
+
+Recorded on 2026-10-21 from Mod live procedure 7's three sessions (Mod live
+7 results above). Each key takes exactly one value, on a line of its own.
+The checks that decide it are on the line below.
+
+unique-route: satanic-draw
+Decided by `vanilla-route`, `dbg-draw-build` and `dbg-arglist` (Live 1). Both uniques the owner reported have built lines of the same name in scope `draw`, as do the two he did not report. `dbg-draw-build` rose by 4, which is the window's `draw=` rise and at least the 2 reported. `dropunique=`, `outside=`, `kill-calls=` and `retsat-calls=` stayed flat. One clause of the rule did not hold as written: `dbg-arglist` did not stay flat. It logged 49 hits, so the argument-7 draw's lookup ran on these kills. Every `draw` build still went through the Satanic draw's own build call (4 of 4 in Live 1, and 105 of 105 in Live 1c), so none was built through the argument-7 draw. The driver read the route as `satanic-draw` on that evidence on 2026-10-21 (the workorder's Live 1 log), and this record keeps that reading. Every natural kill unique in Live 1b and Live 1c was built in scope `draw` too, except 4 built inside the nested `DropUniqueItems` roll, 2 in each session. One of Live 1b's 2 has the boots below-SS stand-in's class, base, tier and list counts.
+
+tier-k: matches
+Decided by `tier-k` (Live 1): `on-k=4`, `off-k=0`. Live 1b read `on-k=` +8 and `off-k=` +0, and Live 1c `on-k=` +103 and `off-k=` +0. Every natural draw build's triple sat on list k, and its tier equalled k.
+
+push-route: seen
+Decided by Live 1b's `push-held` (pass: +971 and +2336, `push-skipped=` +0) and its `pushed-reads=`, which rose by 1943 in the below half and by 4538 in the SS half. The draw read pushed entries in both halves. The below half built one: Shadow's Grasp at k = 5 (`push-kept-below`). Live 1c's SS half built two: `ss-build`.
+
+draw-mode: first-kept
+Decided by `draw-reads` and Live 1b's below half. Take the natural `draw` builds of Live 1 (`reads=` 28, 9, 19, 85) and Live 1b (4, 2, 5, 3, 2, 2, 4, 3): 12 builds with a median of 4, which is 10 or fewer. The below half's picks per typed draw build were 1 / 3 = 0.33, against half of s·c / (L_k + s·c) = 0.5 × 100 / (274.0 + 100) = 0.13. The lever half rests on 3 typed builds and 1 pick, so it is a weak reading. Live 1c's 103 natural draw builds (median `reads=` 3) are not part of the rule, but they agree. `ss-share` (2.17, Live 1b) is recorded apart and does not enter it.
+
+ss-build: seen
+Decided by `ss-build` (Live 1c, pass): `pick-builds=` rose by 2 in the SS half, and two `draw` built lines at k = 2 and k = 4 name the helmet and boots SS stand-ins. The owner named both. `ss-native` and `below-builds` are controls for a `rejected` reading only, so they do not bear on `seen`.
+
+Every gating value is `satanic-draw`, `matches` or `seen`, so nothing here
+sends the move back to planning. The driver set `move: go` on these values
+on 2026-10-21.
+
+`draw-mode: first-kept` lets the move use the per-list coin, c / (n_k + c),
+as written. Its lever half is thin, so Live 2's kill counts remain the
+measure of the share.
+
+The SS side needs care. A pushed SS stand-in that the draw picks is built,
+but rarely: 2 of 47 picks at magic find x10 in Live 1c, and 0 of 13 at x1
+in Live 1b. Each picked entry that was not built never reached the draw's
+build call. This record does not say why. Both slot-75 sites were reached,
+and they read 75.0 on every logged hit, but the comparison after that read
+was not logged. No natural Satanic SS unique was built through the draw in
+28 minutes at x10, so the SS rate a Mark 1 piece or Pocket Elf stand-in
+gets is far below its pick rate. The model and the player text take that
+from Live 2, not from the pick share.
+
+The values each key may take:
+
+- `unique-route`, where a kill's unique is built: `satanic-draw`,
+  `arg-list`, `dropuniqueitems`, `outside-dropitem`, `mixed` or
+  `not-observed`.
+- `tier-k`, whether a draw build's triple sits on the list k names:
+  `matches`, `differs` or `not-observed`.
+- `push-route`, whether entries the lever pushes reach the draw: `seen`,
+  `not-observed` or `instrument`.
+- `draw-mode`, how the draw chooses among its entries: `first-kept`,
+  `weighed` or `not-observed`.
+- `ss-build`, whether a pushed SS entry the draw picks is ever built:
+  `seen`, `rejected` or `not-observed`.
