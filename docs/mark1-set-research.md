@@ -2908,3 +2908,87 @@ The values each key may take:
   `weighed` or `not-observed`.
 - `ss-build`, whether a pushed SS entry the draw picks is ever built:
   `seen`, `rejected` or `not-observed`.
+
+### Mod live procedure 8
+
+One session on the research build that carries the moved kill routes: the
+Mark 1 drops and Pocket Elf on `DropItem`'s own draw, through DropManager's
+one `DropItem` detour and raredrop's one `LoadSatanicDropTier` detour (the
+hub guide's Mark 1 set › *Drops*, *kill draw*). The capture is the uniques
+workorder's live capture 2, `forgepact-166-mark1-set-uniques-live-2.md`,
+kept with the hub's workorder files and not tracked. Mod live procedure 7
+settled which code builds a kill's unique, so this session uses no
+debugger: it checks the shipped behaviour through the plugin's own counters
+and what lands on the ground, each with a control in the same session.
+
+**Setup:**
+
+- **Build:** the research build (`plugin_build\build.bat dev`) at the
+  ForgePact commit that moves both kill routes onto the draw; its SHA-256 is
+  recorded in the capture (`dll-hash`), and the owner is asked before it is
+  installed. The game build must be the one Mod live procedure 7 ran on.
+- **Character:** save slot 14, "Sorak", saves backed up first and restored
+  at the end.
+- **Control:** as in Mod live procedure 7: `ping` answers `pong (YYTK
+  4.0.1)`, and a bare `mark1probe` answers `mark1probe: research build`
+  with its rows line (`control`).
+- **Relies on:** everything Mod live procedure 7 relies on, plus
+  [Mod live 7 results](#mod-live-7-results) (the route, `satanic-draw`),
+  `flightprobe copies` and `sigdrop status` (the hub guide's Command
+  Reference).
+- **Cases:** ordinary packs in a Hell zone, where k reaches 5. The Heroic
+  roll and the `DropUniqueItems` route are run by name. The operator
+  teleports and casts its own kills, and nothing is placed on or near the
+  waypoint.
+
+**Steps:**
+
+- L1: the control, then `playerwarp` to a free point at least 400 px from
+  the waypoint, checked with `mark1probe walkable here` (`marker`), as in
+  Mod live procedure 7's H1.
+- L2: `mark1set drops 1` and `flightcharm elf 1`. The drops answer
+  `mark1set: drops=on install=installed gate=pending kill-gate=pending
+  draw-gate=pending`, and `mark1set stat`'s second line reads
+  `draw-hook=detoured` and `tier-hook=detoured` (`drops-on`). `flightcharm
+  stat` reads `elf-draw-hook=detoured` (`elf-on`).
+- L3: `sigdrop status` and `mark1set stat`, then one operator kill batch at
+  copies 1. `draw-calls=` and `draw-pushed=` each rise by at least 1
+  (`draw-control`).
+- L4: `raredrop ceiling 10` (as in Mod live procedure 7's H4b),
+  `mark1probe copies 400` and `flightprobe copies 400`, then kill batches
+  until each of the four `draw-<key>=` fields and `elf-draw=` has risen, or
+  8 batches have passed. At least one piece is built with an `SS` label on
+  screen and no lootshow (a screenshot), with `anomalies=0` and
+  `refused=0` (`draw-pieces`). Pocket Elf is built (`draw-elf`). Record
+  each `mark1set drops hit: kill draw -> <outcome>` and `flightcharm hit:
+  kill draw -> <outcome>` line, `tier-unread=`, `draw-nested=`, and each
+  `draw-standin-<key>=` and `elf-draw-standin=` as read.
+- L5: `sigdrop status` matches L3's. `mark1probe pool kill` reads lengths
+  50, 61, 79, 152 and 221, and `mark1probe pool` reads list 5 at 380
+  (`nested-clean`): the entries came off every list, and #74's counters were
+  put back after every call.
+- L6: `mark1probe heroic 1` raises `heroic-calls=` by 1 with a build line
+  (`heroic-still`). `mark1probe unique 1` raises `kill-calls=` by 1
+  (`unique-still`). Both routes stay as built beside the draw.
+- L7: copies back to 1 (`mark1probe copies 1`, `flightprobe copies 1`),
+  `raredrop ceiling 1`, `mark1set drops 0` and `flightcharm elf 0`; then one
+  kill batch. `draw-calls=` rises and `draw-pushed=` is unchanged, with no
+  piece and no Pocket Elf built (`drop-off`).
+- L8: teardown as in Mod live procedure 7's H9: stop the game, inspect and
+  restore the saves.
+
+**Checks.** Session validity, all required: `dll-hash`, `control`,
+`marker` and `draw-control`. Acceptance, all required: `drops-on`,
+`elf-on`, `draw-pieces`, `draw-elf`, `nested-clean`, `heroic-still`,
+`unique-still` and `drop-off`. Research, never required and recorded as
+read: `natural-draw`, a piece or Pocket Elf built at copies 1 if one is
+seen, with its hit line.
+
+**What the result decides.** The session adds two values to
+[Phase 4 decision](#phase-4-decision), each on a line of its own.
+`draw-claim: yes` only if `draw-pieces` passed, and then the player text
+may say the pieces drop from kills; `draw-claim: no` otherwise.
+`elf-claim: yes` only if `draw-elf` passed, and then the player text may
+say Pocket Elf drops from kills; `elf-claim: no` otherwise. A pass at copies 400
+shows the route builds the item; it does not measure the rate per kill at
+copies 1, which `natural-draw` only samples.

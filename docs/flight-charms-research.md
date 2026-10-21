@@ -1353,10 +1353,21 @@ own draw on `lootListUnique[k]` instead, with k from `LoadSatanicDropTier`
 (the hub's `docs/RUNTIME_DATA_MODELS.md` § 13.12). So with `flightcharm
 elf 1`, Pocket Elf drops when something calls that roll (the research
 build's `flightprobe unique`, for one), and, as far as is read and measured,
-an ordinary kill does not drop it. The Mark 1 research's
+an ordinary kill does not drop it through that roll. The Mark 1 research's
 [Phase 4](mark1-set-research.md#phase-4-the-unique-draw-inside-dropitem)
-measures that draw; moving Pocket Elf's kill route onto it, with Mark 1's,
-waits on that result.
+measured that draw ([Mod live 7 results](mark1-set-research.md#mod-live-7-results):
+`unique-route: satanic-draw`, `tier-k: matches`, `push-route: seen`,
+`ss-build: seen`), and Pocket Elf's kill route has moved onto it with
+Mark 1's. With `flightcharm elf 1`, one SS (tier 5) Satanic class-10
+stand-in, the rarity and tier of Aimbot.exe, goes onto each of
+`lootListUnique[0..5]` for each outermost `DropItem` call, and a hit on it
+is Pocket Elf's at c / (n_k + c), k the call's `LoadSatanicDropTier`
+answer; the `DropUniqueItems` route stays beside it. A pushed SS entry the
+draw picks was built only rarely in Mod live 7, so Pocket Elf's rate per
+kill is not established. The Mark 1 research's
+[Mod live procedure 8](mark1-set-research.md#mod-live-procedure-8)
+verifies the moved route (`elf-on`, `draw-elf`); `flightcharm stat` carries
+its `elf-draw-` fields.
 
 ### Hooks
 
@@ -1371,7 +1382,10 @@ Everything is resolved by name, and every script hook goes through
   refusal prints one `flightcharm: refused - <why>` line and is final for the
   session;
 - from a drop switch turned on: #74's detection hooks, `DropUniqueItems`
-  (Pocket Elf only) and the shared `LootGroundInit` detour.
+  (Pocket Elf only), the kill draw's two shared detours (Pocket Elf only:
+  DropManager's one `DropItem` detour and raredrop's one
+  `LoadSatanicDropTier` detour, shared with the Mark 1 drops) and the
+  shared `LootGroundInit` detour.
 
 In the research build flight refuses while `citrace` or `jumpprobe` holds one
 of its hooks, and those two refuse while flight holds them; the research rows

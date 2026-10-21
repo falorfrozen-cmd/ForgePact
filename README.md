@@ -49,8 +49,8 @@ none of these diagnostic hooks or the recorder. See
 | **Jump Through Scenery** | Mods → Quality of Life, off by default (plugin command `jumpscenery 1` / `jumpscenery 0`, `jumpscenery stat`). Your universal jump carries you over rocks, fences, carts and other scenery that stop it today, when your mouse cursor is on open ground past the scenery: the landing is checked where the jump is aimed, and a jump aimed into the scenery itself stays blocked as in the game. On at launch, it waits for your character to load before it hooks in. The first jump after loading needs no practice jump, and changing zone keeps what it learned about your jump. Locked doors and zone gates still block it. Some jumps the game itself refuses to start stay refused ([details](#jump-through-scenery-jump-over-the-props-that-stop-it)) |
 | **Loot Announcements** | Mods → Quality of Life, off by default (plugin command `lootann 1` / `lootann 0`, `lootann stat`). Offline play shows no chat line when a great item drops; online play announces it. With this on, a Heroic, Angelic or Unholy item the game drops on the ground is announced once in the in-game chat, as a red `SERVER: <your character> found <item name>` line (not the game's own online announcement). Satanic, Mythic and lower items, gold, gems, materials and relics are not announced, and neither are items you drop yourself from the bag. Checked in play on 2026-10-04: a placed Heroic and Angelic item announced, a Satanic one not, an item dropped from the bag not announced again, nothing with the switch off, and a drop from a kill announced ([details](#loot-announcements)) |
 | **Always Show Chaos Pillar Mods** | Mods → Quality of Life, off by default (plugin command `pillartips 1` / `pillartips 0`, `pillartips stat`). A Chaos Pillar shows its box of mods only while your mouse cursor is on it. With this on, every Chaos Pillar on screen shows its box without being hovered, like a strongbox in Path of Exile: the game's own box, text and colours. A pillar that leaves the screen hides it again, and a pillar you have activated stops showing its box. Mouse play only; gamepad is not supported. Checked in a game session with mouse play ([details](#always-show-chaos-pillar-mods)) |
-| **Flight Charms** | Mods → Items, three switches, all off by default (plugin command `flightcharm elf\|wings\|broom 1` / `0`, `flightcharm stat`). Three charms of ForgePact's own: **Pocket Elf** (Satanic, one cell), **Gabriel Wings** (Angelic, 2x2, 1-12% less physical and magic damage taken) and **Witch's Broomstick** (Unholy, 1x5, +10-100% movement speed), each with its own icon and a gold Flight line. While you wear one, you walk through scenery and are drawn in front of it, tree canopies included, and you walk through monsters too, though they still hit you (owner-confirmed in play, 2026-10-13); walls, zone gates, locked doors and the map's edge still stop you, though a few stone walls the game builds as scenery, such as the town church's, can be crossed (measured as scenery in a game session, not yet walked with a charm on). The game counts only one flight charm at a time. Each switch lets its charm drop from the game's own rolls (Pocket Elf among the ordinary uniques, the other two from the Angelic roll); a charm you own works either way. Offline only. Checked in three game sessions on a research build, drop rates included, plus the owner's play check for monsters ([details](#flight-charms-pocket-elf-gabriel-wings-witchs-broomstick)) |
-| **Mark 1 Set** | Mods → Items → **Mark 1 set** and **Mark 1 drops**, both off by default (plugin commands `mark1set bonus 1` / `mark1set bonus 0`, `mark1set drops 1` / `mark1set drops 0`, `mark1set stat`). Four Satanic pieces of ForgePact's own, like the game's own set pieces: the Mark 1 Helmet, Body Armor, Boots and Gloves, each with its own art. With the switch on and all four worn, the skills on your Q, E, R and Y slots cast themselves whenever the game lets them and take turns, so a skill with no cooldown cannot keep the others from being cast, each slot outlined; your jump always goes three times as far toward your cursor, over scenery, and lands only where you can walk (until it has learned your reach, a jump can stop short of its landing); in exchange you walk at half speed, and a cast still slows you as it does without the set. With **Mark 1 drops** on, the pieces join the game's own roll for a unique item, the one a kill's drop can run, and the Heroic roll a vault runs, each about as often as any single unique of that roll; no piece has dropped from a kill in testing yet. Checked in play: the pieces, their art, the jump, the taking turns and the half walk; a toggle skill on the bar and the drops not yet ([details](#mark-1-set)) |
+| **Flight Charms** | Mods → Items, three switches, all off by default (plugin command `flightcharm elf\|wings\|broom 1` / `0`, `flightcharm stat`). Three charms of ForgePact's own: **Pocket Elf** (Satanic, one cell), **Gabriel Wings** (Angelic, 2x2, 1-12% less physical and magic damage taken) and **Witch's Broomstick** (Unholy, 1x5, +10-100% movement speed), each with its own icon and a gold Flight line. While you wear one, you walk through scenery and are drawn in front of it, tree canopies included, and you walk through monsters too, though they still hit you (owner-confirmed in play, 2026-10-13); walls, zone gates, locked doors and the map's edge still stop you, though a few stone walls the game builds as scenery, such as the town church's, can be crossed (measured as scenery in a game session, not yet walked with a charm on). The game counts only one flight charm at a time. Each switch lets its charm drop from the game's own rolls (Pocket Elf among the SS uniques a kill can drop, at the rarity and tier of Aimbot.exe, the other two from the Angelic roll); a charm you own works either way. Offline only. Checked in three game sessions on a research build, drop rates included, plus the owner's play check for monsters ([details](#flight-charms-pocket-elf-gabriel-wings-witchs-broomstick)) |
+| **Mark 1 Set** | Mods → Items → **Mark 1 set** and **Mark 1 drops**, both off by default (plugin commands `mark1set bonus 1` / `mark1set bonus 0`, `mark1set drops 1` / `mark1set drops 0`, `mark1set stat`). Four Satanic pieces of ForgePact's own, like the game's own set pieces: the Mark 1 Helmet, Body Armor, Boots and Gloves, each with its own art. With the switch on and all four worn, the skills on your Q, E, R and Y slots cast themselves whenever the game lets them and take turns, so a skill with no cooldown cannot keep the others from being cast, each slot outlined; your jump always goes three times as far toward your cursor, over scenery, and lands only where you can walk (until it has learned your reach, a jump can stop short of its landing); in exchange you walk at half speed, and a cast still slows you as it does without the set. With **Mark 1 drops** on, the pieces join the draw the game uses for a kill's unique items, among its SS uniques like the game's own SS set pieces, and the Heroic roll a vault runs; how often a kill gives one is not measured yet. Checked in play: the pieces, their art, the jump, the taking turns and the half walk; a toggle skill on the bar and the drops not yet ([details](#mark-1-set)) |
 | **Goburin's Head pity** | Mods → Quality of Life, off by default (plugin command `gambapity <1-200>` / `gambapity off`, `gambapity status`). A switch and a slider from 1 to 200. Each slot machine explosion without a head counts one, and the explosion that reaches your number drops exactly one Goburin's Head; then the count starts over. If the game drops the charm itself, the count starts over too. The count carries over between machines and between sessions, kept in `forgepact_gamba_pity.json`. Checked in play on 2026-10-06 with the number at 2: the first machine to explode dropped nothing and was counted, the second dropped one Goburin's Head, and the count started over. A head the game drops on its own has not been observed yet ([details](#goburins-head-pity)) |
 | **Extra Packs As You Approach** | Mods → Quality of Life, off by default; matters only with Monster Density above 1x. Monster Density's extra spawners are made within about 3,000 px of you, and ahead of you as you move, instead of across the whole zone at once, so the far ones cost nothing until you get there. Up close nothing changes: in Act_01_01 at 5x the spawners and monsters within 1,500 px of the player were the same, while the zone held 430 spawners instead of 1,570 and the game's own work per frame fell from 84% to 70% of a 60 fps frame ([details](#extra-packs-as-you-approach-lighter-frames-at-high-density)) |
 | **Timed skill countdown** | For a small set of timed skills measured and tested in-game, plus most other skills with both a duration and a real cooldown, covered by rule and untested: draws how much of the cast is left over its skill-bar slot, in one of four looks (arc / bar / number / fade), disappearing at zero. A few skills are left out where a measurement showed the timer on the skill's own object is not the skill's duration. Companion skills (turrets, totems, hydra) are not covered. A few skills whose duration is a buff on you, measured in-game, are covered too, and other buff-only skills are not. In a fight, hits can add a little time to some skills (roughly 0.2 s each in our test) and the countdown rises slightly to match. A skill switched on as a toggle never gets a countdown. Off by default; a cast already running when you turn it on shows as full until the next cast |
@@ -1704,7 +1704,7 @@ line too.
   the charm off while you stand inside scenery or a monster, flight stays on
   until you have walked out of it, and then ends.
 - **Drops.** Each switch lets one charm drop from the game's own rolls: Pocket
-  Elf among the ordinary unique items a monster drops, Gabriel Wings and
+  Elf among the unique items a monster drops, Gabriel Wings and
   Witch's Broomstick from the game's Angelic roll (the one a Blood Pact or
   dungeon "Angelic item drop chance" effect turns on). For the length of each
   roll ForgePact adds the charm to the roll's list in place of one real unique
@@ -1713,11 +1713,15 @@ line too.
   ForgePact adds no die of its own. So the charm is about as rare as one
   particular unique, and no drop chance changes: Gabriel Wings and Witch's
   Broomstick each come as about 1 in 50 of the Angelic roll's drops (the
-  same share as Headhunter and Tyrant's Crown), and Pocket Elf on about 1 in
-  51 to 1 in 222 of the ordinary unique roll's draws, depending on which of
-  the game's unique lists the roll draws from. If the plugin cannot set the
-  roll up safely on your game, the switch says why and the roll stays the
-  game's own.
+  same share as Headhunter and Tyrant's Crown). Pocket Elf joins the draw
+  the game itself uses for a kill's unique items, which picks from one of
+  its unique lists by the monster's level: it stands in for one SS Satanic
+  unique there, the rarity and tier of Aimbot.exe, so it is about as likely
+  as one such unique. SS uniques are rare, and how often a kill gives a
+  Pocket Elf is not measured yet. It also still joins the game's named
+  unique roll (about 1 in 51 to 1 in 222 of that roll's draws), which
+  ordinary kills do not run. If the plugin cannot set a roll up safely on
+  your game, the switch says why and the roll stays the game's own.
 - **You keep what you have.** A charm you already own works, and keeps its
   look and size, whether its switch is on or off. With ForgePact removed it
   loads as a plain Small Charm.
@@ -1803,18 +1807,23 @@ all four.
   built on. Switched on with pieces already loaded, they show their new art
   from the next load.
 - **Getting the pieces.** Switch on **Mark 1 drops** (Mods → Items, off by
-  default, apart from the set's own switch). The pieces then join the
-  game's own unique roll, the one a kill's drop runs when it gives a unique.
-  Each piece is about as likely as any single unique that roll can give. In a
-  30-minute Hell Act 1 test no kill ran that roll, so whether ordinary kills
-  ever drop the pieces is not known yet. They also still drop from the
+  default, apart from the set's own switch). The pieces then join the draw
+  the game itself uses for a monster's unique items: when a kill (or a
+  chest or breakable) drops loot, the game picks one of its unique lists by
+  the monster's level and may draw a unique from it. Each piece stands in
+  there for one of the game's SS Satanic uniques of its kind, the way the
+  game's own SS set pieces sit on those lists, so a piece is about as likely
+  as one such unique; only when the game has no SS item of a piece's kind
+  does it stand in for a lower one. SS uniques are rare, and how often a
+  kill gives a piece is not measured yet. The pieces also still join the
+  game's named unique roll, which ordinary kills do not run, and the
   game's own Heroic roll, the one that runs when you open a vault from your
   bag (and, as far as is known, for one Chaos Tower NPC), each about as
   likely as any single Heroic unique that roll can give. A dropped piece
   shows its own art on the ground and in the bag. If the game holds no
   fitting item of a piece's kind on a roll, that piece cannot drop from it
   (`mark1set stat` shows it as `none`); the other pieces still can. With the
-  switch off both rolls are the game's own.
+  switch off every roll is the game's own.
 
 `mark1set stat` prints the switch, whether you wear the full set and where
 each piece was found, the casts it pressed, the skips, the casts that landed
@@ -1822,9 +1831,9 @@ and the turns each of the four slots waited or gave up, the jumps it
 lengthened or left alone and the reach it used, how many of the pieces' icons
 loaded, and how many movement-speed answers it halved. A second line,
 beginning `mark1set drops:`, shows the drops: the switch, how many Heroic
-rolls and how many unique rolls from kills it saw and added the pieces to,
+rolls, named unique rolls and kill draws it saw and added the pieces to,
 each piece's drops from each, and the game's item each piece stands in for on
-each roll.
+each.
 
 The set was checked in play on a research build of the plugin (2026-10-19):
 the pieces, their art in the bag, on the ground and on the worn body armour,
