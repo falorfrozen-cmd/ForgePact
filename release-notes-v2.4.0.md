@@ -60,7 +60,8 @@ pieces" below.
     the game's own Heroic roll, the one that runs when you open a vault from
     your bag, each about as likely as any single Heroic unique that roll can
     give you; a piece dropping from a vault has not been seen in play yet. A
-    dropped piece shows its own art. With the switch off, kills and vaults
+    dropped piece shows its own art. The pieces are **SS tier**, so a loot
+    filter that shows SS items shows them. With the switch off, kills and vaults
     drop exactly what they always did.
 
   The set was checked in play on a research build of the plugin: the

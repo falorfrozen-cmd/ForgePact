@@ -1826,7 +1826,8 @@ all four.
   shows its own art on the ground and in the bag. If the game holds no
   fitting item of a piece's kind on a roll, that piece cannot drop from it
   (`mark1set stat` shows it as `none`); the other pieces still can. With the
-  switch off every roll is the game's own.
+  switch off every roll is the game's own. The pieces are **SS tier**, so a
+  loot filter that shows SS items shows them.
 
 `mark1set stat` prints the switch, whether you wear the full set and where
 each piece was found, the casts it pressed, the skips, the casts that landed

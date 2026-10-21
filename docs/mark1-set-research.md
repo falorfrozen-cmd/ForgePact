@@ -91,6 +91,21 @@ anything that suspends the game's own loop.
   Healing Zone cast can leave two zone instances. The facts are folded into
   `docs/RUNTIME_DATA_MODELS.md` § 7.7, § 7.8 and § 19.10 and into
   `mod_live_3` of the curated measurements.
+- **Phase 3 (the drops):** Mod live 4 to Mod live 6 ran on 2026-10-20 (§
+  Phase 3: the drops, "Mod live 4 results" to "Mod live 6 results", and
+  "Phase 3 decision"). Mod live 4 measured the Heroic roll's pool (T_H = 203
+  on list 5, a stand-in for every class) and the pieces' share by name; Mod
+  live 5 the `DropUniqueItems` route by name, the pieces at SS tier and the
+  owner's filter; Mod live 6 the kill lever, which showed that ordinary kills
+  never run that route (`vanilla-unique-path: other-path`). The facts are
+  folded into `docs/RUNTIME_DATA_MODELS.md` § 13.1, § 18.5 and § 23.4, into
+  `mod_live_4` to `mod_live_6` of the curated measurements and into UP21 and
+  UP22 of `hs-game-sdk/curated/unique_pick_measurements.json`.
+- **Phase 4 (the unique draw inside `DropItem`):** the route a kill's unique
+  really takes, measured by Mod live 7 and taken by the pieces and Pocket Elf
+  in Mod live 8 (§ Phase 4, "Mod live 7 results", "Phase 4 decision" and "Mod
+  live 8 results"). It supersedes the `DropUniqueItems` route as the kill
+  route, and its `draw-claim` decides what the player text says about kills.
 
 ## Static search
 
@@ -2445,6 +2460,187 @@ never run the roll the kill route hooks: that is a product finding for the
 owner and a Known Limitations entry, never a reason to ship the lever.
 `filter-shown` is read against `filter-control` as Mod live procedure 5
 says.
+
+### Mod live 4 results
+
+Mod live procedure 4 ran once on 2026-10-20 (14:21 to 14:38 UTC), on save
+slot 14, "Sorak", with the debugger attached, and restored its saves clean at
+the end. The capture is the drops workorder's
+`forgepact-166-mark1-set-drops-live-1.md`, kept with the hub's workorder files
+and not tracked. The research build is from ForgePact `9132dea` (DLL SHA-256
+`3ab4ec05ed3ad7f3bc92098fefbde89512f90d28aeffc860c56c054a5fae1da8`), on game
+build `498d5885…`. It predates the kill route and the tier change: the
+pieces it built read rarity 9 (Heroic), and their tier was not SS.
+
+`tools/live_checks.py` reads 15 checks: 10 pass, 1 fail (`drops-on`) and 4
+not observed (`drop-built`, `drop-art`, `heroic-natural`, `dbg-heroic`). The
+session does not pass as written, because `drops-on` failed and `drop-built`
+and `drop-art` were not observed; Mod live 5 re-checked all three.
+
+| Check | Verdict | Observed |
+|---|---|---|
+| `dll-hash` | pass | The lease's DLL hash is the build's. |
+| `control` | pass | `ping` answered `pong (YYTK 4.0.1)`. |
+| `marker` | pass | `mark1probe: research build` with its rows line. |
+| `fresh-off` | pass | Before any switch: bonus, art and drops off, the install not armed, `heroic-calls=0`, no piece. |
+| `dbg-control` | pass | The control logpoint logged about once a frame, and its hold test proved it. |
+| `heroic-control` | pass | With the drops off, 10 by-name `DropItemHeroic` calls placed 10 items, 4 of rarity 6 and 6 of rarity 9, no piece. `dbg-heroic` logged all 10. |
+| `pool` | pass (research) | `lootListUnique[5]`: length 380, 203 entries the Heroic roll keeps (93 of rarity 6, 110 of rarity 9), 48 refused for rarity 7 (31) or 10 (17), 129 flagged hidden. `[4]`: length 221, 218 kept, all rarity 6, 3 hidden. Every class (helmet, body, boots, gloves) had a stand-in on both lists, each listed once (n = 1): rarity 9 on [5], rarity 6 on [4]. So T_H = 203 on [5] and `standins: all`. |
+| `drops-on` | fail | `mark1set drops 1` read `drops=on install=installed gate=on`, `hook=detoured`, `art=armed` and `ground-route=both` as expected, but the four `standin-<key>=` fields read `none` (with `list=-`) instead of `pool`'s stand-ins. They read `pool`'s values after the first rolls (`reach`). |
+| `reach` | pass | At `mark1probe copies 200`, 40 by-name calls placed 32 pieces, helmet 10, body 13, boots 6 and gloves 3, each ours and built (`10/10`, `13/13`, `6/6`, `3/3`), with `refused=0` and `anomalies=0`; `heroic-calls=` rose from 0 to 40. `dbg-heroic` stayed at 10 across them: once the detour was in, the by-name calls no longer passed the entry the logpoint sat on, as Mod live 5 saw for `dbg-unique`. |
+| `drop-built` | not observed | The placed lines named the pieces (`Mark 1 Helmet` and the rest) at rarity 9, but none showed on the ground: the owner's loot filter hides items below S, and these pieces were not SS. The owner then decided the set is SS tier (the drops workorder's `tier` item), which Mod live 5 checked. |
+| `drop-art` | not observed | No piece showed on the ground, for the same reason. |
+| `rate` | pass (research) | At one copy, the player build's, 100 by-name calls gave 2 pieces (body 1, gloves 1), each hit handed over by the coin at 1 in 2. The band for 4 / (T_H + 4) = 4 / 207 over 100 calls is (-2.197, 6.062), and 2 lies inside it; `refused=0`, `anomalies=0`. |
+| `drop-off` | pass | After `mark1set drops 0`, at copies 200, 20 calls placed 20 items, no piece, and `injected=` stayed 32400. |
+| `heroic-natural` | not observed | Sorak's bag held no vault item (the active vault grid was empty), so no natural Heroic roll was made. |
+| `dbg-heroic` | not observed | No vault was used; its total stayed 10. |
+
+`drops-on`'s fail was in the check, not the route. A piece's stand-in on the
+Heroic roll is resolved on the list that call reads, inside the call, so
+before the first roll there is nothing to name and the field read `none`.
+The build after this session reads `pending` until the first call, and Mod
+live procedure 5 expects `pending` before one call and a stand-in after it;
+Mod live 5's `drops-on` passed that way. `heroic-natural` stays not
+observed: it says nothing about whether a vault rolls the pieces.
+
+### Mod live 5 results
+
+Mod live procedure 5 ran once on 2026-10-20 (from 16:47 UTC), on save slot
+14, "Sorak", with the debugger attached, its kill window in the Outskirts of
+Inoya on Hell, and restored its saves clean at the end. The capture is the
+drops workorder's `forgepact-166-mark1-set-drops-live-2.md`, kept with the
+hub's workorder files and not tracked. The research build is from ForgePact
+`9c6756e` (DLL SHA-256
+`d65ce50aad1ddf9b66f4552de6d0bbdbb8f2fa724eb838aabad4bec864376961`), the
+first with the kill route through the shared `DropUniqueItems` detour and the
+pieces written SS (rarity 6, tier 5), on game build `498d5885…`.
+
+`tools/live_checks.py` reads 20 checks: 17 pass, 2 not observed
+(`filter-control`, `kill-natural`) and 1 not run (`filter-shown`, its
+control not observed). Every by-name check passed; the session is
+inconclusive for the kill route, because `kill-natural` was not observed.
+
+| Check | Verdict | Observed |
+|---|---|---|
+| `dll-hash` | pass | The installed DLL's hash is the build's. |
+| `control` | pass | `ping` answered `pong (YYTK 4.0.1)`. |
+| `marker` | pass | `mark1probe: research build` with its rows line. |
+| `dbg-control` | pass | The control logpoint logged about once a frame, and its hold test proved it. |
+| `kill-control` | pass | With the drops off, 10 by-name `DropUniqueItems` calls placed 10 items, all rarity 6, no piece; `dbg-unique` logged all 10. |
+| `filter-control` | not observed | 50 by-name calls with the drops off gave tiers 3 and 4 only, no tier-5 item. |
+| `drops-on` | pass | `drops=on install=installed gate=pending kill-gate=pending`, then after one by-name call `kill-gate=on`, a stand-in for each class and `kill-calls=` 0 to 1. Mod live 4's `drops-on`, re-checked. |
+| `pool-kill` | pass (research) | `lootListUnique[0..4]` read lengths 50, 61, 79, 152 and 221 (#74's), none unread. Every class had a kill stand-in held an equal number of times on each list (0 each): helmet `0:15`, body `0:1`, boots `0:9`, gloves `0:16`, all rarity 6. So `kstandins: all`. |
+| `reach-kill` | pass | At `mark1probe copies 200`, 40 by-name calls built 35 pieces, helmet 5, body 8, boots 10 and gloves 12, each ours and built, `refused=0`, `anomalies=0`; `kill-calls=` rose from 1 to 41. |
+| `tier-read` | pass | All 35 Mark 1 placed lines read rarity 6, tier 5; the 5 other uniques read tier 3 or 4. |
+| `sig-untouched` | pass | #74's `sigdrop` counts (`injected=0 ourHits=0 built=0`) and the flight charms' drops line were the same before and after; only the shared detour's install fields changed. |
+| `filter-shown` | not run (control) | Without `lootshow`, no Mark 1 label showed at the pile, but neither did any item placed after the earlier batch, whatever its tier; after `lootshow`, pieces placed later showed `Mark 1 Gloves \| SS` labels with no further `lootshow`. With `filter-control` not observed, this cannot tell the filter from the pile view. |
+| `drop-built` | pass | `placed … rarity=6 tier=5 name="Mark 1 Gloves" piece=gloves`, picked up into the bag. Mod live 4's `drop-built`, re-checked. |
+| `drop-art` | pass | The pieces' own art on the ground and in the bag, never `Error_spr`. Mod live 4's `drop-art`, re-checked. |
+| `tier-ss` | pass | The tooltip, on the ground and in the bag: `Mark 1 Gloves`, `Satanic Gloves`, `Tier SS`. |
+| `heroic-still` | pass | 20 by-name Heroic calls gave 18 Mark 1 lines, all rarity 6, tier 5, `gate=on`, `heroic-calls=` up by 20. |
+| `spawn-tier` | pass | `mark1probe spawn set` dressed all four with `tier=5`; the helmet's tooltip read `Tier SS`. |
+| `kill-natural` | not observed | 30 minutes of kills and chests in the Outskirts of Inoya on Hell: `dbg-unique` stayed at 50 and `kill-calls=` at 42, while the control logged throughout. |
+| `dbg-unique` | pass (research) | N = 0 in the kill window; its 50 hits were all the by-name calls made before the detour went in. |
+| `drop-off` | pass | After `mark1set drops 0`, 20 calls placed 19 items, no piece, `injected=` and `kill-pushed=` unchanged. |
+
+`kill-natural` is `not-observed` by Mod live procedure 5's rule: no kill in
+30 minutes ran `DropUniqueItems` at all, so neither instrument could rise. It
+is not read as "kills do not roll". Mod live 6 took it up with a lever on
+drop type 45's gate. `filter-shown` was re-run there with a fresh control.
+
+### Mod live 6 results
+
+Mod live procedure 6 ran on 2026-10-20 on save slot 14, "Sorak", with the
+debugger attached, in two attempts. The capture is the drops workorder's
+`forgepact-166-mark1-set-drops-live-3.md`, kept with the hub's workorder
+files and not tracked. Both attempts ran the research build from ForgePact
+`38c35ea` (DLL SHA-256
+`0845ee4f6a7b2116d20e6ad5d10af4d912910f0d55a2269d858f980ebda67cb7`), which
+adds the `killgate` lever on `LoadDrops`, on game build `498d5885…`.
+
+- **Attempt 1** (from 18:28 UTC) was aborted. A hardware logpoint on
+  `LoadDrops` (`dbg-loaddrops`) was hot: it logged 14398 of the game's own
+  calls during the owner's first kills, the game fell to about 1 fps and
+  then froze with every thread suspended, and the plugin's counters could
+  not be read. The game was force-stopped and its saves restored. None of
+  its checks is used here.
+- **Attempt 2** (19:05 to 19:25 UTC) read `LoadDrops` through the plugin's
+  own `loaddrops=` count instead of a logpoint, and is the record: the block
+  `tools/live_checks.py --block last` reads. Its saves were restored clean
+  at the end. The operator's kills ran in the Outskirts of Inoya on Hell
+  (zone level 243); the owner's window began there, at about 101 to 227 fps.
+
+`tools/live_checks.py` reads 16 checks: 15 pass and 1 not observed
+(`filter-control`). It also prints a problem for the capture's last line,
+the lease's release, which is a teardown note and not a check. Every
+check the procedure requires passed.
+
+| Check | Verdict | Observed |
+|---|---|---|
+| `dll-hash` | pass | The lease's DLL hash is the build's. |
+| `control` | pass | `pong (YYTK 4.0.1)` and `mark1probe: research build` with its rows line. |
+| `marker` | pass | `playerwarp` reached the filter point in town, a free cell 557 px from the waypoint. |
+| `dbg-control` | pass | The control logpoint logged about once a frame, proven by its hold test, and logged again after the owner's window. |
+| `kill-control` | pass | 10 by-name `DropUniqueItems` calls placed 10 items; `dbg-unique` 0 to 10. |
+| `filter-control` | not observed | 30 by-name calls with the drops off gave no tier-5 item (28 placed, tiers 3 and 4). |
+| `drops-on` | pass | `drops=on install=installed gate=pending kill-gate=pending`, `kill-hook=detoured`. |
+| `filter-shown` | pass | A by-name call placed `Mark 1 Boots`, rarity 6, tier 5, and its ground label `Mark 1 Boots \| SS` showed past the owner's filter with no `lootshow`. A pass needs no control. |
+| `lever-sees` | pass | Lever off: `lever=off hook=detoured`, `raised=0 reentered=0` throughout; over one batch of the operator's kills `loaddrops=` rose 0 to 922 and `arrays=` 0 to 51, so the hook sees the game's own direct calls. |
+| `dbg-loaddrops` | pass (research) | The plugin's reading: `loaddrops=` 0 to 922 and `game45=` 0 to 0 over those kills. |
+| `natural-45` | pass (research) | The operator's batch: `arrays=` +51 with `c45-nonzero=`, `c45-max=` and `game45=` all 0. The owner's window, about 8.7 minutes: `loaddrops=` +45332 and `arrays=` +1831, with `c45-nonzero=` +0, `c45-max=` 0 and `game45=` +0, `kill-calls=` +0 and `dbg-unique` +0. |
+| `kill-natural` | pass (seen) | Across the lever-off batch and the lever-on batch, `dbg-unique` rose 40 to 97 (+57) and `kill-calls=` 1 to 58 (+57): N = 57 on both, every one in the lever-on batch. |
+| `dbg-unique` | pass (research) | +10 (`kill-control`), +30 (`filter-control`), +0 lever off, +57 lever on, +0 lever off again, +0 in the owner's window. |
+| `lever-opened` | pass | `lever=on`: `reentered=` 0 to 57, `raised=0`, `threw=0`, `unique-during=` 0 to 57 beside `dbg-unique`'s +57. That batch built 48 pieces, helmet 13, body 13, boots 9 and gloves 13, each ours and built (`kill-boots=` 1/1 to 10/10, the others 0/0 to 13/13), on screen with `SS` labels. |
+| `lever-off` | pass | Lever off again over two batches: `raised=` and `reentered=` unchanged (0 and 57) while `loaddrops=` rose 1565 to 2240 and `arrays=` 108 to 147, and `kill-calls=` and `dbg-unique` stayed flat. |
+| `vanilla-unique-path` | pass (research: `other-path`) | In the owner's window, lever off, 4 natural uniques dropped from kills (Molten Boots, Arcane Robes of Authority, Heaven's Champion, Gladiator's Skullet), each with `dbg-unique` +0 and `kill-calls=` +0 around it; `kill-control` passed in the same attempt. |
+
+`kill-natural` read `seen` only with the lever on. With it off, over three
+batches of the operator's kills and the owner's whole window, neither
+`dbg-unique` nor `kill-calls=` moved. The lever forces drop type 45's gate
+open once per kill, inside the game's own `LoadDrops` call, so `seen` shows
+that the shared detour sees `DropUniqueItems`' direct call from `LoadDrops`
+when that gate passes. It does not show that a kill without the lever rolls
+it. The same window read why: drop type 45's chance was 0 on every one of
+1831 `LoadDrops` arrays (and 51 more in the operator's lever-off batch),
+`game45=` 0. And `vanilla-unique-path` read `other-path`, with `kill-control`
+passing in the same attempt, so the instrument could rise: a vanilla kill's
+unique does not come through `DropUniqueItems`. Phase 4 found where it does
+come from.
+
+### Phase 3 decision
+
+Recorded on 2026-10-21 from Mod live 4, 5 and 6 (the results above). Each
+key takes exactly one value, on a line of its own. The checks that decide it
+are on the line below.
+
+standins: all
+Decided by `pool` (Mod live 4): each of the four classes had a stand-in on `lootListUnique[5]` and on `[4]`, each listed once.
+
+heroic-t: 203
+Decided by `pool` (Mod live 4): T_H, the entries the Heroic roll keeps on list [5], is 203 (93 of rarity 6, 110 of rarity 9), and `rate`'s 2 in 100 lies inside the band for 4 / (203 + 4). On list [4] the roll keeps 218.
+
+heroic-natural: not-observed
+Decided by `heroic-natural` (Mod live 4): Sorak's bag held no vault, so no natural Heroic roll was made.
+
+kstandins: all
+Decided by `pool-kill` (Mod live 5): each class had a kill stand-in held equally (0 times) on each of `lootListUnique[0..4]`.
+
+kill-natural: seen
+Read only with Mod live 6's `killgate` lever on (`kill-natural`, N = 57 on `dbg-unique` and `kill-calls=` alike, all in the lever-on batch): it shows that the detour sees `DropUniqueItems`' direct call when type 45's gate is forced open, not that an unlevered kill rolls it. Mod live 5's 30 minutes without the lever were not observed.
+
+vanilla-unique-path: other-path
+Decided by `vanilla-unique-path` (Mod live 6): four natural uniques dropped from unlevered kills with `dbg-unique` and `kill-calls=` both flat, while `kill-control` passed in the same attempt.
+
+The `DropUniqueItems` route is superseded as the kill route by Phase 4's
+draw inside `DropItem` ([Phase 4 decision](#phase-4-decision) below), which
+the pieces and Pocket Elf now join on kills. The route stays installed
+beside the draw, as the uniques workorder's default keeps it: a type-45
+drop or a by-name call still runs it. Whether the player text may say the
+pieces drop from kills is Phase 4's `draw-claim`, not anything recorded
+here. So this decision carries no `kill-claim` key: Amendment 7's rule for
+one is withdrawn, because with `no` it would have stripped the kill
+sentence `draw-claim: yes` now supports, and with `yes` it would have rested
+a claim on a levered reading.
 
 ## Phase 4: the unique draw inside DropItem
 
