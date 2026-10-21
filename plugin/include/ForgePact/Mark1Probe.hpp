@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <exception>
 #include <functional>
 #include <map>
 #include <optional>
@@ -1311,12 +1312,8 @@ public:
             }
             ++counts_.raised;
             Opened<Ops> opened(*this, ops, vanilla);
-            try {
-                ops.CallGame();
-            } catch (...) {
-                ++counts_.threw;
-                throw;
-            }
+            PassingThrow passing(counts_.threw);   // the game's own throw goes on, uncaught here
+            ops.CallGame();
             return;
         }
 
@@ -1351,6 +1348,17 @@ private:
         }
         Opened(const Opened&) = delete;
         Opened& operator=(const Opened&) = delete;
+    };
+
+    // Counts `threw=` for an exception leaving its scope without catching it, so the game's
+    // own call's throw reaches the adapter's detour, which writes the rethrow line, unchanged.
+    struct PassingThrow {
+        uint64_t& threw;
+        int unwinding;
+        explicit PassingThrow(uint64_t& t) : threw(t), unwinding(std::uncaught_exceptions()) {}
+        ~PassingThrow() { if (std::uncaught_exceptions() > unwinding) ++threw; }
+        PassingThrow(const PassingThrow&) = delete;
+        PassingThrow& operator=(const PassingThrow&) = delete;
     };
 
     bool on_ = false;

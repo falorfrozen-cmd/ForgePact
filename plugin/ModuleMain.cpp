@@ -67249,6 +67249,8 @@ struct M1pKillgateOps {
     uint64_t UniqueCalls() { return g_M1Drop.core.KillCalls(); }
 };
 
+static volatile long g_M1pKillgateRethrowLines = 0;   // RethrowLine's count for the detour below
+
 // Hook_LoadDrops' first call, in the research build (declared beside g_OrigLoadDrops).
 static RValue& M1pKillgateLoadDrops(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
@@ -67261,7 +67263,12 @@ static RValue& M1pKillgateLoadDrops(CInstance* S, CInstance* O, RValue& R, int a
         id = (uint64_t)(uintptr_t)A[8]->m_Pointer;
         hasArray = id != 0;
     }
-    g_M1pKillgate.Around(type, hasArray, id, (int64_t)g_RuntimeFrame, ops);
+    try {
+        g_M1pKillgate.Around(type, hasArray, id, (int64_t)g_RuntimeFrame, ops);
+    } catch (...) {
+        RethrowLine("mark1probe", g_M1pKillgateRethrowLines);
+        throw;
+    }
     return *ops.result;
 }
 
