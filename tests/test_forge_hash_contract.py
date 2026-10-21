@@ -140,6 +140,10 @@ EXPECTED_PLAYER_COMMANDS = {
     # The Mark 1 set, Mods > Items: `mark1set bonus 1|0|stat` (ForgePact #166;
     # test_mark1_set_contract.py pins it).
     "mark1set",
+    # The number guard's status line, `numguard` / `numguard stat` (ForgePact
+    # #230); its research verbs are refused in the player build
+    # (test_number_guard_contract.py pins it).
+    "numguard",
 }
 
 

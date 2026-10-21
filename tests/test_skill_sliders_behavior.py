@@ -53,6 +53,7 @@ def skill_sliders(header):
         if not line.strip().startswith("#pragma once")
         and '#include "Common.hpp"' not in line
         and '#include "ReturnSpecificStatHook.hpp"' not in line
+        and '#include "NumberGuard.hpp"' not in line
     )
     private_ctor = "private:\n    SkillSlidersMod() = default;"
     if text.count(private_ctor) != 1:
@@ -83,8 +84,12 @@ class SkillSlidersBehaviorTests(unittest.TestCase):
             "static consteval const char* SdkShortScriptName(",
         )])
 
-        out = ROOT / "build/skill-sliders-behavior"
+        # One directory per process: a serial run and run_tests_parallel.py's
+        # worker started side by side would otherwise write and lock the same
+        # .cpp, .obj, .exe and compile.cmd (C1083, Permission denied).
+        out = ROOT / "build/skill-sliders-behavior" / f"pid-{os.getpid()}"
         out.mkdir(parents=True, exist_ok=True)
+        cls.addClassCleanup(shutil.rmtree, out, ignore_errors=True)
         code = (ROOT / "tests/skill_sliders_harness.cpp").read_text(encoding="utf-8")
         shared = "\n".join(
             line for line in SHARED_HEADER.read_text(encoding="utf-8").replace("\r\n", "\n").split("\n")
@@ -153,6 +158,24 @@ class SkillSlidersBehaviorTests(unittest.TestCase):
 
     def first_call_lines(self, label):
         return [line for line in self.logs(label) if ": first boosted call " in line]
+
+    def arms(self, label):
+        """How many times the scenario's commands armed the number guard (#230)."""
+        for line in self.output.split("\n"):
+            if line.startswith(f"ARMS {label} "):
+                return int(line[len(f"ARMS {label} "):])
+        raise AssertionError(f"no ARMS line for {label!r}:\n{self.output}")
+
+    def test_a_lever_armed_natively_arms_the_number_guard(self):
+        # Each lever set above 0 on native hooks arms it (#230; the guard
+        # itself installs once); 0, junk and a refused lever arm nothing.
+        for label in ("baseline_off", "zero_installs_nothing", "list_fresh", "table_only_refused",
+                      "partial_refused", "not_found_refused"):
+            with self.subTest(label=label):
+                self.assertEqual(self.arms(label), 0)
+        self.assertEqual(self.arms("off_after_on"), 3)
+        # Of four bad lines only the last, "ProjAmount 1", is a real value.
+        self.assertEqual(self.arms("bad_input"), 1)
 
     def test_harness_ran(self):
         self.assertIn("HARNESS DONE", self.output, self.output)

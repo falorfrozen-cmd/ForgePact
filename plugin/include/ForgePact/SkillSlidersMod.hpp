@@ -2,6 +2,7 @@
 
 #include "Common.hpp"
 #include "ReturnSpecificStatHook.hpp"
+#include "NumberGuard.hpp"
 
 namespace ForgePact {
 
@@ -114,6 +115,8 @@ public:
         }
         state.value = value;
         state.first = kFirstPending;
+        // A Modifiers lever off vanilla (#230): arm the number guard.
+        ForgePact::NumberGuard::Arm();
         // An object name that did not resolve is asked again, once, per arming.
         if (m_PlayerIndex == kUnresolved) m_PlayerIndex = -1;
         if (m_DoubleCastIndex == kUnresolved) m_DoubleCastIndex = -1;

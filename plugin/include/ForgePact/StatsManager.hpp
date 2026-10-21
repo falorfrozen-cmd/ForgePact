@@ -2,6 +2,7 @@
 
 #include "Common.hpp"
 #include "CombatTextHook.hpp"
+#include "NumberGuard.hpp"
 #include <hs_game_sdk/reward_scope.hpp>
 
 namespace ForgePact {
@@ -81,10 +82,23 @@ public:
             return;
         }
         if (!*hedef->orig) {
-            HookOneScript(hedef->name, hedef->hookId, hedef->hook, hedef->orig);
+            bool native = false;
+            HookOneScript(hedef->name, hedef->hookId, hedef->hook, hedef->orig, &native);
             if (!*hedef->orig) { Out(std::string("stat: ") + hedef->name + " kancasi kurulamadi"); return; }
+#ifndef FORGEPACT_RELEASE
+            // Kept for `numguard trace on`'s reply (#230): HookOneScript
+            // reports the route on the first install only.
+            if (std::string(hedef->name) == "CalculateEndDamage")
+                m_EndDamageRoute = native ? ForgePact::NumberGuard::kRouteNative : ForgePact::NumberGuard::kRouteTableOnly;
+#else
+            (void)native;
+#endif
         }
         *hedef->mult = c;
+        // A damage or crit multiplier off vanilla can push a hit or a DPS sum
+        // past what the game's number shortener can show (#230): arm the
+        // number guard. The other entries scale nothing it shows.
+        if (c != 1.0 && ArmsNumberGuard(*hedef)) ForgePact::NumberGuard::Arm();
         if (std::string(hedef->name) == "EnemyCalculateExperience") HeroSiege::RewardScope::SetForgePactXp(c);
         ShareXpMultiplier(*hedef, c);
         // XP carpani acilinca baloncuk metnini de duzelt (yalnizca gorsel).
@@ -147,13 +161,43 @@ public:
         }
         *e->bonus = ek;
         *e->first = kFirstPending;
+        ForgePact::NumberGuard::Arm();   // a Modifiers lever off vanilla (#230)
         char b[160];
         sprintf_s(b, "statadd %s -> +%g", e->script, ek);
         Out(b);
     }
 
+#ifndef FORGEPACT_RELEASE
+    // `numguard trace on` (#230, research build): CalculateEndDamage's hook,
+    // installed as a pass-through when no `stat damage` put it in, so the
+    // trace sees every hit as the game built it and as returned. At x1 it
+    // changes nothing. Returns the route the hook took (NumberGuard's Route:
+    // native, table-only, or failed when it is not in), whether this install
+    // or an earlier `stat damage` put it in.
+    int InstallEndDamageTrace() {
+        const Entry* table = Table();
+        for (int i = 0; i < kEntryCount; ++i) {
+            const Entry& e = table[i];
+            if (std::string(e.name) != "CalculateEndDamage") continue;
+            if (!*e.orig) {
+                bool native = false;
+                HookOneScript(e.name, e.hookId, e.hook, e.orig, &native);
+                if (*e.orig)
+                    m_EndDamageRoute = native ? ForgePact::NumberGuard::kRouteNative : ForgePact::NumberGuard::kRouteTableOnly;
+            }
+            return *e.orig ? m_EndDamageRoute : ForgePact::NumberGuard::kRouteFailed;
+        }
+        return ForgePact::NumberGuard::kRouteFailed;
+    }
+#endif
+
 private:
     StatsManager() = default;
+
+#ifndef FORGEPACT_RELEASE
+    // The route CalculateEndDamage's hook took, for `numguard trace on` (#230).
+    int m_EndDamageRoute{ ForgePact::NumberGuard::kRouteNone };
+#endif
 
     // Vanilya tabani sifir olmayan statlar icin oransal carpim.
     static RValue Scale(RValue& deger, double carpan) {
@@ -220,6 +264,16 @@ private:
         Out(b);
     }
 
+    // The research trace's callout (#230, `numguard trace`): CalculateEndDamage's
+    // result as the game built it and as this hook returns it. Compiled out of
+    // the player build, and a no-op for every other stat.
+#ifndef FORGEPACT_RELEASE
+#define FP_STAT_TRACE(NAME, SITE, VALUE) \
+    if constexpr (std::string_view(#NAME) == "CalculateEndDamage") ForgePact::NumberGuard::TraceResult(ForgePact::NumberGuard::SITE, VALUE)
+#else
+#define FP_STAT_TRACE(NAME, SITE, VALUE) ((void)0)
+#endif
+
 #define FP_STAT_HOOK(NAME) \
     PFUNC_YYGMLScript m_Orig_##NAME{ nullptr }; \
     volatile long m_Calls_##NAME{ 0 }; \
@@ -228,8 +282,10 @@ private:
         auto& mgr = Instance(); \
         BP_DIAG_INCREMENT(mgr.m_Calls_##NAME); \
         RValue& _r = mgr.m_Orig_##NAME ? mgr.m_Orig_##NAME(S, O, R, argc, A) : R; \
+        FP_STAT_TRACE(NAME, kSiteEndDamageNative, _r); \
         const bool rewardStat = std::string_view(#NAME)=="StatMagicFind" || std::string_view(#NAME)=="EnemyCalculateExperience" || std::string_view(#NAME)=="StatExtraGold" || std::string_view(#NAME)=="StatExperienceGain"; \
         if (mgr.m_Mult_##NAME != 1.0 && !(rewardStat && HeroSiege::RewardScope::Active())) { try { _r = Scale(_r, mgr.m_Mult_##NAME); } catch (...) {} } \
+        FP_STAT_TRACE(NAME, kSiteEndDamageReturned, _r); \
         return _r; \
     }
 
@@ -257,6 +313,7 @@ private:
     // icindeki sabiti degil, tanimi geregi hesaplanan deneyimi carpiyoruz.
     FP_STAT_HOOK(EnemyCalculateExperience)
 #undef FP_STAT_HOOK
+#undef FP_STAT_TRACE
 
     // Additive hooks (`statadd`): a bonus of 0 leaves the hook a pure
     // pass-through, so vanilla behaviour is exactly preserved when it is off.
@@ -297,6 +354,22 @@ private:
         ForgePact::CombatText::xpMultiplier = c;
     }
     static constexpr int kEntryCount = 14;
+
+    // The `stat` entries whose multiplier scales the damage and crit numbers
+    // the game's number shortener shows (#230; owner, 2026-10-20: "Irrelevant
+    // mods shouldn't arm it"). Only these arm the number guard; Magic Find,
+    // speed, gold, Experience, replenish and defense multipliers do not.
+    static constexpr int kGuardArmCount = 5;
+    static constexpr const char* kGuardArmAliases[kGuardArmCount] = {
+        "damage", "critdamage", "critchance", "spellcritdamage", "spellcritchance",
+    };
+    static bool ArmsNumberGuard(const Entry& e) {
+        if (!e.alias) return false;
+        for (const char* a : kGuardArmAliases)
+            if (std::string(e.alias) == a) return true;
+        return false;
+    }
+
     const Entry* Table() {
         static const Entry table[kEntryCount] = {
             { "StatMagicFind",        "fp_st_mf",  (void*)Hook_StatMagicFind,        &m_Orig_StatMagicFind,        &m_Calls_StatMagicFind,        &m_Mult_StatMagicFind,        "magicfind" },

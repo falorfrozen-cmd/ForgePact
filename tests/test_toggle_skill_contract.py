@@ -882,6 +882,9 @@ class ToggleIndicatorReadContractTests(unittest.TestCase):
             # The Mark 1 set's switch and `mark1set stat` (ForgePact #166;
             # test_mark1_set_contract.py).
             "mark1set",
+            # The number display guard's `numguard stat` (ForgePact #230;
+            # test_number_guard_contract.py).
+            "numguard",
         }
         self.assertEqual(entries, expected)
 
@@ -3116,8 +3119,10 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         # test_flight_charms_contract.py), `soulpiece` is Boss soul
         # pieces (ForgePact #197, test_soul_piece_contract.py), `tracker`
         # is HS Offline Tracker's sensor (ForgePact #185,
-        # test_tracker_mod_contract.py), and `mark1set` is the Mark 1 set's
-        # switch and stat (ForgePact #166, test_mark1_set_contract.py).
+        # test_tracker_mod_contract.py), `mark1set` is the Mark 1 set's
+        # switch and stat (ForgePact #166, test_mark1_set_contract.py), and
+        # `numguard` is the number display guard's `numguard stat` (ForgePact
+        # #230, test_number_guard_contract.py).
         self.assertEqual(now - before, {"autoprospect", "skilltimer", "menulayout", "restartanytime",
                                         "miningore", "miningrolls", "minerhelm", "packmarks", "craftmats",
                                         "gemmythic", "gemmaxroll", "gemfilter",
@@ -3126,7 +3131,8 @@ class ToggleTableProbeContractTests(unittest.TestCase):
                                         "petunstick", "petrelic", "frameprof", "farsleep", "stashmoveall", "stashmove",
                                         "densityroll", "hiddenloot", "bossrarity", "incident", "dungeonchest",
                                         "jumpscenery", "satzone", "skillslider", "gambapity", "lootann",
-                                        "pillartips", "flightcharm", "soulpiece", "tracker", "mark1set"})
+                                        "pillartips", "flightcharm", "soulpiece", "tracker", "mark1set",
+                                        "numguard"})
         self.assertEqual(before - now, set())
 
     # ---- Sprite look probe (R round 3, issue #11): `tgprobe sprite ...` ----

@@ -24230,6 +24230,8 @@ static void NAddrAll()
         // The Mark 1 set's landing detour (`mark1set`, #166). Two research
         // probes have a row on it too, in the research build.
         "TalentUseSetSpeed",
+        // ForgePact::NumberGuard's one detour (`numguard`, #230).
+        "num_compressSteam",
 #ifndef FORGEPACT_RELEASE
         // `projprobe`'s other rows (research build, issue #160). Guarded like
         // projprobe itself, so the player DLL lists only what it hooks.
@@ -68123,6 +68125,21 @@ static bool HandleMark1ProbeCommand(const std::string& lc, const std::string& re
 }
 #endif // FORGEPACT_RELEASE (mark1probe)
 
+// `numguard` (#230): the number guard's status line, in both builds; the
+// research build adds `off`, `auto` and `trace on|off` (NumberGuard.hpp).
+// Nothing here arms it: the Modifiers levers do.
+static void NumGuardCmd(const std::string& rest)
+{
+#ifndef FORGEPACT_RELEASE
+    // The trace's CalculateEndDamage site is StatsManager's hook, and
+    // NumberGuard.hpp comes before that class, so its install is handed in.
+    ForgePact::NumberGuard::installEndDamageTrace = [] {
+        return ForgePact::StatsManager::Instance().InstallEndDamageTrace();
+    };
+#endif
+    ForgePact::NumberGuard::HandleCommand(rest);
+}
+
 static void RunCommand(const std::string& line)
 {
     std::string rest;
@@ -68144,7 +68161,7 @@ static void RunCommand(const std::string& line)
         "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem", "frameprof", "farsleep",
         "stashmoveall", "stashmove", "densityroll", "hiddenloot", "bossrarity", "incident", "dungeonchest",
         "jumpscenery", "skillslider", "gambapity", "lootann", "pillartips", "flightcharm", "soulpiece",
-        "tracker", "mark1set"
+        "tracker", "mark1set", "numguard"
     };
     if (kPlayerCommands.find(lc) == kPlayerCommands.end()) {
         Out("command unavailable in player build: " + cmd);
@@ -68218,6 +68235,8 @@ static void RunCommand(const std::string& line)
         if (!enable) PetRelicCollectorStats();
         return;
     }
+    // `numguard` (#230): an early return too, for the same nesting limit.
+    if (lc == "numguard") { NumGuardCmd(rest); return; }
     if (HandleHeadhunterCommand(lc, rest)) return;
     if (HandleProspectCommand(lc, rest)) return;
     if (HandleMenuProbeCommand(lc, rest)) return;
