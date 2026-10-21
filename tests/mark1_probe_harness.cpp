@@ -262,14 +262,16 @@ struct FakeLoadDrops {
 
 // `draws push`'s ops on the six lists, as the adapter's are on lootListUnique[0..5]: each
 // list a vector of triples, every add and delete logged; `throwAfter` makes the n-th add
-// throw, `unreadable` one list's length fail, and `meddle` lets the "game" change a list
-// between the push and the removal.
+// throw, `unreadable` one list's length fail, `tailHidden` every tail check fail (a push that
+// does not read back, NotHeld), and `meddle` lets the "game" change a list between the push
+// and the removal.
 struct FakeDrawLists {
     using T = ForgePact::Mark1Drops::Triple;
     std::array<std::vector<T>, 6> lists;
     int adds = 0, deletes = 0;
     int throwAfter = -1;
     int unreadable = -1;
+    bool tailHidden = false;
 
     int Length(int k) { return k == unreadable ? -1 : (int)lists[(size_t)k].size(); }
     bool Add(int k, const T& t)
@@ -283,6 +285,7 @@ struct FakeDrawLists {
     {
         const std::vector<T>& l = lists[(size_t)k];
         len = (int)l.size();
+        if (tailHidden) return false;
         int at = before;
         for (size_t e = 0; e < entries.size() && e < on.size(); ++e)
             for (int n = 0; n < on[e]; ++n) {
@@ -1650,7 +1653,8 @@ int main()
         check("draws/baseline_off_status_line_exact",
               fresh == "mark1probe draws: watch=off dropitem=not-installed sattier=not-installed retsat=not-installed calls=0 argc=- "
                        "arg7=undefined:0,list:0,other:0 tiers=0,0,0,0,0,0 tier-unread=0 reads=0 builds=0 normal=0 draw=0 "
-                       "dropunique=0 angelic=0 heroic=0 outside=0 on-k=0 off-k=0 retsat-calls=0 push=off picks=0 pick-builds=0 anomalies=0",
+                       "dropunique=0 angelic=0 heroic=0 outside=0 on-k=0 off-k=0 retsat-calls=0 push=off push-side=- picks=0 pick-builds=0 "
+                       "push-held=0 push-skipped=0 pushed-reads=0 anomalies=0",
               fresh);
         const std::string push = w.SetPush(100, false, false);
         check("draws/baseline_off_the_lever_pushes_nothing",
@@ -1892,7 +1896,8 @@ int main()
         check("draws/target_status_line_and_off_reply",
               status == "mark1probe draws: watch=on dropitem=detoured sattier=detoured retsat=not-found calls=1 argc=12..12 "
                         "arg7=undefined:0,list:1,other:0 tiers=0,0,0,0,0,1 tier-unread=0 reads=1 builds=1 normal=0 draw=1 "
-                        "dropunique=0 angelic=0 heroic=0 outside=0 on-k=1 off-k=0 retsat-calls=1 push=7 picks=0 pick-builds=0 anomalies=1"
+                        "dropunique=0 angelic=0 heroic=0 outside=0 on-k=1 off-k=0 retsat-calls=1 push=7 push-side=ss-first picks=0 "
+                        "pick-builds=0 push-held=0 push-skipped=0 pushed-reads=0 anomalies=1"
                   && offReply == "mark1probe draws: watch=off dropitem=detoured sattier=detoured retsat=not-found - counting and the push stopped; the hooks stay"
                   && w.Counts().calls == 1 && !w.On(),
               status + " | " + offReply);
@@ -1917,11 +1922,172 @@ int main()
               bare.form == Form::Draws && on.form == Form::DrawsSet && on.count == 1 && off.form == Form::DrawsSet && off.count == 0
                   && push.form == Form::DrawsPush && push.count == 100 && pushOff.form == Form::DrawsPush && pushOff.count == 0
                   && poolDraw.form == Form::PoolDraw && parsed("draws push 400").count == 400
-                  && why("draws maybe") == "usage: draws [on|off|push <c>|push off]"
-                  && why("draws push") == "usage: draws [on|off|push <c>|push off]"
-                  && why("draws push 0") == "usage: draws push <c>|off, c a whole number 1..400, not 0"
-                  && why("draws push 401") == "usage: draws push <c>|off, c a whole number 1..400, not 401"
+                  && why("draws maybe") == "usage: draws [on|off|push <c> [ss|below]|push off]"
+                  && why("draws push") == "usage: draws [on|off|push <c> [ss|below]|push off]"
+                  && why("draws push 0") == "usage: draws push <c> [ss|below]|off, c a whole number 1..400, not 0"
+                  && why("draws push 401") == "usage: draws push <c> [ss|below]|off, c a whole number 1..400, not 401"
+                  && why("draws push 5 ss below") == "usage: draws [on|off|push <c> [ss|below]|push off]"
                   && why("pool draw 2") == "usage: pool [<k>|kill|draw], k a sub-list 0..5");
+    }
+
+    // ---- draws: the lever's push counters (Mod live procedure 7, Live 1b) -----------------
+    {
+        // Baseline: the watch on and the push off. Calls (nested ones too), reads, typed picks
+        // and builds leave push-held, push-skipped and pushed-reads at 0, and no call pushes.
+        Draws w;
+        w.SetOn(true, DetouredRoutes());
+        bool anyShould = false;
+        for (int i = 0; i < 3; ++i) {
+            w.BeginCall(12, DrawArg7::Undefined);
+            anyShould = anyShould || w.ShouldPush(false, false);
+            w.NoteTier(true, 2);
+            DrawBuild(w, { 0, 7, 10, 1, "Game's" }, DrawListCounts{ 0, 0, 1, 0, 0, 0 }, 2);
+            w.BeginCall(12, DrawArg7::Undefined);
+            anyShould = anyShould || w.ShouldPush(false, false);
+            w.NoteRead(true, 0, 7, 10);
+            w.EndCall();
+            w.EndCall();
+        }
+        const DrawCounts& c = w.Counts();
+        const std::string status = w.StatusLine(DetouredRoutes());
+        check("draws/baseline_push_counters_stay_zero_without_a_push",
+              !anyShould && c.calls == 6 && c.reads == 12 && c.onK == 3 && c.picks == 0 && c.pickBuilds == 0 && c.pushHeld == 0
+                  && c.pushSkipped == 0 && c.pushedReads == 0
+                  && status.find(" push=off push-side=- picks=0 pick-builds=0 push-held=0 push-skipped=0 pushed-reads=0 anomalies=0")
+                         != std::string::npos,
+              status);
+    }
+    {
+        // Target: a push that reads back Held is one push-held per outermost call; the nested
+        // DropItem riding on its entries adds none (noted or not), and push-skipped stays 0.
+        namespace D = ForgePact::Mark1Drops;
+        const std::vector<D::PushEntry> plan = { D::PushEntry{ ForgePact::Mark1Set::Piece::Helmet, { 0, 7, 10 }, 1, 2 } };
+        FakeDrawLists lists;
+        DrawPushBook book;
+        Draws w;
+        w.SetOn(true, DetouredRoutes());
+        w.SetPush(2, false, false);
+        bool nestedShould = false;
+        for (int i = 0; i < 2; ++i) {
+            w.BeginCall(12, DrawArg7::Undefined);
+            std::vector<std::string> lines;
+            if (w.ShouldPush(false, false) && book.Push(plan, lists, lines) == DrawPushResult::Held) w.NotePushed(book.Entries());
+            w.BeginCall(12, DrawArg7::Undefined);
+            nestedShould = nestedShould || w.ShouldPush(false, false);
+            w.NotePushed(book.Entries());   // a nested call never pushes; noted anyway, it is not counted
+            w.EndCall();
+            book.Remove(lists);
+            w.EndCall();
+        }
+        const DrawCounts& c = w.Counts();
+        const std::string status = w.StatusLine(DetouredRoutes());
+        check("draws/target_push_held_once_per_outermost_call",
+              c.pushHeld == 2 && c.pushSkipped == 0 && !nestedShould && !w.Pushing() && lists.adds == 24 && lists.deletes == 24
+                  && status.find(" push-held=2 push-skipped=0 ") != std::string::npos,
+              status);
+    }
+    {
+        // Target: each silent way a call that was to push ends without a Held push is one
+        // push-skipped and no push-held - the lists unread, no stand-ins, nothing planned, a
+        // list's length unread (None), a push its tails do not show (NotHeld), an add that
+        // throws (Threw), a throw the adapter swallows - noted as M1pDrawsCall notes it. A call
+        // that may not push (Mark 1 drops on) notes nothing, and a held push is no skip.
+        namespace D = ForgePact::Mark1Drops;
+        const std::vector<D::PushEntry> plan = { D::PushEntry{ ForgePact::Mark1Set::Piece::Helmet, { 0, 7, 10 }, 1, 2 } };
+        Draws w;
+        w.SetOn(true, DetouredRoutes());
+        w.SetPush(2, false, false);
+        DrawPushBook book;
+        FakeDrawLists ok, unreadable, hidden, throwing;
+        unreadable.unreadable = 2;
+        hidden.tailHidden = true;
+        throwing.throwAfter = 3;
+        int removedLines = 0;
+        // M1pDrawsPush's shape: true only when the book read the push back Held.
+        auto through = [&](FakeDrawLists& lists, const std::vector<D::PushEntry>& p) {
+            return [&w, &book, &removedLines, &lists, p]() {
+                std::vector<std::string> lines;
+                const DrawPushResult r = book.Push(p, lists, lines);
+                removedLines += (int)lines.size();
+                if (r != DrawPushResult::Held) return false;
+                w.NotePushed(book.Entries());
+                return true;
+            };
+        };
+        // M1pDrawsCall's shape.
+        auto call = [&](bool mark1On, const std::function<bool()>& push) {
+            w.BeginCall(12, DrawArg7::Undefined);
+            if (w.ShouldPush(mark1On, false)) {
+                bool held = false;
+                try { held = push(); } catch (...) { held = false; }
+                if (!held) w.NotePushSkipped();
+            }
+            if (book.Pushed() > 0) book.Remove(ok);
+            w.EndCall();
+        };
+        call(false, [] { return false; });                                   // the lists unread
+        call(false, [] { return false; });                                   // no stand-ins resolved
+        call(false, through(ok, {}));                                        // nothing planned: None
+        call(false, through(unreadable, plan));                              // a length unread: None
+        call(false, through(hidden, plan));                                  // not on the tails: NotHeld
+        call(false, through(throwing, plan));                                // an add threw: Threw
+        call(false, []() -> bool { throw std::runtime_error("adapter"); });  // swallowed
+        const uint64_t skippedSilent = w.Counts().pushSkipped;
+        const uint64_t heldSilent = w.Counts().pushHeld;
+        call(true, through(ok, plan));                                       // may not push: nothing noted
+        const uint64_t skippedRefused = w.Counts().pushSkipped;
+        call(false, through(ok, plan));                                      // the positive control: held
+        // Every list is as found, except the tails the fake hides: the tail rule leaves those as
+        // found, one removal line each.
+        bool empty = true;
+        for (const FakeDrawLists* l : { &ok, &unreadable, &throwing })
+            for (const auto& v : l->lists) empty = empty && v.empty();
+        const DrawCounts& c = w.Counts();
+        check("draws/target_push_skipped_on_every_silent_path",
+              skippedSilent == 7 && heldSilent == 0 && skippedRefused == 7 && c.pushSkipped == 7 && c.pushHeld == 1 && empty
+                  && hidden.adds == 12 && hidden.deletes == 0 && removedLines == 6 && throwing.adds == 3 && throwing.deletes == 3
+                  && unreadable.adds == 0 && ok.adds == 12 && ok.deletes == 12 && c.calls == 9,
+              w.StatusLine(DetouredRoutes()) + " removal lines " + std::to_string(removedLines));
+    }
+    {
+        // Target: pushed-reads counts a `draw`-scope repository read of a triple this call
+        // pushed (a nested DropItem riding on the entries too); a read of a game triple, of a
+        // pushed pair under another class, unreadable or not whole, inside a nested roll, or
+        // before or after the call does not.
+        namespace D = ForgePact::Mark1Drops;
+        const std::vector<D::PushEntry> plan = { D::PushEntry{ ForgePact::Mark1Set::Piece::Helmet, { 0, 7, 10 }, 1, 1 },
+                                                 D::PushEntry{ ForgePact::Mark1Set::Piece::Boots, { 2, 9, 31 }, 1, 1 } };
+        FakeDrawLists lists;
+        DrawPushBook book;
+        Draws w;
+        w.SetOn(true, DetouredRoutes());
+        w.SetPush(1, false, false);
+        w.NoteRead(true, 0, 7, 10);                  // before the call: nothing pushed
+        w.BeginCall(12, DrawArg7::Undefined);
+        std::vector<std::string> lines;
+        const bool held = w.ShouldPush(false, false) && book.Push(plan, lists, lines) == DrawPushResult::Held;
+        if (held) w.NotePushed(book.Entries());
+        w.NoteRead(true, 0, 7, 10);                  // pushed: counts
+        w.NoteRead(true, 2, 9, 31);                  // pushed: counts
+        w.NoteRead(true, 0, 7, 11);                  // a game triple
+        w.NoteRead(true, 1, 7, 10);                  // the pair under another class
+        w.NoteRead(false, 0, 7, 10);                 // unread
+        w.NoteRead(true, 0, 7, 10.5);                // not whole
+        w.EnterRoll(DrawScope::DropUnique);
+        w.NoteRead(true, 0, 7, 10);                  // inside a nested roll
+        w.LeaveRoll();
+        w.BeginCall(12, DrawArg7::Undefined);
+        w.NoteRead(true, 2, 9, 31);                  // a nested DropItem's draw: counts
+        w.EndCall();
+        book.Remove(lists);
+        w.EndCall();
+        w.NoteRead(true, 0, 7, 10);                  // after the call: nothing pushed
+        const DrawCounts& c = w.Counts();
+        const std::string status = w.StatusLine(DetouredRoutes());
+        check("draws/target_pushed_reads_only_draw_reads_of_a_pushed_triple",
+              held && c.pushedReads == 3 && c.reads == 10 && c.pushHeld == 1 && c.pushSkipped == 0
+                  && status.find(" push-held=1 push-skipped=0 pushed-reads=3 anomalies=0") != std::string::npos,
+              status);
     }
 
     // ---- pool draw ------------------------------------------------------------------------
@@ -2043,6 +2209,84 @@ int main()
         other[5].id = 999;
         check("draws/target_lever_stand_ins_resolved_again_when_a_list_changed",
               firstStale && held && cache.Stale(longer) && cache.Stale(other));
+
+        // Baseline: a push with no side picks exactly as built (kDrawLeverPrefersSs: SS first,
+        // the below-SS best a named fallback), with the same line, plan and reply.
+        const DrawLeverStandIns plain = DrawLeverPick(classes, DrawSide::SsFirst);
+        const DrawLeverStandIns plainFallback = DrawLeverPick(belowOnly, DrawSide::SsFirst);
+        bool same = true;
+        for (size_t i = 0; i < picks.size(); ++i)
+            same = same && DrawLeverStandInText(plain[i]) == DrawLeverStandInText(picks[i])
+                   && DrawLeverStandInText(plainFallback[i]) == DrawLeverStandInText(fallback[i]);
+        const Command noSide = parsed("draws push 25");
+        Draws sideless;
+        const std::string plainReply = sideless.SetPush(25, false, false);
+        const std::vector<D::PushEntry> plainPlan = DrawPushPlan(plain, 3);
+        check("draws/baseline_push_without_a_side_keeps_ss_first",
+              kDrawLeverPrefersSs && same && DrawLeverLine(plain, true) == onLine && DrawLeverLine(plain, true, DrawSide::SsFirst) == onLine
+                  && plainPlan.size() == 1 && plainPlan[0].triple.b == 10 && plainFallback[0].fallback && plainFallback[0].pick->triple.b == 13
+                  && noSide.form == Form::DrawsPush && noSide.count == 25 && noSide.side == DrawSide::SsFirst
+                  && sideless.Side() == DrawSide::SsFirst
+                  && plainReply == "mark1probe draws push: c=25 - while the watch is on, each DropItem call pushes 25 copies of each Mark 1 kill "
+                                   "stand-in onto each of lootListUnique[0..5]; nothing is rewritten"
+                  && sideless.StatusLine(DrawRoutes{}).find(" push=25 push-side=ss-first picks=0 ") != std::string::npos,
+              plainReply);
+
+        // Target: `below` takes only below-SS candidates and `ss` only SS ones, with no
+        // fallback: a class with none on the asked side pushes nothing and is named as refused,
+        // and every stand-in still names its side.
+        const DrawLeverStandIns below = DrawLeverPick(classes, DrawSide::Below);
+        const DrawLeverStandIns ssOnly = DrawLeverPick(classes, DrawSide::Ss);
+        std::vector<PoolDrawClass> ssOnlyClasses = classes;
+        ssOnlyClasses[0].bestOther.reset();
+        const DrawLeverStandIns belowNone = DrawLeverPick(ssOnlyClasses, DrawSide::Below);
+        const DrawLeverStandIns ssNone = DrawLeverPick(belowOnly, DrawSide::Ss);
+        const std::vector<D::PushEntry> belowPlan = DrawPushPlan(below, 25);
+        auto sideRefused = [](const char* key, int t, const char* what, const char* side) {
+            return std::string(key) + "=refused (class " + std::to_string(t) + " has no " + what
+                + " draw candidate on lootListUnique[0..5]; side=" + side + " takes no fallback)";
+        };
+        const std::string belowRest = " | " + sideRefused("body", 1, "below-SS", "below") + " | " + sideRefused("boots", 2, "below-SS", "below")
+            + " | " + sideRefused("gloves", 4, "below-SS", "below");
+        const std::string belowLine = DrawLeverLine(below, true, DrawSide::Below);
+        const std::string ssLine = DrawLeverLine(ssOnly, false, DrawSide::Ss);
+        check("draws/target_push_below_picks_only_below_ss_and_refuses_a_class_without_one",
+              below[0].pick && below[0].pick->triple.b == 13 && below[0].pick->tier == 4 && !below[0].ss && !below[0].fallback
+                  && ssOnly[0].pick && ssOnly[0].pick->triple.b == 10 && ssOnly[0].ss && !ssOnly[0].fallback
+                  && !belowNone[0].pick && DrawPushPlan(belowNone, 25).empty() && !ssNone[0].pick && DrawPushPlan(ssNone, 25).empty()
+                  && belowPlan.size() == 1 && belowPlan[0].triple.b == 13 && belowPlan[0].copies == 25
+                  && belowLine == "mark1probe draws push: stand-ins (pool draw's candidates, below SS only, side=below, no fallback) "
+                                  "helmet=7:13 rarity=6 tier=4 f40=0 f41=0 lists=1,1,1,1,1,0 side=below-ss" + belowRest
+                  && ssLine.rfind("mark1probe draws push: stand-ins (pool draw's candidates, SS only, side=ss, no fallback) "
+                                  "helmet=7:10 rarity=6 tier=5 f40=0 f41=0 lists=1,1,1,1,1,0 side=ss | ", 0) == 0
+                  && DrawLeverStandInText(belowNone[0]) == sideRefused("helmet", 0, "below-SS", "below")
+                  && DrawLeverStandInText(ssNone[0]) == sideRefused("helmet", 0, "SS", "ss"),
+              belowLine);
+        // The side word: parsed, refused with its reason, named in the reply and on the status
+        // line (`-` while the push is off), and a reason to resolve the stand-ins again.
+        const Command pushBelow = parsed("draws push 25 below");
+        const Command pushSs = parsed("DRAWS PUSH 25 SS");
+        Draws sided;
+        const std::string belowReply = sided.SetPush(25, false, false, DrawSide::Below);
+        const std::string sidedStatus = sided.StatusLine(DrawRoutes{});
+        const std::string ssReply = sided.SetPush(25, false, false, DrawSide::Ss);
+        const std::string offReply = sided.SetPush(0, false, false, DrawSide::Below);
+        DrawLeverCache sideCache;
+        sideCache.Store(keys, below, DrawSide::Below);
+        const std::string base = "mark1probe draws push: c=25 - while the watch is on, each DropItem call pushes 25 copies of each Mark 1 "
+                                 "kill stand-in onto each of lootListUnique[0..5]; nothing is rewritten";
+        check("draws/target_push_side_parse_reply_and_status",
+              pushBelow.form == Form::DrawsPush && pushBelow.count == 25 && pushBelow.side == DrawSide::Below
+                  && pushSs.form == Form::DrawsPush && pushSs.count == 25 && pushSs.side == DrawSide::Ss
+                  && why("draws push 25 left") == "usage: draws push <c> [ss|below]|off, c a whole number 1..400, the side ss or below, not left"
+                  && why("draws push off below") == "usage: draws push <c> [ss|below]|off, c a whole number 1..400, not off"
+                  && belowReply == base + "; side=below: below-SS stand-ins only, no fallback"
+                  && ssReply == base + "; side=ss: SS stand-ins only, no fallback"
+                  && sidedStatus.find(" push=25 push-side=below picks=0 ") != std::string::npos
+                  && offReply == "mark1probe draws push: off - nothing is pushed" && sided.Side() == DrawSide::SsFirst
+                  && sided.StatusLine(DrawRoutes{}).find(" push=off push-side=- picks=0 ") != std::string::npos
+                  && !sideCache.Stale(keys, DrawSide::Below) && sideCache.Stale(keys, DrawSide::Ss) && sideCache.Stale(keys),
+              belowReply + " | " + sidedStatus);
     }
 
     // ---- walkable -------------------------------------------------------------

@@ -64,7 +64,12 @@ a DropItem route other than the inline detour refuses the watch. Target
 (`test_draws_target_*`): each scope classes a build by the innermost one open; k,
 on-k and off-k follow the recorded tier; the lever pushes c onto each of [0..5] and
 takes exactly that off; the picks and pick-builds; the status and built lines exact.
-`test_pool_draw_*`: the candidate rule and the line.
+`test_pool_draw_*`: the candidate rule and the line. Live 1b adds the lever's push
+counters and its side (`draws push <c> [ss|below]|off`): the baselines that the
+counters stay 0 with the push off and that no side picks as built, SS first; the
+targets that push-held= counts once per outermost call, push-skipped= once per silent
+path, pushed-reads= only draw-scope reads of a pushed triple, and that `below` picks
+only below-SS candidates and refuses a class without one.
 """
 import os
 import shutil
@@ -365,6 +370,42 @@ class Mark1ProbeBehaviorTests(unittest.TestCase):
         self.assertScenarios("draws/target_built_lines_exact", "draws/target_status_line_and_off_reply",
                              "draws/target_push_refused_while_mark1_or_pocket_elf_is_on",
                              "draws/target_built_lines_capped_counters_not", "draws/parse")
+
+    # ---- draws: the lever's push counters and side (Live 1b) -----------------------
+
+    def test_draws_baseline_push_counters_stay_zero_without_a_push(self):
+        # The watch on and the push off: calls (nested ones too), reads, picks and builds leave
+        # push-held=, push-skipped= and pushed-reads= at 0, and push-side= reads `-`.
+        self.assertScenarios("draws/baseline_push_counters_stay_zero_without_a_push")
+
+    def test_draws_target_push_held_once_per_outermost_call(self):
+        # A push that reads back Held is one push-held per outermost DropItem call; a nested call
+        # riding on its entries adds none, even when noted.
+        self.assertScenarios("draws/target_push_held_once_per_outermost_call")
+
+    def test_draws_target_push_skipped_on_every_silent_path(self):
+        # Each silent way a call that was to push ends without a Held push (lists unread, no
+        # stand-ins, nothing planned, a length unread, NotHeld, Threw, a throw the adapter
+        # swallows) is one push-skipped and no push-held; a call that may not push notes nothing.
+        self.assertScenarios("draws/target_push_skipped_on_every_silent_path")
+
+    def test_draws_target_pushed_reads_count_only_draw_reads_of_a_pushed_triple(self):
+        # A draw-scope read of a triple the call pushed counts (a nested DropItem's too); a read
+        # of a game triple, inside a nested roll, unreadable, or outside the call does not.
+        self.assertScenarios("draws/target_pushed_reads_only_draw_reads_of_a_pushed_triple")
+
+    def test_draws_baseline_push_without_a_side_keeps_ss_first(self):
+        # No side word picks exactly as built: SS first, the below-SS best a named fallback,
+        # the same line, plan and reply, and push-side=ss-first.
+        self.assertScenarios("draws/baseline_push_without_a_side_keeps_ss_first")
+
+    def test_draws_target_push_below_picks_only_below_ss_and_refuses_a_class_without_one(self):
+        # `below` (the keep control) takes only below-SS candidates and `ss` only SS ones, with
+        # no fallback: a class with none on that side pushes nothing and is named as refused.
+        # The side word parses, is refused with its reason otherwise, and shows in the reply,
+        # on push-side= and in the stand-ins cache's key.
+        self.assertScenarios("draws/target_push_below_picks_only_below_ss_and_refuses_a_class_without_one",
+                             "draws/target_push_side_parse_reply_and_status")
 
     # ---- pool draw ----------------------------------------------------------------
 

@@ -421,6 +421,23 @@ enum class Form : int {
     Draws, DrawsSet, DrawsPush, PoolDraw,
 };
 
+// `draws push <c> [ss|below]`'s side: which of `pool draw`'s two bests each piece's stand-in
+// is. No side word is `SsFirst`, the rule as first built (kDrawLeverPrefersSs below: SS, the
+// other side as a named fallback); `ss` and `below` take only that side, with no fallback, so
+// a class with no candidate there pushes nothing. `below` is the keep control: a below-SS
+// entry passes the draw's own SS check whenever the draw keeps a pushed entry at all.
+enum class DrawSide : int { SsFirst, Ss, Below };
+
+inline const char* DrawSideText(DrawSide s)
+{
+    switch (s) {
+    case DrawSide::Ss: return "ss";
+    case DrawSide::Below: return "below";
+    case DrawSide::SsFirst: break;
+    }
+    return "ss-first";
+}
+
 struct Command {
     Form        form = Form::Status;
     Lever       lever;                     // Set, Scale, Move, Stat, Hold, Statpin
@@ -438,6 +455,7 @@ struct Command {
     long long   itemClass = 0;             // Base: the class (hs_game_sdk ItemType) and the base b
     long long   base = 0;
     std::string piece;                     // Spawn: helmet, body, boots, gloves or set
+    DrawSide    side = DrawSide::SsFirst;  // DrawsPush: the stand-ins' side, SsFirst with no side word
 };
 
 inline const std::string& RowList()
@@ -727,7 +745,7 @@ inline bool Parse(const std::vector<std::string>& tok, Command& c, std::string& 
         return true;
     }
     if (head == "draws") {
-        const char* usage = "usage: draws [on|off|push <c>|push off]";
+        const char* usage = "usage: draws [on|off|push <c> [ss|below]|push off]";
         if (n == 1) { c.form = Form::Draws; return true; }
         const std::string word = LowerText(tok[1]);
         if (n == 2 && (word == "on" || word == "off")) {
@@ -735,13 +753,19 @@ inline bool Parse(const std::vector<std::string>& tok, Command& c, std::string& 
             c.form = Form::DrawsSet;
             return true;
         }
-        if (n == 3 && word == "push") {
+        if ((n == 3 || n == 4) && word == "push") {
             c.form = Form::DrawsPush;
-            if (SameWord(tok[2], "off")) { c.count = 0; return true; }
-            const std::string pushUsage = "usage: draws push <c>|off, c a whole number 1.." + std::to_string(Mark1Drops::kMaxCopies);
+            if (n == 3 && SameWord(tok[2], "off")) { c.count = 0; return true; }
+            const std::string pushUsage = "usage: draws push <c> [ss|below]|off, c a whole number 1.." + std::to_string(Mark1Drops::kMaxCopies);
             long long v = 0;
             if (!ParseWhole(tok[2], 1, Mark1Drops::kMaxCopies, v)) { why = pushUsage + ", not " + tok[2]; return false; }
             c.count = static_cast<int>(v);
+            if (n == 4) {
+                const std::string side = LowerText(tok[3]);
+                if (side == "ss") c.side = DrawSide::Ss;
+                else if (side == "below") c.side = DrawSide::Below;
+                else { why = pushUsage + ", the side ss or below, not " + tok[3]; return false; }
+            }
             return true;
         }
         why = usage;
@@ -811,7 +835,7 @@ inline std::vector<std::string> Usage()
         "  mark1probe copies <k>                                each piece's stand-in pushed k times (1..400) per roll, Heroic and unique",
         "  mark1probe killgate [0|1]                            open LoadDrops' type-45 gate once per kill inside the game's call; alone, its counts",
         "  mark1probe draws [on|off]                            watch DropItem's own unique draw: each build's scope, the call's tier; alone, its counts",
-        "  mark1probe draws push <c>|off                        push each Mark 1 kill stand-in c times (1..400) onto lootListUnique[0..5] per DropItem call",
+        "  mark1probe draws push <c> [ss|below]|off             push each Mark 1 kill stand-in c times (1..400) onto lootListUnique[0..5] per DropItem call; ss or below: that side's only",
         "  mark1probe pool draw                                 per class (helmet, body, boots, gloves, elf) the candidates DropItem's draw keeps",
         "  mark1probe walkable here <dx> <dy> | at <x> <y> | scan <deg> <step> <count>",
         "  frames default 600, at most 3600; one lever at a time, a new one replaces it",
@@ -1362,7 +1386,13 @@ private:
 // read, is a pick (`picks=`); one built is a `pick-builds=`. Nothing is rewritten, the
 // adapter takes the copies off again on every way out (the tail rule, `anomalies=`
 // otherwise), and the lever refuses while Mark 1 drops or Pocket Elf is switched on,
-// since both push onto the same lists.
+// since both push onto the same lists. Three counters say whether the lists the draw read
+// carried the push at all: `push-held=` the outermost calls whose push read back on every
+// list, `push-skipped=` those that were to push and did not (whatever the reason: a list
+// unread, no stand-in, nothing planned, a push taken off again, a throw the adapter
+// swallowed; the adapter notes it, the core counts it), and `pushed-reads=` the `draw`-scope
+// repository reads of a triple this call pushed. `draws push <c> ss|below` picks the
+// stand-ins from that side only (`push-side=`), the below side being the keep control.
 
 inline constexpr int kDrawListCount = Mark1Drops::kListCount;   // lootListUnique[0..5]
 inline constexpr int kDrawTierCount = 6;                         // LoadSatanicDropTier answers 0..5 (static reading)
@@ -1419,6 +1449,9 @@ struct DrawCounts {
     uint64_t onK = 0, offK = 0;
     uint64_t retsatCalls = 0;
     uint64_t picks = 0, pickBuilds = 0;
+    uint64_t pushHeld = 0;                             // outermost calls whose push read back Held
+    uint64_t pushSkipped = 0;                          // outermost calls that were to push and held none
+    uint64_t pushedReads = 0;                          // `draw`-scope reads of a triple the call pushed
     uint64_t anomalies = 0;
 };
 
@@ -1550,6 +1583,7 @@ class Draws {
 public:
     bool On() const { return on_; }
     int Push() const { return push_; }
+    DrawSide Side() const { return side_; }
     const DrawCounts& Counts() const { return counts_; }
 
     // `draws on|off`. On needs DropItem's route to be the inline detour: only that one sees
@@ -1565,9 +1599,10 @@ public:
         return "mark1probe draws: watch=off" + RoutesText(r) + " - counting and the push stopped; the hooks stay";
     }
 
-    // `draws push <c>|off`; c 0 is off. A push on is refused while either feature that pushes
-    // onto the same lists is switched on.
-    std::string SetPush(int copies, bool mark1On, bool elfOn)
+    // `draws push <c> [ss|below]|off`; c 0 is off. A push on is refused while either feature
+    // that pushes onto the same lists is switched on. The side (SsFirst with no side word) is
+    // the one the stand-ins are picked from; the reply names it only when one was asked.
+    std::string SetPush(int copies, bool mark1On, bool elfOn, DrawSide side = DrawSide::SsFirst)
     {
         if (copies > 0 && (mark1On || elfOn))
             return std::string("mark1probe draws push: refused - ")
@@ -1575,9 +1610,13 @@ public:
                 + "; the lever stays " + PushText();
         if (copies > Mark1Drops::kMaxCopies) copies = Mark1Drops::kMaxCopies;
         push_ = copies < 1 ? 0 : copies;
+        side_ = push_ == 0 ? DrawSide::SsFirst : side;
         if (push_ == 0) return "mark1probe draws push: off - nothing is pushed";
-        return "mark1probe draws push: c=" + std::to_string(push_) + " - while the watch is on, each DropItem call pushes "
+        std::string out = "mark1probe draws push: c=" + std::to_string(push_) + " - while the watch is on, each DropItem call pushes "
             + std::to_string(push_) + " copies of each Mark 1 kill stand-in onto each of lootListUnique[0..5]; nothing is rewritten";
+        if (side_ == DrawSide::Ss) out += "; side=ss: SS stand-ins only, no fallback";
+        if (side_ == DrawSide::Below) out += "; side=below: below-SS stand-ins only, no fallback";
+        return out;
     }
 
     std::string StatusLine(const DrawRoutes& r) const
@@ -1593,7 +1632,9 @@ public:
         for (int s = 0; s < kDrawScopeCount; ++s)
             out += std::string(" ") + DrawScopeText(static_cast<DrawScope>(s)) + "=" + n(c.scopes[static_cast<size_t>(s)]);
         out += " on-k=" + n(c.onK) + " off-k=" + n(c.offK) + " retsat-calls=" + n(c.retsatCalls) + " push=" + PushText()
-            + " picks=" + n(c.picks) + " pick-builds=" + n(c.pickBuilds) + " anomalies=" + n(c.anomalies);
+            + " push-side=" + (push_ > 0 ? std::string(DrawSideText(side_)) : std::string("-")) + " picks=" + n(c.picks)
+            + " pick-builds=" + n(c.pickBuilds) + " push-held=" + n(c.pushHeld) + " push-skipped=" + n(c.pushSkipped)
+            + " pushed-reads=" + n(c.pushedReads) + " anomalies=" + n(c.anomalies);
         return out;
     }
 
@@ -1617,11 +1658,22 @@ public:
         return on_ && push_ > 0 && !mark1On && !elfOn && DrawFrames() == 1 && pushed_.empty();
     }
 
-    // The entries the adapter's push put on, read back: the picks are typed against them.
+    // The entries the adapter's push put on, read back Held: the picks are typed against them,
+    // and the call is one `push-held=`. Only the outermost call pushes; a nested one, which
+    // rides on the outer one's entries, is not noted.
     void NotePushed(const std::vector<Mark1Drops::PushEntry>& entries)
     {
+        if (!on_ || DrawFrames() != 1) return;
         pushed_.clear();
         for (const Mark1Drops::PushEntry& e : entries) pushed_.push_back(e.triple);
+        if (!pushed_.empty()) ++counts_.pushHeld;
+    }
+    // A call ShouldPush let push and no Held push followed, the adapter's note whatever the
+    // reason (a list unread, no stand-ins, DrawPushResult None, NotHeld or Threw, a throw it
+    // swallowed): one `push-skipped=`.
+    void NotePushSkipped()
+    {
+        if (on_) ++counts_.pushSkipped;
     }
     void NoteAnomaly() { ++counts_.anomalies; }
     bool Pushing() const { return !pushed_.empty(); }
@@ -1668,7 +1720,8 @@ public:
         }
     }
 
-    // A GetUniqueRepoStruct read of (type, sub, b): counted, and the current scope's latest.
+    // A GetUniqueRepoStruct read of (type, sub, b): counted, and the current scope's latest; in
+    // `draw`, a read of a triple the current call pushed is a `pushed-reads=`.
     void NoteRead(bool numeric, double t, double sub, double b)
     {
         if (!on_) return;
@@ -1676,6 +1729,12 @@ public:
         Frame& f = Top();
         ++f.reads;
         f.haveRead = numeric && Mark1Set::AsWhole(t, f.read.t) && Mark1Set::AsWhole(sub, f.read.sub) && Mark1Set::AsWhole(b, f.read.b);
+        if (!f.haveRead || f.kind != DrawScope::Draw) return;
+        for (const Mark1Drops::Triple& p : pushed_) {
+            if (!(p == f.read)) continue;
+            ++counts_.pushedReads;
+            break;
+        }
     }
 
     // A CreateDefaultParams call of (sub, b): the current scope's pick, typed when the scope's
@@ -1790,6 +1849,7 @@ private:
 
     bool on_ = false;
     int push_ = 0;
+    DrawSide side_ = DrawSide::SsFirst;
     int lines_ = 0;
     std::vector<Frame> frames_;
     Frame outside_;
@@ -1925,7 +1985,9 @@ inline std::vector<std::string> PoolDrawLines(const std::vector<PoolDrawClass>& 
 // so the lever meets what the move would meet), and the other side only when the class has
 // no SS candidate; the reply names the side. A class with no candidate pushes nothing and
 // is named as refused. Each pushed stand-in prints its rarity, tier, fields 40 and 41 and
-// its counts on [0..5].
+// its counts on [0..5]. That is the rule with no side word (DrawSide::SsFirst); `ss` or
+// `below` takes that side's best only, and a class with none there is refused, never
+// filled from the other side.
 
 inline constexpr bool kDrawLeverPrefersSs = true;   // Mark 1's kill-draw default: SS first
 
@@ -1936,6 +1998,7 @@ struct DrawLeverStandIn {
     std::optional<DrawCandidate> pick;
     bool                         ss = false;         // picked on the SS side
     bool                         fallback = false;   // the preferred side had no candidate
+    DrawSide                     side = DrawSide::SsFirst;   // the side asked
 };
 using DrawLeverStandIns = std::array<DrawLeverStandIn, Mark1Set::kPieceCount>;
 
@@ -1948,9 +2011,9 @@ inline std::string DrawLeverRefusal(const DrawCandidate& c)
     return {};
 }
 
-// Each piece's stand-in from `pool draw`'s classes: the preferred side's best, else the
-// other side's, else none.
-inline DrawLeverStandIns DrawLeverPick(const std::vector<PoolDrawClass>& classes)
+// Each piece's stand-in from `pool draw`'s classes. With no side: the preferred side's best,
+// else the other side's, else none. With `ss` or `below`: that side's best, else none.
+inline DrawLeverStandIns DrawLeverPick(const std::vector<PoolDrawClass>& classes, DrawSide side = DrawSide::SsFirst)
 {
     DrawLeverStandIns out{};
     for (int i = 0; i < Mark1Set::kPieceCount; ++i) {
@@ -1959,8 +2022,17 @@ inline DrawLeverStandIns DrawLeverPick(const std::vector<PoolDrawClass>& classes
         s.piece = row.piece;
         s.key = std::string(row.key);
         s.itemType = row.itemType;
+        s.side = side;
         for (const PoolDrawClass& pc : classes) {
             if (pc.itemType != row.itemType) continue;
+            if (side != DrawSide::SsFirst) {
+                const std::optional<DrawCandidate>& only = side == DrawSide::Ss ? pc.bestSs : pc.bestOther;
+                if (only) {
+                    s.pick = only;
+                    s.ss = side == DrawSide::Ss;
+                }
+                break;
+            }
             const std::optional<DrawCandidate>& first = kDrawLeverPrefersSs ? pc.bestSs : pc.bestOther;
             const std::optional<DrawCandidate>& second = kDrawLeverPrefersSs ? pc.bestOther : pc.bestSs;
             if (first) {
@@ -1998,6 +2070,10 @@ inline std::vector<Mark1Drops::PushEntry> DrawPushPlan(const DrawLeverStandIns& 
 // lists=<n0>,...,<n5> side=<ss|below-ss>[ (fallback)]`, or `<key>=refused (...)` naming why.
 inline std::string DrawLeverStandInText(const DrawLeverStandIn& s)
 {
+    if (!s.pick && s.side != DrawSide::SsFirst)
+        return s.key + "=refused (class " + std::to_string(s.itemType) + " has no "
+            + (s.side == DrawSide::Ss ? "SS" : "below-SS") + " draw candidate on lootListUnique[0..5]; side="
+            + DrawSideText(s.side) + " takes no fallback)";
     if (!s.pick)
         return s.key + "=refused (class " + std::to_string(s.itemType)
             + " has no draw candidate: no rarity-6 entry with fields 40 and 41 clear on lootListUnique[0..5])";
@@ -2011,32 +2087,36 @@ inline std::string DrawLeverStandInText(const DrawLeverStandIn& s)
         + " f41=" + (c.f41 ? "1" : "0") + " lists=" + counts + " side=" + (s.ss ? "ss" : "below-ss") + (s.fallback ? " (fallback)" : "");
 }
 
-// The reply `draws push <c>` prints after the core's, naming what each call will push.
-inline std::string DrawLeverLine(const DrawLeverStandIns& s, bool watchOn)
+// The reply `draws push <c> [ss|below]` prints after the core's, naming what each call will
+// push and from which side.
+inline std::string DrawLeverLine(const DrawLeverStandIns& s, bool watchOn, DrawSide side = DrawSide::SsFirst)
 {
     std::string out = std::string("mark1probe draws push: stand-ins (pool draw's candidates, ")
-        + (kDrawLeverPrefersSs ? "SS first" : "below SS first") + ", the side Mark 1's kill draw is to use)";
+        + (side == DrawSide::Ss      ? std::string("SS only, side=ss, no fallback)")
+           : side == DrawSide::Below ? std::string("below SS only, side=below, no fallback)")
+                                     : std::string(kDrawLeverPrefersSs ? "SS first" : "below SS first") + ", the side Mark 1's kill draw is to use)");
     for (size_t i = 0; i < s.size(); ++i) out += (i ? " | " : " ") + DrawLeverStandInText(s[i]);
     if (!watchOn) out += " (the watch is off: `draws on` to push)";
     return out;
 }
 
 // The lever's stand-ins, resolved again when any of [0..5] changed (another array or
-// another length), as the kill route's cache does.
+// another length), as the kill route's cache does, or when another side is asked.
 class DrawLeverCache {
 public:
-    bool Stale(const Mark1Drops::KillListKeys& keys) const
+    bool Stale(const Mark1Drops::KillListKeys& keys, DrawSide side = DrawSide::SsFirst) const
     {
-        if (!have_) return true;
+        if (!have_ || side != side_) return true;
         for (size_t k = 0; k < keys.size(); ++k)
             if (keys[k].id != keys_[k].id || keys[k].length != keys_[k].length) return true;
         return false;
     }
-    void Store(const Mark1Drops::KillListKeys& keys, const DrawLeverStandIns& s)
+    void Store(const Mark1Drops::KillListKeys& keys, const DrawLeverStandIns& s, DrawSide side = DrawSide::SsFirst)
     {
         have_ = true;
         keys_ = keys;
         standIns_ = s;
+        side_ = side;
     }
     const DrawLeverStandIns* Find() const { return have_ ? &standIns_ : nullptr; }
 
@@ -2044,6 +2124,7 @@ private:
     bool                         have_ = false;
     Mark1Drops::KillListKeys     keys_{};
     DrawLeverStandIns            standIns_{};
+    DrawSide                     side_ = DrawSide::SsFirst;
 };
 
 // ---- `walkable` ---------------------------------------------------------------------

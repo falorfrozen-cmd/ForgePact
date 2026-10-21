@@ -66525,9 +66525,11 @@ static void M1pKillgate(const M1pNs::Command& c)
 //
 // The lever's push and removal are the core's DrawPushBook on the six lists read by name
 // (Mark1KillReadLists), with the drop adapter's own add, delete and tail check; the stand-ins
-// are `pool draw`'s candidates (DrawLeverPick: an entry the draw keeps as read, SS first),
-// resolved again whenever a list's id or length changes. Nothing is rewritten, and with the
-// watch off every spliced call is the original's.
+// are `pool draw`'s candidates (DrawLeverPick: an entry the draw keeps as read, SS first or
+// the one side `draws push <c> ss|below` asked), resolved again whenever a list's id or
+// length changes. Each outermost call that was to push is either a held push (`push-held=`,
+// noted by the core in NotePushed) or a skip M1pDrawsCall notes (`push-skipped=`). Nothing is
+// rewritten, and with the watch off every spliced call is the original's.
 
 static M1pNs::Draws g_M1pDraws;
 static M1pNs::DrawPushBook g_M1pDrawsBook;
@@ -66747,29 +66749,32 @@ static M1pDrawsListOps g_M1pDrawsOps;   // the lists the call in progress pushed
 static bool M1pDrawVerdict(const M1dNs::Triple& key, M1pNs::DrawVerdict& out);
 
 // The lever's stand-ins: per Mark 1 piece, `pool draw`'s candidate of its class (rarity 6,
-// fields 40 and 41 clear, SS first), so the entry pushed is one the draw keeps as read.
-// Resolved again when a list changed; every verdict read outside a roll's scope and never
-// counted as a read.
-static const M1pNs::DrawLeverStandIns* M1pDrawsStandIns(RValue subs[], const M1dNs::KillListKeys& keys)
+// fields 40 and 41 clear) on the side `draws push` asked (SS first with no side word), so the
+// entry pushed is one the draw keeps as read. Resolved again when a list changed or another
+// side is asked; every verdict read outside a roll's scope and never counted as a read.
+static const M1pNs::DrawLeverStandIns* M1pDrawsStandIns(RValue subs[], const M1dNs::KillListKeys& keys, M1pNs::DrawSide side)
 {
-    if (g_M1pDrawsStandIns.Stale(keys)) {
+    if (g_M1pDrawsStandIns.Stale(keys, side)) {
         M1pDrawsBusyScope busy;
         FlightDropOutsideRoll outside;
         M1dNs::KillLists lists;
         for (int k = 0; k < M1dNs::kListCount; ++k) lists[(size_t)k] = Mark1DropEntries(subs[k], keys[(size_t)k].length);
-        g_M1pDrawsStandIns.Store(keys, M1pNs::DrawLeverPick(M1pNs::PoolDraw(lists, M1pDrawVerdict)));
+        g_M1pDrawsStandIns.Store(keys, M1pNs::DrawLeverPick(M1pNs::PoolDraw(lists, M1pDrawVerdict), side), side);
     }
     return g_M1pDrawsStandIns.Find();
 }
 
-static void M1pDrawsPush()
+// One outermost call's push. True only when it read back Held (and the core noted it); every
+// other way out returns false - the lists unread, no stand-ins, nothing planned (None), or a
+// push taken off again (NotHeld, Threw) - and M1pDrawsCall notes that as a skip.
+static bool M1pDrawsPush()
 {
     RValue subs[M1dNs::kListCount];
     M1dNs::KillListKeys keys{};
     std::string why;
-    if (!Mark1KillReadLists(subs, keys, why)) return;
-    const M1pNs::DrawLeverStandIns* s = M1pDrawsStandIns(subs, keys);
-    if (!s) return;
+    if (!Mark1KillReadLists(subs, keys, why)) return false;
+    const M1pNs::DrawLeverStandIns* s = M1pDrawsStandIns(subs, keys, g_M1pDraws.Side());
+    if (!s) return false;
     for (int k = 0; k < M1dNs::kListCount; ++k) g_M1pDrawsOps.subs[k] = subs[k];
     std::vector<std::string> lines;
     const M1pNs::DrawPushResult result = g_M1pDrawsBook.Push(M1pNs::DrawPushPlan(*s, g_M1pDraws.Push()), g_M1pDrawsOps, lines);
@@ -66777,14 +66782,15 @@ static void M1pDrawsPush()
     if (result == M1pNs::DrawPushResult::Held) {
         g_M1pDraws.NotePushed(g_M1pDrawsBook.Entries());
         g_M1pDrawsPushMissLogged = false;
-        return;
+        return true;
     }
-    if (result == M1pNs::DrawPushResult::None) return;
+    if (result == M1pNs::DrawPushResult::None) return false;
     g_M1pDraws.NoteAnomaly();
     if (!g_M1pDrawsPushMissLogged) {
         g_M1pDrawsPushMissLogged = true;
         Out(M1pNs::DrawPushRefusedLine(result));
     }
+    return false;
 }
 
 static void M1pDrawsRemove()
@@ -66796,7 +66802,8 @@ static void M1pDrawsRemove()
 static bool M1pDrawsElfOn() { return g_FlightDrop.switches[(int)FcNs::Charm::Elf]; }
 
 // One DropItem call: the watch's scope, and the lever's push for the outermost call, taken off
-// again on every way out, a throw from the game's DropItem included.
+// again on every way out, a throw from the game's DropItem included. A call that was to push
+// and held none, for any reason including a throw swallowed here, is one `push-skipped=`.
 struct M1pDrawsCall {
     bool counted = false;
     bool pushed = false;
@@ -66813,7 +66820,9 @@ struct M1pDrawsCall {
         counted = g_M1pDraws.BeginCall(argc, arg7);
         if (!counted || !g_M1pDraws.ShouldPush(g_M1Drop.core.Enabled(), M1pDrawsElfOn())) return;
         pushed = true;
-        try { M1pDrawsPush(); } catch (...) {}
+        bool held = false;
+        try { held = M1pDrawsPush(); } catch (...) { held = false; }
+        if (!held) g_M1pDraws.NotePushSkipped();
     }
     ~M1pDrawsCall()
     {
@@ -66875,19 +66884,20 @@ static void M1pDraws(const M1pNs::Command& c)
     Out(g_M1pDraws.StatusLine(M1pDrawsRoutes()));
 }
 
-// `draws push <c>|off`: the lever, refused by the core while Mark 1 drops or Pocket Elf is on;
-// on, the stand-ins it will push are resolved now, outside any call, and printed.
+// `draws push <c> [ss|below]|off`: the lever, refused by the core while Mark 1 drops or Pocket
+// Elf is on; on, the stand-ins it will push are resolved now on the side the command named
+// (the core keeps it for every call's push), outside any call, and printed.
 static void M1pDrawsPushCommand(const M1pNs::Command& c)
 {
-    Out(g_M1pDraws.SetPush(c.count, g_M1Drop.core.Enabled(), M1pDrawsElfOn()));
+    Out(g_M1pDraws.SetPush(c.count, g_M1Drop.core.Enabled(), M1pDrawsElfOn(), c.side));
     if (g_M1pDraws.Push() <= 0 || c.count <= 0) return;
     RValue subs[M1dNs::kListCount];
     M1dNs::KillListKeys keys{};
     std::string why;
     if (!Mark1KillReadLists(subs, keys, why)) { Out("mark1probe draws push: the lists are not readable now (" + why + ")"); return; }
-    const M1pNs::DrawLeverStandIns* s = M1pDrawsStandIns(subs, keys);
+    const M1pNs::DrawLeverStandIns* s = M1pDrawsStandIns(subs, keys, g_M1pDraws.Side());
     if (!s) { Out("mark1probe draws push: the stand-ins could not be resolved now"); return; }
-    Out(M1pNs::DrawLeverLine(*s, g_M1pDraws.On()));
+    Out(M1pNs::DrawLeverLine(*s, g_M1pDraws.On(), g_M1pDraws.Side()));
 }
 
 // `mark1probe pool draw`: the six lists read through the kill route's own reads, each distinct

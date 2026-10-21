@@ -747,21 +747,22 @@ class Mark1ProbeContract(unittest.TestCase):
         self.assertEqual(self.code.count("Mark1DropAddEntry("), 1)
         self.assertEqual(self.code.count("Mark1DropDeleteLast("), 1)
         self.assertIn("g_M1pDrawsBook.Push(M1pNs::DrawPushPlan(*s, g_M1pDraws.Push()), g_M1pDrawsOps, lines)",
-                      self.body("static void M1pDrawsPush()"))
+                      self.body("static bool M1pDrawsPush()"))
         # The lever's stand-ins are `pool draw`'s candidates (an entry the draw keeps as read),
         # never `pool kill`'s DropUniqueItems choice, and its reply is the core's line.
-        standins = self.body("static const M1pNs::DrawLeverStandIns* M1pDrawsStandIns(RValue subs[], const M1dNs::KillListKeys& keys)")
-        self.assertIn("M1pNs::DrawLeverPick(M1pNs::PoolDraw(lists, M1pDrawVerdict))", standins)
+        standins = self.body("static const M1pNs::DrawLeverStandIns* M1pDrawsStandIns(RValue subs[], const M1dNs::KillListKeys& keys, "
+                             "M1pNs::DrawSide side)")
+        self.assertIn("M1pNs::DrawLeverPick(M1pNs::PoolDraw(lists, M1pDrawVerdict), side)", standins)
         self.assertIn("FlightDropOutsideRoll outside;", standins)
         self.assertNotIn("ResolveKillStandIns", standins)
         self.assertIn("static M1pNs::DrawLeverCache g_M1pDrawsStandIns;", self.code)
-        self.assertIn("Out(M1pNs::DrawLeverLine(*s, g_M1pDraws.On()));",
+        self.assertIn("Out(M1pNs::DrawLeverLine(*s, g_M1pDraws.On(), g_M1pDraws.Side()));",
                       self.body("static void M1pDrawsPushCommand(const M1pNs::Command& c)"))
         call = self.code[self.code.index("struct M1pDrawsCall {"):]
         call = call[:call.index("\n};")]
         self.assertIn("g_M1pDraws.ShouldPush(g_M1Drop.core.Enabled(), M1pDrawsElfOn())", call)
         self.assertLess(call.index("if (pushed) { try { M1pDrawsRemove(); } catch (...) {} }"), call.index("if (counted) g_M1pDraws.EndCall();"))
-        self.assertIn("g_M1pDraws.SetPush(c.count, g_M1Drop.core.Enabled(), M1pDrawsElfOn())",
+        self.assertIn("g_M1pDraws.SetPush(c.count, g_M1Drop.core.Enabled(), M1pDrawsElfOn(), c.side)",
                       self.body("static void M1pDrawsPushCommand(const M1pNs::Command& c)"))
         self.assertIn("if (copies > 0 && (mark1On || elfOn))", self.header)
         # `pool draw` reads GetUniqueRepoStruct by its SDK constant outside a roll and is
@@ -779,6 +780,47 @@ class Mark1ProbeContract(unittest.TestCase):
         commands = run[run.index("kPlayerCommands = {"):]
         commands = commands[:commands.index("};")]
         self.assertNotIn('"draws"', commands)
+
+    def test_draws_push_skip_counted_on_every_silent_path(self):
+        # Live 1b's push-held=/push-skipped= rest on the adapter: M1pDrawsPush returns true only
+        # after a Held push the core noted (NotePushed, which counts push-held), and false on
+        # every other way out - the lists unread, no stand-ins, nothing planned (None), and a
+        # push taken off again (NotHeld, Threw) - and M1pDrawsCall notes one skip whenever no
+        # Held push followed ShouldPush, a throw it swallows included.
+        push = self.body("static bool M1pDrawsPush()")
+        self.assertIn("if (!Mark1KillReadLists(subs, keys, why)) return false;", push)
+        self.assertIn("if (!s) return false;", push)
+        self.assertIn("if (result == M1pNs::DrawPushResult::None) return false;", push)
+        self.assertEqual(push.count("return true;"), 1)
+        self.assertEqual(push.count("return false;"), 4, "the list read, the stand-ins, None, and NotHeld/Threw")
+        self.assertNotRegex(push, r"return\s*;", "no way out of the push that says neither held nor skipped")
+        held = push[push.index("if (result == M1pNs::DrawPushResult::Held) {"):]
+        held = held[:held.index("}")]
+        self.assertLess(held.index("g_M1pDraws.NotePushed(g_M1pDrawsBook.Entries());"), held.index("return true;"))
+        call = self.code[self.code.index("struct M1pDrawsCall {"):]
+        call = call[:call.index("\n};")]
+        self.assertIn("bool held = false;", call)
+        self.assertIn("try { held = M1pDrawsPush(); } catch (...) { held = false; }", call)
+        self.assertIn("if (!held) g_M1pDraws.NotePushSkipped();", call)
+        self.assertLess(call.index("g_M1pDraws.ShouldPush(g_M1Drop.core.Enabled(), M1pDrawsElfOn())"),
+                        call.index("try { held = M1pDrawsPush(); }"))
+        self.assertLess(call.index("try { held = M1pDrawsPush(); }"), call.index("if (!held) g_M1pDraws.NotePushSkipped();"))
+        self.assertEqual(self.code.count("NotePushSkipped("), 1, "one place notes a skip, so a call is never counted twice")
+        self.assertEqual(self.code.count("M1pDrawsPush()"), 2, "the definition and M1pDrawsCall's one call")
+        # The core takes the notes: push-held in NotePushed, push-skipped in NotePushSkipped,
+        # pushed-reads in NoteRead, all printed after pick-builds=; the side reaches the pick.
+        self.assertIn("++counts_.pushHeld;", self.header)
+        self.assertIn("++counts_.pushSkipped;", self.header)
+        self.assertIn("++counts_.pushedReads;", self.header)
+        self.assertIn('" pick-builds=" + n(c.pickBuilds) + " push-held=" + n(c.pushHeld) + " push-skipped=" + n(c.pushSkipped)', self.header)
+        self.assertIn("M1pDrawsStandIns(subs, keys, g_M1pDraws.Side())", push)
+        # All of it is research build only: nothing of the counters or the side ships.
+        player_text = strip_research_blocks(self.plugin)
+        # (NotePushed itself is not listed: the player build's own drop cores carry the name.)
+        for word in ("NotePushSkipped", "M1pDrawsCall", "DrawSide", "push-skipped", "pushed-reads", "push-held"):
+            self.assertNotIn(word, player_text)
+        for name in ("struct M1pDrawsCall {", "static bool M1pDrawsPush()", "static void M1pDrawsPushCommand(const M1pNs::Command& c)"):
+            self.assertIn(name, self.block)
 
     def test_satanic_tier_one_detour(self):
         # LoadSatanicDropTier has one detour in the whole source, raredrop's HookSatanicTier,
