@@ -40,6 +40,9 @@ namespace ForgePact::FlightCharms {
 //   - the size guard, which defers a dressed charm to the end of its grid's
 //     load so that it never takes a cell a vanilla item needs.
 //   - Pocket Elf's stand-in rule, and the coin every flight drop is decided by.
+//   - Pocket Elf's kill route on DropItem's own draw (#166): its SS stand-in
+//     over lootListUnique[0..5], the coin at the call's recorded tier, and
+//     one DropItem call's push, hits and nested rolls (ElfDraw).
 //   - the `flightcharm` command's forms and its `stat` line.
 //
 // It is game-independent by contract - numbers and strings, never an instance
@@ -590,6 +593,13 @@ struct StatFields {
     uint64_t       refused = 0;
     uint64_t       anomalies = 0;
     std::string    standinElf = "none";
+    // Pocket Elf's kill route on DropItem's own draw (#166). The adapter sets
+    // the hook's route; ElfDraw::FillStat the rest.
+    std::string    elfDrawHook = "not-installed";
+    uint64_t       elfDrawCalls = 0;
+    uint64_t       elfDrawPushed = 0;
+    DropTally      elfDraw;
+    std::string    elfDrawStandIn = "none";
 };
 
 // The worn charms' keys, in table order, joined by `+`; `none` for none. Keys,
@@ -606,7 +616,8 @@ inline std::string EquippedText(unsigned mask)
 }
 
 // `flightcharm stat`. The fields up to standin-elf= are the requirement, in
-// this order; anything added goes after them.
+// this order; anything added goes after them, as the kill draw's `elf-draw-`
+// fields do (#166).
 inline std::string StatLine(const StatFields& f)
 {
     std::string s = "flightcharm: switches";
@@ -626,6 +637,11 @@ inline std::string StatLine(const StatFields& f)
     s += " refused=" + std::to_string(f.refused);
     s += " anomalies=" + std::to_string(f.anomalies);
     s += " standin-elf=" + f.standinElf;
+    s += " elf-draw-hook=" + f.elfDrawHook;
+    s += " elf-draw-calls=" + std::to_string(f.elfDrawCalls);
+    s += " elf-draw-pushed=" + std::to_string(f.elfDrawPushed);
+    s += " elf-draw=" + std::to_string(f.elfDraw.ours) + "/" + std::to_string(f.elfDraw.built);
+    s += " elf-draw-standin=" + f.elfDrawStandIn;
     return s;
 }
 
@@ -1573,6 +1589,397 @@ inline bool CoinOurs(long long n, long long c, double u)
     if (!(u >= 0.0 && u < 1.0)) return false;
     return u < CoinShare(n, c);
 }
+
+// ---- drops: Pocket Elf's kill route on DropItem's own draw (#166) -----------------
+//
+// A kill does not reach the ordinary unique roll above (DropUniqueItems): its
+// unique comes from DropItem's own draw, which reads lootListUnique[k] for the
+// k LoadSatanicDropTier returned in that call (Live 1, measured), and keeps an
+// entry whose definition reads rarity 6 with fields 40 and 41 clear (static
+// reading). So for the length of one DropItem call the kill route pushes
+// `copies` of one stand-in onto each of [0..5], and a typed hit on it is Pocket
+// Elf's with probability c / (n_k + c): n_k is the stand-in's own count on list
+// k, k the tier recorded in this call. With no tier recorded the hit is refused.
+//
+// The stand-in is a class-10 entry the draw keeps as read, at SS (tier 5): the
+// rarity and tier of Aimbot.exe, which Pocket Elf's drop is to match, with no
+// fallback below SS (the owner, 2026-10-21). A class 10 with no SS candidate
+// has no stand-in, and Pocket Elf does not drop from the draw. Among the SS
+// candidates the smallest largest count over the six lists wins (0 everywhere
+// first: then every hit on it is Pocket Elf's), then the lowest (sub, b). The
+// coin uses the recorded k, so no equal-count rule is needed, and it stays
+// exact even if the draw weighs entries: the copies and the natural ones are
+// the same triple. The DropUniqueItems route above keeps its own stand-in.
+//
+// The adapter owns the hooks (DropManager's one DropItem detour, raredrop's
+// one LoadSatanicDropTier detour), the list reads and the push; ElfDraw
+// decides and counts.
+
+inline constexpr int kDrawListCount = 6;    // lootListUnique[0..5], what the draw can read
+inline constexpr int kDrawRarity = 6;       // the Satanic rarity the draw keeps (static reading)
+inline constexpr int kDrawSsTier = 5;       // the definition's SS tier
+inline constexpr int kElfDrawType = 10;     // Pocket Elf's class
+inline constexpr int kElfDrawTier = kDrawSsTier;   // Aimbot.exe's tier; no fallback below it
+inline constexpr int kDrawMaxCopies = 400;  // the research lever's ceiling
+
+using DrawCounts = std::array<int, kDrawListCount>;
+using DrawLists = std::array<std::vector<UniqueEntry>, kDrawListCount>;
+
+struct DrawTriple {
+    int t = 0;
+    int sub = 0;
+    int b = 0;
+};
+
+// One triple's definition as the draw reads it: rarity, tier, and fields 40
+// and 41. The adapter reads it by name, outside a roll; false when unreadable.
+struct DrawVerdict {
+    int  rarity = 0;
+    int  tier = -1;
+    bool f40 = false;
+    bool f41 = false;
+};
+using DrawVerdictFn = std::function<bool(const DrawTriple& key, DrawVerdict& out)>;
+
+// Whether the draw keeps an entry with this definition as read.
+inline bool DrawKeeps(const DrawVerdict& v) { return v.rarity == kDrawRarity && !v.f40 && !v.f41; }
+
+struct DrawStandIn {
+    bool       resolved = false;
+    DrawTriple triple;
+    int        rarity = 0;
+    int        tier = -1;
+    DrawCounts counts{};   // its own count on each of [0..5]
+};
+
+struct ElfDrawResolution {
+    DrawStandIn standIn;
+    int         candidates = 0;   // distinct class-10 triples the draw keeps, any tier
+    int         ss = 0;           // of those, tier 5
+    int         unread = 0;       // distinct class-10 triples whose definition could not be read
+};
+
+// Pocket Elf's draw stand-in from the six lists as read.
+inline ElfDrawResolution ResolveElfDrawStandIn(const DrawLists& lists, const DrawVerdictFn& verdict)
+{
+    ElfDrawResolution r;
+    std::vector<std::pair<DrawTriple, DrawCounts>> seen;
+    for (int k = 0; k < kDrawListCount; ++k) {
+        for (const UniqueEntry& e : lists[static_cast<size_t>(k)]) {
+            long long t = 0, sub = 0, b = 0;
+            if (!AsWhole(e.t, t) || !AsWhole(e.sub, sub) || !AsWhole(e.b, b) || t != kElfDrawType) continue;
+            if (sub < INT32_MIN || sub > INT32_MAX || b < INT32_MIN || b > INT32_MAX) continue;
+            const DrawTriple key{ kElfDrawType, static_cast<int>(sub), static_cast<int>(b) };
+            size_t i = 0;
+            while (i < seen.size() && !(seen[i].first.sub == key.sub && seen[i].first.b == key.b)) ++i;
+            if (i == seen.size()) seen.push_back({ key, DrawCounts{} });
+            ++seen[i].second[static_cast<size_t>(k)];
+        }
+    }
+    const auto largest = [](const DrawCounts& c) {
+        int m = 0;
+        for (int n : c) m = n > m ? n : m;
+        return m;
+    };
+    for (const auto& [key, counts] : seen) {
+        DrawVerdict v;
+        if (!verdict || !verdict(key, v)) {
+            ++r.unread;
+            continue;
+        }
+        if (!DrawKeeps(v)) continue;
+        ++r.candidates;
+        if (v.tier == kDrawSsTier) ++r.ss;
+        if (v.tier != kElfDrawTier) continue;
+        DrawStandIn& best = r.standIn;
+        bool better = !best.resolved;
+        if (!better) {
+            const int mc = largest(counts), mb = largest(best.counts);
+            better = mc != mb ? mc < mb
+                : key.sub != best.triple.sub ? key.sub < best.triple.sub
+                : key.b < best.triple.b;
+        }
+        if (!better) continue;
+        best.resolved = true;
+        best.triple = key;
+        best.rarity = v.rarity;
+        best.tier = v.tier;
+        best.counts = counts;
+    }
+    return r;
+}
+
+// ` elf-draw-standin=`: `<sub>:<b>@<rarity>/<tier>x<n0>,...,<n5>`, or none.
+inline std::string ElfDrawStandInText(const DrawStandIn& s)
+{
+    if (!s.resolved) return "none";
+    std::string counts;
+    for (int k = 0; k < kDrawListCount; ++k) counts += (k ? "," : "") + std::to_string(s.counts[static_cast<size_t>(k)]);
+    return std::to_string(s.triple.sub) + ":" + std::to_string(s.triple.b) + "@" + std::to_string(s.rarity) + "/"
+        + std::to_string(s.tier) + "x" + counts;
+}
+
+// The copies one call pushes onto each list: none without a stand-in or below
+// one copy, at most kDrawMaxCopies.
+inline int ElfDrawCopies(const DrawStandIn& s, int copies)
+{
+    if (!s.resolved || copies < 1) return 0;
+    return copies > kDrawMaxCopies ? kDrawMaxCopies : copies;
+}
+
+// A stand-in hit's share at tier k: c / (n_k + c); 0 for a k outside [0..5].
+inline double ElfDrawShare(const DrawStandIn& s, int k, int copies)
+{
+    if (!s.resolved || k < 0 || k >= kDrawListCount) return 0.0;
+    return CoinShare(s.counts[static_cast<size_t>(k)], copies);
+}
+
+// One list's identity as the adapter read it: its handle and its length.
+struct DrawListKey {
+    double id = -1.0;
+    int    length = -1;
+};
+using DrawListKeys = std::array<DrawListKey, kDrawListCount>;
+
+// The stand-in, resolved again whenever any of [0..5] changed its array or
+// its length.
+class ElfDrawCache {
+public:
+    bool Stale(const DrawListKeys& keys) const
+    {
+        if (!have_) return true;
+        for (size_t k = 0; k < keys.size(); ++k)
+            if (keys[k].id != keys_[k].id || keys[k].length != keys_[k].length) return true;
+        return false;
+    }
+    void Store(const DrawListKeys& keys, const ElfDrawResolution& r)
+    {
+        have_ = true;
+        keys_ = keys;
+        resolution_ = r;
+    }
+    const ElfDrawResolution* Find() const { return have_ ? &resolution_ : nullptr; }
+
+private:
+    bool              have_ = false;
+    DrawListKeys      keys_{};
+    ElfDrawResolution resolution_;
+};
+
+// What a DropItem call does for Pocket Elf: nothing (switch, refusal or gate
+// off), nothing because a roll or another DropItem call is already in
+// progress, or resolve the stand-in and push it.
+enum class DrawAction : int { PassOff, PassNested, Push };
+
+inline std::string DrawActionName(DrawAction a)
+{
+    switch (a) {
+    case DrawAction::PassOff:    return "pass-off";
+    case DrawAction::PassNested: return "pass-nested";
+    case DrawAction::Push:       return "push";
+    }
+    return "?";
+}
+
+// A typed hit, as ElfDraw::Hit decides it. Ours goes to the rewrite point;
+// every other answer leaves the hit the game's own.
+enum class DrawHit : int {
+    NotPushed,    // no DropItem call carries Pocket Elf's entries
+    SetAside,     // a roll nested in the call runs: its own machinery decides
+    NotStandIn,   // another triple
+    TierUnread,   // no tier recorded in this call: refused
+    Game,         // the stand-in, and the coin gave it to the game
+    Ours,
+};
+
+inline std::string DrawHitName(DrawHit h)
+{
+    switch (h) {
+    case DrawHit::NotPushed:  return "not-pushed";
+    case DrawHit::SetAside:   return "set-aside";
+    case DrawHit::NotStandIn: return "not-stand-in";
+    case DrawHit::TierUnread: return "tier-unread";
+    case DrawHit::Game:       return "game";
+    case DrawHit::Ours:       return "ours";
+    }
+    return "?";
+}
+
+// One session's kill draw for Pocket Elf. The adapter calls, per DropItem
+// call: BeginCall, then on Push the resolution and NotePushed with what went
+// on; NoteTier from LoadSatanicDropTier's detour (the innermost call in
+// progress); EnterRoll / LeaveRoll around a nested roll (#74's Angelic roll,
+// the shared DropUniqueItems detour, Mark 1's Heroic hook), taking the entries
+// off when EnterRoll answers true and putting them back when LeaveRoll does;
+// Hit for each typed hit, Settle once its rewrite ran or was refused, and
+// EndCall, which answers whether the entries come off. NoteBuilt counts one at
+// the forge's final pass.
+class ElfDraw {
+public:
+    DrawAction BeginCall(bool on, int rollDepth)
+    {
+        ++calls_;
+        frames_.push_back(Frame{});
+        if (!on) return DrawAction::PassOff;
+        if (rollDepth > 0 || rollDepth_ > 0 || frames_.size() > 1) {
+            ++nested_;
+            return DrawAction::PassNested;
+        }
+        return DrawAction::Push;
+    }
+
+    void NoteResolution(const ElfDrawResolution& r)
+    {
+        state_ = ListState::Resolved;
+        last_ = r.standIn;
+    }
+    void NoteListsUnreadable()
+    {
+        state_ = ListState::Unreadable;
+        last_ = DrawStandIn{};
+    }
+
+    // `copies` of `s` went onto each of [0..5] and were held read-back.
+    void NotePushed(const DrawStandIn& s, int copies)
+    {
+        if (frames_.empty() || pushFrame_ >= 0 || !s.resolved || copies < 1) return;
+        frames_.back().pushed = true;
+        pushFrame_ = static_cast<int>(frames_.size()) - 1;
+        plan_ = s;
+        copies_ = copies;
+        ++pushedCalls_;
+        injected_ += static_cast<uint64_t>(copies) * kDrawListCount;
+    }
+
+    // The tier LoadSatanicDropTier returned, for the innermost call in
+    // progress; one outside [0..5] is no tier.
+    void NoteTier(int k)
+    {
+        if (frames_.empty()) return;
+        frames_.back().tier = k >= 0 && k < kDrawListCount ? k : -1;
+    }
+
+    // A nested roll begins: true when the call's entries must come off now.
+    // The open hit waits until the roll returns.
+    bool EnterRoll()
+    {
+        ++rollDepth_;
+        if (rollDepth_ != 1 || pushFrame_ < 0) return false;
+        asideHit_ = hit_;
+        hit_ = HitState{};
+        return true;
+    }
+    // A nested roll returned: true when the entries must go back now.
+    bool LeaveRoll()
+    {
+        if (rollDepth_ <= 0) return false;
+        --rollDepth_;
+        if (rollDepth_ != 0 || pushFrame_ < 0) return false;
+        hit_ = asideHit_;
+        asideHit_ = HitState{};
+        return true;
+    }
+
+    // A typed hit on (t, sub, b), for u drawn uniformly from [0, 1). An open
+    // hit is closed first: each hit is settled apart.
+    DrawHit Hit(double t, double sub, double b, double u)
+    {
+        if (frames_.empty() || pushFrame_ < 0) return DrawHit::NotPushed;
+        if (rollDepth_ > 0) return DrawHit::SetAside;
+        hit_ = HitState{};
+        if (t != plan_.triple.t || sub != plan_.triple.sub || b != plan_.triple.b) return DrawHit::NotStandIn;
+        const int k = frames_.back().tier;
+        if (k < 0) {
+            ++tierUnread_;
+            return DrawHit::TierUnread;
+        }
+        if (!CoinOurs(plan_.counts[static_cast<size_t>(k)], copies_, u)) return DrawHit::Game;
+        hit_.ours = true;
+        ++ours_;
+        return DrawHit::Ours;
+    }
+    // Whether an Ours hit is waiting for its rewrite.
+    bool HitPending() const { return hit_.ours; }
+    // The open hit's rewrite ran (`rewritten`) or was refused.
+    void Settle(bool rewritten)
+    {
+        if (hit_.ours && rewritten) ++pendingBuilt_;
+        hit_ = HitState{};
+    }
+    // The forge's final pass counted a rewritten Pocket Elf built.
+    void NoteBuilt()
+    {
+        if (pendingBuilt_ == 0) return;
+        --pendingBuilt_;
+        ++built_;
+    }
+
+    // The call returned: true when its entries must come off now (it pushed
+    // them, and no nested roll has them off already).
+    bool EndCall()
+    {
+        if (frames_.empty()) return false;
+        const bool pushed = frames_.back().pushed;
+        frames_.pop_back();
+        if (!pushed) return false;
+        pushFrame_ = -1;
+        hit_ = HitState{};
+        asideHit_ = HitState{};
+        return rollDepth_ == 0;
+    }
+
+    // ` elf-draw-standin=`: pending while the switch is on and nothing was
+    // resolved yet, else the last resolution's stand-in, or none.
+    std::string StandInField(bool on) const
+    {
+        if (state_ == ListState::Unknown) return on ? "pending" : "none";
+        return ElfDrawStandInText(last_);
+    }
+
+    uint64_t Calls() const { return calls_; }
+    uint64_t PushedCalls() const { return pushedCalls_; }
+    uint64_t Nested() const { return nested_; }
+    uint64_t Injected() const { return injected_; }
+    uint64_t TierUnread() const { return tierUnread_; }
+    uint64_t Ours() const { return ours_; }
+    uint64_t Built() const { return built_; }
+
+    // Every `elf-draw-` field but the hook's route, which the adapter sets.
+    void FillStat(StatFields& s, bool on) const
+    {
+        s.elfDrawCalls = calls_;
+        s.elfDrawPushed = pushedCalls_;
+        s.elfDraw = DropTally{ ours_, built_ };
+        s.elfDrawStandIn = StandInField(on);
+    }
+
+private:
+    enum class ListState : int { Unknown, Resolved, Unreadable };
+    struct Frame {
+        int  tier = -1;
+        bool pushed = false;
+    };
+    struct HitState {
+        bool ours = false;
+    };
+
+    std::vector<Frame> frames_;
+    int                pushFrame_ = -1;
+    int                rollDepth_ = 0;
+    DrawStandIn        plan_;
+    int                copies_ = 0;
+    HitState           hit_, asideHit_;
+    ListState          state_ = ListState::Unknown;
+    DrawStandIn        last_;
+    uint64_t           calls_ = 0;
+    uint64_t           pushedCalls_ = 0;
+    uint64_t           nested_ = 0;
+    uint64_t           injected_ = 0;
+    uint64_t           tierUnread_ = 0;
+    uint64_t           ours_ = 0;
+    uint64_t           built_ = 0;
+    uint64_t           pendingBuilt_ = 0;
+};
 
 // ---- the `flightcharm` command ------------------------------------------------------
 
