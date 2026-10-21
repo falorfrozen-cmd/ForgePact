@@ -44,7 +44,11 @@ grant (hs-game-sdk's curated item_info.json, `tooltip.set_section` and
 `tooltip.skill_grant`). `tooltip_target`: the set block's rows exactly, grey
 and green by what is worn, its bonus line lit only with all four worn and the
 switch on, nothing green on a failed read, the type line `Satanic Set
-Gloves`, and the stat line's `tip=0 tip-unread=0`.
+Gloves`, and the stat line's `tip=0 tip-unread=0 tip-armed=0 typeline=0
+typeline-miss=0` (round 0's instrument-blindness findings: the on-screen
+passes armed for a piece, and of those the ones whose type line was swapped
+and the ones that ended with none). The type line's install waits for the art
+to be armed, never for embedded art (`art_baseline`/`art_target`).
 """
 import json
 import os
@@ -366,6 +370,14 @@ class Mark1SetBehaviorTests(unittest.TestCase):
                              "art_target/armed_the_ground_install_is_pending",
                              "art_target/the_line_reads_art_armed_with_the_switch_off")
 
+    # ---- the type line's install, apart from the icons (round 0's findings) -----
+
+    def test_type_line_baseline_unarmed_nothing_is_pending(self):
+        self.assertScenario("art_baseline/unarmed_the_type_line_install_is_not_pending")
+
+    def test_type_line_target_armed_it_waits_for_no_embedded_art(self):
+        self.assertScenario("art_target/the_type_line_install_waits_for_no_embedded_art")
+
     # ---- the set block in a piece's tooltip (owner playtest, 2026-10-21) --------
 
     def colours(self):
@@ -406,6 +418,15 @@ class Mark1SetBehaviorTests(unittest.TestCase):
 
     def test_tooltip_target_the_fresh_line_carries_tip_and_tip_unread(self):
         self.assertScenarios("tooltip_target/the_line_carries_tip_and_tip_unread", "stat/fresh_line_exact")
+
+    def test_tooltip_target_the_line_counts_armed_passes_and_the_type_line(self):
+        # Round 0's instrument-blindness findings: `tip-armed=` counts the
+        # on-screen passes armed for a piece, `typeline=` those whose type line
+        # was swapped and `typeline-miss=` those that ended with none.
+        self.assertScenarios("tooltip_target/the_line_carries_tip_armed_typeline_and_typeline_miss",
+                             "stat/fresh_line_exact", "failure_counts/every_field_once_in_order")
+        self.assertIn(" tip=0 tip-unread=0 tip-armed=0 typeline=0 typeline-miss=0 | speed=",
+                      self.line("stat/fresh_line_exact"))
 
 
 if __name__ == "__main__":

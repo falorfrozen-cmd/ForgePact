@@ -323,8 +323,11 @@ struct StatFields {
     bool         artArmed = false;           // the art rule's sticky flag (Bonus::ArtArmed)
     uint64_t     ground = 0;                 // ground items given our icon
     std::string  groundRoute = "not-installed";  // GroundRouteName(): the shared LootGroundInit detour's route
-    uint64_t     tip = 0;                    // set blocks drawn in a piece's tooltip (once per uncached pass)
+    uint64_t     tip = 0;                    // set blocks drawn in a piece's on-screen tooltip (once per uncached pass)
     uint64_t     tipUnread = 0;              // of those, drawn on a worn read that failed or had an unreadable slot
+    uint64_t     tipArmed = 0;               // on-screen passes armed for a piece, whether or not the block anchored
+    uint64_t     typeLine = 0;               // of those, passes whose type line was drawn as `Satanic Set <type>`
+    uint64_t     typeLineMiss = 0;           // of those, passes that ended with no type line swapped
     LeverCount   speed;
     LeverCount   penalty;
 };
@@ -420,6 +423,8 @@ inline std::string StatLine(const StatFields& f)
     s += " ground=" + std::to_string(f.ground);
     s += " ground-route=" + f.groundRoute;
     s += " tip=" + std::to_string(f.tip) + " tip-unread=" + std::to_string(f.tipUnread);
+    s += " tip-armed=" + std::to_string(f.tipArmed);
+    s += " typeline=" + std::to_string(f.typeLine) + " typeline-miss=" + std::to_string(f.typeLineMiss);
     s += " | speed=" + LeverText(f.speed) + " penalty=" + LeverText(f.penalty);
     return s;
 }
@@ -483,6 +488,28 @@ inline bool ArtGroundInstallPending(bool armed, int iconsEmbedded, bool tried)
 inline bool ArtWantsGroundInstall(bool armed, int iconsEmbedded, bool tried, bool setupDone, bool playerResolved)
 {
     return ArtGroundInstallPending(armed, iconsEmbedded, tried) && setupDone && playerResolved;
+}
+
+// Whether the pieces' type line (the tooltip's draw_text hook) still waits to
+// be installed: armed and no try yet. It needs no embedded art, so it never
+// shares the ground consumer's icon gate.
+inline bool TypeLineInstallPending(bool armed, bool tried)
+{
+    return armed && !tried;
+}
+
+// Whether anything the art installs still waits: the ground consumer or the
+// type line. The tick checks this before any game call.
+inline bool ArtInstallPending(bool armed, int iconsEmbedded, bool groundTried, bool typeLineTried)
+{
+    return ArtGroundInstallPending(armed, iconsEmbedded, groundTried) || TypeLineInstallPending(armed, typeLineTried);
+}
+
+// Whether the adapter runs the art's install now: something pending, setup
+// done and the local player resolved. The switch is not asked.
+inline bool ArtWantsInstall(bool armed, int iconsEmbedded, bool groundTried, bool typeLineTried, bool setupDone, bool playerResolved)
+{
+    return ArtInstallPending(armed, iconsEmbedded, groundTried, typeLineTried) && setupDone && playerResolved;
 }
 
 // ---- the set block in a piece's tooltip --------------------------------------------

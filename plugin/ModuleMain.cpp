@@ -22341,18 +22341,28 @@ static const double kTipWrapWidth = 622.0;
 static const double kTipWrapSeparation = -1.0;
 // Mark 1's set block in this pass (Mark1TooltipRows): whether the rows are it,
 // whether its worn read failed or had an unreadable slot, and the piece whose
-// type line the pass's draw_text rewrites (-1: none). Counted when drawn, for
-// `mark1set stat`'s `tip=` and `tip-unread=`.
+// type line the pass's draw_text rewrites (-1: none). `mark1set stat` counts
+// the player's own (on-screen) passes only, so an Item Truth drawing request
+// never moves a count: `tip=` and `tip-unread=` when the block is drawn,
+// `tip-armed=` when a pass is armed for a piece (Hook_DrawInventoryItemV2),
+// and of those `typeline=` / `typeline-miss=` at the pass's end, by whether
+// the type-line detour drew its `Satanic Set <type>` (g_TipTypeLineSwaps).
 static bool g_TipSetBlock = false;
 static bool g_TipSetBlockUnread = false;
+static bool g_TipSetOnScreen = false;   // the pass is the player's own, armed for a piece
 static int g_TipTypeLinePiece = -1;
 static uint64_t g_TipSetBlocks = 0;
 static uint64_t g_TipSetBlocksUnread = 0;
+static uint64_t g_TipSetPassesArmed = 0;
+static uint64_t g_TipTypeLines = 0;
+static uint64_t g_TipTypeLineMisses = 0;
+static uint64_t g_TipTypeLineSwaps = 0;   // type lines the detour drew, in any pass
 
 static void TipSetBlockClear()
 {
     g_TipSetBlock = false;
     g_TipSetBlockUnread = false;
+    g_TipSetOnScreen = false;
     g_TipTypeLinePiece = -1;
 }
 
@@ -22709,6 +22719,15 @@ static RValue& Hook_DrawInventoryItemV2(CInstance* S, CInstance* O, RValue& R, i
             g_TipItemNoStats = g_TipRowsPending && TipItemHasNoStats(*A[3]);
         }
     } catch (...) { g_TipRows.clear(); g_TipRowsPending = false; g_TipItemNoStats = false; TipSetBlockClear(); }
+    // The player's own pass, armed for a piece (`tip-armed=`), whether or not
+    // its block reaches the anchor. Item Truth's batch above ran and cleared
+    // before this, so only this pass is counted.
+    const bool pieceOnScreen = g_TipSetBlock;
+    if (pieceOnScreen) {
+        g_TipSetOnScreen = true;
+        ++g_TipSetPassesArmed;
+    }
+    const uint64_t swapsBefore = g_TipTypeLineSwaps;
     g_TipStatCallsInTooltip = 0;
     const bool capturing = TipCaptureBegin(argc, A);
     if (capturing) g_Tip.drawnBy = TipObjectName(S);
@@ -22722,6 +22741,13 @@ static RValue& Hook_DrawInventoryItemV2(CInstance* S, CInstance* O, RValue& R, i
 #ifndef FORGEPACT_RELEASE
     if (trace) Out("   DrawInventoryItemV2 -> " + Describe(r) + " statLines=" + std::to_string(g_TipStatCallsInTooltip) + " forgedRows=" + std::to_string(g_TipRows.size()));
 #endif
+    // Of the armed passes, whether the type-line detour drew `Satanic Set
+    // <type>` during this one (`typeline=`) or the pass ended with none
+    // (`typeline-miss=`: the hook not in, or no draw_text matched).
+    if (pieceOnScreen) {
+        if (g_TipTypeLineSwaps != swapsBefore) ++g_TipTypeLines;
+        else ++g_TipTypeLineMisses;
+    }
     g_TipRowsPending = false;
     g_TipItemNoStats = false;
     TipSetBlockClear();
@@ -22754,7 +22780,7 @@ static RValue& Hook_DrawInventoryStatsNew(CInstance* S, CInstance* O, RValue& R,
                 double extra = 0.0;
                 for (const TipRow& row : g_TipRows) extra += TipDrawRow(x, y + extra, row);
                 g_TipRowsPending = false;
-                if (g_TipSetBlock) {
+                if (g_TipSetBlock && g_TipSetOnScreen) {
                     ++g_TipSetBlocks;
                     if (g_TipSetBlockUnread) ++g_TipSetBlocksUnread;
                 }
@@ -22845,6 +22871,7 @@ static bool TipTypeLineDraw(RValue& Result, CInstance* S, CInstance* O, int argc
     const std::string drawn = Args[2].ToString();
     const std::string line = M1sNs::TypeLineFor(true, piece, drawn);
     if (line == drawn) return false;
+    ++g_TipTypeLineSwaps;
     std::vector<RValue> args(Args, Args + argc);
     args[2] = RValue(line);
     TipNoteText(kTipBuiltinText[0], argc, args.data());
@@ -22880,14 +22907,15 @@ static void InstallTipBuiltinTextHooks(std::index_sequence<I...>)
 // draw_text alone, for a Mark 1 piece's type line: the pass draws that line
 // through the runner's draw_text (Item Truth's captures: `draw_text`, the
 // line under the name), so the same hook Item Truth records with sees it.
-// Installed with the pieces' ground consumer, once a piece armed the art and a
-// character exists (Mark1GroundIconInstall), never from a draw. Outside a
+// Installed from the pieces' ground install's callers, once a piece armed the
+// art and a character exists, embedded art or not (Mark1GroundIconInstall's
+// first statement), never from a draw. Outside a
 // piece's pass, or a recorded one, the hook is one test and a jump.
-static bool g_TipTypeLineHookTried = false;
+static bool g_TipTypeLineTried = false;
 static void InstallTipTypeLineHook()
 {
-    if (g_TipTypeLineHookTried) return;
-    g_TipTypeLineHookTried = true;
+    if (g_TipTypeLineTried) return;
+    g_TipTypeLineTried = true;
     InstallForgedTooltipHooks();
     InstallTipBuiltinTextHook<0>();
 }
@@ -63693,16 +63721,17 @@ static void Mark1OnGroundInit(int argc, RValue** A)
 // through the flight charms' install; never a second hook. With no icon
 // embedded no consumer of ours has work, so nothing is installed for it; while
 // the art is not armed (no piece dressed, no drops switch-on) nothing is
-// either. Tried once a session. The pieces' type line goes in at the same
-// moment (InstallTipTypeLineHook: the tooltip's draw_text), so a player who
+// either. Tried once a session. The pieces' type line goes in first, from the
+// same callers (InstallTipTypeLineHook: the tooltip's draw_text), once the art
+// is armed, embedded art or not: its own gate, never the icons'. A player who
 // never holds a piece installs neither.
 static void Mark1GroundIconInstall()
 {
+    if (M1sNs::TypeLineInstallPending(g_Mark1.ArtArmed(), g_TipTypeLineTried)) InstallTipTypeLineHook();
     if (ForgePact::Mark1Icons::kIconCount == 0) return;
     if (!M1sNs::ArtGroundInstallPending(g_Mark1.ArtArmed(), (int)ForgePact::Mark1Icons::kIconCount, g_M1sGroundTried)) return;
     g_M1sGroundTried = true;
     FlightGroundIconInstall();
-    InstallTipTypeLineHook();
 }
 
 // ---- the local player and the worn read ----
@@ -64545,21 +64574,22 @@ static void Mark1InstallIfReady(bool fromTick)
     Mark1RefreshPlayer();
 }
 
-static unsigned long long g_M1sArtFrames = 0;   // frames the tick ran with the art's ground install pending
+static unsigned long long g_M1sArtFrames = 0;   // frames the tick ran with the art's install pending
 
-// The art's one ground install from the tick (Mark1Set.hpp's
-// ArtWantsGroundInstall): the art armed, an icon embedded, no try yet, setup
-// done and the local player resolved, so never at character select. The
-// switch is not asked: once armed, the consumer is wanted whatever it says.
+// The art's one install from the tick (Mark1Set.hpp's ArtWantsInstall): the
+// art armed, the ground consumer (an icon embedded, no try yet) or the type
+// line (no try yet, embedded art or not) still waiting, setup done and the
+// local player resolved, so never at character select. The switch is not
+// asked: once armed, both are wanted whatever it says.
 static void Mark1ArtInstallIfReady()
 {
-    const bool player = M1sNs::ArtGroundInstallPending(g_Mark1.ArtArmed(), (int)ForgePact::Mark1Icons::kIconCount, g_M1sGroundTried) && g_Setup && Mark1PlayerResolves();
-    if (!M1sNs::ArtWantsGroundInstall(g_Mark1.ArtArmed(), (int)ForgePact::Mark1Icons::kIconCount, g_M1sGroundTried, g_Setup, player)) return;
+    const bool player = M1sNs::ArtInstallPending(g_Mark1.ArtArmed(), (int)ForgePact::Mark1Icons::kIconCount, g_M1sGroundTried, g_TipTypeLineTried) && g_Setup && Mark1PlayerResolves();
+    if (!M1sNs::ArtWantsInstall(g_Mark1.ArtArmed(), (int)ForgePact::Mark1Icons::kIconCount, g_M1sGroundTried, g_TipTypeLineTried, g_Setup, player)) return;
     Mark1GroundIconInstall();
 }
 
 // The per-frame tick. Returns at once while the switch is off and the art's
-// ground install is not pending (decided from the adapter's own state, before
+// install is not pending (decided from the adapter's own state, before
 // any game call). While that install is pending, looks for the local player
 // every kInstallPollFrames frames, whatever the switch says. While the switch
 // is armed and not installed, looks for the local player the same way; once
@@ -64567,7 +64597,7 @@ static void Mark1ArtInstallIfReady()
 // hooked call, at the point of use.
 static void Mark1SetTick()
 {
-    const bool artPending = M1sNs::ArtGroundInstallPending(g_Mark1.ArtArmed(), (int)ForgePact::Mark1Icons::kIconCount, g_M1sGroundTried);
+    const bool artPending = M1sNs::ArtInstallPending(g_Mark1.ArtArmed(), (int)ForgePact::Mark1Icons::kIconCount, g_M1sGroundTried, g_TipTypeLineTried);
     if (!g_Mark1.Enabled() && !artPending) return;
     if (artPending && M1sNs::Bonus::LooksForPlayer(g_M1sArtFrames++)) Mark1ArtInstallIfReady();
     if (!g_Mark1.Enabled()) return;
@@ -64593,6 +64623,9 @@ static M1sNs::StatFields Mark1SetStatFields()
     g_Mark1.FillStat(f);
     f.tip = g_TipSetBlocks;               // set blocks drawn in a piece's tooltip
     f.tipUnread = g_TipSetBlocksUnread;   // of those, on a failed or partly unreadable worn read
+    f.tipArmed = g_TipSetPassesArmed;     // on-screen passes armed for a piece
+    f.typeLine = g_TipTypeLines;          // of those, the type line drawn as `Satanic Set <type>`
+    f.typeLineMiss = g_TipTypeLineMisses; // of those, ended with no type line swapped
     const ForgePact::Mark1Automation& automation = ForgePact::Mark1Automation::Instance();
     for (int i = 0; i < M1sNs::kColumnCount; ++i) {
         const ForgePact::Mark1ColumnCounters k = automation.Counters(ForgePact::kMark1FirstColumn + i);

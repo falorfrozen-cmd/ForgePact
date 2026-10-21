@@ -81,8 +81,9 @@ pieces" below.
   that they would show up within one session, kills in Hell dropped all four
   pieces, 8 in all among the 67 unique items the game's draw built. A toggle
   skill on the bar, and a piece dropping from a vault, have not been checked
-  in play yet, nor have the set display in the tooltip and the art showing
-  from the moment you have a piece, which came after those sessions.
+  in play yet, nor have the set display in the tooltip, the pieces' `Satanic
+  Set <type>` line and the art showing from the moment you have a piece,
+  which came after those sessions.
 
 ## Fixed
 

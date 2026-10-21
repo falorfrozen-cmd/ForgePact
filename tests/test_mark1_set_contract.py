@@ -64,7 +64,11 @@ text, comments stripped, and pins the adapter around it:
   armed pass, drawn at the forged rows' anchor in its colours; every other
   forged item keeps its gold rows; the pass's draw_text draws the piece's type
   line as the core's `Satanic Set <type>`, the hook going in with the ground
-  consumer; `tip=` and `tip-unread=` count the blocks drawn;
+  consumer's callers, once the art is armed and a character exists, never
+  behind the icons' own gate; `tip=` and `tip-unread=` count the blocks drawn
+  in the player's own (on-screen) passes, `tip-armed=` those passes armed for a
+  piece, `typeline=` / `typeline-miss=` whether each drew its type line, and
+  Item Truth's off-screen passes count in none of them;
 - the jump (Mark1Jump.hpp, applied here): one skillsLeap detour and one
   install of the five collision builtins in the whole plugin, shared with
   jumpscenery (and the flight charms for the builtins); Mark 1's take-off
@@ -372,8 +376,8 @@ class Mark1SetContract(unittest.TestCase):
         # Off and no art install pending: back at once, before any game call.
         # The pending check is the core's, on the adapter's own state only.
         lines = self.lines("tick")
-        self.assertEqual(lines[0], "const bool artPending = M1sNs::ArtGroundInstallPending(g_Mark1.ArtArmed(), "
-                                   "(int)ForgePact::Mark1Icons::kIconCount, g_M1sGroundTried);")
+        self.assertEqual(lines[0], "const bool artPending = M1sNs::ArtInstallPending(g_Mark1.ArtArmed(), "
+                                   "(int)ForgePact::Mark1Icons::kIconCount, g_M1sGroundTried, g_TipTypeLineTried);")
         self.assertEqual(lines[1], "if (!g_Mark1.Enabled() && !artPending) return;")
         # The art's one ground install runs whatever the switch now says, on
         # the polled frames; the set's own part still needs the switch.
@@ -792,11 +796,12 @@ class Mark1SetContract(unittest.TestCase):
 
     def test_art_fallback_the_ticks_ground_install_waits_for_a_character(self):
         ready = self.body("art_install_if_ready")
-        gate = ("const bool player = M1sNs::ArtGroundInstallPending(g_Mark1.ArtArmed(), "
-                "(int)ForgePact::Mark1Icons::kIconCount, g_M1sGroundTried) && g_Setup && Mark1PlayerResolves();")
+        gate = ("const bool player = M1sNs::ArtInstallPending(g_Mark1.ArtArmed(), "
+                "(int)ForgePact::Mark1Icons::kIconCount, g_M1sGroundTried, g_TipTypeLineTried) && g_Setup "
+                "&& Mark1PlayerResolves();")
         self.assertIn(gate, ready)
-        want = ("if (!M1sNs::ArtWantsGroundInstall(g_Mark1.ArtArmed(), (int)ForgePact::Mark1Icons::kIconCount, "
-                "g_M1sGroundTried, g_Setup, player)) return;")
+        want = ("if (!M1sNs::ArtWantsInstall(g_Mark1.ArtArmed(), (int)ForgePact::Mark1Icons::kIconCount, "
+                "g_M1sGroundTried, g_TipTypeLineTried, g_Setup, player)) return;")
         self.assertIn(want, ready)
         self.assertLess(ready.index(want), ready.index("Mark1GroundIconInstall();"))
         # The switch is not asked: once armed, the consumer is wanted whatever it says.
@@ -883,12 +888,12 @@ class Mark1SetContract(unittest.TestCase):
 
     def test_art_default_ground_install_returns_unless_armed_before_the_flight_install(self):
         self.assertEqual(self.lines("ground_install"), [
+            "if (M1sNs::TypeLineInstallPending(g_Mark1.ArtArmed(), g_TipTypeLineTried)) InstallTipTypeLineHook();",
             "if (ForgePact::Mark1Icons::kIconCount == 0) return;",
             "if (!M1sNs::ArtGroundInstallPending(g_Mark1.ArtArmed(), (int)ForgePact::Mark1Icons::kIconCount, "
             "g_M1sGroundTried)) return;",
             "g_M1sGroundTried = true;",
             "FlightGroundIconInstall();",
-            "InstallTipTypeLineHook();",
         ])
         pending = function_body(self.header(), "inline bool ArtGroundInstallPending(")
         self.assertIn("return armed && iconsEmbedded > 0 && !tried;", pending)
@@ -905,21 +910,22 @@ class Mark1SetContract(unittest.TestCase):
                          "InstallIfReady(", "IconInstall(", "SetInstall(", "Hook"):
                 with self.subTest(line=line, call=call):
                     self.assertNotIn(call, line)
-        self.assertIn("ArtGroundInstallPending(g_Mark1.ArtArmed(),", lines[0])
+        self.assertIn("ArtInstallPending(g_Mark1.ArtArmed(),", lines[0])
         # The art's install comes before the switch's own return, so it runs
         # whatever the switch now says.
         tick = self.body("tick")
         self.assertLess(tick.index("Mark1ArtInstallIfReady();"), tick.index("if (!g_Mark1.Enabled()) return;"))
         self.assertEqual(self.lines("art_install_if_ready"), [
-            "const bool player = M1sNs::ArtGroundInstallPending(g_Mark1.ArtArmed(), (int)ForgePact::Mark1Icons::kIconCount, "
-            "g_M1sGroundTried) && g_Setup && Mark1PlayerResolves();",
-            "if (!M1sNs::ArtWantsGroundInstall(g_Mark1.ArtArmed(), (int)ForgePact::Mark1Icons::kIconCount, "
-            "g_M1sGroundTried, g_Setup, player)) return;",
+            "const bool player = M1sNs::ArtInstallPending(g_Mark1.ArtArmed(), (int)ForgePact::Mark1Icons::kIconCount, "
+            "g_M1sGroundTried, g_TipTypeLineTried) && g_Setup && Mark1PlayerResolves();",
+            "if (!M1sNs::ArtWantsInstall(g_Mark1.ArtArmed(), (int)ForgePact::Mark1Icons::kIconCount, "
+            "g_M1sGroundTried, g_TipTypeLineTried, g_Setup, player)) return;",
             "Mark1GroundIconInstall();",
         ])
-        # The core's decision takes no switch: armed, embedded, untried, setup, player.
-        self.assertIn("inline bool ArtWantsGroundInstall(bool armed, int iconsEmbedded, bool tried, bool setupDone, "
-                      "bool playerResolved)", self.header())
+        # The core's decision takes no switch: armed, embedded, untried (the
+        # ground consumer and the type line each), setup, player.
+        self.assertIn("inline bool ArtWantsInstall(bool armed, int iconsEmbedded, bool groundTried, bool typeLineTried, "
+                      "bool setupDone, bool playerResolved)", self.header())
 
     def test_art_default_nothing_installs_inside_create_item_new_pass(self):
         whole = strip_comments(self.plugin)
@@ -1044,12 +1050,86 @@ class Mark1SetContract(unittest.TestCase):
         self.assertIn("f.tip = g_TipSetBlocks;", fields)
         self.assertIn("f.tipUnread = g_TipSetBlocksUnread;", fields)
         stat = function_body(self.shipped, "static RValue& Hook_DrawInventoryStatsNew(")
-        count = "if (g_TipSetBlock) {"
+        count = "if (g_TipSetBlock && g_TipSetOnScreen) {"
         self.assertIn(count, stat)
         self.assertLess(stat.index("extra += TipDrawRow(x, y + extra, row);"), stat.index(count))
         self.assertIn("++g_TipSetBlocks;", stat)
         self.assertIn("if (g_TipSetBlockUnread) ++g_TipSetBlocksUnread;", stat)
         self.assertEqual(re.findall(r"\+\+g_TipSetBlocks\b", self.shipped), ["++g_TipSetBlocks"])
+
+    # ---- round 0's instrument-blindness findings: what the tooltip counts ------------------
+
+    def test_type_line_hook_not_gated_on_icons(self):
+        # The pieces' type line (the tooltip's draw_text) goes in once the art
+        # is armed and a character exists, with or without embedded art: the
+        # ground install's first statement, before the icons' own return.
+        install = self.body("ground_install")
+        first = "if (M1sNs::TypeLineInstallPending(g_Mark1.ArtArmed(), g_TipTypeLineTried)) InstallTipTypeLineHook();"
+        self.assertEqual(self.lines("ground_install")[0], first)
+        self.assertLess(install.index(first), install.index("if (ForgePact::Mark1Icons::kIconCount == 0) return;"))
+        # The core's rule takes no icon count; the tick's pending and wanted
+        # checks cover it, so a build with no art embedded still installs it.
+        header = self.header()
+        self.assertIn("return armed && !tried;", function_body(header, "inline bool TypeLineInstallPending(bool armed, bool tried)"))
+        pending = function_body(header, "inline bool ArtInstallPending(")
+        self.assertIn("ArtGroundInstallPending(armed, iconsEmbedded, groundTried)", pending)
+        self.assertIn("TypeLineInstallPending(armed, typeLineTried)", pending)
+        self.assertIn("|| TypeLineInstallPending(armed, typeLineTried)", pending)
+        self.assertIn("g_TipTypeLineTried", self.lines("tick")[0])
+        self.assertIn("g_TipTypeLineTried", self.body("art_install_if_ready"))
+        # Tried once a session; the hook's only caller is that statement.
+        hook = function_body(self.shipped, "static void InstallTipTypeLineHook()")
+        self.assertLess(hook.index("if (g_TipTypeLineTried) return;"), hook.index("g_TipTypeLineTried = true;"))
+        self.assertLess(hook.index("g_TipTypeLineTried = true;"), hook.index("InstallTipBuiltinTextHook<0>();"))
+        self.assertEqual(len(re.findall(r"\bInstallTipTypeLineHook\(\);", self.shipped)), 1)
+
+    def test_item_truth_passes_not_counted_in_tip(self):
+        # `tip=`, `tip-unread=`, `tip-armed=`, `typeline=` and `typeline-miss=`
+        # count the player's own (on-screen) passes only. Item Truth's
+        # off-screen TipDrawOne passes arm the block and draw the type line
+        # too, but never mark the pass on screen and bump none of the counts.
+        one = strip_comments(function_body(self.shipped, "static bool TipDrawOne("))
+        for name in ("g_TipSetOnScreen", "g_TipSetBlocks", "g_TipSetBlocksUnread", "g_TipSetPassesArmed",
+                     "g_TipTypeLines", "g_TipTypeLineMisses", "g_TipTypeLineSwaps"):
+            with self.subTest(name=name):
+                self.assertNotIn(name, one)
+        # The on-screen flag is set in one place: the player's pass, once armed for a piece.
+        self.assertEqual(re.findall(r"\bg_TipSetOnScreen\s*=\s*true\b", self.shipped), ["g_TipSetOnScreen = true"])
+        item = strip_comments(function_body(self.shipped, "static RValue& Hook_DrawInventoryItemV2("))
+        arm = "if (pieceOnScreen) {"
+        self.assertIn("const bool pieceOnScreen = g_TipSetBlock;", item)
+        self.assertIn("g_TipSetOnScreen = true;", item)
+        self.assertIn("++g_TipSetPassesArmed;", item)
+        # Armed after the piece's rows were built, and before the game's pass.
+        self.assertLess(item.index("Mark1TooltipRows(tipPiece)"), item.index("const bool pieceOnScreen = g_TipSetBlock;"))
+        self.assertLess(item.index("++g_TipSetPassesArmed;"), item.index("g_Orig_DrawInventoryItemV2("))
+        # Off-screen batches run before the arming, so never inside an armed pass.
+        self.assertLess(item.index("TipDrawBatch(S, O, argc, A);"), item.index("const bool pieceOnScreen = g_TipSetBlock;"))
+        # The pass end: of the armed passes, swapped or not, then cleared.
+        end = "if (g_TipTypeLineSwaps != swapsBefore) ++g_TipTypeLines;"
+        self.assertIn(end, item)
+        self.assertIn("else ++g_TipTypeLineMisses;", item)
+        self.assertLess(item.index("g_Orig_DrawInventoryItemV2("), item.index(end))
+        self.assertLess(item.index(end), item.rindex("TipSetBlockClear();"))
+        self.assertEqual(item.count(arm), 2)
+        # The swap is counted where the type-line detour draws it, and nowhere else.
+        line = strip_comments(function_body(self.shipped, "static bool TipTypeLineDraw("))
+        self.assertLess(line.index("if (line == drawn) return false;"), line.index("++g_TipTypeLineSwaps;"))
+        self.assertEqual(re.findall(r"\+\+g_TipTypeLineSwaps\b", self.shipped), ["++g_TipTypeLineSwaps"])
+        for counter in ("g_TipSetPassesArmed", "g_TipTypeLines", "g_TipTypeLineMisses"):
+            with self.subTest(counter=counter):
+                self.assertEqual(re.findall(r"\+\+" + counter + r"\b", self.shipped), ["++" + counter])
+        # The block's own count needs the on-screen pass too.
+        stat = function_body(self.shipped, "static RValue& Hook_DrawInventoryStatsNew(")
+        self.assertIn("if (g_TipSetBlock && g_TipSetOnScreen) {", stat)
+        # And the line's three new fields read those counters.
+        fields = self.body("stat_fields")
+        self.assertIn("f.tipArmed = g_TipSetPassesArmed;", fields)
+        self.assertIn("f.typeLine = g_TipTypeLines;", fields)
+        self.assertIn("f.typeLineMiss = g_TipTypeLineMisses;", fields)
+        # Each pass starts and ends with the on-screen flag clear.
+        clear = function_body(self.shipped, "static void TipSetBlockClear()")
+        self.assertIn("g_TipSetOnScreen = false;", clear)
 
     # ---- the jump (Mark1Jump.hpp): the shared detours ------------------------------------
 

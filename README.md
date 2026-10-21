@@ -1838,7 +1838,12 @@ each piece was found, the casts it pressed, the skips, the casts that landed
 and the turns each of the four slots waited or gave up, the jumps it
 lengthened or left alone and the reach it used, how many of the pieces' icons
 loaded, how many set displays it drew in the pieces' tooltips, and how many
-movement-speed answers it halved. A second line,
+movement-speed answers it halved. The tooltip counts are for tooltips you
+hover on screen only: `tip=` the set displays drawn, `tip-armed=` the
+tooltips it got ready for a piece (whether or not the display was drawn),
+and of those `typeline=` the ones whose line under the name it changed to
+`Satanic Set <type>` and `typeline-miss=` the ones where it did not. A
+second line,
 beginning `mark1set drops:`, shows the drops: the switch, how many Heroic
 rolls, named unique rolls and kill draws it saw and added the pieces to,
 each piece's drops from each, and the game's item each piece stands in for on

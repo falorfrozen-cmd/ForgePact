@@ -3438,8 +3438,8 @@ decompiled or disassembled text is quoted here.
 - **How the game draws a skill grant.** Celestial's Authority's `+1 to
   Celestial Might` is stat 203's line in orange (18687), and under it the
   talent's description in grey (8421504), wrapped and centred, then a
-  parameter row. **Measured** on all 200 captured tooltips with that line,
-  all of them ALT views or items that roll no ranges, so whether the
+  parameter row. **Measured** on all 200 captured tooltips with a stat-203
+  line (161 of them potions and relics), all of them ALT views or items that roll no ranges, so whether the
   description shows without ALT is **not established** (`desc-plain` below
   looks).
 - **The set tables.** `GetSetName` turns a set index 1 to 70 into its
@@ -3481,9 +3481,15 @@ decompiled or disassembled text is quoted here.
   description in grey, an empty row, `Mark 1` in pale gold, and the four
   pieces' names, green when worn and dark grey when not. The pieces' type
   line reads `Satanic Set <type>`, as the game's own set pieces do (the
-  owner's choice). `mark1set stat` counts the blocks drawn (`tip=`) and
-  those drawn on a worn read that failed or had an unreadable slot
-  (`tip-unread=`).
+  owner's choice). `mark1set stat` counts, on the player's own (on-screen)
+  tooltips only, the blocks drawn (`tip=`) and those drawn on a worn read
+  that failed or had an unreadable slot (`tip-unread=`); the passes armed
+  for a piece, whether or not the block reached its anchor (`tip-armed=`);
+  and of those, the passes whose type line was drawn as `Satanic Set <type>`
+  (`typeline=`) and the ones that ended with no swap (`typeline-miss=`).
+  Item Truth's off-screen drawing passes count in none of the five. The
+  type line's hook goes in once a piece armed the art and a character
+  exists, whether or not the build embeds the pieces' art.
 - **Rejected: making the pieces a game set.** A 71st entry in
   `GetSetInformation`, `GetSetName` and `requiredPieces` would let the pass
   draw the section itself, but the section names pieces by unique triple and
@@ -3523,13 +3529,19 @@ otherwise.
   (`UI_Pickup_Tooltip_obj`, a second tooltip object); a worn piece hovered;
   pieces loaded from a save in a fresh game process.
 - **Debugger:** none. The one call question, whether a new hover runs a new
-  tooltip pass, is answered by the plugin's own `tip=` count, with the first
-  hover as its positive control. Every other check is a screenshot or a
-  stat field.
+  tooltip pass, is read from the plugin's own `tip-armed=` count (the
+  on-screen passes armed for a piece, whether or not the block reached its
+  anchor), with the first hover as its positive control; `tip=` counts only
+  the blocks drawn, so it cannot tell a pass that never ran from one whose
+  block never anchored. `typeline=` and `typeline-miss=` say whether each
+  armed pass drew its `Satanic Set <type>` line. A hover whose `tip-armed=`
+  did not rise is recorded as not observed to re-run, never as a cached
+  tooltip, unless a pass count backs that reading. Every other check is a
+  screenshot or a stat field.
 - **Relies on:** `mark1probe spawn` (the hub guide's Mark 1 set ›
   *Commands*, and Mod live procedure 2's Pieces); the `mark1set stat` fields
-  (the hub guide's Command Reference, with `tip=` and `tip-unread=` from
-  Phase 5); one stat-call pass per hover (hub `docs/RUNTIME_DATA_MODELS.md`
+  (the hub guide's Command Reference, with `tip=`, `tip-unread=`,
+  `tip-armed=`, `typeline=` and `typeline-miss=` from Phase 5); one stat-call pass per hover (hub `docs/RUNTIME_DATA_MODELS.md`
   § 16.6, measured); the set display's colours (§ 16.12, measured);
   `hs_exit_to_menu`, `hs_stop_game`, `hs_launch`, `hs_select_character` and
   `hs_input` (the hub's `docs/tools/hs-drive-mcp.md`); the bag on C, and a
@@ -3548,13 +3560,14 @@ otherwise.
   by 4, and the four pieces lie on the ground as our ground icons, never
   base art or `Error_spr` (screenshot, `art-spawn`).
 - S3: hover one piece's ground label. The type line reads `Satanic Set
-  <type>`, the tooltip shows the block (`+1 to Automation` grey, the
-  description, `Mark 1` gold, four grey names), and `tip=` rises
-  (screenshot, `tip-ground`).
+  <type>`, with `typeline=` up and `typeline-miss=` unchanged; the tooltip
+  shows the block (`+1 to Automation` grey, the description, `Mark 1` gold,
+  four grey names), and `tip-armed=` and `tip=` rise (screenshot,
+  `tip-ground`).
 - S4: pick up all four (hover the name label, F) and open the bag (C). The
   bag shows our four icons (screenshot, `art-bag`).
-- S5: hover a bag piece with none worn: the block as in S3, `tip=` up and
-  `tip-unread=` unchanged (`tip-none`).
+- S5: hover a bag piece with none worn: the block as in S3, `tip-armed=`
+  and `tip=` up and `tip-unread=` unchanged (`tip-none`).
 - S6: wear the helmet and the body armour (right click), then hover a bag
   piece again: those two names green, the other two and the bonus line grey
   (`tip-two`).
@@ -3563,8 +3576,9 @@ otherwise.
 - S8: `mark1set bonus 1` and hover a worn piece again: the bonus line gold
   (`tip-full-on`). Then `mark1set bonus 0`.
 - For S3 and S5 to S8, every row sits inside the tooltip's box, none over
-  another or over the footer (`tip-layout`). `tip=` is recorded before and
-  after each hover (`tip-rehover`).
+  another or over the footer (`tip-layout`). `tip-armed=`, `tip=`,
+  `typeline=` and `typeline-miss=` are recorded before and after each hover
+  (`tip-rehover`).
 - S9: if Sorak holds a game item with a `+N to <skill>` line, hover it
   without ALT (screenshot) and then with ALT held (screenshot), and record
   whether its description shows in each (`desc-plain`).
@@ -3580,5 +3594,6 @@ otherwise.
 `tip-none`, `tip-two`, `tip-full-off`, `tip-full-on`, `tip-layout` and
 `art-save`. `art-default` is acceptance too but not required, because a
 piece already in the save makes it not observed. Research, never required
-and recorded as read: `tip-rehover` (a hover whose `tip=` did not rise means
-a cached tooltip, which is the finding) and `desc-plain`.
+and recorded as read: `tip-rehover` (whether each hover's `tip-armed=` rose;
+one that did not is not observed to re-run, and reads as a cached tooltip
+only if a pass count backs it) and `desc-plain`.

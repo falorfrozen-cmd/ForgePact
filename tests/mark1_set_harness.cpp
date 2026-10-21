@@ -28,7 +28,8 @@
 // the `drops 1|0` form, and a drops switch-on arms the same art flag without
 // touching the set's switch (phase 3, Mark1Drops.hpp). art_baseline/* and
 // art_target/*: `mark1set bonus 1` alone no longer arms the art; a piece's
-// dressing and the drops' switch do, both sticky. tooltip_baseline/* and
+// dressing and the drops' switch do, both sticky; the pieces' type line goes
+// in once armed, embedded art or not. tooltip_baseline/* and
 // tooltip_target/*: the set block a piece's tooltip draws, its rows and
 // colours by what is worn, the switch and the read, and the piece's type line
 // (the owner's playtest, 2026-10-21).
@@ -592,7 +593,7 @@ int main()
             " | jump granted=0 backed-off=0 refused-landing=0 refused-gate=0 refused-cursor=0 max=175(start)"
             " refused-unreadable=0 jumps=0 scaled=0 clamped=0 answered=0 excluded=0 rejected=0/0/0/0 unread=0/0/0/0/0/0"
             " grid-reads=0/0/0 | icons=0/0 art=off ground=0 ground-route=not-installed tip=0 tip-unread=0"
-            " | speed=unavailable penalty=unavailable";
+            " tip-armed=0 typeline=0 typeline-miss=0 | speed=unavailable penalty=unavailable";
         check("stat/fresh_line_exact", fresh == expected, fresh);
 
         bool ok = true;
@@ -690,7 +691,8 @@ int main()
             "landed", "skip-turn", "yielded", "cast-calls",
             "granted", "backed-off", "refused-landing", "refused-gate", "refused-cursor", "max",
             "refused-unreadable", "jumps", "scaled", "clamped", "answered", "excluded", "rejected", "unread", "grid-reads",
-            "icons", "art", "ground", "ground-route", "tip", "tip-unread", "speed", "penalty" };
+            "icons", "art", "ground", "ground-route", "tip", "tip-unread", "tip-armed", "typeline", "typeline-miss",
+            "speed", "penalty" };
         const std::string fresh = StatLine(StatFields{});
         bool ok = fieldNames(fresh) == names;
         check("failure_counts/every_field_once_in_order", ok, fresh);
@@ -959,6 +961,11 @@ int main()
         check("art_baseline/a_fresh_core_is_not_armed_and_nothing_is_pending",
               !fresh.ArtArmed() && !ArtGroundInstallPending(fresh.ArtArmed(), 8, false)
                   && !ArtWantsGroundInstall(fresh.ArtArmed(), 8, false, true, true));
+        // Nor is the pieces' type line, embedded art or not.
+        check("art_baseline/unarmed_the_type_line_install_is_not_pending",
+              !TypeLineInstallPending(fresh.ArtArmed(), false) && !ArtInstallPending(fresh.ArtArmed(), 8, false, false)
+                  && !ArtInstallPending(fresh.ArtArmed(), 0, false, false)
+                  && !ArtWantsInstall(fresh.ArtArmed(), 0, false, false, true, true));
         // `mark1set bonus 1` alone leaves it unarmed, before and after its
         // install, and after a refused one.
         Bonus on;
@@ -1002,6 +1009,19 @@ int main()
               ArtGroundInstallPending(piece.ArtArmed(), 8, false) && ArtGroundInstallPending(drops.ArtArmed(), 8, false)
                   && ArtWantsGroundInstall(quiet.ArtArmed(), 8, false, true, true)
                   && !ArtWantsGroundInstall(quiet.ArtArmed(), 8, false, true, false));
+        // The pieces' type line goes in once armed and a character exists,
+        // with or without embedded art (instrument-blindness round 0: it no
+        // longer shares the icons' gate), and once.
+        bool ok = TypeLineInstallPending(quiet.ArtArmed(), false) && !TypeLineInstallPending(quiet.ArtArmed(), true)
+            && ArtInstallPending(quiet.ArtArmed(), 0, false, false)
+            && ArtWantsInstall(quiet.ArtArmed(), 0, false, false, true, true)
+            && !ArtWantsInstall(quiet.ArtArmed(), 0, false, false, true, false)   // character select: no player
+            && !ArtWantsInstall(quiet.ArtArmed(), 0, false, false, false, true)
+            && !ArtInstallPending(quiet.ArtArmed(), 0, false, true)
+            && ArtInstallPending(quiet.ArtArmed(), 8, false, true)               // the ground consumer still waits
+            && ArtInstallPending(quiet.ArtArmed(), 8, true, false)               // the type line still waits
+            && !ArtInstallPending(quiet.ArtArmed(), 8, true, true);
+        check("art_target/the_type_line_install_waits_for_no_embedded_art", ok);
         StatFields f;
         quiet.FillStat(f);
         check("art_target/the_line_reads_art_armed_with_the_switch_off",
@@ -1115,9 +1135,30 @@ int main()
         counted.tip = 7;
         counted.tipUnread = 2;
         const std::string line = StatLine(counted);
-        ok = has(fresh, " ground-route=not-installed tip=0 tip-unread=0 | speed=") && field(line, "tip") == "7"
+        ok = has(fresh, " ground-route=not-installed tip=0 tip-unread=0 ") && field(line, "tip") == "7"
             && field(line, "tip-unread") == "2";
         check("tooltip_target/the_line_carries_tip_and_tip_unread", ok, line);
+
+        // The on-screen passes armed for a piece, and of those the ones whose
+        // type line was swapped and the ones that ended with no swap, after
+        // tip-unread= (instrument-blindness round 0: the block's count alone
+        // cannot tell a pass that never ran from one whose block never anchored,
+        // and nothing counted the type line).
+        StatFields passes;
+        passes.tip = 3;
+        passes.tipUnread = 1;
+        passes.tipArmed = 5;
+        passes.typeLine = 4;
+        passes.typeLineMiss = 1;
+        const std::string counted2 = StatLine(passes);
+        ok = has(fresh, " tip=0 tip-unread=0 tip-armed=0 typeline=0 typeline-miss=0 | speed=")
+            && field(counted2, "tip") == "3" && field(counted2, "tip-unread") == "1" && field(counted2, "tip-armed") == "5"
+            && field(counted2, "typeline") == "4" && field(counted2, "typeline-miss") == "1"
+            && counted2.find(" tip-unread=") < counted2.find(" tip-armed=")
+            && counted2.find(" tip-armed=") < counted2.find(" typeline=")
+            && counted2.find(" typeline=") < counted2.find(" typeline-miss=")
+            && counted2.find(" typeline-miss=") < counted2.find(" | speed=");
+        check("tooltip_target/the_line_carries_tip_armed_typeline_and_typeline_miss", ok, counted2);
     }
 
     std::cout << (failures ? "RESULT FAIL " + std::to_string(failures) : std::string("RESULT OK")) << std::endl;
