@@ -1382,8 +1382,14 @@ private:
 //
 // `draws push <c>` (the lever): for the length of each outermost DropItem call, c copies
 // of each Mark 1 kill stand-in on each of lootListUnique[0..5]. A `draw`-scope
-// CreateDefaultParams call whose pair is a pushed stand-in's, typed by the scope's latest
-// read, is a pick (`picks=`); one built is a `pick-builds=`. Nothing is rewritten, the
+// CreateDefaultParams call whose pair is a pushed stand-in's is a pick (`picks=`); one built
+// is a `pick-builds=`. A pick is typed against every triple the scope read since its last
+// typed pick or build, not only the latest read: whether the draw keeps the first entry it
+// accepts or weighs several and keeps an earlier one is not established, and typing by the
+// latest read alone would leave every pick of a weighing draw untyped (picks, pick-builds,
+// on-k and off-k all flat). When the pair names triples of more than one class, the pick
+// counts at once only if all of them were pushed; otherwise the build settles it by its
+// class. Nothing is rewritten, the
 // adapter takes the copies off again on every way out (the tail rule, `anomalies=`
 // otherwise), and the lever refuses while Mark 1 drops or Pocket Elf is switched on,
 // since both push onto the same lists. Three counters say whether the lists the draw read
@@ -1397,6 +1403,7 @@ private:
 inline constexpr int kDrawListCount = Mark1Drops::kListCount;   // lootListUnique[0..5]
 inline constexpr int kDrawTierCount = 6;                         // LoadSatanicDropTier answers 0..5 (static reading)
 inline constexpr int kDrawBuiltLineCap = 200;                    // `built` lines a session; the counters go on
+inline constexpr size_t kDrawReadWindowCap = 2048;               // distinct triples a scope remembers between picks
 
 enum class DrawScope : int { Draw, DropUnique, Angelic, Heroic, Outside };
 inline constexpr int kDrawScopeCount = 5;
@@ -1457,7 +1464,7 @@ struct DrawCounts {
 
 // What the adapter reads for one build before NoteBuilt: whether it is a unique (c 1),
 // and the triple its scope's latest typed pick names when the build's class and b agree
-// with that pick (then `lists=` is that triple's counts).
+// with one of the triples that pick matched (then `lists=` is that triple's counts).
 struct DrawBuildQuery {
     bool unique = false;
     bool haveTriple = false;
@@ -1720,8 +1727,9 @@ public:
         }
     }
 
-    // A GetUniqueRepoStruct read of (type, sub, b): counted, and the current scope's latest; in
-    // `draw`, a read of a triple the current call pushed is a `pushed-reads=`.
+    // A GetUniqueRepoStruct read of (type, sub, b): counted, the current scope's latest, and one
+    // of the triples its next pick is typed against; in `draw`, a read of a triple the current
+    // call pushed is a `pushed-reads=`.
     void NoteRead(bool numeric, double t, double sub, double b)
     {
         if (!on_) return;
@@ -1729,44 +1737,56 @@ public:
         Frame& f = Top();
         ++f.reads;
         f.haveRead = numeric && Mark1Set::AsWhole(t, f.read.t) && Mark1Set::AsWhole(sub, f.read.sub) && Mark1Set::AsWhole(b, f.read.b);
-        if (!f.haveRead || f.kind != DrawScope::Draw) return;
-        for (const Mark1Drops::Triple& p : pushed_) {
-            if (!(p == f.read)) continue;
-            ++counts_.pushedReads;
-            break;
-        }
+        if (!f.haveRead) return;
+        RememberRead(f, f.read);
+        if (f.kind == DrawScope::Draw && IsPushed(f.read)) ++counts_.pushedReads;
     }
 
-    // A CreateDefaultParams call of (sub, b): the current scope's pick, typed when the scope's
-    // latest read names the same pair; in `draw`, a typed pick of a pushed stand-in counts.
+    // A CreateDefaultParams call of (sub, b): the current scope's pick, typed when any triple
+    // the scope read since its last typed pick or build names the same pair (the newest such
+    // read first). A draw that weighs several entries and keeps one it read earlier is typed
+    // the same as one that keeps the last entry it read. In `draw`, a typed pick counts in
+    // `picks=` now when every triple it matched was pushed; when the pair also names a triple
+    // that was not, the build settles it by its class (NoteBuilt).
     void NotePick(bool numeric, double sub, double b)
     {
         if (!on_) return;
         Frame& f = Top();
-        long long s = 0, bb = 0;
-        f.havePick = numeric && f.haveRead && Mark1Set::AsWhole(sub, s) && Mark1Set::AsWhole(b, bb) && s == f.read.sub && bb == f.read.b;
-        f.pick = f.read;
+        f.havePick = false;
         f.pickPushed = false;
-        if (!f.havePick || f.kind != DrawScope::Draw) return;
-        for (const Mark1Drops::Triple& p : pushed_) {
-            if (!(p == f.pick)) continue;
-            f.pickPushed = true;
-            ++counts_.picks;
-            break;
+        f.pickMatches.clear();
+        long long s = 0, bb = 0;
+        if (numeric && Mark1Set::AsWhole(sub, s) && Mark1Set::AsWhole(b, bb)) {
+            for (auto it = f.window.rbegin(); it != f.window.rend(); ++it)
+                if (it->sub == s && it->b == bb) f.pickMatches.push_back(*it);
         }
+        if (f.pickMatches.empty()) return;   // untyped: the reads stay for the next pick
+        f.havePick = true;
+        f.pick = f.pickMatches.front();
+        f.window.clear();                    // the next pick is typed against the reads after this one
+        if (f.kind != DrawScope::Draw) return;
+        bool allPushed = true;
+        for (const Mark1Drops::Triple& m : f.pickMatches) allPushed = allPushed && IsPushed(m);
+        if (!allPushed) return;
+        f.pickPushed = true;
+        ++counts_.picks;
     }
 
-    // What to read for one build: whether it is a unique, and the triple its scope picked.
+    // What to read for one build: whether it is a unique, and the triple its scope picked, the
+    // one of the pick's matches whose class and b are the build's.
     DrawBuildQuery Query(const DrawBuilt& item) const
     {
         DrawBuildQuery q;
         long long c = -1, t = -1, b = -1;
         q.unique = item.c && Mark1Set::AsWhole(*item.c, c) && c == 1;
         const Frame& f = TopConst();
-        if (q.unique && f.havePick && item.t && item.b && Mark1Set::AsWhole(*item.t, t) && Mark1Set::AsWhole(*item.b, b)
-            && t == f.pick.t && b == f.pick.b) {
+        if (!q.unique || !f.havePick || !item.t || !item.b || !Mark1Set::AsWhole(*item.t, t) || !Mark1Set::AsWhole(*item.b, b))
+            return q;
+        for (const Mark1Drops::Triple& m : f.pickMatches) {
+            if (m.t != t || m.b != b) continue;
             q.haveTriple = true;
-            q.triple = f.pick;
+            q.triple = m;
+            break;
         }
         return q;
     }
@@ -1787,8 +1807,12 @@ public:
         Frame& f = Top();
         const int k = DrawK();
         if (scope == DrawScope::Draw && q.haveTriple) {
-            if (f.pickPushed) ++counts_.pickBuilds;
-            else if (lists && k >= 0) ++((*lists)[static_cast<size_t>(k)] >= 1 ? counts_.onK : counts_.offK);
+            if (IsPushed(q.triple)) {
+                if (!f.pickPushed) ++counts_.picks;   // a pick its pair left open, settled by the build's class
+                ++counts_.pickBuilds;
+            } else if (lists && k >= 0) {
+                ++((*lists)[static_cast<size_t>(k)] >= 1 ? counts_.onK : counts_.offK);
+            }
         }
         std::string line;
         if (lines_ < kDrawBuiltLineCap) {
@@ -1806,6 +1830,8 @@ public:
         f.reads = 0;
         f.havePick = false;
         f.pickPushed = false;
+        f.pickMatches.clear();
+        f.window.clear();
         return line;
     }
 
@@ -1821,10 +1847,31 @@ private:
         int                reads = 0;       // reads in this scope since its last build
         bool               haveRead = false;
         Mark1Drops::Triple read;            // the latest read
+        std::vector<Mark1Drops::Triple> window;        // distinct reads since the last typed pick or build, oldest first
         bool               havePick = false;
-        Mark1Drops::Triple pick;            // the latest typed pick
-        bool               pickPushed = false;
+        Mark1Drops::Triple pick;            // the latest typed pick: its newest matching read
+        std::vector<Mark1Drops::Triple> pickMatches;   // every read in the window the pick's pair named, newest first
+        bool               pickPushed = false;          // counted in `picks=` at the pick: every match was pushed
     };
+
+    bool IsPushed(const Mark1Drops::Triple& x) const
+    {
+        for (const Mark1Drops::Triple& p : pushed_)
+            if (p == x) return true;
+        return false;
+    }
+
+    // A read joins its scope's window once, as the newest; past the cap the oldest drops out.
+    static void RememberRead(Frame& f, const Mark1Drops::Triple& x)
+    {
+        for (auto it = f.window.begin(); it != f.window.end(); ++it) {
+            if (!(*it == x)) continue;
+            f.window.erase(it);
+            break;
+        }
+        f.window.push_back(x);
+        if (f.window.size() > kDrawReadWindowCap) f.window.erase(f.window.begin());
+    }
 
     static std::string RoutesText(const DrawRoutes& r)
     {
