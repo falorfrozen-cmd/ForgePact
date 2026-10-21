@@ -106,6 +106,11 @@ anything that suspends the game's own loop.
   in Mod live 8 (§ Phase 4, "Mod live 7 results", "Phase 4 decision" and "Mod
   live 8 results"). It supersedes the `DropUniqueItems` route as the kill
   route, and its `draw-claim` decides what the player text says about kills.
+- **Phase 5 (the set tooltip and the pieces' art):** built, Mod live
+  procedure 9 pending (§ Phase 5). The pieces show their art from the moment
+  they exist, whatever the switches say, and each piece's tooltip draws the
+  set the way the game draws its own sets. The game facts it rests on are in
+  `docs/RUNTIME_DATA_MODELS.md` § 16.12.
 
 ## Static search
 
@@ -3394,3 +3399,186 @@ piece and for Pocket Elf.
 - `incident stat` counted 29 episodes by the end of L4, at copies 400,
   with frames over a second and `drops` the mod with the worst frame; the
   session did not measure the drops' cost at copies 1.
+
+## Phase 5: the set tooltip and the pieces' art
+
+The owner's playtest of 2026-10-21, on a research DLL with the pieces placed
+by `mark1probe spawn set`, asked for three things before the pull requests
+([ForgePact#166, the owner's comment](https://github.com/falorfrozen-cmd/ForgePact/issues/166#issuecomment-6322675344)):
+
+1. **The pieces' own art, always.** The pieces showed base-item art. The art
+   was armed by the session's first `mark1set bonus 1`, and the pieces had
+   been built before it ran, so a piece loaded from a save or built before
+   the switch kept its base art.
+2. **A set display like the game's own set items:** the set's power, and
+   which of its pieces the player wears.
+3. **Automation as a passive:** the full-set bonus reads **+1 to
+   Automation**, with what Automation does underneath, the way a `+1 to
+   <talent>` line reads on Celestial Might.
+
+Phase 5 builds all three. One session on the research build,
+Mod live procedure 9 below, checks them.
+
+### Phase 5 static reading
+
+Read on 2026-10-21 through the hub's ghidra MCP, and measured from Item
+Truth's tooltip captures (game build `pe-6aaa6779-0cad4fc8`, 2026-09-27 to
+2026-10-21). The shared facts are in the hub's `docs/RUNTIME_DATA_MODELS.md`
+§ 16.12, with their labels; this is the part phase 5 builds on, in short. No
+decompiled or disassembled text is quoted here.
+
+- **How the game draws a set piece.** After the item's own stats and
+  sockets, and a two-row gap each time: the set's bonus lines, pale gold
+  (7844807) when active and dark grey (4210752) when not; then the set's
+  name, centred, in pale gold; then one centred row per piece, in the set's
+  order, green (65280) when worn and dark grey when not. No count of worn
+  pieces is drawn. **Measured** over 230 set-piece tooltips. The rule that
+  lights a bonus line, and how the pass decides an item belongs to a set,
+  are **not established**.
+- **How the game draws a skill grant.** Celestial's Authority's `+1 to
+  Celestial Might` is stat 203's line in orange (18687), and under it the
+  talent's description in grey (8421504), wrapped and centred, then a
+  parameter row. **Measured** on all 200 captured tooltips with that line,
+  all of them ALT views or items that roll no ranges, so whether the
+  description shows without ALT is **not established** (`desc-plain` below
+  looks).
+- **The set tables.** `GetSetName` turns a set index 1 to 70 into its
+  localized name; `DefineSetPieceRequirements` fills `requiredPieces` for
+  the same 70 sets with 2, 3 or 4; `gml_Script_s_SetItemInfo` names a piece
+  by three fields, `itemType`, `weaponType` and `itemId`, a unique triple;
+  `GetSetInformation` sorts a set name into one of 70 cases; and
+  `DrawInventoryItemV2`, the tooltip pass, is a method value whose body the
+  MCP's decompiler gives up on. **Static reading.**
+- **The art today.** The art was armed by the core's sticky flag, set only
+  by `mark1set bonus 1` and `mark1set drops 1`. A piece is dressed (our bag
+  sprite written, the icons loaded on first use) only when it is built,
+  inside `CreateItemNew`'s outermost return, and only while that flag is
+  set. So the playtest's pieces, placed before `bonus 1`, kept base art, and
+  right after `bonus 1` the stat line read `icons=0/8 art=armed ground=0`:
+  armed, with nothing dressed since. The switch gated the art because our
+  sprite draws `Error_spr` on the ground until the ground consumer, which
+  rides hidden loot's shared `LootGroundInit` detour, sets the ground
+  instance's sprite, and that detour is installed by the tick once the art
+  is armed and a character exists.
+- **The new rule.** The first dressing of a piece outside Item Truth's own
+  builds arms the art, before the armed test, so the first piece of a
+  session gets its art at once; `mark1set drops 1` still arms it; and on the
+  research build `mark1probe spawn` arms it and installs the ground consumer
+  before it builds anything. `mark1set bonus 1` no longer arms it. The flag
+  stays the core's, with one setter beside the drops' one. This follows the
+  flight charms, whose dressing arms flight and whose tick installs the same
+  shared detour whatever the switches say. A player who holds no piece still
+  loads, writes and installs nothing for the art; one who holds a piece gets
+  the art and the ground consumer with every switch off, which is the
+  piece's own display, not a mod turned on. One window stays: a piece moved
+  to the ground after the character loads and before the tick's install (at
+  most 60 frames after the player resolves) would draw `Error_spr`, as
+  `bonus 1` at character select could before; it is in the module guide's
+  Known Limitations.
+- **The set block.** In place of the pieces' old three gold rows, at the same
+  anchor and in the game's order: `+1 to Automation` (pale gold while all
+  four are worn and `mark1set bonus` is on, dark grey otherwise), its
+  description in grey, an empty row, `Mark 1` in pale gold, and the four
+  pieces' names, green when worn and dark grey when not. The pieces' type
+  line reads `Satanic Set <type>`, as the game's own set pieces do (the
+  owner's choice). `mark1set stat` counts the blocks drawn (`tip=`) and
+  those drawn on a worn read that failed or had an unreadable slot
+  (`tip-unread=`).
+- **Rejected: making the pieces a game set.** A 71st entry in
+  `GetSetInformation`, `GetSetName` and `requiredPieces` would let the pass
+  draw the section itself, but the section names pieces by unique triple and
+  a Mark 1 piece is a base item, no such triple; index 71 is past both
+  tables; a real set entry carries set-bonus stats, and the mod adds no item
+  stats; and how the pass finds an item's set was not read.
+- **Rejected: a real `+1 to <talent>` grant** (stats 202 to 204, as on
+  Celestial's Authority). No talent named Automation exists in
+  `translationsTalent.csv`, and a grant is an item stat. The block draws the
+  line itself.
+- **Rejected:** keeping the pieces' old affix rows beside the block (a
+  second, stale wording of the bonus on every piece), and re-dressing pieces
+  already built when a switch arms the art (a walk over every grid, for a
+  case the new rule removes).
+
+### Mod live procedure 9
+
+One session on the research build that carries Phase 5. The capture is the
+tooltip workorder's live capture 1,
+`forgepact-166-mark1-set-tooltip-live-1.md`, kept with the hub's workorder
+files and not tracked. Every Mark 1 switch stays off unless a step says
+otherwise.
+
+**Setup:**
+
+- **Build:** the research build (`plugin_build\build.bat dev`) at the
+  ForgePact commit that carries Phase 5; its path and SHA-256 are recorded
+  in the capture, and `dll-hash` compares the installed DLL with that
+  SHA-256. The owner is asked before it is installed.
+- **Character:** save slot 14, "Sorak", saves backed up first and restored
+  at the end. The session restores its own backup, so the pieces it saves
+  vanish with it.
+- **Control:** `ping` answers `pong (YYTK 4.0.1)` (`control`), and a bare
+  `mark1probe` answers `mark1probe: research build` with its rows line
+  (`marker`).
+- **Cases:** a bag piece hovered (the ordinary case); a ground piece hovered
+  (`UI_Pickup_Tooltip_obj`, a second tooltip object); a worn piece hovered;
+  pieces loaded from a save in a fresh game process.
+- **Debugger:** none. The one call question, whether a new hover runs a new
+  tooltip pass, is answered by the plugin's own `tip=` count, with the first
+  hover as its positive control. Every other check is a screenshot or a
+  stat field.
+- **Relies on:** `mark1probe spawn` (the hub guide's Mark 1 set ›
+  *Commands*, and Mod live procedure 2's Pieces); the `mark1set stat` fields
+  (the hub guide's Command Reference, with `tip=` and `tip-unread=` from
+  Phase 5); one stat-call pass per hover (hub `docs/RUNTIME_DATA_MODELS.md`
+  § 16.6, measured); the set display's colours (§ 16.12, measured);
+  `hs_exit_to_menu`, `hs_stop_game`, `hs_launch`, `hs_select_character` and
+  `hs_input` (the hub's `docs/tools/hs-drive-mcp.md`); the bag on C, and a
+  pickup by hovering the item's name label and pressing F (the owner's
+  standing rules).
+
+**Steps:**
+
+- S1: a fresh game process with the character loaded: `dll-hash`,
+  `control` and `marker`. Then `mark1set stat` before any `mark1set`
+  command. With no piece in Sorak's gear, bag or stash it reads `art=off
+  icons=0/8 ground-route=not-installed` (`art-default`; not observed, with
+  the reading recorded, if a piece from an earlier save is already there).
+- S2: `mark1probe spawn set` (then `lootshow` if the labels are hidden). The
+  stat line reads `art=armed icons=8/8 ground-route=both` with `ground=` up
+  by 4, and the four pieces lie on the ground as our ground icons, never
+  base art or `Error_spr` (screenshot, `art-spawn`).
+- S3: hover one piece's ground label. The type line reads `Satanic Set
+  <type>`, the tooltip shows the block (`+1 to Automation` grey, the
+  description, `Mark 1` gold, four grey names), and `tip=` rises
+  (screenshot, `tip-ground`).
+- S4: pick up all four (hover the name label, F) and open the bag (C). The
+  bag shows our four icons (screenshot, `art-bag`).
+- S5: hover a bag piece with none worn: the block as in S3, `tip=` up and
+  `tip-unread=` unchanged (`tip-none`).
+- S6: wear the helmet and the body armour (right click), then hover a bag
+  piece again: those two names green, the other two and the bonus line grey
+  (`tip-two`).
+- S7: wear all four and hover a worn piece: four names green and the bonus
+  line grey, the switch being off (`tip-full-off`).
+- S8: `mark1set bonus 1` and hover a worn piece again: the bonus line gold
+  (`tip-full-on`). Then `mark1set bonus 0`.
+- For S3 and S5 to S8, every row sits inside the tooltip's box, none over
+  another or over the footer (`tip-layout`). `tip=` is recorded before and
+  after each hover (`tip-rehover`).
+- S9: if Sorak holds a game item with a `+N to <skill>` line, hover it
+  without ALT (screenshot) and then with ALT held (screenshot), and record
+  whether its description shows in each (`desc-plain`).
+- S10: `hs_exit_to_menu` (the game saves), `hs_stop_game`, `hs_launch` and
+  `hs_select_character` 14. Before any `mark1set` command, `mark1set stat`
+  reads `bonus=off`, `art=armed` and `icons=8/8`, and the worn pieces show
+  our icons (screenshot, `art-save`).
+- S11: teardown: `hs_stop_game`, `hs_saves_inspect`, `hs_saves_restore` and
+  `hs_lease_release`.
+
+**Checks.** Session validity, all required: `dll-hash`, `control` and
+`marker`. Acceptance, all required: `art-spawn`, `art-bag`, `tip-ground`,
+`tip-none`, `tip-two`, `tip-full-off`, `tip-full-on`, `tip-layout` and
+`art-save`. `art-default` is acceptance too but not required, because a
+piece already in the save makes it not observed. Research, never required
+and recorded as read: `tip-rehover` (a hover whose `tip=` did not rise means
+a cached tooltip, which is the finding) and `desc-plain`.
