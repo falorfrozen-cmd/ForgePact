@@ -7,8 +7,8 @@ game's own set pieces, that, worn together with the new **Mark 1 set** switch
 on (off by default), cast the skills on your Q, E, R and Y slots for you and
 send your jump three times as far over scenery, at the price of walking at
 half speed. A second switch, **Mark 1 drops** (also off by default), lets
-the pieces drop from the monsters you kill (seen in Hell), among the game's own SS
-unique items, and adds them to the Heroic roll a vault runs. See "Finding the
+the pieces drop from the monsters you kill, among the game's own SS unique
+items, and adds them to the Heroic roll a vault runs. See "Finding the
 pieces" below.
 
 ## New
@@ -50,7 +50,9 @@ pieces" below.
     built on.
   - **Finding the pieces.** Switch on **Mark 1 drops** (Mods → Items, off by
     default; it works with or without the set's own switch). The pieces then
-    drop from kills (seen in Hell). When a kill drops a unique item, the game draws
+    drop from kills, checked in Hell (zone levels 243 to 276); whether
+    lower-level zones and the other difficulties drop them is not yet known.
+    When a kill drops a unique item, the game draws
     it from one of its unique lists; each piece stands in on those lists for
     one of the game's own SS Satanic uniques of its kind, the way the game's
     own SS set pieces drop. SS uniques are rare, and how often a kill gives a
@@ -84,7 +86,8 @@ pieces" below.
   kills in Act 1 on Hell, that roll did not run once. Now Pocket Elf joins
   the draw the game itself uses for a kill's unique items, standing in for
   one SS Satanic unique, the rarity and tier of Aimbot.exe, so it drops from
-  kills (seen in Hell). SS uniques are rare, and how often a kill gives a Pocket
+  kills, checked in Hell (zone levels 243 to 276); whether lower-level zones
+  and the other difficulties drop it is not yet known. SS uniques are rare, and how often a kill gives a Pocket
   Elf at the normal setting has not been measured. Tested in a game session
   on 2026-10-21 with Pocket Elf's share raised 400-fold and magic find
   raised: a Pocket Elf dropped from a kill in Hell. With the switch off,
