@@ -188,9 +188,9 @@
     <label class="switch"><input type="checkbox" id="mod_mark1_set" aria-label="Mark 1 set"><span class="sl"></span></label>
     <span class="val" id="mk1val">off</span>
   </div>
-  <!-- Mark 1 drops (#166): lets the four pieces join the game's own unique roll, which the monsters you kill anywhere run, and its Heroic roll, which vaults run. -->
+  <!-- Mark 1 drops (#166): the kill route is DropItem's unique draw (kills measured in Hell only), the vault route the game's Heroic roll (built by name-called rolls; a vault's own call not observed). -->
   <div class="row" style="border:none">
-    <span class="lbl" style="width:auto;flex:1">Mark 1 drops<br><span class="feature-description">Lets the four pieces of Mark 1, a ForgePact item set (helmet, body armor, boots and gloves), drop from the monsters you kill anywhere, and from vaults, among the game's own items. The set's bonus is the Mark 1 set switch above. Off by default.</span></span>
+    <span class="lbl" style="width:auto;flex:1">Mark 1 drops<br><span class="feature-description">Lets the four pieces of Mark 1, a ForgePact item set (helmet, body armor, boots and gloves), drop from the monsters you kill, among the game's own items, and join the roll a vault makes for its loot. The set's bonus is the Mark 1 set switch above. Off by default.</span></span>
     <label class="switch"><input type="checkbox" id="mod_mark1_drops" aria-label="Mark 1 drops"><span class="sl"></span></label>
     <span class="val" id="mk1dval">off</span>
   </div>

@@ -15,9 +15,11 @@ tests. This file pins what the panel owns, for the one switch
 - the row sits in the Mods tab's Items card (`itemsCard`), directly after the
   Mark 1 set's row, as its own top-level row titled "Mark 1 drops";
 - its description is short, player-facing, says the four pieces can drop from
-  the monsters you kill, anywhere, among the game's own items (vaults may be
-  named too), ends `Off by default.` and names the set `a ForgePact item set`
-  exactly once (the Items card's classification rule);
+  the monsters you kill, among the game's own items, and names a vault only as
+  the roll the pieces join; it says neither "anywhere" (Mod live 8 measured
+  kills in Hell only) nor "from vaults" (a vault's own use of the roll was not
+  observed); it ends `Off by default.` and names the set `a ForgePact item
+  set` exactly once (the Items card's classification rule);
 - it is a boolean mod for the "Enabled mods" list, and a native boolean of the
   derived behaviour oracle, entered on Mods > Items after the Mark 1 set's.
 
@@ -204,12 +206,18 @@ class Mark1DropsPanelRowTests(unittest.TestCase):
         self.assertNotIn(CHARM_TEXT, text)
         self.assertNotIn("forged with Mechanic:", text)
         # What it does for the player: the four pieces can drop from the
-        # monsters you kill, anywhere, among the game's own items (the kill
-        # route, owner 2026-10-20). Vaults may be named too; they are not
-        # required.
-        for said in ("helmet", "body armor", "boots", "gloves", "drop", "monsters you kill", "anywhere",
-                     "among the game's own items"):
+        # monsters you kill, among the game's own items (the kill route, owner
+        # 2026-10-20), and join a vault's roll. It says what was measured and
+        # no more: Mod live 8 measured kills dropping the pieces in Hell only,
+        # so "anywhere" would overclaim; and a vault's own use of the roll was
+        # not observed (Mod live 4 built pieces only from by-name calls of the
+        # roll), so the vault is named as the roll the pieces join, never as
+        # a place they drop "from".
+        for said in ("helmet", "body armor", "boots", "gloves", "drop", "monsters you kill",
+                     "among the game's own items", "vault"):
             self.assertIn(said, text, said)
+        for overclaim in ("anywhere", "from vaults"):
+            self.assertNotIn(overclaim, text, overclaim)
         # No game object, counter, command or measurement: the only digit is
         # the set's own name, and "ForgePact" the one camel-cased word.
         self.assertNotRegex(text.replace("Mark 1", ""), r"\d", text)
