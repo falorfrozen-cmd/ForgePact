@@ -16,8 +16,11 @@ pieces" below.
 - **Mark 1 set (#166).** Mark 1 is an item set of ForgePact's own: the
   **Mark 1 Helmet**, **Mark 1 Body Armor**, **Mark 1 Boots** and **Mark 1
   Gloves**, four Satanic pieces like the game's own set pieces, each with its
-  own icon in the bag and on the ground and a gold **Mark 1** line in its
-  tooltip, and no stats of their own. The set's bonus works only while you wear all four and the new switch
+  own icon in the bag and on the ground, and no stats of their own. Each
+  piece's tooltip reads `Satanic Set <type>` under its name and shows the set
+  the way the game shows its own sets: the set's bonus, **+1 to Automation**,
+  with what Automation does underneath, lit while the bonus is active, then
+  the set's name and its four pieces, the ones you wear in green. The set's bonus works only while you wear all four and the new switch
   (Mods → Items → **Mark 1 set**, off by default) is on.
   - **Your skills cast themselves.** The skills on your Q, E, R and Y slots
     are cast for you whenever the game would let you cast them: the game still
@@ -45,9 +48,10 @@ pieces" below.
     character sheet, can show the changed value while the bonus is on.
     Casting a skill still slows your walk for about a second, as it does
     without the set, on top of the half speed.
-  - **Its own art** shows once you have switched either Mark 1 switch on in
-    that game session; until then a piece looks like the base item it is
-    built on.
+  - **Its own art** shows from the moment you have a piece, whatever the
+    Mark 1 switches say: a piece loaded from your save, one that drops and
+    one placed for a test alike. If its art cannot load, a piece looks like
+    the base item it is built on.
   - **Finding the pieces.** Switch on **Mark 1 drops** (Mods → Items, off by
     default; it works with or without the set's own switch). The pieces then
     drop from kills, checked in Hell (zone levels 243 to 276); whether
@@ -77,7 +81,8 @@ pieces" below.
   that they would show up within one session, kills in Hell dropped all four
   pieces, 8 in all among the 67 unique items the game's draw built. A toggle
   skill on the bar, and a piece dropping from a vault, have not been checked
-  in play yet.
+  in play yet, nor have the set display in the tooltip and the art showing
+  from the moment you have a piece, which came after those sessions.
 
 ## Fixed
 

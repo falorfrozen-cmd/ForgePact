@@ -1766,10 +1766,13 @@ for the state. Both off by default.
 
 Mark 1 is an item set of ForgePact's own: four Satanic pieces, like the game's
 own set pieces, **Mark 1 Helmet**, **Mark 1 Body Armor**, **Mark 1 Boots** and
-**Mark 1 Gloves**. They
-carry no stats of their own; each shows a gold **Mark 1** line and the set's
-bonus in its tooltip. The bonus works only while the switch is on and you wear
-all four.
+**Mark 1 Gloves**. They carry no stats of their own. Each piece's tooltip
+reads `Satanic Set <type>` under its name and shows the set the way the
+game shows its own sets: first the set's bonus, **+1 to Automation**, with
+what Automation does underneath, then the set's name and its four pieces,
+the ones you wear in green. The bonus line lights up while the bonus is
+active and stays grey otherwise. The bonus works only while the switch is on
+and you wear all four.
 
 - **Your skills cast themselves.** The skills on your skill bar's Q, E, R and
   Y slots are cast for you whenever the game would let you cast them: the game
@@ -1805,11 +1808,12 @@ all four.
 - **A cast still slows you.** Casting a skill slows your walk for about a
   second, as it does without the set, and the set does not remove that. The
   slowdown comes on top of the half speed.
-- **Its own art.** Each piece has its own icon in the bag and on the ground
-  once you have switched either Mark 1 switch on in that game session. Until
-  then, or if its art cannot load, a piece looks like the base item it is
-  built on. Switched on with pieces already loaded, they show their new art
-  from the next load.
+- **Its own art.** Each piece shows its own icon in the bag and on the
+  ground from the moment you have one, whatever the Mark 1 switches say: a
+  piece loaded from your save, one that drops and one placed for a test
+  alike. If its art cannot load, a piece looks like the base item it is built
+  on. A piece put on the ground within about a second of your character
+  loading can show a missing-sprite icon there.
 - **Getting the pieces.** Switch on **Mark 1 drops** (Mods → Items, off by
   default, apart from the set's own switch). The pieces then join the draw
   the game itself uses for a monster's unique items: when a kill drops
@@ -1833,7 +1837,8 @@ all four.
 each piece was found, the casts it pressed, the skips, the casts that landed
 and the turns each of the four slots waited or gave up, the jumps it
 lengthened or left alone and the reach it used, how many of the pieces' icons
-loaded, and how many movement-speed answers it halved. A second line,
+loaded, how many set displays it drew in the pieces' tooltips, and how many
+movement-speed answers it halved. A second line,
 beginning `mark1set drops:`, shows the drops: the switch, how many Heroic
 rolls, named unique rolls and kill draws it saw and added the pieces to,
 each piece's drops from each, and the game's item each piece stands in for on
@@ -1856,6 +1861,10 @@ in Hell dropped all four pieces through the game's own draw (2 Helmets, 4
 Body Armors, 1 Boots and 1 Gloves among 67 unique items that draw built),
 and the ones seen on the ground were labelled SS. A piece dropping from a vault has not been seen in play
 yet.
+
+The set display in the tooltip, the `Satanic Set <type>` line and the art
+showing from the moment you have a piece came after those sessions and have
+not been checked in play yet.
 
 ## Goburin's Head pity
 
