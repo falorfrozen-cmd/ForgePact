@@ -27,12 +27,24 @@ item_info.json; the owner, 2026-10-20); the stat line, fresh
 entries and throws, and the jump's failed reads and per-reason rejections
 each reach the line under their own name (a bar column that could not be read
 never lands in `skip-no-state=`). `art_rule`: the pieces' art is armed by the
-session's first switch-on and stays armed; a dressing writes our icon only
+session's first piece dressed and stays armed; a dressing writes our icon only
 when armed, with both copies loaded and a ground detour not known to be
 table-only; the ground consumer is wanted only when armed, in game.
 `drops_arm`: `mark1set drops 1|0` parses, and a drops switch-on arms the same
-art flag (one flag, either switch) while the first stat line and the bonus
-reply stay byte for byte.
+art flag (one flag, a piece or the drops) while the first stat line and the
+bonus reply stay byte for byte.
+
+The owner's playtest (2026-10-21): pieces placed before `mark1set bonus 1`
+kept their base art. `art_baseline`: a fresh core is not armed, and
+`mark1set bonus 1` alone no longer arms it. `art_target`: a piece's dressing
+and the drops' switch arm it, both sticky, and armed the ground install is
+pending. `tooltip_baseline`: what is not a piece gets no block and keeps its
+type line, and the core's colours are the game's own set display and skill
+grant (hs-game-sdk's curated item_info.json, `tooltip.set_section` and
+`tooltip.skill_grant`). `tooltip_target`: the set block's rows exactly, grey
+and green by what is worn, its bonus line lit only with all four worn and the
+switch on, nothing green on a failed read, the type line `Satanic Set
+Gloves`, and the stat line's `tip=0 tip-unread=0`.
 """
 import json
 import os
@@ -208,7 +220,10 @@ class Mark1SetBehaviorTests(unittest.TestCase):
 
     def test_dressing(self):
         self.assertScenarios("dressing/display_names", "dressing/satanic_rarity_and_mechanic",
-                             "dressing/affix_rows_first_reads_mark_1")
+                             "dressing/the_set_name_reads_mark_1")
+        # No affix rows: the set block says what the set does.
+        header = (ROOT / "plugin/include/ForgePact/Mark1Set.hpp").read_text(encoding="utf-8")
+        self.assertNotIn("kAffixRows", header)
 
     # ---- the dressing's tier and rarity (owner, 2026-10-20) ---------------------------
 
@@ -304,8 +319,8 @@ class Mark1SetBehaviorTests(unittest.TestCase):
         self.assertScenarios("art_rule/baseline_fresh_session_not_armed_writes_and_installs_nothing",
                              "art_rule/baseline_fresh_stat_reads_art_off")
 
-    def test_art_rule_first_switch_on_arms_for_the_session(self):
-        self.assertScenarios("art_rule/switch_on_arms_and_off_does_not_disarm",
+    def test_art_rule_the_first_piece_arms_for_the_session(self):
+        self.assertScenarios("art_rule/a_piece_arms_and_the_switch_does_not_disarm",
                              "art_rule/armed_stat_reads_art_armed")
 
     def test_art_rule_a_write_needs_both_copies_and_the_route(self):
@@ -327,10 +342,70 @@ class Mark1SetBehaviorTests(unittest.TestCase):
     def test_drops_arm_a_drops_switch_on_arms_the_art_and_leaves_the_set_off(self):
         self.assertScenarios("drops_arm/drops_on_arms_the_art_and_leaves_the_set_off",
                              "drops_arm/baseline_drops_off_arms_nothing",
-                             "drops_arm/one_flag_either_switch")
+                             "drops_arm/one_flag_a_piece_or_the_drops")
 
     def test_drops_arm_the_first_line_and_the_bonus_reply_stay_byte_for_byte(self):
         self.assertScenarios("drops_arm/first_line_and_bonus_reply_unchanged", "stat/fresh_line_exact")
+
+    # ---- the art armed by a piece (owner playtest, 2026-10-21) ------------------
+
+    def test_art_baseline_a_fresh_core_is_unarmed_and_bonus_1_alone_leaves_it_so(self):
+        self.assertScenarios("art_baseline/a_fresh_core_is_not_armed_and_nothing_is_pending",
+                             "art_baseline/bonus_1_alone_leaves_it_unarmed")
+
+    def test_art_baseline_the_switch_writes_no_art_flag(self):
+        header = (ROOT / "plugin/include/ForgePact/Mark1Set.hpp").read_text(encoding="utf-8")
+        body = header[header.index("void SetEnabled(bool on)"):]
+        body = body[:body.index("\n    }\n")]
+        self.assertNotIn("artArmed_", body)
+
+    def test_art_target_a_piece_and_the_drops_switch_arm_it_sticky(self):
+        self.assertScenarios("art_target/a_piece_dressed_arms_and_stays_armed",
+                             "art_target/a_piece_leaves_the_switch_and_install_alone",
+                             "art_target/the_drops_switch_arms_and_stays_armed",
+                             "art_target/armed_the_ground_install_is_pending",
+                             "art_target/the_line_reads_art_armed_with_the_switch_off")
+
+    # ---- the set block in a piece's tooltip (owner playtest, 2026-10-21) --------
+
+    def colours(self):
+        for line in self.output.split("\n"):
+            if line.startswith("COLOURS "):
+                return {k: int(v) for k, v in (p.split("=") for p in line.split()[1:])}
+        raise AssertionError(f"no COLOURS line in harness output:\n{self.output}")
+
+    def test_tooltip_baseline_what_is_not_a_piece_gets_no_block(self):
+        self.assertScenarios("tooltip_baseline/not_a_piece_gets_no_block",
+                             "tooltip_baseline/not_a_piece_keeps_its_type_line",
+                             "tooltip_baseline/a_piece_keeps_every_other_text")
+
+    def test_tooltip_baseline_the_cores_colours_are_the_games_set_display(self):
+        # The game's own display is the reference: the curated file's measured
+        # set section and skill grant, never a value of our own.
+        tooltip = self.curated()["tooltip"]
+        section, grant = tooltip["set_section"], tooltip["skill_grant"]
+        self.assertEqual(section["status"], "measured")
+        self.assertEqual(grant["status"], "measured")
+        core = self.colours()
+        for name in ("bonus_active", "bonus_inactive", "set_name", "piece_worn", "piece_not_worn"):
+            with self.subTest(colour=name):
+                self.assertEqual(core[name], section["colours"][name])
+        self.assertEqual(core["description"], grant["colours"]["description"])
+
+    def test_tooltip_target_the_block_by_what_is_worn_the_switch_and_the_read(self):
+        self.assertScenarios("tooltip_target/none_worn_four_grey_names_and_a_grey_bonus",
+                             "tooltip_target/two_worn_those_two_green",
+                             "tooltip_target/four_worn_switch_off_all_green_and_a_grey_bonus",
+                             "tooltip_target/four_worn_switch_on_a_gold_bonus",
+                             "tooltip_target/a_failed_read_gives_nothing_green",
+                             "tooltip_target/an_unreadable_slot_leaves_that_piece_grey_and_counts_unread")
+
+    def test_tooltip_target_the_type_line_reads_satanic_set_gloves(self):
+        self.assertScenario("tooltip_target/a_pieces_type_line_reads_satanic_set_gloves")
+        self.assertIn("Satanic Set Gloves", self.line("tooltip_target/a_pieces_type_line_reads_satanic_set_gloves"))
+
+    def test_tooltip_target_the_fresh_line_carries_tip_and_tip_unread(self):
+        self.assertScenarios("tooltip_target/the_line_carries_tip_and_tip_unread", "stat/fresh_line_exact")
 
 
 if __name__ == "__main__":

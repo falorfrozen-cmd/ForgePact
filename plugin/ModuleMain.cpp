@@ -4807,8 +4807,9 @@ static bool Mark1PieceOf(const RValue& item, M1sNs::Piece& piece)
 
 // The built-in entry for one piece: its display name, rarity Satanic and tier
 // SS (Mark1Set.hpp's kRarity and kTier, what its Dress decision gives a piece;
-// the owner, 2026-10-20), the gold rows (the first reads exactly `Mark 1`), fp_mechanic =
-// mark1, the native stats removed and none of its own. No lore. The forge's
+// the owner, 2026-10-20), fp_mechanic = mark1, the native stats removed and
+// none of its own. No affix rows and no lore: the tooltip draws the set block
+// for a piece, recognised by Mark1PieceOf (Mark1TooltipRows). The forge's
 // final pass writes the rarity and the tier on every dressed piece: the drops'
 // rewrite, the research build's spawn and a piece loaded from a save alike. The
 // selector is the item's own.
@@ -4828,9 +4829,6 @@ static bool Mark1ForgeEntry(const RValue& item, const RValue& definition, Custom
     entry.rarity = M1sNs::kRarity;
     entry.tier = M1sNs::kTier;
     entry.name = std::string(row.name);
-    std::string rows;
-    for (const std::string_view r : M1sNs::kAffixRows) rows += (rows.empty() ? "" : "\n") + std::string(r);
-    entry.affix = rows;   // fp_affix: newline-separated rows, at most three
     entry.mechanic = std::string(M1sNs::kMechanic);
     entry.builtin = true;   // recognition only, as the flight charms' entries
     return true;
@@ -22322,11 +22320,45 @@ static long long TipStatIdOf(int argc, RValue** A)
 static PFUNC_YYGMLScript g_Orig_DrawInventoryItemV2 = nullptr;
 static PFUNC_YYGMLScript g_Orig_DrawInventoryStatsNew = nullptr;
 static int g_TipStatCallsInTooltip = 0;
-static std::vector<std::string> g_TipRows;   // rows still to draw in the current tooltip pass
+// One row the pass draws at the anchor: its text, its colour (0xBBGGRR) and,
+// for a Mark 1 piece's description alone, wrapped by the game's builtins. A
+// forged item's own rows are gold and never wrapped, exactly as before; an
+// empty text is an empty row.
+struct TipRow {
+    std::string text;
+    double colour = 0.0;
+    bool wrapped = false;
+};
+static constexpr double kTipGold = 6472946.0;   // make_colour_rgb(242, 196, 98), the forged rows' gold
+static std::vector<TipRow> g_TipRows;   // rows still to draw in the current tooltip pass
 static bool g_TipRowsPending = false;
 static bool g_TipItemNoStats = false;   // the pass's item has no stats: its rows anchor at the first row call
 static bool g_TipInsideStat = false;
 static const double kTipRowHeight = 30.0;
+// The lore row's draw_text_ext width and separation (measured, Item Truth's
+// captures): a Mark 1 piece's description wraps the same way.
+static const double kTipWrapWidth = 622.0;
+static const double kTipWrapSeparation = -1.0;
+// Mark 1's set block in this pass (Mark1TooltipRows): whether the rows are it,
+// whether its worn read failed or had an unreadable slot, and the piece whose
+// type line the pass's draw_text rewrites (-1: none). Counted when drawn, for
+// `mark1set stat`'s `tip=` and `tip-unread=`.
+static bool g_TipSetBlock = false;
+static bool g_TipSetBlockUnread = false;
+static int g_TipTypeLinePiece = -1;
+static uint64_t g_TipSetBlocks = 0;
+static uint64_t g_TipSetBlocksUnread = 0;
+
+static void TipSetBlockClear()
+{
+    g_TipSetBlock = false;
+    g_TipSetBlockUnread = false;
+    g_TipTypeLinePiece = -1;
+}
+
+// A Mark 1 piece's rows: the core's set block from one worn read, and its type
+// line armed for the pass. Defined with the Mark 1 set adapter.
+static std::vector<TipRow> Mark1TooltipRows(M1sNs::Piece piece);
 
 static std::string HhTooltipLine()
 {
@@ -22357,6 +22389,14 @@ static std::vector<std::string> ForgedTooltipRows(const RValue& item)
     return rows;
 }
 
+// A forged item's rows as the pass draws them: gold, one row each.
+static std::vector<TipRow> TipGoldRows(const std::vector<std::string>& texts)
+{
+    std::vector<TipRow> rows;
+    for (const std::string& text : texts) rows.push_back(TipRow{ text, kTipGold, false });
+    return rows;
+}
+
 // Draws one tooltip text row the way DrawInventoryStatsNew does (centred on x, current
 // font, 2 px dark outline) in gold, restoring the draw state afterwards.
 static void HhDrawTooltipLine(double x, double y, const std::string& text)
@@ -22375,6 +22415,42 @@ static void HhDrawTooltipLine(double x, double y, const std::string& text)
     g_Yytk->CallBuiltin("draw_text", { RValue(x), RValue(y), RValue(text) });
     g_Yytk->CallBuiltin("draw_set_colour", { prevColour });
     g_Yytk->CallBuiltin("draw_set_halign", { prevHalign });
+}
+
+// Draws one anchored row and returns its height. A gold row is
+// HhDrawTooltipLine's, unchanged. Any other row is drawn the same way in its
+// own colour; a wrapped one with draw_text_ext at the lore row's width and
+// separation, its height measured by string_height_ext (a row's height if the
+// measure fails). An empty row draws nothing.
+static double TipDrawRow(double x, double y, const TipRow& row)
+{
+    if (row.text.empty()) return kTipRowHeight;
+    if (!row.wrapped && row.colour == kTipGold) {
+        HhDrawTooltipLine(x, y, row.text);
+        return kTipRowHeight;
+    }
+    RValue prevHalign = g_Yytk->CallBuiltin("draw_get_halign", {});
+    RValue prevColour = g_Yytk->CallBuiltin("draw_get_colour", {});
+    g_Yytk->CallBuiltin("draw_set_halign", { RValue(1.0) });
+    const auto draw = [&](double px, double py) {
+        if (row.wrapped)
+            g_Yytk->CallBuiltin("draw_text_ext", { RValue(px), RValue(py), RValue(row.text), RValue(kTipWrapSeparation), RValue(kTipWrapWidth) });
+        else
+            g_Yytk->CallBuiltin("draw_text", { RValue(px), RValue(py), RValue(row.text) });
+    };
+    g_Yytk->CallBuiltin("draw_set_colour", { RValue(0.0) });
+    const double o = 2.0;
+    draw(x - o, y);
+    draw(x + o, y);
+    draw(x, y - o);
+    draw(x, y + o);
+    g_Yytk->CallBuiltin("draw_set_colour", { RValue(row.colour) });
+    draw(x, y);
+    g_Yytk->CallBuiltin("draw_set_colour", { prevColour });
+    g_Yytk->CallBuiltin("draw_set_halign", { prevHalign });
+    if (!row.wrapped) return kTipRowHeight;
+    const double h = g_Yytk->CallBuiltin("string_height_ext", { RValue(row.text), RValue(kTipWrapSeparation), RValue(kTipWrapWidth) }).ToDouble();
+    return std::isfinite(h) && h > 0.0 ? h : kTipRowHeight;
 }
 
 static bool TipStatPresent(RValue** A, int argc)
@@ -22541,7 +22617,12 @@ static bool TipDrawOne(CInstance* S, CInstance* O, int argc, RValue** A, const F
     if (!TipCaptureBegin(argc, args.data(), true)) return false;
     g_Tip.drawnBy = TipObjectName(S);
     g_Tip.request = g_TipDraw.id;
-    g_TipRows = ForgedTooltipRows(item);
+    // A Mark 1 piece (by its own fields) gets the set block, any other
+    // forged item its gold rows.
+    TipSetBlockClear();
+    M1sNs::Piece tipPiece = M1sNs::Piece::Helmet;
+    if (Mark1PieceOf(item, tipPiece)) g_TipRows = Mark1TooltipRows(tipPiece);
+    else g_TipRows = TipGoldRows(ForgedTooltipRows(item));
     g_TipRowsPending = ForgePact::ForgedTooltipRows::Pending(g_TipRows.size());
     g_TipItemNoStats = g_TipRowsPending && TipItemHasNoStats(item);
     RValue result;
@@ -22552,6 +22633,7 @@ static bool TipDrawOne(CInstance* S, CInstance* O, int argc, RValue** A, const F
     g_TipRows.clear();
     g_TipRowsPending = false;
     g_TipItemNoStats = false;
+    TipSetBlockClear();
     const bool drew = g_Tip.rowCount > 0;
     TipCaptureEnd();
     return drew;
@@ -22615,13 +22697,18 @@ static RValue& Hook_DrawInventoryItemV2(CInstance* S, CInstance* O, RValue& R, i
     g_TipRows.clear();
     g_TipRowsPending = false;
     g_TipItemNoStats = false;
+    TipSetBlockClear();
     try {
         if (argc > 3 && A && A[3]) {
-            g_TipRows = ForgedTooltipRows(*A[3]);
+            // A Mark 1 piece (by its own fields) gets the set block, any
+            // other forged item its gold rows.
+            M1sNs::Piece tipPiece = M1sNs::Piece::Helmet;
+            if (Mark1PieceOf(*A[3], tipPiece)) g_TipRows = Mark1TooltipRows(tipPiece);
+            else g_TipRows = TipGoldRows(ForgedTooltipRows(*A[3]));
             g_TipRowsPending = ForgePact::ForgedTooltipRows::Pending(g_TipRows.size());
             g_TipItemNoStats = g_TipRowsPending && TipItemHasNoStats(*A[3]);
         }
-    } catch (...) { g_TipRows.clear(); g_TipRowsPending = false; g_TipItemNoStats = false; }
+    } catch (...) { g_TipRows.clear(); g_TipRowsPending = false; g_TipItemNoStats = false; TipSetBlockClear(); }
     g_TipStatCallsInTooltip = 0;
     const bool capturing = TipCaptureBegin(argc, A);
     if (capturing) g_Tip.drawnBy = TipObjectName(S);
@@ -22637,6 +22724,7 @@ static RValue& Hook_DrawInventoryItemV2(CInstance* S, CInstance* O, RValue& R, i
 #endif
     g_TipRowsPending = false;
     g_TipItemNoStats = false;
+    TipSetBlockClear();
     return r;
 }
 
@@ -22664,8 +22752,12 @@ static RValue& Hook_DrawInventoryStatsNew(CInstance* S, CInstance* O, RValue& R,
             try {
                 const double x = A[0]->ToDouble(), y = A[1]->ToDouble();
                 double extra = 0.0;
-                for (const std::string& row : g_TipRows) { HhDrawTooltipLine(x, y + extra, row); extra += kTipRowHeight; }
+                for (const TipRow& row : g_TipRows) extra += TipDrawRow(x, y + extra, row);
                 g_TipRowsPending = false;
+                if (g_TipSetBlock) {
+                    ++g_TipSetBlocks;
+                    if (g_TipSetBlockUnread) ++g_TipSetBlocksUnread;
+                }
                 RValue shifted(y + extra);
                 RValue* savedY = A[1];
                 A[1] = &shifted;
@@ -22739,17 +22831,65 @@ static constexpr const char* kTipBuiltinTextIds[kTipBuiltinTextCount] = {
     "fp_truth_dtc", "fp_truth_dtec", "fp_truth_dttc", "fp_truth_dtetc",
 };
 static TRoutine g_Orig_TipBuiltinText[kTipBuiltinTextCount] = {};
+
+// A Mark 1 piece's type line (Mark1Set.hpp's TypeLineFor): while a piece's pass
+// is armed (g_TipTypeLinePiece), a draw_text whose text is exactly the piece's
+// own `Satanic <type>` (the line under the name; any outline copy of it too)
+// is drawn as `Satanic Set <type>`, from a copy of the arguments, and recorded
+// as drawn. Any other text, and every call outside such a pass, is left to the
+// caller. True when it drew.
+static bool TipTypeLineDraw(RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args)
+{
+    if (g_TipTypeLinePiece < 0 || argc < 3 || !Args || Args[2].m_Kind != VALUE_STRING) return false;
+    const M1sNs::Piece piece = static_cast<M1sNs::Piece>(g_TipTypeLinePiece);
+    const std::string drawn = Args[2].ToString();
+    const std::string line = M1sNs::TypeLineFor(true, piece, drawn);
+    if (line == drawn) return false;
+    std::vector<RValue> args(Args, Args + argc);
+    args[2] = RValue(line);
+    TipNoteText(kTipBuiltinText[0], argc, args.data());
+    TipDepthGuard depth(g_Tip.textDepth);
+    if (g_Orig_TipBuiltinText[0]) g_Orig_TipBuiltinText[0](Result, S, O, argc, args.data());
+    return true;
+}
+
 template <size_t N>
 static void Hook_TipBuiltinText(RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args)
 {
+    if constexpr (N == 0) {
+        if (g_TipTypeLinePiece >= 0 && TipTypeLineDraw(Result, S, O, argc, Args)) return;
+    }
     TipNoteText(kTipBuiltinText[N], argc, Args);
     TipDepthGuard depth(g_Tip.textDepth);
     if (g_Orig_TipBuiltinText[N]) g_Orig_TipBuiltinText[N](Result, S, O, argc, Args);
 }
+// Each builtin is hooked once: draw_text may already be in through
+// InstallTipTypeLineHook.
+template <size_t I>
+static void InstallTipBuiltinTextHook()
+{
+    if (!g_Orig_TipBuiltinText[I])
+        HookBuiltin(kTipBuiltinText[I], kTipBuiltinTextIds[I], (PVOID)&Hook_TipBuiltinText<I>, &g_Orig_TipBuiltinText[I]);
+}
 template <size_t... I>
 static void InstallTipBuiltinTextHooks(std::index_sequence<I...>)
 {
-    (HookBuiltin(kTipBuiltinText[I], kTipBuiltinTextIds[I], (PVOID)&Hook_TipBuiltinText<I>, &g_Orig_TipBuiltinText[I]), ...);
+    (InstallTipBuiltinTextHook<I>(), ...);
+}
+
+// draw_text alone, for a Mark 1 piece's type line: the pass draws that line
+// through the runner's draw_text (Item Truth's captures: `draw_text`, the
+// line under the name), so the same hook Item Truth records with sees it.
+// Installed with the pieces' ground consumer, once a piece armed the art and a
+// character exists (Mark1GroundIconInstall), never from a draw. Outside a
+// piece's pass, or a recorded one, the hook is one test and a jump.
+static bool g_TipTypeLineHookTried = false;
+static void InstallTipTypeLineHook()
+{
+    if (g_TipTypeLineHookTried) return;
+    g_TipTypeLineHookTried = true;
+    InstallForgedTooltipHooks();
+    InstallTipBuiltinTextHook<0>();
 }
 
 static bool g_TipTextHooksAttempted = false;
@@ -63494,15 +63634,18 @@ static std::string Mark1GroundRoute()
 }
 
 // On CreateItemNew's outermost return, for a dressed piece: our bag icon under
-// "11" where Mark1Set.hpp's art rule allows it - the art armed by the
-// session's first switch-on, this piece's bag icon and ground copy both
+// "11" where Mark1Set.hpp's art rule allows it - the art armed (this dressing
+// arms it, whatever the switches say: a piece loaded from a save, or built by
+// a roll or the research build's spawn), this piece's bag icon and ground copy both
 // loaded, and the shared detour's route not known to be other than `both`
 // (our sprite under "11" draws Error_spr on the ground unless the ground
-// consumer follows it, RDM § 23.7). Before the art is armed nothing is loaded.
+// consumer follows it, RDM § 23.7; the tick installs it once a character
+// exists). Item Truth's off-screen builds arm nothing and load nothing.
 // Not saved by the game, so written again on every dressing (RDM § 23.5).
 static void Mark1DressFinal(RValue& item, M1sNs::Piece piece)
 {
     if (g_TruthDepth != 0) return;
+    g_Mark1.NotePieceDressed();                           // the piece's own art, from its first dressing on
     if (ForgePact::Mark1Icons::kIconCount == 0) return;   // nothing embedded: the base item's own art
     if (!g_Mark1.ArtArmed()) return;                      // not armed: the base item's own art, nothing loaded
     RValue info;
@@ -63549,14 +63692,17 @@ static void Mark1OnGroundInit(int argc, RValue** A)
 // The ground consumer rides hidden loot's one LootGroundInit detour, put in
 // through the flight charms' install; never a second hook. With no icon
 // embedded no consumer of ours has work, so nothing is installed for it; while
-// the art is not armed nothing is either, so the research build's spawn call
-// installs nothing for an unarmed session. Tried once a session.
+// the art is not armed (no piece dressed, no drops switch-on) nothing is
+// either. Tried once a session. The pieces' type line goes in at the same
+// moment (InstallTipTypeLineHook: the tooltip's draw_text), so a player who
+// never holds a piece installs neither.
 static void Mark1GroundIconInstall()
 {
     if (ForgePact::Mark1Icons::kIconCount == 0) return;
     if (!M1sNs::ArtGroundInstallPending(g_Mark1.ArtArmed(), (int)ForgePact::Mark1Icons::kIconCount, g_M1sGroundTried)) return;
     g_M1sGroundTried = true;
     FlightGroundIconInstall();
+    InstallTipTypeLineHook();
 }
 
 // ---- the local player and the worn read ----
@@ -63649,6 +63795,32 @@ static bool Mark1ReadWorn(M1sNs::WornSlots& slots)
         }
         return true;
     } catch (...) { return false; }
+}
+
+// ---- the set block in a piece's tooltip ----
+// Where a tooltip pass arms its rows for an item Mark1PieceOf recognises
+// (Hook_DrawInventoryItemV2, and TipDrawOne for Item Truth's off-screen
+// draws): one worn read and Evaluate for the pass, never Bonus::ReadNow (the
+// line's `reads=` and `set=` keep their meaning), and the core's block from it
+// and the switch. A read that failed as a whole shows nothing worn. The pass's
+// draw_text then draws the piece's type line as `Satanic Set <type>`. Mark 1's
+// own game calls here run under the adapter's busy flag, as `mark1set stat`'s.
+static std::vector<TipRow> Mark1TooltipRows(M1sNs::Piece piece)
+{
+    M1sNs::WornSlots slots{};
+    bool readOk = false;
+    const bool busy = g_M1sBusy;
+    g_M1sBusy = true;
+    try { readOk = Mark1ReadWorn(slots); } catch (...) { readOk = false; }
+    g_M1sBusy = busy;
+    const M1sNs::SetRead read = readOk ? M1sNs::Evaluate(slots) : M1sNs::SetRead{};
+    std::vector<TipRow> rows;
+    for (const M1sNs::TipRow& r : M1sNs::SetBlockRows(read, readOk, g_Mark1.Enabled()))
+        rows.push_back(TipRow{ r.text, static_cast<double>(r.colour), r.wrapped });
+    g_TipSetBlock = true;
+    g_TipSetBlockUnread = M1sNs::BlockUnread(read, readOk);
+    g_TipTypeLinePiece = static_cast<int>(piece);
+    return rows;
 }
 
 // ---- the automation (Mark1Automation.hpp): the bar's Q, E, R and Y ----
@@ -64419,6 +64591,8 @@ static M1sNs::StatFields Mark1SetStatFields()
 {
     M1sNs::StatFields f;
     g_Mark1.FillStat(f);
+    f.tip = g_TipSetBlocks;               // set blocks drawn in a piece's tooltip
+    f.tipUnread = g_TipSetBlocksUnread;   // of those, on a failed or partly unreadable worn read
     const ForgePact::Mark1Automation& automation = ForgePact::Mark1Automation::Instance();
     for (int i = 0; i < M1sNs::kColumnCount; ++i) {
         const ForgePact::Mark1ColumnCounters k = automation.Counters(ForgePact::kMark1FirstColumn + i);
@@ -67082,6 +67256,9 @@ static void M1pSpawn(const M1pNs::Command& c)
         Out("mark1probe spawn: refused - no local player with a position (load a character first)");
         return;
     }
+    // The pieces about to be built arm their own art (their dressing would),
+    // so the ground consumer is in before they reach the ground.
+    g_Mark1.NotePieceDressed();
     Mark1GroundIconInstall();
     const std::vector<M1sNs::Piece> pieces = M1pNs::SpawnPieces(c.piece);
     static long long s_LastStamp = 0;

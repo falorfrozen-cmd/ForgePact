@@ -1673,6 +1673,26 @@ class FlightCharmsTooltipContract(unittest.TestCase):
         self.assertIn('"variable_struct_names_count"', reader)
         self.assertIn("catch (...) { return false; }", reader, "a failed read keeps the old anchor")
 
+    def test_a_charms_rows_stay_gold_beside_mark_1s_set_block(self):
+        # Both arming sites hand an item that is not a Mark 1 piece its
+        # ForgedTooltipRows, as gold rows; the anchor draws a gold row through
+        # HhDrawTooltipLine, unchanged (ForgePact #166 drew Mark 1's block
+        # beside them, in its own colours).
+        for name, item in (("static RValue& Hook_DrawInventoryItemV2(", "*A[3]"), ("static bool TipDrawOne(", "item")):
+            body = function_body(self.release, name)
+            self.assertIn(f"else g_TipRows = TipGoldRows(ForgedTooltipRows({item}));", body, name)
+        gold = function_body(self.release, "static std::vector<TipRow> TipGoldRows(")
+        self.assertIn("TipRow{ text, kTipGold, false }", gold)
+        self.assertIn("static constexpr double kTipGold = 6472946.0;", self.release)
+        draw = function_body(self.release, "static double TipDrawRow(double x, double y, const TipRow& row)")
+        self.assertIn("if (!row.wrapped && row.colour == kTipGold) {", draw)
+        self.assertIn("HhDrawTooltipLine(x, y, row.text);", draw)
+        line = function_body(self.release, "static void HhDrawTooltipLine(double x, double y, const std::string& text)")
+        self.assertIn('"make_colour_rgb", { RValue(242.0), RValue(196.0), RValue(98.0) }', line)
+        # At most three rows of a forged item's own text, as before.
+        rows = function_body(self.release, "static std::vector<std::string> ForgedTooltipRows(const RValue& item)")
+        self.assertIn("rows.size() < 3", rows)
+
 
 if __name__ == "__main__":
     unittest.main()

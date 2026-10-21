@@ -23,10 +23,15 @@
 // (stat/*) and the command's forms (parse/*). failure_counts/*: every field
 // the line prints is there once, in order, and each failure count reaches it
 // under its own name. art_rule/*: the pieces' art is armed by the first
-// switch-on of a session (baseline: a fresh one writes and installs nothing),
-// and the write and the ground install follow the rule. drops_arm/*: the
-// `drops 1|0` form, and a drops switch-on arms the same art flag without
-// touching the set's switch (phase 3, Mark1Drops.hpp).
+// piece dressed in a session (baseline: a fresh one writes and installs
+// nothing), and the write and the ground install follow the rule. drops_arm/*:
+// the `drops 1|0` form, and a drops switch-on arms the same art flag without
+// touching the set's switch (phase 3, Mark1Drops.hpp). art_baseline/* and
+// art_target/*: `mark1set bonus 1` alone no longer arms the art; a piece's
+// dressing and the drops' switch do, both sticky. tooltip_baseline/* and
+// tooltip_target/*: the set block a piece's tooltip draws, its rows and
+// colours by what is worn, the switch and the read, and the piece's type line
+// (the owner's playtest, 2026-10-21).
 #include <cmath>
 #include <cstdint>
 #include <iostream>
@@ -229,10 +234,8 @@ int main()
             && kPieces[2].name == "Mark 1 Boots" && kPieces[3].name == "Mark 1 Gloves";
         check("dressing/display_names", ok);
         check("dressing/satanic_rarity_and_mechanic", kRarity == 6 && kMechanic == "mark1");
-        ok = kAffixRowCount >= 1 && kAffixRowCount <= 3 && kAffixRows[0] == "Mark 1";
-        for (int i = 1; i < kAffixRowCount; ++i)
-            if (kAffixRows[i].empty() || kAffixRows[i] == "Mark 1") ok = false;
-        check("dressing/affix_rows_first_reads_mark_1", ok, "rows=" + std::to_string(kAffixRowCount));
+        // No affix rows: the set block's name row reads exactly "Mark 1".
+        check("dressing/the_set_name_reads_mark_1", kSetName == "Mark 1");
         // The constants as compiled, for the runner to pin against hs-game-sdk's
         // curated item_info.json (`tiers` SS, `rarities` Satanic).
         std::cout << "DRESSING tier=" << kTier << " rarity=" << kRarity << std::endl;
@@ -588,7 +591,8 @@ int main()
             " landed=0/0/0/0 skip-turn=0/0/0/0 yielded=0/0/0/0 cast-calls=0"
             " | jump granted=0 backed-off=0 refused-landing=0 refused-gate=0 refused-cursor=0 max=175(start)"
             " refused-unreadable=0 jumps=0 scaled=0 clamped=0 answered=0 excluded=0 rejected=0/0/0/0 unread=0/0/0/0/0/0"
-            " grid-reads=0/0/0 | icons=0/0 art=off ground=0 ground-route=not-installed | speed=unavailable penalty=unavailable";
+            " grid-reads=0/0/0 | icons=0/0 art=off ground=0 ground-route=not-installed tip=0 tip-unread=0"
+            " | speed=unavailable penalty=unavailable";
         check("stat/fresh_line_exact", fresh == expected, fresh);
 
         bool ok = true;
@@ -686,7 +690,7 @@ int main()
             "landed", "skip-turn", "yielded", "cast-calls",
             "granted", "backed-off", "refused-landing", "refused-gate", "refused-cursor", "max",
             "refused-unreadable", "jumps", "scaled", "clamped", "answered", "excluded", "rejected", "unread", "grid-reads",
-            "icons", "art", "ground", "ground-route", "speed", "penalty" };
+            "icons", "art", "ground", "ground-route", "tip", "tip-unread", "speed", "penalty" };
         const std::string fresh = StatLine(StatFields{});
         bool ok = fieldNames(fresh) == names;
         check("failure_counts/every_field_once_in_order", ok, fresh);
@@ -818,17 +822,20 @@ int main()
         fresh.FillStat(sf);
         check("art_rule/baseline_fresh_stat_reads_art_off", field(StatLine(sf), "art") == "off", StatLine(sf));
 
-        // The first switch-on arms it for the session; switching off does not
-        // disarm, nor does a refused install (which turns the switch off).
+        // The first piece dressed arms it for the session; the switch going on
+        // and off does not disarm, nor does a refused install (which turns the
+        // switch off).
         Bonus b;
-        b.SetEnabled(true);
+        b.NotePieceDressed();
         const bool armedOn = b.ArtArmed();
+        b.SetEnabled(true);
         b.SetEnabled(false);
         const bool stillArmed = b.ArtArmed();
         Bonus r;
+        r.NotePieceDressed();
         r.SetEnabled(true);
         r.NoteInstall(false, false);
-        check("art_rule/switch_on_arms_and_off_does_not_disarm", armedOn && stillArmed && !b.Enabled()
+        check("art_rule/a_piece_arms_and_the_switch_does_not_disarm", armedOn && stillArmed && !b.Enabled()
               && r.ArtArmed() && !r.Enabled());
         StatFields sa;
         b.FillStat(sa);
@@ -925,14 +932,15 @@ int main()
         f.NoteDropsSwitch(false);
         check("drops_arm/baseline_drops_off_arms_nothing", !f.ArtArmed());
 
-        // One flag: armed by either switch, read by the art rule and the line.
+        // One flag: armed by a piece or the drops' switch, read by the art rule
+        // and the line.
         Bonus e;
-        e.SetEnabled(true);
+        e.NotePieceDressed();
         e.SetEnabled(false);
         e.NoteDropsSwitch(false);
         StatFields sd;
         d.FillStat(sd);
-        check("drops_arm/one_flag_either_switch", e.ArtArmed() && d.ArtArmed()
+        check("drops_arm/one_flag_a_piece_or_the_drops", e.ArtArmed() && d.ArtArmed()
               && ArtGroundInstallPending(d.ArtArmed(), 8, false) && field(StatLine(sd), "art") == "armed", StatLine(sd));
 
         // The first stat line and the bonus reply stay byte for byte.
@@ -942,6 +950,174 @@ int main()
         check("drops_arm/first_line_and_bonus_reply_unchanged",
               startsWith(StatLine(fresh), "mark1set: bonus=off active=no install=not-armed")
               && BonusReply(g) == "mark1set: bonus=on install=waiting-for-character", BonusReply(g));
+    }
+
+    // ---- art_baseline: the switch alone no longer arms the art (owner playtest, 2026-10-21) ----
+    {
+        // A fresh core: not armed, and nothing pending for the ground install.
+        Bonus fresh;
+        check("art_baseline/a_fresh_core_is_not_armed_and_nothing_is_pending",
+              !fresh.ArtArmed() && !ArtGroundInstallPending(fresh.ArtArmed(), 8, false)
+                  && !ArtWantsGroundInstall(fresh.ArtArmed(), 8, false, true, true));
+        // `mark1set bonus 1` alone leaves it unarmed, before and after its
+        // install, and after a refused one.
+        Bonus on;
+        on.SetEnabled(true);
+        const bool unarmedOn = !on.ArtArmed();
+        on.NoteInstall(true, false);
+        Bonus refused;
+        refused.SetEnabled(true);
+        refused.NoteInstall(false, false);
+        StatFields f;
+        on.FillStat(f);
+        check("art_baseline/bonus_1_alone_leaves_it_unarmed",
+              unarmedOn && !on.ArtArmed() && !refused.ArtArmed() && !ArtGroundInstallPending(on.ArtArmed(), 8, false)
+                  && field(StatLine(f), "art") == "off" && field(StatLine(f), "bonus") == "on", StatLine(f));
+    }
+
+    // ---- art_target: a piece's dressing and the drops' switch arm it, sticky ----------------
+    {
+        Bonus piece;
+        piece.NotePieceDressed();
+        const bool armed = piece.ArtArmed();
+        piece.SetEnabled(true);
+        piece.SetEnabled(false);
+        piece.NoteDropsSwitch(false);
+        piece.NoteInstall(false, false);
+        check("art_target/a_piece_dressed_arms_and_stays_armed", armed && piece.ArtArmed() && !piece.Enabled()
+              && piece.InstallStateName() == "refused");
+        // Arming by a piece leaves the set's switch and install alone.
+        Bonus quiet;
+        quiet.NotePieceDressed();
+        check("art_target/a_piece_leaves_the_switch_and_install_alone",
+              quiet.ArtArmed() && !quiet.Enabled() && quiet.InstallStateName() == "not-armed" && !quiet.TickNeeded()
+                  && !quiet.ShouldInstall(true, true, false));
+        Bonus drops;
+        drops.NoteDropsSwitch(true);
+        drops.NoteDropsSwitch(false);
+        check("art_target/the_drops_switch_arms_and_stays_armed", drops.ArtArmed());
+        // With the flag set the ground install is pending, and wanted once a
+        // character exists; the switch is not asked.
+        check("art_target/armed_the_ground_install_is_pending",
+              ArtGroundInstallPending(piece.ArtArmed(), 8, false) && ArtGroundInstallPending(drops.ArtArmed(), 8, false)
+                  && ArtWantsGroundInstall(quiet.ArtArmed(), 8, false, true, true)
+                  && !ArtWantsGroundInstall(quiet.ArtArmed(), 8, false, true, false));
+        StatFields f;
+        quiet.FillStat(f);
+        check("art_target/the_line_reads_art_armed_with_the_switch_off",
+              field(StatLine(f), "art") == "armed" && field(StatLine(f), "bonus") == "off", StatLine(f));
+    }
+
+    // ---- tooltip_baseline: what is not a piece gets no block, and the colours are the game's ----
+    {
+        // What the adapter recognises (IsPiece, as Mark1PieceOf): another
+        // class, a seed outside 777500..777503, `j` not 0 are not pieces, so
+        // they get no block and keep the game's type line.
+        Piece p = Piece::Helmet;
+        bool ok = !IsPiece(3, 777500, 0, 0, 0, p) && !IsPiece(4, 777499, 0, 0, 0, p) && !IsPiece(4, 777504, 0, 0, 0, p)
+            && !IsPiece(4, 777503, 0, 0, 1, p);
+        check("tooltip_baseline/not_a_piece_gets_no_block", ok);
+        ok = TypeLineFor(false, Piece::Gloves, "Satanic Gloves") == "Satanic Gloves"
+            && TypeLineFor(false, Piece::Helmet, "Satanic Set Helmet") == "Satanic Set Helmet"
+            && TypeLineFor(false, Piece::Boots, "Heroic Boots") == "Heroic Boots";
+        check("tooltip_baseline/not_a_piece_keeps_its_type_line", ok);
+        // A piece keeps any other text the pass draws: its name, another
+        // class's type line, the footer.
+        ok = TypeLineFor(true, Piece::Gloves, "Mark 1 Gloves") == "Mark 1 Gloves"
+            && TypeLineFor(true, Piece::Gloves, "Satanic Boots") == "Satanic Boots"
+            && TypeLineFor(true, Piece::Gloves, "Satanic Set Gloves") == "Satanic Set Gloves"
+            && TypeLineFor(true, Piece::Gloves, "Tier ") == "Tier ";
+        check("tooltip_baseline/a_piece_keeps_every_other_text", ok);
+        // The core's colours as compiled, for the runner to pin against
+        // hs-game-sdk's curated item_info.json (tooltip.set_section and
+        // tooltip.skill_grant, the game's own display).
+        std::cout << "COLOURS bonus_active=" << kColourBonusActive << " bonus_inactive=" << kColourBonusInactive
+                  << " set_name=" << kColourSetName << " piece_worn=" << kColourPieceWorn
+                  << " piece_not_worn=" << kColourPieceNotWorn << " description=" << kColourDescription << std::endl;
+    }
+
+    // ---- tooltip_target: the block by what is worn, the switch and the read ----------------
+    {
+        const auto rowsText = [](const std::vector<TipRow>& rows) {
+            std::string s;
+            for (const TipRow& r : rows) s += (s.empty() ? "" : "|") + r.text;
+            return s;
+        };
+        const auto colours = [](const std::vector<TipRow>& rows) {
+            std::string s;
+            for (const TipRow& r : rows) s += (s.empty() ? "" : "/") + std::to_string(r.colour);
+            return s;
+        };
+        const std::string text =
+            "+1 to Automation|Your Q, E, R and Y skills cast themselves whenever they are ready. "
+            "Your jump goes three times as far, over scenery. You walk at half speed.||Mark 1"
+            "|Mark 1 Helmet|Mark 1 Body Armor|Mark 1 Boots|Mark 1 Gloves";
+        const std::string grey = "4210752", green = "65280", gold = "7844807", desc = "8421504";
+
+        WornSlots none;
+        for (auto& s : none) s = emptySlot();
+        const std::vector<TipRow> noneRows = SetBlockRows(Evaluate(none), true, true);
+        bool ok = rowsText(noneRows) == text && noneRows.size() == 8
+            && colours(noneRows) == grey + "/" + desc + "/" + grey + "/" + gold + "/" + grey + "/" + grey + "/" + grey + "/" + grey;
+        // Only the description is wrapped.
+        for (size_t i = 0; i < noneRows.size(); ++i)
+            if (noneRows[i].wrapped != (i == 1)) ok = false;
+        check("tooltip_target/none_worn_four_grey_names_and_a_grey_bonus", ok, colours(noneRows));
+
+        WornSlots two = none;
+        two[0] = pieceIn(Piece::Helmet);
+        two[7] = pieceIn(Piece::Gloves);
+        const std::vector<TipRow> twoRows = SetBlockRows(Evaluate(two), true, true);
+        ok = rowsText(twoRows) == text
+            && colours(twoRows) == grey + "/" + desc + "/" + grey + "/" + gold + "/" + green + "/" + grey + "/" + grey + "/" + green;
+        check("tooltip_target/two_worn_those_two_green", ok, colours(twoRows));
+
+        const std::vector<TipRow> fullOff = SetBlockRows(Evaluate(fullSet()), true, false);
+        ok = rowsText(fullOff) == text
+            && colours(fullOff) == grey + "/" + desc + "/" + grey + "/" + gold + "/" + green + "/" + green + "/" + green + "/" + green;
+        check("tooltip_target/four_worn_switch_off_all_green_and_a_grey_bonus", ok, colours(fullOff));
+
+        const std::vector<TipRow> fullOn = SetBlockRows(Evaluate(fullSet()), true, true);
+        ok = rowsText(fullOn) == text
+            && colours(fullOn) == gold + "/" + desc + "/" + grey + "/" + gold + "/" + green + "/" + green + "/" + green + "/" + green
+            && BlockBonusActive(Evaluate(fullSet()), true, true) && !BlockUnread(Evaluate(fullSet()), true);
+        check("tooltip_target/four_worn_switch_on_a_gold_bonus", ok, colours(fullOn));
+
+        // A read that failed as a whole: nothing green, the bonus grey, even
+        // with a SetRead that claims the full set; counted unread.
+        const std::vector<TipRow> failed = SetBlockRows(Evaluate(fullSet()), false, true);
+        ok = rowsText(failed) == text
+            && colours(failed) == grey + "/" + desc + "/" + grey + "/" + gold + "/" + grey + "/" + grey + "/" + grey + "/" + grey
+            && BlockUnread(Evaluate(fullSet()), false) && !BlockBonusActive(Evaluate(fullSet()), false, true);
+        check("tooltip_target/a_failed_read_gives_nothing_green", ok, colours(failed));
+
+        // An unreadable slot can leave a piece unfound, never found: the
+        // pieces read elsewhere stay green, and the block counts unread.
+        WornSlots partly = fullSet();
+        partly[3] = WornSlot{};   // the gloves' slot, unreadable
+        const SetRead pr = Evaluate(partly);
+        const std::vector<TipRow> partlyRows = SetBlockRows(pr, true, true);
+        ok = colours(partlyRows) == grey + "/" + desc + "/" + grey + "/" + gold + "/" + green + "/" + green + "/" + green + "/" + grey
+            && BlockUnread(pr, true);
+        check("tooltip_target/an_unreadable_slot_leaves_that_piece_grey_and_counts_unread", ok, colours(partlyRows));
+
+        // The piece's type line reads like the game's own set pieces.
+        ok = TypeLineFor(true, Piece::Gloves, "Satanic Gloves") == "Satanic Set Gloves"
+            && TypeLineFor(true, Piece::Helmet, "Satanic Helmet") == "Satanic Set Helmet"
+            && TypeLineFor(true, Piece::Body, "Satanic Body Armor") == "Satanic Set Body Armor"
+            && TypeLineFor(true, Piece::Boots, "Satanic Boots") == "Satanic Set Boots"
+            && TypeLine(Piece::Gloves) == "Satanic Set Gloves";
+        check("tooltip_target/a_pieces_type_line_reads_satanic_set_gloves", ok, TypeLine(Piece::Gloves));
+
+        // The fresh stat line carries the block's two counters, after ground-route=.
+        const std::string fresh = StatLine(StatFields{});
+        StatFields counted;
+        counted.tip = 7;
+        counted.tipUnread = 2;
+        const std::string line = StatLine(counted);
+        ok = has(fresh, " ground-route=not-installed tip=0 tip-unread=0 | speed=") && field(line, "tip") == "7"
+            && field(line, "tip-unread") == "2";
+        check("tooltip_target/the_line_carries_tip_and_tip_unread", ok, line);
     }
 
     std::cout << (failures ? "RESULT FAIL " + std::to_string(failures) : std::string("RESULT OK")) << std::endl;

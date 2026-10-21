@@ -22,19 +22,22 @@ namespace ForgePact::Mark1Set {
 //   - the piece table and recognition. A piece is saved as its base item of
 //     its own class with a fixed seed `a` in ForgePact's built-in band; the
 //     seed layout is a save format after release.
-//   - the dressing's constants (name, rarity, tier, mechanic, affix rows) and
-//     its rarity and tier decision (Dress). The adapter writes them through a
+//   - the dressing's constants (name, rarity, tier, mechanic) and its rarity
+//     and tier decision (Dress). The adapter writes them through a
 //     recognition-only CustomForgeEntry, as the flight charms' are.
 //   - the full-set read's verdict, from the worn gear slots the adapter reads,
 //     refreshed at most once every kRefreshFrames at the point of use (inside
 //     the CheckTalentUse detour) and on `mark1set stat`.
-//   - the install state: armed by `mark1set bonus 1`, installed once a
+//   - the install state: switched on by `mark1set bonus 1`, installed once a
 //     character exists (the guide's Known Limitations item 8, as jumpscenery).
 //   - the `mark1set` command's forms and its `stat` line, whose automation,
 //     jump, art and movement fields the other cores' counters fill.
-//   - the pieces' art rule: armed by the session's first switch-on of the set
-//     or of the drops (Mark1Drops.hpp), and when a dressing may write our icon
-//     and the ground consumer may go in.
+//   - the pieces' art rule: armed by the session's first dressing of a piece
+//     or first switch-on of the drops (Mark1Drops.hpp), and when a dressing may
+//     write our icon and the ground consumer may go in.
+//   - the set block a piece's tooltip draws, the way the game draws its own
+//     sets' (`+1 to Automation`, its description, the set's name and its four
+//     pieces, the worn ones green), and the piece's type line.
 //
 // It is game-independent by contract - numbers and strings, never an instance
 // or an RValue - so tests/mark1_set_harness.cpp compiles it whole. The adapter
@@ -101,14 +104,8 @@ static_assert(SeedsDistinctInBand(), "the four seeds are distinct and inside 777
 inline constexpr int kRarity = 6;                       // Satanic (itemInfoStruct "27")
 inline constexpr int kTier = 5;                         // SS (itemInfoStruct "32")
 inline constexpr std::string_view kMechanic = "mark1";  // fp_mechanic
-// The gold affix rows: the first reads exactly "Mark 1", the rest the full-set
-// bonus in player words. No stats and no lore are written.
-inline constexpr int kAffixRowCount = 3;
-inline constexpr std::string_view kAffixRows[kAffixRowCount] = {
-    "Mark 1",
-    "Full set: Q, E, R and Y cast themselves",
-    "Full set: half walk speed, triple jump",
-};
+// No affix rows, stats or lore are written: the tooltip's set block (below)
+// says what the set does.
 
 inline const PieceRow& RowOf(Piece p)
 {
@@ -326,6 +323,8 @@ struct StatFields {
     bool         artArmed = false;           // the art rule's sticky flag (Bonus::ArtArmed)
     uint64_t     ground = 0;                 // ground items given our icon
     std::string  groundRoute = "not-installed";  // GroundRouteName(): the shared LootGroundInit detour's route
+    uint64_t     tip = 0;                    // set blocks drawn in a piece's tooltip (once per uncached pass)
+    uint64_t     tipUnread = 0;              // of those, drawn on a worn read that failed or had an unreadable slot
     LeverCount   speed;
     LeverCount   penalty;
 };
@@ -420,16 +419,19 @@ inline std::string StatLine(const StatFields& f)
     s += " art=" + std::string(f.artArmed ? "armed" : "off");
     s += " ground=" + std::to_string(f.ground);
     s += " ground-route=" + f.groundRoute;
+    s += " tip=" + std::to_string(f.tip) + " tip-unread=" + std::to_string(f.tipUnread);
     s += " | speed=" + LeverText(f.speed) + " penalty=" + LeverText(f.penalty);
     return s;
 }
 
 // ---- the pieces' own art: the rule the adapter applies --------------------------
 //
-// The bag icon and the ground consumer go together, and both follow the switch:
-// the art is armed for the rest of the session by the first `mark1set bonus 1`
-// or `mark1set drops 1` (Bonus keeps the flag; turning a switch off does not
-// clear it). Until then
+// The bag icon and the ground consumer go together, and both follow the pieces:
+// the art is armed for the rest of the session by the first dressing of a piece
+// (one loaded from a save, one a roll or `mark1probe spawn` built) or the first
+// `mark1set drops 1` (Bonus keeps the flag; turning a switch off does not
+// clear it). `mark1set bonus 1` does not arm it: with pieces present their own
+// dressing has, and with none there is nothing to show. Until then
 // a piece shows its base item's own bag and ground sprites. Our runtime sprite
 // under "11" draws Error_spr on the ground unless the ground consumer sets the
 // ground item's sprite_index (RDM § 23.7), so the icon is written only where
@@ -483,6 +485,103 @@ inline bool ArtWantsGroundInstall(bool armed, int iconsEmbedded, bool tried, boo
     return ArtGroundInstallPending(armed, iconsEmbedded, tried) && setupDone && playerResolved;
 }
 
+// ---- the set block in a piece's tooltip --------------------------------------------
+//
+// The game draws its own set pieces' tooltips with a set section after the
+// item's stats (hs-game-sdk/curated/item_info.json, `tooltip.set_section`,
+// measured): the set's bonus lines, lit while active and grey otherwise, then
+// the set's name and each piece's name, green when worn. A Mark 1 piece is no
+// game set piece (the game names a set's pieces by a unique triple, and a piece
+// is a base item), so the adapter draws the same section itself, at the forged
+// rows' anchor, from these rows. Its bonus line reads like a skill grant's
+// (`tooltip.skill_grant`): `+1 to Automation`, its description under it in the
+// grant description's grey. The colours are the game's own, 0xBBGGRR; the
+// behavior test pins each against the curated file.
+inline constexpr int kColourBonusActive = 7844807;    // set_section.colours.bonus_active (RGB 199,180,119)
+inline constexpr int kColourBonusInactive = 4210752;  // set_section.colours.bonus_inactive (RGB 64,64,64)
+inline constexpr int kColourSetName = 7844807;        // set_section.colours.set_name
+inline constexpr int kColourPieceWorn = 65280;        // set_section.colours.piece_worn (green)
+inline constexpr int kColourPieceNotWorn = 4210752;   // set_section.colours.piece_not_worn
+inline constexpr int kColourDescription = 8421504;    // skill_grant.colours.description (RGB 128,128,128)
+
+inline constexpr std::string_view kSetName = "Mark 1";
+inline constexpr std::string_view kBonusLine = "+1 to Automation";
+// Automation's description: player wording (the owner, 2026-10-21).
+inline constexpr std::string_view kAutomationDescription =
+    "Your Q, E, R and Y skills cast themselves whenever they are ready. "
+    "Your jump goes three times as far, over scenery. You walk at half speed.";
+
+// One row of the block. `wrapped` marks the description, which the adapter
+// wraps with the game's own builtins at the lore row's width and measures; an
+// empty text is one empty row.
+struct TipRow {
+    std::string text;
+    int         colour = kColourPieceNotWorn;
+    bool        wrapped = false;
+};
+
+// The bonus line is lit while the bonus is active: all four pieces worn (a
+// read that succeeded) and the "Mark 1 set" switch on.
+inline bool BlockBonusActive(const SetRead& r, bool readOk, bool switchOn)
+{
+    return readOk && r.full && switchOn;
+}
+
+// The block was drawn on a worn read that failed as a whole or had an
+// unreadable slot (the stat line's `tip-unread=`).
+inline bool BlockUnread(const SetRead& r, bool readOk)
+{
+    return !readOk || r.unreadable > 0;
+}
+
+// The block, in the game's order (a piece has no stats, so the section opens
+// the tooltip's rows): the bonus line, the description, one empty row, the
+// set's name, then the four pieces in table order, green when worn. A read
+// that failed as a whole shows no piece worn; an unreadable slot can leave a
+// piece unfound, never found (Evaluate's rule).
+inline std::vector<TipRow> SetBlockRows(const SetRead& r, bool readOk, bool switchOn)
+{
+    std::vector<TipRow> rows;
+    rows.push_back({ std::string(kBonusLine),
+                     BlockBonusActive(r, readOk, switchOn) ? kColourBonusActive : kColourBonusInactive, false });
+    rows.push_back({ std::string(kAutomationDescription), kColourDescription, true });
+    rows.push_back({ std::string(), kColourPieceNotWorn, false });
+    rows.push_back({ std::string(kSetName), kColourSetName, false });
+    for (int i = 0; i < kPieceCount; ++i) {
+        const bool worn = readOk && r.foundSlot[static_cast<size_t>(i)] != kNotFound;
+        rows.push_back({ std::string(kPieces[i].name), worn ? kColourPieceWorn : kColourPieceNotWorn, false });
+    }
+    return rows;
+}
+
+// ---- the piece's type line ------------------------------------------------------------
+//
+// The tooltip's type line under the name: an ordinary Satanic item reads
+// `Satanic <type>`, a game set piece `Satanic Set <type>` (measured, the
+// curated `tooltip.set_section.type_line`). A Mark 1 piece reads like the
+// game's set pieces (the owner, 2026-10-21). The adapter swaps the one text
+// the pass draws for the piece's own `Satanic <type>`; anything else, and any
+// item that is not a piece, keeps the game's line.
+inline constexpr std::string_view kTypeWords[kPieceCount] = { "Helmet", "Body Armor", "Boots", "Gloves" };
+
+inline std::string GameTypeLine(Piece p)
+{
+    return "Satanic " + std::string(kTypeWords[static_cast<int>(p)]);
+}
+
+inline std::string TypeLine(Piece p)
+{
+    return "Satanic Set " + std::string(kTypeWords[static_cast<int>(p)]);
+}
+
+// The text the pass draws, as the adapter hands it on: the piece's type line
+// for a piece's own `Satanic <type>`, the drawn text otherwise.
+inline std::string TypeLineFor(bool isPiece, Piece p, std::string_view drawn)
+{
+    if (isPiece && drawn == GameTypeLine(p)) return TypeLine(p);
+    return std::string(drawn);
+}
+
 // ---- the bonus: the switch, the install and the refreshed read -------------------
 
 class Bonus {
@@ -496,11 +595,10 @@ public:
     static constexpr unsigned long long kRefreshFrames = 30;
 
     // The `mark1set bonus 1|0` switch. Turning it off ends the bonus at once
-    // and forgets the last read, so turning it on again reads at once. Turning
-    // it on also arms the pieces' art for the rest of the session.
+    // and forgets the last read, so turning it on again reads at once. It does
+    // not arm the pieces' art: a piece's own dressing does (NotePieceDressed).
     void SetEnabled(bool on)
     {
-        if (on) artArmed_ = true;
         if (on == enabled_) return;
         enabled_ = on;
         hasRead_ = false;
@@ -517,8 +615,17 @@ public:
         if (on) artArmed_ = true;
     }
 
-    // The art rule's sticky flag: set by the first switch-on of either
-    // switch, never cleared.
+    // A piece was dressed outside Item Truth's builds (loaded from a save, or
+    // built by a roll or `mark1probe spawn`): its art is wanted whatever the
+    // switches say, so the flag is armed. The piece's own display, not a mod
+    // switched on (the flight charms' dressing arms flight the same way).
+    void NotePieceDressed()
+    {
+        artArmed_ = true;
+    }
+
+    // The art rule's sticky flag: set by the first piece dressed or the first
+    // drops switch-on, never cleared.
     bool ArtArmed() const { return artArmed_; }
 
     // ---- the install: armed by the switch, hooked once a character exists ----

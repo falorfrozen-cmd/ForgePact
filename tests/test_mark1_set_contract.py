@@ -13,8 +13,8 @@ text, comments stripped, and pins the adapter around it:
   true`), tried after every loaded entry and after the flight charms, so a
   sidecar entry for the same item still wins; ForgeCouldMatch lets their seeds
   through; dressing writes the name, Satanic rarity, SS tier (the core's
-  `kTier`), the gold rows and `fp_mechanic` = `mark1`, removes the native
-  stats, writes no lore, and installs nothing inside CreateItemNew;
+  `kTier`) and `fp_mechanic` = `mark1`, removes the native stats, writes no
+  affix rows and no lore, and installs nothing inside CreateItemNew;
 - the bonus arms like jumpscenery since 2.2.1 (the guide's Known Limitations
   item 8): the tick returns at once while the switch is off, and nothing is
   hooked until the local player resolves, so nothing installs at character
@@ -42,18 +42,29 @@ text, comments stripped, and pins the adapter around it:
   icon embedded, or one that failed to load, nothing is written, loaded or
   overridden, so each piece keeps its base item's own bag and ground sprites;
 - the art rule (Mark1Set.hpp's, applied here): the art is armed by the
-  session's first switch-on; until then nothing is loaded or written; a
+  session's first piece dressed outside Item Truth's builds (the owner's
+  playtest, 2026-10-21: pieces placed before `mark1set bonus 1` kept their base
+  art), or the drops' switch-on; until then nothing is loaded or written; a
   dressing writes "11" only where ArtWritesIcon allows it (bag icon and ground
   copy both loaded, the shared detour's route `not-installed` or `both`); the
   ground consumer goes in once, armed, from the tick whatever the switch now
   says, never at character select; the stat line's art, ground and
   ground-route fields come from the adapter's own state;
-- art_default: a player who never turns the switch on this session gets the
-  base items' own art, bag and ground, and nothing loaded, written or
-  installed for it. The armed flag's writers are the core's SetEnabled and,
-  for the drops' switch, NoteDropsSwitch through Mark1Drops.hpp's SetSwitch; the
-  dressing, the ground install and the tick each ask the core's rule before
-  anything else, and no dressing inside CreateItemNew's pass installs a hook;
+- art_default: a player who holds no piece and never turns the drops on gets
+  nothing loaded, written or installed for the art. The armed flag's writers
+  are the core's NotePieceDressed (from the dressing, after its Item Truth
+  guard and before its armed check, and from the research spawn, before its
+  ground install) and, for the drops' switch, NoteDropsSwitch through
+  Mark1Drops.hpp's SetSwitch; never SetEnabled. The dressing, the ground
+  install and the tick each ask the core's rule before anything else, and no
+  dressing inside CreateItemNew's pass installs a hook;
+- tooltip: a piece, recognised by Mark1PieceOf where both tooltip passes arm
+  their rows (the player's and Item Truth's drawn one), gets the core's set
+  block from one worn read (Mark1ReadWorn + Evaluate, never Bonus::ReadNow) per
+  armed pass, drawn at the forged rows' anchor in its colours; every other
+  forged item keeps its gold rows; the pass's draw_text draws the piece's type
+  line as the core's `Satanic Set <type>`, the hook going in with the ground
+  consumer; `tip=` and `tip-unread=` count the blocks drawn;
 - the jump (Mark1Jump.hpp, applied here): one skillsLeap detour and one
   install of the five collision builtins in the whole plugin, shared with
   jumpscenery (and the flight charms for the builtins); Mark 1's take-off
@@ -119,6 +130,7 @@ SIGNATURES = {
     "ground_route": "static std::string Mark1GroundRoute()",
     "art_install_if_ready": "static void Mark1ArtInstallIfReady()",
     "read_worn": "static bool Mark1ReadWorn(M1sNs::WornSlots& slots)",
+    "tooltip_rows": "static std::vector<TipRow> Mark1TooltipRows(M1sNs::Piece piece)",
     "detour": "static RValue& Mark1HookCheckTalentUse(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)",
     "landing": "static RValue& Mark1HookTalentUseSetSpeed(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)",
     "cast_window": "struct Mark1CastWindow {",
@@ -188,7 +200,7 @@ SIGNATURES = {
 }
 
 SHIPPED = ("decode", "of", "entry", "final", "icon_index", "icon_path", "icons_load", "ground", "ground_install",
-           "ground_route", "art_install_if_ready", "read_worn", "detour", "landing", "cast_window", "install", "install_if_ready", "tick", "stat_fields", "command",
+           "ground_route", "art_install_if_ready", "read_worn", "tooltip_rows", "detour", "landing", "cast_window", "install", "install_if_ready", "tick", "stat_fields", "command",
            "refresh", "hud_row", "hud_column", "read_toggle", "input_state", "input_get", "input_set", "border",
            "jump_position", "jump_cursor", "jump_family", "jump_gate", "jump_kind", "jump_grid", "jump_max", "jump_learn",
            "jump_entry", "jump_exit", "jump_builtin", "jump_install", "jump_tick", "leap", "leap_install", "resolve_objects",
@@ -300,11 +312,10 @@ class Mark1SetContract(unittest.TestCase):
                       "entry.name = std::string(row.name);", "entry.mechanic = std::string(M1sNs::kMechanic);"):
             with self.subTest(field=field):
                 self.assertIn(field, entry)
-        # The gold rows: the core's, joined by newlines (at most three rows).
-        self.assertIn("M1sNs::kAffixRows", entry)
-        self.assertIn('"\\n"', entry)
-        # No stats and no lore written (the tier is the next test's).
-        for absent in ("entry.lore", "entry.stats", "entry.sprite"):
+        # No affix rows: the tooltip's set block says what the set does.
+        self.assertNotIn("kAffixRows", self.plugin)
+        # No affix, stats or lore written (the tier is the next test's).
+        for absent in ("entry.affix", "entry.lore", "entry.stats", "entry.sprite"):
             self.assertNotIn(absent, entry)
         # The selector is the item's own, as the flight charms'.
         for key in ('{"t", t}', '{"a", a}', '{"b", b}', '{"c", c}', '{"j", j}'):
@@ -814,7 +825,8 @@ class Mark1SetContract(unittest.TestCase):
         lines = self.lines("final")
         # Not armed (the switch never on this session): back before any read,
         # load or write, so the piece keeps its base item's own bag sprite.
-        self.assertEqual(lines[:3], ["if (g_TruthDepth != 0) return;",
+        self.assertEqual(lines[:4], ["if (g_TruthDepth != 0) return;",
+                                     "g_Mark1.NotePieceDressed();",
                                      "if (ForgePact::Mark1Icons::kIconCount == 0) return;",
                                      "if (!g_Mark1.ArtArmed()) return;"])
         final = self.body("final")
@@ -834,23 +846,35 @@ class Mark1SetContract(unittest.TestCase):
         rule = function_body(self.header(), "inline bool ArtWritesIcon(")
         self.assertIn("return armed && bagLoaded && groundLoaded && GroundRouteAllowsArt(groundRoute);", rule)
 
-    def test_art_default_the_armed_flag_has_no_writer_but_the_cores_set_enabled(self):
+    def test_art_default_the_armed_flag_has_no_writer_but_a_piece_and_the_drops(self):
         whole = strip_comments(self.plugin)
-        # The adapter never touches the flag but through the switch.
+        # The adapter never touches the flag but through the core's setters.
         self.assertNotIn("artArmed", whole)
         self.assertEqual(re.findall(r"\bg_Mark1\.SetEnabled\([^;]*\);", whole), ["g_Mark1.SetEnabled(c.on);"])
         self.assertIn("g_Mark1.SetEnabled(c.on);", self.body("command"))
-        # `mark1probe spawn` arms nothing: the probe block never turns the switch.
+        # A piece arms its own art: the dressing, after its Item Truth guard
+        # and before its armed check, and the research spawn, before its
+        # ground install. Nowhere else; the player build has the dressing's.
+        self.assertEqual(len(re.findall(r"\bg_Mark1\.NotePieceDressed\(\);", whole)), 2)
+        self.assertEqual(len(re.findall(r"\bg_Mark1\.NotePieceDressed\(\);", self.shipped)), 1)
+        final = self.body("final")
+        self.assertLess(final.index("if (g_TruthDepth != 0) return;"), final.index("g_Mark1.NotePieceDressed();"))
+        self.assertLess(final.index("g_Mark1.NotePieceDressed();"), final.index("if (!g_Mark1.ArtArmed()) return;"))
+        spawn = self.body("spawn")
+        self.assertLess(spawn.index("g_Mark1.NotePieceDressed();"), spawn.index("Mark1GroundIconInstall();"))
+        # The research spawn never turns the switch.
         probe = strip_comments(self.probe)
         self.assertNotIn("SetEnabled(", probe)
         self.assertNotIn("artArmed", probe)
-        # In the core, the writes that set it are SetEnabled's and the drops'
-        # NoteDropsSwitch, each on a switch-on (drops arm the art, the drops
-        # workorder's default); the adapter reaches the second only through
-        # Mark1Drops.hpp's SetSwitch, from the drops' switch.
+        # In the core, the writes that set it are NotePieceDressed's and the
+        # drops' NoteDropsSwitch on a switch-on (drops arm the art, the drops
+        # workorder's default); SetEnabled writes no art flag (the owner's
+        # playtest, 2026-10-21). The adapter reaches NoteDropsSwitch only
+        # through Mark1Drops.hpp's SetSwitch, from the drops' switch.
         header = self.header()
         self.assertEqual(re.findall(r"\bartArmed_\s*=\s*true\b", header), ["artArmed_ = true", "artArmed_ = true"])
-        self.assertIn("if (on) artArmed_ = true;", function_body(header, "void SetEnabled(bool on)"))
+        self.assertNotIn("artArmed_", function_body(header, "void SetEnabled(bool on)"))
+        self.assertIn("artArmed_ = true;", function_body(header, "void NotePieceDressed()"))
         self.assertIn("if (on) artArmed_ = true;", function_body(header, "void NoteDropsSwitch(bool on)"))
         self.assertEqual(len(re.findall(r"\bartArmed_\s*=(?!=)", header)), 3)   # those two writes and the member's `= false`
         self.assertNotIn("NoteDropsSwitch", whole)
@@ -864,6 +888,7 @@ class Mark1SetContract(unittest.TestCase):
             "g_M1sGroundTried)) return;",
             "g_M1sGroundTried = true;",
             "FlightGroundIconInstall();",
+            "InstallTipTypeLineHook();",
         ])
         pending = function_body(self.header(), "inline bool ArtGroundInstallPending(")
         self.assertIn("return armed && iconsEmbedded > 0 && !tried;", pending)
@@ -931,6 +956,100 @@ class Mark1SetContract(unittest.TestCase):
         self.assertIn("f.groundRoute = Mark1GroundRoute();", fields)
         self.assertIn("ForgePact::HiddenLootMod::Instance().RouteName()", self.body("ground_route"))
         self.assertLess(fields.index("g_Mark1.FillStat(f);"), fields.index("f.ground = g_M1sGround;"))
+
+    # ---- the set block in a piece's tooltip (the owner's playtest, 2026-10-21) ----------
+
+    def test_tooltip_both_arming_sites_build_the_block_for_a_piece_by_mark1_piece_of(self):
+        # The player's tooltip and Item Truth's drawn one: a piece, by its own
+        # fields (class, seed, `j` 0; never fp_mechanic), gets the core's
+        # block, and anything else its gold rows from ForgedTooltipRows, before
+        # the rows are armed.
+        for name, item in (("static RValue& Hook_DrawInventoryItemV2(", "*A[3]"), ("static bool TipDrawOne(", "item")):
+            with self.subTest(site=name):
+                body = strip_comments(function_body(self.shipped, name))
+                piece = f"if (Mark1PieceOf({item}, tipPiece)) g_TipRows = Mark1TooltipRows(tipPiece);"
+                gold = f"else g_TipRows = TipGoldRows(ForgedTooltipRows({item}));"
+                self.assertIn(piece, body)
+                self.assertIn(gold, body)
+                self.assertLess(body.index(piece), body.index(gold))
+                self.assertLess(body.index(gold),
+                                body.index("g_TipRowsPending = ForgePact::ForgedTooltipRows::Pending(g_TipRows.size());"))
+                # The pass's block state starts clear and is cleared when it ends.
+                self.assertGreaterEqual(body.count("TipSetBlockClear();"), 2)
+                self.assertNotIn('"fp_mechanic"', body)
+
+    def test_tooltip_the_worn_read_is_once_per_armed_pass(self):
+        rows = self.body("tooltip_rows")
+        self.assertEqual(rows.count("Mark1ReadWorn("), 1)
+        self.assertEqual(rows.count("M1sNs::Evaluate("), 1)
+        self.assertNotIn("ReadNow(", rows)   # `reads=` and `set=` keep their meaning
+        self.assertNotIn("Active(", rows)
+        self.assertIn("M1sNs::SetBlockRows(read, readOk, g_Mark1.Enabled())", rows)
+        self.assertIn("const M1sNs::SetRead read = readOk ? M1sNs::Evaluate(slots) : M1sNs::SetRead{};", rows)
+        self.assertIn("g_TipSetBlockUnread = M1sNs::BlockUnread(read, readOk);", rows)
+        # Mark 1's own game calls run under its busy flag, put back after.
+        self.assertLess(rows.index("g_M1sBusy = true;"), rows.index("Mark1ReadWorn("))
+        self.assertLess(rows.index("Mark1ReadWorn("), rows.index("g_M1sBusy = busy;"))
+        # Its two callers are the two arming sites, and nothing else reads the
+        # set for a tooltip.
+        self.assertEqual(len(re.findall(r"\bMark1TooltipRows\(tipPiece\)", self.shipped)), 2)
+        for install in ("HookOneScript", "HookBuiltin", "MmCreateHook", "Install"):
+            self.assertNotIn(install, rows)
+
+    def test_tooltip_the_block_draws_at_the_anchor_in_its_colours_and_other_rows_stay_gold(self):
+        stat = function_body(self.shipped, "static RValue& Hook_DrawInventoryStatsNew(")
+        self.assertIn("for (const TipRow& row : g_TipRows) extra += TipDrawRow(x, y + extra, row);", stat)
+        draw = function_body(self.shipped, "static double TipDrawRow(double x, double y, const TipRow& row)")
+        # A forged item's gold row is HhDrawTooltipLine's, unchanged.
+        self.assertIn("if (!row.wrapped && row.colour == kTipGold) {", draw)
+        self.assertIn("HhDrawTooltipLine(x, y, row.text);", draw)
+        self.assertIn("static constexpr double kTipGold = 6472946.0;", self.shipped)
+        gold = function_body(self.shipped, "static std::vector<TipRow> TipGoldRows(")
+        self.assertIn("TipRow{ text, kTipGold, false }", gold)
+        # The description wraps with the game's builtins and adds its measured height.
+        self.assertIn('"draw_text_ext"', draw)
+        self.assertIn('"string_height_ext"', draw)
+        self.assertIn("RValue(kTipWrapSeparation), RValue(kTipWrapWidth)", draw)
+        self.assertIn("static const double kTipWrapWidth = 622.0;", self.shipped)
+        self.assertIn("static const double kTipWrapSeparation = -1.0;", self.shipped)
+        self.assertIn('{ RValue(row.colour) }', draw)
+
+    def test_tooltip_the_type_line_is_the_cores_through_the_pass_draw_text(self):
+        line = function_body(self.shipped, "static bool TipTypeLineDraw(")
+        self.assertIn("M1sNs::TypeLineFor(true, piece, drawn)", line)
+        self.assertIn("if (line == drawn) return false;", line)
+        self.assertLess(line.index("if (line == drawn) return false;"), line.index("args[2] = RValue(line);"))
+        # The pass ends the piece's type line where it ends its rows.
+        for name in ("static RValue& Hook_DrawInventoryItemV2(", "static bool TipDrawOne("):
+            body = function_body(self.shipped, name)
+            self.assertGreater(body.rindex("TipSetBlockClear();"), body.index("g_Orig_DrawInventoryItemV2("), name)
+        self.assertIn("g_TipTypeLinePiece = -1;", function_body(self.shipped, "static void TipSetBlockClear()"))
+        hook = self.shipped[self.shipped.index("static void Hook_TipBuiltinText("):]
+        hook = hook[:hook.index("\n}\n") + 2]
+        self.assertIn("if constexpr (N == 0) {", hook)
+        self.assertIn("if (g_TipTypeLinePiece >= 0 && TipTypeLineDraw(Result, S, O, argc, Args)) return;", hook)
+        # The pass's piece is armed only by Mark1TooltipRows.
+        self.assertEqual(re.findall(r"\bg_TipTypeLinePiece\s*=\s*static_cast<int>\(piece\);", self.shipped),
+                         ["g_TipTypeLinePiece = static_cast<int>(piece);"])
+        self.assertIn("g_TipTypeLinePiece = static_cast<int>(piece);", self.body("tooltip_rows"))
+        # The hook goes in with the pieces' ground consumer, never from a draw or a dressing.
+        install = function_body(self.shipped, "static void InstallTipTypeLineHook()")
+        self.assertIn("InstallTipBuiltinTextHook<0>();", install)
+        self.assertIn("InstallForgedTooltipHooks();", install)
+        self.assertEqual(len(re.findall(r"\bInstallTipTypeLineHook\(\);", self.shipped)), 1)
+        self.assertIn("InstallTipTypeLineHook();", self.body("ground_install"))
+
+    def test_tooltip_stat_fields_tip_and_tip_unread_count_blocks_drawn(self):
+        fields = self.body("stat_fields")
+        self.assertIn("f.tip = g_TipSetBlocks;", fields)
+        self.assertIn("f.tipUnread = g_TipSetBlocksUnread;", fields)
+        stat = function_body(self.shipped, "static RValue& Hook_DrawInventoryStatsNew(")
+        count = "if (g_TipSetBlock) {"
+        self.assertIn(count, stat)
+        self.assertLess(stat.index("extra += TipDrawRow(x, y + extra, row);"), stat.index(count))
+        self.assertIn("++g_TipSetBlocks;", stat)
+        self.assertIn("if (g_TipSetBlockUnread) ++g_TipSetBlocksUnread;", stat)
+        self.assertEqual(re.findall(r"\+\+g_TipSetBlocks\b", self.shipped), ["++g_TipSetBlocks"])
 
     # ---- the jump (Mark1Jump.hpp): the shared detours ------------------------------------
 
