@@ -2962,8 +2962,9 @@ and what lands on the ground, each with a control in the same session.
   `flightcharm stat`, then up to 4 operator kill batches at copies 1; if
   `draw-typed=` has not risen after them, the owner plays until it does.
   `draw-calls=`, `draw-pushed=`, `draw-typed=` (either half) and
-  `elf-draw-typed=` (either half) each rise by at least 1, while the
-  second number of `draw-class-check=` and of `elf-draw-class-check=`, the
+  `elf-draw-typed=` (either half) each rise by at least 1, the first number
+  of `draw-class-check=` and of `elf-draw-class-check=`, the agreements,
+  each rise by at least 1, and the second number of both, the
   disagreements, is still 0 (`draw-control`). Every read records
   `draw-class=` and `draw-class-check=` and their twins `elf-draw-class=`
   and `elf-draw-class-check=` beside the typed fields. This is a
@@ -2972,10 +2973,13 @@ and what lands on the ground, each with a control in the same session.
   in this session, so a later miss can be read as one. `draw-control`
   fails, and the session goes straight to L8 with the reads recorded, at
   the first read where either line's `draw-class-check=` counts a
-  disagreement (the class read is wrong), or where the true halves of
+  disagreement (the class read is wrong), where the true halves of
   `draw-class=` (`bool` and `num` together) have risen by 5 or more while
   `draw-typed=` has not risen (the class is read but the read match fails,
-  and `draw-untyped=` carries those builds).
+  and `draw-untyped=` carries those builds), or where either line's third
+  number of `draw-class-check=`, `unread`, has risen by 5 or more while its
+  first number has not (the check cannot read the game's `c`, so a wrong
+  class read would show no disagreement and a right one no agreement).
 - Expected class, a static reading and not a measurement: on this game
   build `DropItem` passes its third argument as a bool (hub
   `docs/RUNTIME_DATA_MODELS.md` § 13.12), so `draw-class=` and
@@ -3057,14 +3061,22 @@ and 380 (UP20).
 [Phase 4 decision](#phase-4-decision), each on a line of its own.
 `draw-claim: yes` only if `draw-pieces` passed, and then the player text
 may say the pieces drop from kills. `draw-claim: no` only if `draw-pieces`
-did not pass and Mark 1's `draw-typed=` rose above 0 over L4: the result
-then reads "not observed in N typed builds", N that rise, with the model's
-chance of a miss at that N from the list above. `draw-claim: not-reached`
-when L4 counted no typed build: the session then says nothing about the
-route. `elf-claim:` follows the same rule on `draw-elf` and
-`elf-draw-typed=`: `elf-claim: yes` only if `draw-elf` passed, `elf-claim:
-no` with "not observed in N typed builds" and its miss chance, or
-`elf-claim: not-reached` when no typed build was counted. When the first
+did not pass, Mark 1's `draw-typed=` rose above 0 over L4, the first
+number of `draw-class-check=` (the agreements) rose with it, and its second
+number (the disagreements) did not rise over L4: the result then reads
+"not observed in N typed builds", N the rise of `draw-typed=`, with the
+model's chance of a miss at that N from the list above. `draw-claim:
+not-reached` when L4 counted no typed build, or when the class check
+counted a disagreement over L4 or no agreement beside the typed builds:
+the session then says nothing about the route, and a disagreement count is
+recorded as a defect of the instrument, not as a miss, since the typed
+builds then are not the unique builds the miss chance assumes.
+`elf-claim:` follows the same rule on `draw-elf`, `elf-draw-typed=` and
+`elf-draw-class-check=`: `elf-claim: yes` only if `draw-elf` passed,
+`elf-claim: no` with "not observed in N typed builds" and its miss chance
+only when the agreements rose and the disagreements did not, or
+`elf-claim: not-reached` when no typed build was counted or the class
+check failed that way. When the first
 half of either counter rose, own-stand-in typed builds, and no hit
 followed, the result records that as a defect of the route, not as a
 miss. A pass at copies 400 shows the route builds the item; it does not
