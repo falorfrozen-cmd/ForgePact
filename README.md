@@ -1872,8 +1872,15 @@ and the ones seen on the ground were labelled SS. A piece dropping from a vault 
 yet.
 
 The set display in the tooltip, the `Satanic Set <type>` line and the art
-showing from the moment you have a piece came after those sessions and have
-not been checked in play yet.
+showing from the moment you have a piece came after those sessions and were
+checked in two more (2026-10-21). The pieces showed their own art with every
+Mark 1 switch off, on the ground, in the bag and worn, and again after
+saving and loading the character. Each piece's tooltip read `Satanic Set
+<type>` and showed the set on the ground, in the bag and worn: the names of
+the pieces worn in green, `+1 to Automation` lit only with all four worn and
+the set's switch on, and every line inside the tooltip. `mark1set stat`
+counted one drawn tooltip per hover and the game's copy for every frame
+after it.
 
 ## Goburin's Head pity
 

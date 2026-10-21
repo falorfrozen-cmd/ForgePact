@@ -114,8 +114,9 @@ anything that suspends the game's own loop.
 - **Mod live procedure 9** ran on 2026-10-21: 12 of its 15 checks passed and
   three failed (`tip-ground`, `art-spawn`, `tip-layout`); replan 1 recounted
   the tooltip per call, wrapped the description at 478 and lit the bonus line
-  only with the bonus installed, and **Mod live procedure 10** re-checks the
-  three on that build, pending.
+  only with the bonus installed, and **Mod live procedure 10** (2026-10-21)
+  passed all 13 of its checks on that build, those three included (§ "Mod
+  live 9 results", § "Mod live 10 results").
 
 ## Static search
 
@@ -3445,8 +3446,9 @@ decompiled or disassembled text is quoted here.
   talent's description in grey (8421504), wrapped and centred, then a
   parameter row. **Measured** on all 200 captured tooltips with a stat-203
   line (161 of them potions and relics), all of them ALT views or items that roll no ranges, so whether the
-  description shows without ALT is **not established** (`desc-plain` below
-  looks).
+  description shows without ALT was not established from them. Mod live 9's
+  `desc-plain` then **measured** it: a gear item's grant description shows
+  with and without ALT (§ "Mod live 9 results").
 - **The set tables.** `GetSetName` turns a set index 1 to 70 into its
   localized name; `DefineSetPieceRequirements` fills `requiredPieces` for
   the same 70 sets with 2, 3 or 4; `gml_Script_s_SetItemInfo` names a piece
@@ -3603,6 +3605,68 @@ and recorded as read: `tip-rehover` (whether each hover's `tip-armed=` rose;
 one that did not is not observed to re-run, and reads as a cached tooltip
 only if a pass count backs it) and `desc-plain`.
 
+### Mod live 9 results
+
+Mod live procedure 9 ran once on 2026-10-21 (20:35 to 20:45 UTC), on save
+slot 14, "Sorak", in town, with no debugger, and restored its saves clean at
+the end. It ran the research build from ForgePact `064ddbc` (DLL SHA-256
+`9eda04c6b85dc5976f84035a83f70a65134435bdb04122590aa191d38eb83fbb`). The
+capture is the tooltip workorder's `forgepact-166-mark1-set-tooltip-live-1.md`,
+kept with the hub's workorder files and not tracked.
+
+`tools/live_checks.py` reads 15 checks: 12 pass and 3 fail (`tip-ground`,
+`art-spawn` and `tip-layout`). Every session-validity check passed.
+
+| Check | Verdict | What it showed |
+|---|---|---|
+| `dll-hash` | pass | The lease hashed the installed DLL as `9eda04c6…3fbb`, the Live 1 build. |
+| `control` | pass | `pong (YYTK 4.0.1)`. |
+| `marker` | pass | `mark1probe: research build` and `mark1probe: rows=20 hooked=0 held=0 lever=off watch=off statlog=off`. |
+| `art-default` | pass | Before any `mark1set` command: `icons=0/8 art=off ground=0 ground-route=not-installed`. |
+| `art-spawn` | fail | After `mark1probe spawn set` (four `dressed=yes tier=5` lines), with every switch off, the stat line read `icons=8/8 art=armed ground=4 ground-route=both`. The screenshots showed the four `SS` labels and no item sprite of any kind under them: no icon of ours, no base art and no `Error_spr`. The pieces lay on Inoya's waypoint (below). |
+| `tip-ground` | fail | The Helmet's ground tooltip read `Satanic Set Helmet` under its name, then `+1 to Automation` grey, the description, `Mark 1` gold and the four names grey, footer `Tier SS, Requires Level 26`. Over the one hover `tip=` and `typeline=` rose 0 to 1, but `tip-armed=` 0 to 767 and `typeline-miss=` 0 to 766 (below). |
+| `art-bag` | pass | Extra tab 1 showed the four pieces in the owner's steel art: a visored helmet, a cuirass with a blue core, boots and crossed gauntlets. |
+| `tip-none` | pass | A bag piece, none worn: the block as on the ground; `tip=` 4 to 5, `tip-armed=` 6349 to 7086, `tip-unread=` 0. |
+| `tip-two` | pass | With the Helmet and the Body Armor worn, a bag piece's tooltip showed those two names green, the Boots and the Gloves grey and `+1 to Automation` grey; the stat line read two pieces worn, `worn=0/1/-/-`. |
+| `tip-full-off` | pass | All four worn (`set=full worn=0/1/2/4`), the switch off: four names green, `+1 to Automation` grey. |
+| `tip-full-on` | pass | `mark1set bonus 1` answered `mark1set: bonus=on install=installed`; on a new hover `+1 to Automation` was gold and the four names green, and the stat line read `bonus=on active=yes install=installed set=full`. |
+| `tip-layout` | fail | No row overlapped another or the footer, but in all five tooltips the description's first row ran past both edges of the box, its first and last letters cut (below). |
+| `art-save` | pass | After `Save & Exit`, a fresh game process and slot 14 again, the first `mark1set stat` read `bonus=off`, `set=full worn=0/1/2/4`, `icons=8/8 art=armed ground=0 ground-route=both`, and the worn slots showed the steel art. |
+| `tip-rehover` | pass | Research. `tip-armed=` rose on every one of the five hovers (0 to 767, 6349 to 7086, 31718 to 32471, 33750 to 34566, 34566 to 36773), and `tip=` and `typeline=` by 1 each, the hover after each gear change included. It also rose with the cursor resting on a piece and no new hover (7086 to 31718 over about three minutes). Two other items hovered moved no counter. |
+| `desc-plain` | pass | Research. A worn Zealot's Book of Prophecy, line `+11 to Satan's Mark (White Mage)`: the skill's description showed under the line without ALT and with ALT held, and the tooltip was the same in both. |
+
+**The three fails, and what replan 1 changed.**
+
+- **`tip-ground`: counters on a call that runs every frame.**
+  `Hook_DrawInventoryItemV2` runs on every frame a tooltip shows, while the
+  game draws the tooltip's text on the first frame of a hover only and shows
+  a cached copy after (hub `docs/RUNTIME_DATA_MODELS.md` § 16.6 measured the
+  stat calls once per hover). This build counted every frame in
+  `tip-armed=` and every cached frame in `typeline-miss=`: per hover `tip=`
+  and `typeline=` rose by 1, and `typeline-miss=` stayed `tip-armed=` less
+  `typeline=` throughout. The type line itself showed as `Satanic Set
+  <type>` on every frame, so the cache holds the type line too. Replan 1
+  counts each call by what the game drew in it (`tip-armed=` the drawn
+  calls, `tip-cached=` the cached ones, `typeline-hook=` whether the type
+  line's hook is in).
+- **`art-spawn`: the waypoint.** `mark1probe spawn` places the pieces at the
+  player, and Sorak loads standing on Inoya's waypoint, so all four lay on
+  it. The waypoint is drawn over a ground item lying on it, whatever its art
+  (Mod live 2's V2a saw one piece there show its label and no sprite).
+  `ground=4` was right about what it counts, four ground instances given our
+  sprite; the screenshot could not see them. No code changed: Mod live
+  procedure 10 places the pieces off the waypoint.
+- **`tip-layout`: the wrap width.** The description wrapped at 622, the
+  width of a few wide boxes of the game's, and a piece's box is narrower.
+  Replan 1 wraps it at 478, the narrowest width the game's own description
+  rows used in Item Truth's captures (hub RDM § 16.12).
+
+**Observation, its cause not read.** After `mark1set bonus 1`, with all four
+worn and in town, Sorak's life read 720 / 3833 in the S9 screenshot (3833 /
+3833 at S7) and 1030 / 3833 a few seconds later, while the automation pressed
+(`presses=355/631/4/0`, `cast-calls=3`). Phase 5 touches neither life, casting
+nor the bonus.
+
 ### Mod live procedure 10
 
 Mod live 9 (2026-10-21) passed 12 of its 15 checks and failed three. In
@@ -3725,4 +3789,67 @@ it disagrees with `tip-armed=`; not observed when it logged nothing while the
 control logged) and `dbg-ground-draw` (pass when its count rose with the
 pieces on screen after staying flat before the spawn; not observed when it
 stayed flat while the control logged). The life readings are an observation,
-not a check. The results are recorded below once the session has run.
+not a check. The results are in Mod live 10 results below.
+
+### Mod live 10 results
+
+Mod live procedure 10 ran once on 2026-10-21 (21:49 to 21:57 UTC), on save
+slot 14, "Sorak", in town, and restored its saves clean at the end. It ran
+the research build from ForgePact `2f16449` (DLL SHA-256
+`9567fb0d99fb28da02da164224e194cc4f4632cdb5042fefd6264093380b4777`), with
+the hub's x64dbg MCP attached from after S1 to after S6. The capture is the
+tooltip workorder's `forgepact-166-mark1-set-tooltip-live-2.md`, kept with
+the hub's workorder files and not tracked.
+
+`tools/live_checks.py` reads 13 checks, and all 13 pass: the four
+session-validity checks, the seven acceptance checks and both research
+checks. With Mod live 9's twelve passes, every check of Phase 5 has now
+passed live.
+
+| Check | Verdict | What it showed |
+|---|---|---|
+| `dll-hash` | pass | The lease hashed the installed DLL as `9567fb0d…4777`, the Live 2 build. |
+| `control` | pass | `pong (YYTK 4.0.1)`. |
+| `marker` | pass | `mark1probe: research build` and its rows line, and the first `mark1set stat` ended `ground-route=not-installed tip=0 tip-unread=0 tip-armed=0 typeline=0 typeline-miss=0 tip-cached=0 typeline-hook=not-tried \| speed=0 penalty=unavailable`, replan 1's fields. |
+| `dbg-control` | pass | The logpoint on `CheckTalentUse` logged 19214 lines, `ctu #1` to `ctu #19227`, rising in every step's window from S2 to S6. The attach tool proved the instrument by the game's frame counter: 7666 to 7774 before arming, no answer during the control's hold, 7959 after it. |
+| `art-spawn` | pass | `playerwarp 912 960` (from 912,822, the waypoint), `mark1probe spawn set` (four `dressed=yes tier=5` lines) and `playerwarp 1040 960`. The stat line read `icons=8/8 art=armed ground=4 ground-route=both` and `typeline-hook=in`; `soulprobe ground` listed four items, `a=777500` to `777503`, with the sprites `__newsprite32286`, `__newsprite32288`, `__newsprite32290` and `__newsprite32292`, none `Error_spr` and none a `Pickup_` name; and a screenshot showed four steel sprites, helmet, body armour, boots and gloves, under the four `SS` labels, with no `lootshow` needed. |
+| `dbg-ground-draw` | pass | Research. The logpoint on `LootGroundDraw`, logging every hit (the sampling condition was not used: x64dbg reads a bare number as hex), read 0 before the spawn with no ground item on screen, 353 right after the second warp, 745 five seconds later and 2099 when it was cleared. |
+| `tip-ground` | pass | The Helmet's ground label hovered for 1 s: `Satanic Set Helmet`, `+1 to Automation` grey, the description wrapped over four rows, `Mark 1` gold, the four names grey, footer `Tier SS, Requires Level 26`. `tip=`, `tip-armed=` and `typeline=` 0 to 1, `typeline-miss=` 0 to 0, `tip-cached=` 0 to 49, `typeline-hook=in`. |
+| `tip-cached` | pass | The cursor resting 5 s on that label: `tip=1 tip-armed=1 typeline=1` unchanged, `tip-cached=` 49 to 2239. |
+| `dbg-stat-site` | pass | Research. The logpoint on a direct `DrawInventoryStatsNew` call inside the tooltip pass rose by 1 on each timed hover, as `tip-armed=` did (S3 0 to 1, S5 10 to 11, S6 15 to 16), and stayed at 1 over S4's 5 s rest while the control rose by 390. |
+| `tip-none` | pass | A bag piece, none worn (Extra tab 1, the Main tab full): the block as on the ground; `tip=`, `tip-armed=` and `typeline=` 10 to 11, `typeline-miss=` 0, `tip-cached=` 3644 to 3759. The nine between S3 and S5 were the label hovers of the pickups, with the stat site's count rising 1 to 10 beside them. |
+| `tip-full-off` | pass | All four worn (`set=full worn=0/1/2/4`), the switch off, a worn piece hovered: four names green, `+1 to Automation` grey, `bonus=off`; the counters 11 to 12. |
+| `tip-full-on` | pass | `mark1set bonus 1` answered `mark1set: bonus=on install=installed`; on a new hover `+1 to Automation` was gold and the four names green, and the stat line read `bonus=on active=yes install=installed set=full`. |
+| `tip-layout` | pass | In S3, S5, S6 and S7 the description wrapped at 478 over four rows ("Your Q, E, R and Y skills cast themselves / whenever they are ready. Your jump / goes three times as far, over scenery. / You walk at half speed."), every row inside the box, no letter cut and none over another row or the footer. |
+
+**What else the session showed.**
+
+- **The tooltip's text is drawn once per hover, read two ways.** On every
+  timed hover one call drew the tooltip and every later call of the hover
+  showed the cached copy (`tip-cached=` 49 after 1 s, 2239 after 5 s more),
+  and the debugger's count of the tooltip pass's stat call agreed with
+  `tip-armed=` on every hover and stayed flat over the rest. So the cached
+  frames make no stat call, and the type line is in the cached part (Mod
+  live 9). Between hovers the stat site also counted other items' tooltips
+  (15 against 11 over the four equips, `tip=` flat): it counts every item's
+  pass, `tip-armed=` only a piece's.
+- **The name of a sprite added at runtime.** `sprite_get_name` read the
+  pieces' ground sprites, which ForgePact adds with `sprite_add` and sets
+  after the game's `LootGroundInit`, as `__newsprite<n>` (32286 to 32292,
+  one even number per piece, in spawn order). Hub RDM § 23.7 had that name as
+  not read live.
+- **A piece off the waypoint is drawn.** 128 px south of the waypoint the
+  four pieces showed their sprites, and `LootGroundDraw` ran with them on
+  screen after not running before the spawn. Mod live 9's empty screenshot
+  was the waypoint, not the art.
+- With `LootGroundDraw` logging every hit the game ran at about 19 frames a
+  second until it was cleared.
+- **Life, an observation, its cause not read.** Sorak's life read 4374 /
+  4374 at S1, 4108 / 4108 with the Helmet worn and 3833 / 3833 with all four
+  (the maximum falling as each piece took a worn slot; the pieces carry no
+  stats, and what the gear they replaced gave was not read). It read 3833 /
+  3833 before `mark1set bonus 1`, 3360 in the tooltip screenshot just after
+  it, 3779 about 5 s after it, and 645 about 30 s after `mark1set bonus 0`,
+  in town, with the damage meter reading 526 020. Mod live 9 saw the same
+  kind of drop after `bonus 1`. Phase 5 touches neither life, casting nor the
+  bonus.

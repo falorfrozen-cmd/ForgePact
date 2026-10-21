@@ -79,11 +79,15 @@ pieces" below.
   about a third of your normal speed. A third session checked the drops from
   kills: with the pieces' share raised 400-fold and magic find raised, so
   that they would show up within one session, kills in Hell dropped all four
-  pieces, 8 in all among the 67 unique items the game's draw built. A toggle
-  skill on the bar, and a piece dropping from a vault, have not been checked
-  in play yet, nor have the set display in the tooltip, the pieces' `Satanic
-  Set <type>` line and the art showing from the moment you have a piece,
-  which came after those sessions.
+  pieces, 8 in all among the 67 unique items the game's draw built. Two more
+  sessions checked the set display in the tooltip, the pieces' `Satanic Set
+  <type>` line and the art: the pieces showed their own art with every Mark
+  1 switch off, on the ground, in the bag and worn, and again after saving
+  and loading the character; and each piece's tooltip showed the set the way
+  the game shows its own, on the ground, in the bag and worn, the names of
+  the pieces you wear in green and `+1 to Automation` lit only with the set's
+  switch on, every line inside the tooltip. A toggle skill on the bar, and a
+  piece dropping from a vault, have not been checked in play yet.
 
 ## Fixed
 
