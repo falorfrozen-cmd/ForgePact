@@ -6,11 +6,10 @@ A new item set of ForgePact's own, **Mark 1**: four Satanic pieces, like the
 game's own set pieces, that, worn together with the new **Mark 1 set** switch
 on (off by default), cast the skills on your Q, E, R and Y slots for you and
 send your jump three times as far over scenery, at the price of walking at
-half speed. A second switch, **Mark 1 drops** (also off by default), adds the
-pieces to two of the game's own rolls: its roll for a unique item and the
-Heroic roll a vault runs. Do not expect the pieces from kills yet: in testing
-no kill has run the unique roll at all, so no piece has dropped from a kill.
-See "Finding the pieces" below.
+half speed. A second switch, **Mark 1 drops** (also off by default), lets
+the pieces drop from the monsters you kill, anywhere, among the game's own SS
+unique items, and adds them to the Heroic roll a vault runs. See "Finding the
+pieces" below.
 
 ## New
 
@@ -51,19 +50,16 @@ See "Finding the pieces" below.
     built on.
   - **Finding the pieces.** Switch on **Mark 1 drops** (Mods → Items, off by
     default; it works with or without the set's own switch). The pieces then
-    join the game's own roll for a unique item, so that whenever that roll
-    runs, each piece is about as likely as any single unique it can give you.
-    That does not mean kills drop them. The game's code ties that roll to a
-    kill's drop, but in a 30-minute test of killing monsters, elites and
-    Treasure Gobblers and opening chests in Act 1 on Hell, no kill ran the
-    roll at all, and on the one monster whose drop chances have been read,
-    the chance of a unique item was zero. So no piece has dropped from a kill,
-    and whether any ordinary kill ever drops one is not known yet. The pieces
-    also join the game's own Heroic roll, the one that runs when you open a
-    vault from your bag, each about as likely as any single Heroic unique that
-    roll can give you; a piece dropping from a vault has not been seen in play
-    yet either. No rate has been measured. A dropped piece shows its own art.
-    With the switch off, kills and vaults drop exactly what they always did.
+    drop from kills anywhere. When a kill drops a unique item, the game draws
+    it from one of its unique lists; each piece stands in on those lists for
+    one of the game's own SS Satanic uniques of its kind, the way the game's
+    own SS set pieces drop. SS uniques are rare, and how often a kill gives a
+    piece at the normal setting has not been measured. The pieces also join
+    the game's own Heroic roll, the one that runs when you open a vault from
+    your bag, each about as likely as any single Heroic unique that roll can
+    give you; a piece dropping from a vault has not been seen in play yet. A
+    dropped piece shows its own art. With the switch off, kills and vaults
+    drop exactly what they always did.
 
   The set was checked in play on a research build of the plugin: the
   pieces, their art, the outlines and the jump worked, and in that session,
@@ -73,12 +69,26 @@ See "Finding the pieces" below.
   seconds with no key pressed, Shadow Bolt was cast 31 times, Heavenly Fire 30
   and Healing Zone 3. It also measured the walk at half speed with the set on,
   and a cast's slowdown on top of that: while a cast slows you, you walk at
-  about a third of your normal speed. A toggle skill on the bar, and a piece
-  dropping from a vault, have not been checked in play yet; a piece dropping
-  from a kill was looked for and not seen, as above.
+  about a third of your normal speed. A third session checked the drops from
+  kills: with the pieces' share raised 400-fold and magic find raised, so
+  that they would show up within one session, kills in Hell dropped all four
+  pieces, 8 in all among the 67 unique items the game's draw built. A toggle
+  skill on the bar, and a piece dropping from a vault, have not been checked
+  in play yet.
 
 ## Fixed
 
+- **Pocket Elf did not drop from kills (#166).** Since 2.3.0, switching
+  on **Pocket Elf drops** added Pocket Elf only to a unique roll that kills
+  seldom run, so in practice no kill dropped one: in a 30-minute test of
+  kills in Act 1 on Hell, that roll did not run once. Now Pocket Elf joins
+  the draw the game itself uses for a kill's unique items, standing in for
+  one SS Satanic unique, the rarity and tier of Aimbot.exe, so it drops from
+  kills anywhere. SS uniques are rare, and how often a kill gives a Pocket
+  Elf at the normal setting has not been measured. Tested in a game session
+  on 2026-10-21 with Pocket Elf's share raised 400-fold and magic find
+  raised: a Pocket Elf dropped from a kill in Hell. With the switch off,
+  kills drop exactly what they always did.
 - **The game no longer runs out of room for monsters at high density (#232).**
   With Density or a Special Content spawner turned far up (for example
   density x5 with Battlefield, Chaos Pillars and Shadow Realm at x100), the

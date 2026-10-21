@@ -2895,6 +2895,16 @@ was not logged. No natural Satanic SS unique was built through the draw in
 gets is far below its pick rate. The model and the player text take that
 from Live 2, not from the pick share.
 
+Mod live procedure 8 adds two more keys, recorded on 2026-10-21 from its
+second attempt ([Mod live 8 results](#mod-live-8-results) below) by the
+procedure's claim rule.
+
+draw-claim: yes
+Decided by `draw-pieces` (Mod live 8, pass). Over L4 the drops' own kill draw built 8 Mark 1 pieces (helmet 2, body 4, boots 1, gloves 1), and the Body Armor, the Helmet and the Boots were on screen with an `SS` label, with `anomalies=0` and `refused=0`. Mark 1's `draw-typed=` rose by 67 over L4, the agreements of `draw-class-check=` rose with it (17 to 13457) and its disagreements stayed 0, so the hit typing was reading the draw's builds throughout. Every own-stand-in typed build (8) was a hit, so the route shows no defect. The pieces' share was raised 400-fold (`mark1probe copies 400`) and magic find to x10, then x100 (an owner deviation), so this shows the route builds the pieces from kills; it does not measure their rate at the player build's one copy.
+
+elf-claim: yes
+Decided by `draw-elf` (Mod live 8, pass). Over L4 the kill draw built one Pocket Elf (`elf-draw=` 0/0 to 1/1), on screen as `Pocket Elf | SS`, with `anomalies=0` and `refused=0`. `elf-draw-typed=` rose by 67 over L4, the agreements of `elf-draw-class-check=` rose with it (17 to 13457) and its disagreements stayed 0. Its one own-stand-in typed build was the hit. As for the pieces, the share was raised 400-fold (`flightprobe copies 400`), so the rate at one copy is not measured.
+
 The values each key may take:
 
 - `unique-route`, where a kill's unique is built: `satanic-draw`,
@@ -2908,6 +2918,9 @@ The values each key may take:
   `weighed` or `not-observed`.
 - `ss-build`, whether a pushed SS entry the draw picks is ever built:
   `seen`, `rejected` or `not-observed`.
+- `draw-claim`, whether the player text may say the pieces drop from kills
+  (Mod live procedure 8's claim rule): `yes`, `no` or `not-reached`.
+- `elf-claim`, the same for Pocket Elf: `yes`, `no` or `not-reached`.
 
 ### Mod live procedure 8
 
@@ -3081,3 +3094,107 @@ half of either counter rose, own-stand-in typed builds, and no hit
 followed, the result records that as a defect of the route, not as a
 miss. A pass at copies 400 shows the route builds the item; it does not
 measure the rate per kill at copies 1, which `natural-draw` only samples.
+
+### Mod live 8 results
+
+Mod live procedure 8 ran twice on 2026-10-21, on save slot 14, "Sorak", in
+Hell, and each attempt restored its saves clean at the end. The capture is
+the uniques workorder's `forgepact-166-mark1-set-uniques-live-2.md`, kept
+with the hub's workorder files and not tracked; this record is its second
+attempt, the block `tools/live_checks.py --block last` reads.
+
+- **Attempt 1** (13:34 to 13:59 UTC) ran the research build from ForgePact
+  e19b70d (SHA-256 `e1642ea3…8d13`). It stopped in L3. Over 8342 draw
+  calls and 3990 normal builds, while the owner saw ordinary uniques drop,
+  `draw-typed=` and `draw-untyped=` both stayed 0 on both lines. The typed
+  count was blind to the unique builds it was meant to count: its class
+  read took only a number, and `DropItem` passes the class as a bool (hub
+  `docs/RUNTIME_DATA_MODELS.md` § 13.12). The owner stopped the session,
+  `draw-control` was not run, and so were none of the acceptance checks.
+- **Attempt 2** (14:57 to 15:45 UTC) ran the build from ForgePact b59a017
+  (SHA-256 `10fdd37c…572b`), which reads the class as the game reads it and
+  adds `draw-class=` and `draw-class-check=` to both stat lines. Every
+  result below is this attempt's. The capture does not record the game
+  build's hash.
+
+`tools/live_checks.py` reads 14 checks: 13 pass, 0 fail and 1 not observed
+(`natural-draw`). Every session-validity check passed. L3 and the
+operator's four L4 batches ran in the Outskirts of Inoya (zone level 243);
+the owner's L4 play ran in The Devil's Breach (zone level 276). Magic find
+was x10 from L3, as written, until the owner raised it to x100 partway
+through L4 to speed it up (an owner deviation from the procedure, at the
+read where `draw-typed=` stood at 2/21). L7's kill batch ran at x100 too,
+since the procedure sets magic find back to 1 after it.
+
+| Check | Verdict | What it showed |
+|---|---|---|
+| `dll-hash` | pass | The lease hashed the installed DLL as `10fdd37c…572b`, the saved Live 2 build. |
+| `control` | pass | `pong (YYTK 4.0.1)`; `mark1probe: research build`, `rows=20 hooked=0 held=0`. |
+| `marker` | pass | `playerwarp` to (1412, 822), free on every test, 500 px from the waypoint. |
+| `draw-control` | pass | At L3's second operator batch, at copies 1: `draw-calls=` and `draw-pushed=` 0 to 102, `draw-typed=` 0/0 to 0/2 and `elf-draw-typed=` 0/0 to 0/2, the agreements of `draw-class-check=` 0 to 17 on both lines with no disagreement, and `draw-class=bool:2/15,num:0/0`. No read met a fail exit. Batches 3 and 4 and the owner's L3 play were not needed. |
+| `drops-on` | pass | `mark1set: drops=on install=installed gate=pending kill-gate=pending draw-gate=pending`; the stat line read `draw-hook=detoured tier-hook=detoured`. |
+| `elf-on` | pass | `flightcharm: elf drop on`; the stat line read `elf-draw-hook=detoured`. |
+| `draw-pieces` | pass | Over L4 the drops' kill draw built 8 pieces: `draw-helmet=` 0/0 to 2/2, `draw-body=` 0/0 to 4/4, `draw-boots=` 0/0 to 1/1 and `draw-gloves=` 0/0 to 1/1, with `anomalies=0` and `refused=0`. The Body Armor, the Helmet and the Boots of the last screenshot were on screen with an `SS` label, each one the draw's by the counters read beside its screenshot. No frame showed a beam or an announcement; each screenshot came after the drop, so whether a lootshow played at that moment was not observed. |
+| `draw-elf` | pass | `elf-draw=` 0/0 to 1/1, `Pocket Elf \| SS` on screen, `anomalies=0` and `refused=0`. |
+| `nested-clean` | pass | `sigdrop status` read as at L3 in every field but its call counter `cdpCalls=` (0 to 13474), which counts the game's `CreateDefaultParams` calls and rises with every build, so this record reads it as outside the match. `mark1probe pool kill` read `kill lengths=50,61,79,152,221 unread=0` and `mark1probe pool` read list 5 at 380. `kill-nested=0`, `nested=0`. |
+| `heroic-still` | pass | `mark1probe heroic 1` raised `heroic-calls=` 0 to 1 with `mark1set drops hit: heroic roll -> Mark 1 Boots (stand-in 2/0/36, 400 in 401) built by the game`. |
+| `unique-still` | pass | `mark1probe unique 1` raised `kill-calls=` 7 to 8; it built a Pocket Elf (`flightcharm hit: unique roll -> Pocket Elf (stand-in Aimbot.exe, 400 in 400) built by the game`). |
+| `drop-off` | pass | With copies 1, `raredrop ceiling 1`, `mark1set drops 0` and `flightcharm elf 0`, one kill batch: `draw-calls=` 3143 to 3182, while `draw-pushed=` (3143), `draw-typed=` (8/61), `elf-draw-typed=` (1/68), `draw-class=` and `draw-class-check=` and their twins did not change. No new piece and no Pocket Elf on the ground. |
+| `natural-draw` | not observed | L3's two batches at copies 1 typed 2 builds and built no piece and no Pocket Elf. At one copy procedure 8's model gives one item about 4.5e-5 of the typed builds on list 4, so none was expected. |
+| `draw-scope` | pass | Read at L3, L4 and L7, the same on both lines. L3's end: `draw-untyped=0 draw-normal=15 draw-outside=busy:0,aside:0,lists:0,roll:0 draw-class=bool:2/15,num:0/0,none:0,other:0 draw-class-check=17/0/0`. L4's end and L7: `draw-untyped=0 draw-normal=13388 draw-outside=busy:0,aside:5,lists:0,roll:0 draw-class=bool:69/8482,num:0/0,none:4906,other:0 draw-class-check=13457/0/0`. |
+
+**Typed builds over L4, beside the model.** L4 ran at copies 400 for every
+piece and for Pocket Elf.
+
+| Counter | L4 start to end | Rise | At x10, then x100 | Hits |
+|---|---|---|---|---|
+| `draw-typed=` | 0/2 to 8/61 | 67 (own stand-ins 8, others 59) | 21, then 46 | 8 pieces |
+| `elf-draw-typed=` | 0/2 to 1/68 | 67 (own stand-in 1, others 66) | 21, then 46 | 1 Pocket Elf |
+
+- Every own-stand-in typed build was a hit, 8 of 8 for the pieces and 1 of
+  1 for Pocket Elf, as the coin at copies 400 (at least 400/401) predicts.
+  So no typed build on a stand-in went unclaimed, and the route shows no
+  defect.
+- The model's share at copies 400 is about 4.0% (list 5) to 6.6% (list 4)
+  of typed builds for the four pieces together, and 1.0% to 1.7% for Pocket
+  Elf, more on the shorter lists. The measured shares are 8 of 67 (11.9%)
+  and 1 of 67 (1.5%). The pieces' count lies above what lists 4 and 5 give
+  (2.7 to 4.4 expected). Shorter lists give larger shares, and no build's k
+  was recorded, so this record does not say whether the share differs from
+  the model's.
+- Not a rate at one copy: copies 400 and a raised magic find were the
+  session's levers. How often a piece or Pocket Elf drops from kills at the
+  player build's one copy is not measured.
+
+**What else the session showed.**
+
+- **The class as the game reads it** (**measured**, the static reading in
+  hub RDM § 13.12): over L3 and L4, 13457 builds in the draw's scope, every
+  one with the class read as a bool or absent and none as a number
+  (`num:0/0`, `other:0`). The 69 that read true are the 69 typed builds;
+  the 8482 that read false and the 4906 that read absent or undefined add
+  up to `draw-normal=13388`. `draw-class-check=` agreed with the `c` the
+  game's own `CreateDefaultParams` stored on all 13457 (0 disagreements, 0
+  unread). Which call made the 4906 normal builds with no class was not
+  read.
+- **The `DropUniqueItems` route ran on kills.** In the owner's L4 play,
+  `kill-calls=` rose 0 to 7 with `draw-nested=` 0 to 7 beside it: the
+  ordinary unique roll ran 7 times inside a kill's `DropItem` call, and at
+  copies 400 it built Mark 1 Boots twice and Mark 1 Gloves once
+  (`kill-boots=2/2`, `kill-gloves=1/1`; the first two Boots and the Gloves
+  on screen were these). The drops workorder's Live 3 saw it never run in Act
+  1 on Hell. Whether the zone, the zone level or the magic find opened drop
+  type 45's gate here is not established.
+- **No kill-draw hit line was seen.** The procedure asked for each
+  `mark1set drops hit: kill draw -> <outcome>` and `flightcharm hit: kill
+  draw -> <outcome>` line. None reached `bp_ipc\out.txt` for the 9 draw
+  hits, nor a `unique roll` line for the 3 `DropUniqueItems`-route hits
+  made by kills, while L6's by-name calls printed theirs in the command's
+  reply. Where a hit line made outside a command goes was not looked at.
+- `tier-unread=0`, `draw-outside=` `aside:5` and `busy:0,lists:0,roll:0`
+  throughout. `draw-standin-<key>=` read `0:15@6/5`, `0:1@6/5`, `0:9@6/5`
+  and `0:16@6/5`, each `x0,0,0,0,0,1`, and `elf-draw-standin=` `0:1@6/5`
+  with the same counts, at every read.
+- `incident stat` counted 29 episodes by the end of L4, at copies 400,
+  with frames over a second and `drops` the mod with the worst frame; the
+  session did not measure the drops' cost at copies 1.
