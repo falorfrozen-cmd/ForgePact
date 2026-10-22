@@ -111,10 +111,20 @@ pieces" below.
   switch on, every line inside the tooltip. A later session checked that a
   skill fired the way an item's proc fires one is cast at the skill's own
   level, the grey icons in the game's own dark look, and the 20% lower
-  maximum mana with three automated skills. The skills firing with no cast
-  time, firing while you hold a button, the lock on casting them by hand, a
-  toggle skill on the bar, a piece dropping from a vault, the set bonus's
-  lines and the roll ranges have not been checked in play yet.
+  maximum mana with three automated skills (that build's cost; the mana
+  drain replaced it). A second session that day checked the roll ranges,
+  the set's bonus lines lit by pieces worn and their values added to your
+  stats (your maximum life on the HUD went from 4901 to 5651 with all four),
+  half speed, the skills firing in Q, E, R, Y order with the toggle skill
+  on R pressed only while it was off, a skill with no
+  cooldown firing about as often as holding its key casts it, the skills
+  firing while the right mouse button was held with that button's own skill
+  still casting, an automated skill's key casting nothing, and the grey
+  icons; those counts are the times the set fired a skill, not casts seen
+  landing. Not checked in play yet: whether the game uses the set's Defense
+  and Physical Damage Taken Reduced when a monster hits you, whether every
+  fired skill casts, the mana drain as it ships, the character sheet
+  showing the set's lines and a piece dropping from a vault.
 
 ## Fixed
 

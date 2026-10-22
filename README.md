@@ -1818,7 +1818,8 @@ any item's, and the set gives more for every piece you wear.
   while the bonus is active. An aura slot and an empty slot are left alone.
   Because a fired skill skips the game's checks, a skill the game would
   sometimes refuse to cast, such as Mana Orb while its orb is still out,
-  can be fired anyway; whether that stacks has not been checked in play.
+  can be fired anyway, and they stack: in a test session Mana Orb fired
+  this way had 7 orbs out at once.
 - **Your jump goes three times as far.** The universal jump always goes three
   times your jump's normal reach, in the direction of your cursor however near
   the cursor is, and passes over rocks, fences, carts and other scenery. It
@@ -1925,10 +1926,27 @@ icons came from the owner's playtest (2026-10-22). A session later that day
 on a research build checked that a skill fired the way an item's proc fires
 one is cast at the skill's own level, the grey icons in the game's own dark
 look and the 20% lower maximum mana with three automated skills, and found
-the roll ranges missing from the pieces' lines, which they now show. The
-skills firing with no cast time, firing while you hold a button, the lock on
-casting them by hand, the set bonus's lines, the ranges and these settings
-together have not been checked in play yet.
+the roll ranges missing from the pieces' lines, which they now show. A
+second session that day checked these settings together on a research
+build: each rolled line's range in grey, and the Defense and sockets lines'
+own ranges; the set's bonus lines lit with 2, 3 and 4 pieces worn; the
+set's values added to your stats as the game reports them (with all four
+worn your maximum life on the HUD went from 4901 to 5651); half speed; the
+skills firing in Q, E, R, Y order; Shadow Bolt, which has no cooldown,
+fired 20 times in 10 seconds against 21 casts from holding its key; the
+skills kept firing while the right mouse button was held, and the right
+button's own skill kept casting (16 times in 8 seconds); pressing an
+automated skill's key cast nothing, where with the lock switched off for
+the test the same key cast 9 times; and the grey icons, back to normal when
+the set's switch went off. Those counts are the times the set fired a
+skill, not casts seen landing in the game. That build cut your maximum
+mana by 20% per automated skill, the cost then; the mana drain replaced
+it. Not checked in play yet: whether the game uses the set's Defense and
+Physical Damage Taken Reduced when a monster hits you (in that session the
+game asked for neither on your behalf), how soon the HUD shows a lower
+maximum after you take a piece off, whether every fired skill casts, what
+the drain does at low mana, the drain at its shipped 1%, and the character
+sheet showing the set's lines.
 
 ## Goburin's Head pity
 
