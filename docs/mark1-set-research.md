@@ -4917,3 +4917,145 @@ These set the workorder's route tokens `auto-route: proc`, `cost: maxmana`,
 `grey-look: enabled`, `hold-value: 4`, `held-route: mask`, `desc-view:
 both` and `allres-route: dispatcher`. Stats live procedure 2, above, runs
 on the build that applies them.
+
+### Static reading after Stats live 2
+
+Made on 2026-10-22, after Stats live 2's second attempt, for the owner's
+question: what is the other self that Stats live 2's `dbg-defense` and
+`dbg-pdr` lines showed asking the dispatcher for Defense (id 92) and
+Physical Damage Taken Reduced (id 97), one instance outside town and two
+fresh ones each time the sheet opened in town, and does the game ask for
+the player's own Defense and PDR on it. Answered statically, in our own
+words: names and counts only, no game code. The game facts are folded into
+the toolkit's `docs/RUNTIME_DATA_MODELS.md` § 16.13.
+
+**Sources.** The hub's ghidra MCP (status healthy): it decompiled
+`GetMyPlayer`; `StatDefense` and `StatPhysicalDamageReduction` timed out at
+120 s; `UI_Talent_Screen_Attributes_Container_obj`'s Create method came back
+unannotated and gave nothing usable. Local byte scans of an import copy of
+`Hero_Siege.exe` (build `498d588550d8`) with the code-row table of an
+earlier run: a constant-id scan of direct `call rel32` sites into the
+dispatcher, a name scan, an argument scan and a caller scan. The scans and
+their outputs stay on the owner's machine, outside any repository
+(`%USERPROFILE%\tools\hs-decomp\issue166\`,
+`%USERPROFILE%\tools\hs-decomp\mark1-playtest2-replan2\`), and hold names
+and counts only.
+
+**Positive controls**, through the same scans: the constant-id scan listed
+id 64's askers exactly as the toolkit's § 7.8 lists them (the player's
+Step, `StatTotalDamage`, `StatAttackDamage`, `StatMagicSkillDamage`,
+`TalentsSamurai` and `Mercenary_obj`'s Alarm 5), and the caller scan found
+`CheckTalentUse` called from `PlayerMovement`. Both scans see direct call
+sites and constant ids only. A call through the script table, a global or a
+method value, or with a computed id, is invisible to them, so an asker they
+did not find is **not observed**, not absent.
+
+- **Id 92 with a constant id**: `StatMaxLife` (one site), `StatDefense`
+  itself, and the collision events of `Player_obj` and of `Mercenary_obj`
+  with `Enemy_Damage_Parent_Projectile_obj`. **Id 97**: `sc_hurt` (one
+  site) and `Mercenary_obj`'s collision events with
+  `Enemy_Damage_Parent_obj` and with `Enemy_Damage_Parent_Projectile_obj`
+  (two sites each). Static reading. Open: askers with a computed id, which
+  the scan cannot see.
+- **A hit on the player.** `sc_hurt`'s direct callers are `Player_obj`'s
+  two collision events with enemy damage and `CA_playerHurt`;
+  `PlayerTakeDamage`'s are the same two events. Static reading. A collision
+  event runs on the instance it belongs to and a called script keeps its
+  caller's self (GameMaker's rule, not read in this build), so when an
+  enemy strikes the player its own Defense and PDR are asked with the
+  player as self, which the consumer's local-player test already answers.
+  Inference, **not established** until Stats live 3 measures it with hits
+  taken (`hit-control`, `bonus-def-hit`, `bonus-pdr-hit`). Stats live 2's
+  in-play windows had no hit on the player: the life falls were Soul
+  Spurn's Purgatory drain on R (the owner's correction), not hits.
+- **The mercenary.** `Mercenary_obj`'s Alarm 5 asks 36, 37, 64, 2, 8 and
+  more at 18 sites, `StatMaxLife` asks 92 at one, and the mercenary's melee
+  collision asks 97 at two. That fits Stats live 2's lines outside town: 92
+  about once every 344 control hits (a periodic alarm) and 97 in pairs.
+  Sorak has a mercenary (the toolkit's § 7.6, measured 2026-10-04 in
+  Outskirts of Inoya). Static reading and inference: that the other self
+  outside town is a `Mercenary_obj` is **not established**; Stats live 3's
+  `other-object` names it.
+- **The talent screen.** T opens the character sheet (Stats live 2: the
+  Player tab with Base Stats, Offensive, Defensive, Summoned and
+  Statistics; the owner: it scrolls and has several tabs). Four of its
+  objects call the dispatcher directly: `UI_Button_Talent_Player_obj`'s
+  Alarm 0 at 15 sites with no constant id (plausibly the row's own stat)
+  and its Draw GUI at 27 with constant damage ids;
+  `UI_Talent_Screen_Attribute_obj`'s and `UI_Talent_Screen_Allocate_obj`'s
+  Alarm 0 at about 30 each (127, 68, 69, 155, 32 and 33 as constants, the
+  rest computed); `Player_Talent_Tooltip_obj`'s Create method at 34. Static
+  reading. No `UI_Mercenary_*` object calls the dispatcher directly: **not
+  observed**. Measured in Stats live 2: each opening of the sheet made two
+  fresh instances ask 92 twice and 97 three times, and the sheet showed
+  Life 4901 while the HUD read 5651 with the id-36 answer on. So the sheet
+  asks for the player's stats with selves the consumer filters out. Which
+  of the four objects draws Base Stats' Life is **not established**.
+- `Load_Player_Stats_obj`'s Step calls the dispatcher at 226 sites, all
+  with constant damage ids (2, 3 to 10, 79, 194, 355, 361, 561 to 565),
+  none of them 36, 92 or 97. Static reading.
+- **Argument 0.** The dispatcher hands its first argument to `GetMyPlayer`
+  (seen in id 102's case); `GetMyPlayer` given an undefined argument takes
+  a global value and walks the `Player_obj` instances for the one whose
+  player number matches. `StatDefense`, `StatPhysicalDamageReduction` and
+  `StatMaxLife` read `playerBuff` (63, 181 and 85 references) and test
+  `instance_exists` (9, 28 and 13). So the unit a stat is computed for may
+  be argument 0 rather than self. Static reading; what argument 0 carries
+  on each asker is **not established**, and the `bonusothers` recorder logs
+  it per asker so Stats live 3 can tell.
+- **The HUD's numbers.** `DrawHud` draws text through `draw_text` (32
+  references) after reading values through the protected store
+  (`gDataProtected`'s `GetVariable`, 45) and `pSt` (8). That its life and
+  mana `current / max` texts are among them is plausible, **not
+  established**; Stats live 3's `vitals-control` checks it, and Stats live 3
+  reads mana and life in process (`mark1probe vitals`), never from the HUD.
+- **Debugger targets** for Stats live 3, research findings and never
+  shipped constants: the entries of `PlayerMovement` (the control),
+  `StatDefense`, `StatPhysicalDamageReduction` and `sc_hurt`, named by
+  their ghidra MCP entries in the live procedure, with their first bytes
+  checked against the import copy.
+
+**The answered askers.** The owner chose to answer the other self when it
+is the local player's, identified by what it is, never a mercenary's or a
+monster's, with a negative control. By the reading above the in-play
+askers are the player itself (already answered) and, plausibly, the
+mercenary (never answered), and the local player's other askers are the
+talent screen's objects. So one predicate decides for the set bonus and
+the mana cost alike:
+
+- **Answered**: self is the local player (unchanged), or self is an
+  instance of one of the four talent-screen objects that call the
+  dispatcher directly: `UI_Button_Talent_Player_obj`,
+  `UI_Talent_Screen_Attribute_obj`, `UI_Talent_Screen_Allocate_obj` and
+  `Player_Talent_Tooltip_obj`. Each is resolved at install by its
+  `hs-game-sdk` name through `asset_get_index`, as the toggle guard resolves
+  `Universal_Double_Cast_obj`, never by a typed index. Self's
+  `object_index` is read with `variable_instance_get` on self, a
+  `VALUE_REF` self accepted.
+- **Left as the game answered**: every other self, `Mercenary_obj`,
+  monsters, summons, the player's skill objects and the `UI_Mercenary_*`
+  objects included. An unread object index and an unresolved name never
+  match each other: a sentinel never compares equal.
+- **Cost on the hot path**: the object is read only for a call whose id the
+  bonus or the cost answers (in the research build, also an id the
+  recorder watches) and whose self is not the local player. The dispatcher
+  is the game's hottest stat path.
+- **Counted**: answers given to a talent-screen self show as `sheet=<n>` on
+  the `mark1set bonus:` line, after `stat-fail=`.
+
+Rejected, and why. Do not propose these again without new evidence:
+
+- **Answering the other self outside town.** By the reading it is the
+  mercenary, which the owner ruled out, and Stats live 2's in-play gap is
+  explained without it: the player was not struck in those windows.
+- **Answering by argument 0**, the stat's unit. What it carries is not
+  established, and if the mercenary passes its owner's player number the
+  bonus would leak to the mercenary. The recorder logs it for a later
+  decision.
+- **A deny list** (everything but the mercenary and monsters). It fails
+  open: any object not on it, a summon, a skill object or a future object,
+  would be answered.
+- **Answering the player's skill objects** (Healing Zone's collision with
+  the player, projectiles). The owner did not ask for it, and which of them
+  act for the player is not established; the recorder lists them as other
+  askers.
