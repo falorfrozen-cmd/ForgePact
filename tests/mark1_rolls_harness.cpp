@@ -346,6 +346,135 @@ int main() {
         check("bonus_target/words_are_value_and_label", words);
     }
 
+    // ---- the roll ranges: one information-view pass per piece --------------------
+    // Each pass replays what Live 1's Item Truth journal recorded for a piece's
+    // stand-in in the information view: the header's keyless stat call draws
+    // `Defense: `, the value, the white base ` [N]` and the stand-in's grey
+    // range; each of the piece's lines is a stat call of its key; then, outside
+    // the stat calls, `Sockets (N)` and the stand-in's sockets range. The pass
+    // prints what it would draw (RANGE lines) for the behavior test's table.
+    {
+        bool headerOk = true, socketsOk = true, linesOk = true;
+        for (const M1r::PieceRolls& r : M1r::kPieceRolls) {
+            const M1r::Piece p = r.piece;
+            const M1r::PieceRanges ranges = M1r::RangesFor(p);
+            M1r::RangePass pass;
+            std::string swap;
+            for (const char* t : { "Defense: ", "224", " [80]" })
+                if (!pass.OnGameText(p, t, true, false).empty()) headerOk = false;
+            swap = pass.OnGameText(p, " [26-38]", true, false);
+            M1r::RangeEntry def;
+            if (!ranges.Find(M1r::kKeyDefense, def) || swap != M1r::RangeText(def.lo, def.hi)) headerOk = false;
+            std::cout << "RANGE " << PieceWord(p) << " header " << swap.substr(swap.empty() ? 0 : 1) << std::endl;
+            // Every key the piece draws as a line, rolled and fixed.
+            std::vector<int> keys;
+            for (int k = 0; k < r.rolledStats; ++k) keys.push_back(r.rolls[k].key);
+            for (int k = 0; k < r.fixedCount; ++k) keys.push_back(r.fixed[k].key);
+            for (int key : keys) {
+                if (key == M1r::kKeyDefense || key == M1r::kKeySockets) continue;
+                const std::string text = pass.LineRange(p, key);
+                M1r::RangeEntry e;
+                const bool rolled = ranges.Find(key, e);
+                if (rolled != !text.empty() || (rolled && text != M1r::RangeText(e.lo, e.hi))) linesOk = false;
+                if (!text.empty()) std::cout << "RANGE " << PieceWord(p) << " " << key << " " << text.substr(1) << std::endl;
+            }
+            if (!pass.OnGameText(p, "Sockets (2)", false, false).empty()) socketsOk = false;
+            swap = pass.OnGameText(p, " [1-3]", false, false);
+            M1r::RangeEntry sockets;
+            const bool rollsSockets = ranges.Find(M1r::kKeySockets, sockets);
+            if (rollsSockets ? swap != M1r::RangeText(sockets.lo, sockets.hi) : !swap.empty()) socketsOk = false;
+            if (!swap.empty()) std::cout << "RANGE " << PieceWord(p) << " sockets " << swap.substr(1) << std::endl;
+        }
+        check("ranges_target/header_swapped_for_the_pieces_own", headerOk);
+        check("ranges_target/each_rolled_line_has_its_tables_range", linesOk);
+        check("ranges_target/sockets_swapped_where_the_piece_rolls_them", socketsOk);
+
+        // The table: Defense and Sockets included, the fixed stats none.
+        const M1r::PieceRanges helmet = M1r::RangesFor(M1r::Piece::Helmet);
+        const M1r::PieceRanges boots = M1r::RangesFor(M1r::Piece::Boots);
+        M1r::RangeEntry e;
+        check("ranges_target/ranges_for_is_the_roll_table",
+              helmet.count == 5 && helmet.Find(M1r::kKeyDefense, e) && e.lo == 60 && e.hi == 80
+                  && helmet.Find(M1r::kKeySockets, e) && e.lo == 1 && e.hi == 2 && !helmet.Find(M1r::kKeyVitality, e)
+                  && boots.count == 4 && !boots.Find(M1r::kKeySockets, e),
+              std::to_string(helmet.count) + "/" + std::to_string(boots.count));
+
+        // The text's shape: the game's ` [lo-hi]`; the header's white ` [80]`
+        // and anything else is not a range.
+        bool shape = M1r::RangeText(60, 80) == " [60-80]" && M1r::RangeText(2, 3) == " [2-3]" && M1r::kColourRange == 8421504;
+        for (const char* t : { " [7-12]", " [26-38]", " [1-3]", " [300-400]" }) if (!M1r::IsRangeText(t)) shape = false;
+        for (const char* t : { " [80]", "[1-2]", " [1-2] ", " [a-b]", " [-3]", " [3-]", " [1--2]", "Sockets (2)", "", " [" })
+            if (M1r::IsRangeText(t)) { shape = false; std::cout << "  range? " << t << std::endl; }
+        check("ranges_target/range_text_is_the_games_shape", shape);
+
+        // Where the call's x goes and where the range starts: Zealot's Book's
+        // line 203 drew its label at 1859 and its range at 2214 (a 355-wide label).
+        check("ranges_target/shift_and_right_edge",
+              M1r::RangeShiftedX(2048.0, 90.0) == 2003.0 && M1r::RangeRightEdge(1859.0, 355.0, 0.0) == 2214.0
+                  && M1r::RangeRightEdge(2000.0, 100.0, 1.0) == 2050.0 && M1r::RangeRightEdge(2000.0, 100.0, 2.0) == 2000.0);
+    }
+
+    // ---- baseline: the fixed lines, and every key not rolled, have no range ----------
+    {
+        bool none = true;
+        for (const M1r::PieceRolls& r : M1r::kPieceRolls) {
+            M1r::RangePass pass;
+            pass.OnGameText(r.piece, " [26-38]", true, false);
+            if (!pass.GameDrewRange()) none = false;
+            // The fixed stats (48 Vitality, 170 FHR, 51 All Attributes) on every
+            // piece, Defense and Sockets as lines, a key no piece carries, and no key.
+            for (long long key : { 48LL, 170LL, 51LL, 154LL, 20LL, 203LL, -1LL })
+                if (!pass.LineRange(r.piece, key).empty()) { none = false; std::cout << "  " << PieceWord(r.piece) << " " << key << std::endl; }
+        }
+        // A rolled key of another piece: Life (52) is the body's, not the helmet's.
+        M1r::RangePass helmet;
+        helmet.OnGameText(M1r::Piece::Helmet, " [26-38]", true, false);
+        if (!helmet.LineRange(M1r::Piece::Helmet, 52).empty() || !helmet.LineRange(M1r::Piece::Gloves, 173).empty()) none = false;
+        check("ranges_baseline/fixed_lines_and_other_keys_have_none", none);
+        // Boots and gloves roll no sockets: the game's sockets range stays.
+        bool kept = true;
+        for (M1r::Piece p : { M1r::Piece::Boots, M1r::Piece::Gloves }) {
+            M1r::RangePass pass;
+            pass.OnGameText(p, "Sockets (1)", false, false);
+            if (!pass.OnGameText(p, " [1-3]", false, false).empty()) kept = false;
+        }
+        check("ranges_baseline/boots_and_gloves_keep_the_games_sockets_range", kept);
+        // Only the header's range is swapped inside a keyless call, once; a
+        // range inside a keyed call (a line's own) or not after a sockets row is left.
+        M1r::RangePass once;
+        const bool first = !once.OnGameText(M1r::Piece::Body, " [10-18]", true, false).empty();
+        const bool second = once.OnGameText(M1r::Piece::Body, " [10-18]", true, false).empty();
+        const bool keyed = once.OnGameText(M1r::Piece::Body, " [7-12]", true, true).empty();
+        const bool loose = once.OnGameText(M1r::Piece::Body, " [1-4]", false, false).empty();
+        check("ranges_baseline/only_the_header_and_the_sockets_row_are_swapped", first && second && keyed && loose);
+        // A range the game drew that is already the piece's own needs no swap.
+        M1r::RangePass same;
+        check("ranges_baseline/a_range_already_the_pieces_own_is_left",
+              same.OnGameText(M1r::Piece::Helmet, " [60-80]", true, false).empty() && same.GameDrewRange());
+    }
+
+    // ---- target: ranges are drawn only after the game drew one in the pass -----------
+    {
+        M1r::RangePass pass;
+        const M1r::Piece p = M1r::Piece::Helmet;
+        bool ok = pass.LineRange(p, M1r::kKeyEnhancedDefense).empty() && !pass.GameDrewRange();
+        // The header outside the information view: `Defense: `, the value and
+        // the white base value, no range: still nothing.
+        for (const char* t : { "Defense: ", "224", " [80]" }) pass.OnGameText(p, t, true, false);
+        if (!pass.LineRange(p, M1r::kKeyEnhancedDefense).empty() || pass.GameDrewRange()) ok = false;
+        // A line of its own draws value and label: still nothing.
+        pass.OnGameText(p, "+180%", true, true);
+        pass.OnGameText(p, "Enhanced Defense", true, true);
+        if (!pass.LineRange(p, M1r::kKeyAllResistances).empty()) ok = false;
+        // The game draws a range of its own: from then on each rolled line has its range.
+        pass.OnGameText(p, " [26-38]", true, false);
+        if (pass.LineRange(p, M1r::kKeyEnhancedDefense) != " [120-180]" || pass.LineRange(p, M1r::kKeyAllSkills) != " [2-3]") ok = false;
+        // A new pass starts without.
+        M1r::RangePass next;
+        if (!next.LineRange(p, M1r::kKeyEnhancedDefense).empty()) ok = false;
+        check("ranges_target/drawn_only_after_the_game_drew_one", ok);
+    }
+
     std::cout << (failures ? "RESULT FAIL" : "RESULT OK") << std::endl;
     return failures ? 1 : 0;
 }

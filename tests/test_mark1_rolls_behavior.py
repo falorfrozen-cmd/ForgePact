@@ -43,6 +43,15 @@ OWNER_ROLLS = {
     "gloves": [(154, 46, 68), (29, 75, 100), (201, 2, 3)],
 }
 OWNER_FIXED = {"helmet": [(48, 35)], "body": [(170, 125)], "boots": [], "gloves": [(51, 20)]}
+# The ranges a piece's information view draws (the context's "The roll ranges
+# (replan 1)", expected texts): each rolled line's, the header's and the
+# sockets row's swapped for the piece's own; none on a fixed line (48, 170, 51).
+EXPECTED_RANGES = {
+    "helmet": {29: " [120-180]", 173: " [10-30]", 201: " [2-3]", "header": " [60-80]", "sockets": " [1-2]"},
+    "body": {29: " [220-280]", 52: " [300-400]", 201: " [3-4]", "header": " [210-240]", "sockets": " [3-4]"},
+    "boots": {29: " [150-200]", 59: " [15-25]", 173: " [20-30]", "header": " [72-90]"},
+    "gloves": {29: " [75-100]", 201: " [2-3]", "header": " [46-68]"},
+}
 OWNER_BANDS = {
     "helmet": (1000000000, 107604, 777500), "body": (1001000000, 763964, 777501),
     "boots": (1002000000, 117249, 777502), "gloves": (1003000000, 1196, 777503),
@@ -223,6 +232,36 @@ class Mark1RollsBehaviorTests(unittest.TestCase):
         got = [(l["threshold"], l["applied"], l["id"], l["value"], l["words"]) for l in self.bonus_lines()]
         self.assertEqual(got, OWNER_BONUS)
         self.assertIn("ROUTE allres-route: dispatcher", self.output)
+
+    # ---- the roll ranges in the information view ----------------------------------
+    def ranges(self):
+        out = {}
+        for piece, slot, text in self.rows("RANGE"):
+            out.setdefault(piece, {})[slot if slot in ("header", "sockets") else int(slot)] = " " + text
+        return out
+
+    def test_ranges_target_each_rolled_line_has_its_range(self):
+        for label in ("header_swapped_for_the_pieces_own", "each_rolled_line_has_its_tables_range",
+                      "sockets_swapped_where_the_piece_rolls_them", "ranges_for_is_the_roll_table",
+                      "range_text_is_the_games_shape", "shift_and_right_edge"):
+            self.assertScenario("ranges_target/" + label)
+        # Every text the context's table expects, and nothing more: the header
+        # and the sockets row swapped for the piece's own, each rolled line its range.
+        self.assertEqual(self.ranges(), EXPECTED_RANGES)
+
+    def test_ranges_baseline_fixed_lines_have_none(self):
+        for label in ("fixed_lines_and_other_keys_have_none", "boots_and_gloves_keep_the_games_sockets_range",
+                      "only_the_header_and_the_sockets_row_are_swapped", "a_range_already_the_pieces_own_is_left"):
+            self.assertScenario("ranges_baseline/" + label)
+        drawn = self.ranges()
+        for piece, fixed in OWNER_FIXED.items():
+            for key, _ in fixed:
+                self.assertNotIn(key, drawn.get(piece, {}), (piece, key))
+        for piece in ("boots", "gloves"):
+            self.assertNotIn("sockets", drawn[piece])
+
+    def test_ranges_target_drawn_only_after_the_game_drew_one(self):
+        self.assertScenario("ranges_target/drawn_only_after_the_game_drew_one")
 
 
 if __name__ == "__main__":

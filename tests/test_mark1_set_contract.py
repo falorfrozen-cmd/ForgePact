@@ -1221,7 +1221,7 @@ class Mark1SetContract(unittest.TestCase):
         self.assertIn("f.typeLineMiss = g_TipTypeLineMisses;", fields)
         self.assertIn("f.tipCached = g_TipSetCallsCached;", fields)
         self.assertIn("f.typeLineHook = std::string(M1sNs::TypeLineHookName(g_TipTypeLineTried, "
-                      "g_Orig_TipBuiltinText[0] != nullptr));", fields)
+                      "g_Orig_TipBuiltinText[0] != nullptr))", fields)
         # Each call starts and ends with the on-screen flag clear.
         clear = function_body(self.shipped, "static void TipSetBlockClear()")
         self.assertIn("g_TipSetOnScreen = false;", clear)
@@ -1996,6 +1996,74 @@ class Mark1SetContract(unittest.TestCase):
         # Only these two functions write `enabled` in the adapter.
         shipped_adapter = strip_comments(strip_research_blocks(self.adapter))
         self.assertEqual(len(re.findall(r'variable_instance_set", \{ [^}]*RValue\("enabled"\)', shipped_adapter)), 2)
+
+    def test_range_text_drawn_in_the_stat_detour(self):
+        # Replan 1 (the owner after Live 1: the pieces "didn't show their roll
+        # ranges"): in a piece's pass, once the game drew a range of its own,
+        # a rolled line's call is shifted left by half the range's width, the
+        # game's original runs, and the range is drawn after it at the right
+        # edge of the last text the call drew, in the game's range grey,
+        # left-aligned, the draw state put back. The ranges come from the rolls
+        # core (Mark1Rolls.hpp's RangePass), never a second copy.
+        stat = self.body("stats_new")
+        self.assertIn("const long long rangeKey = g_TipTypeLinePiece >= 0 ? TipStatIdOf(argc, A) : -1;", stat)
+        self.assertIn("const TipRangeStatScope rangeStat(rangeKey >= 0);", stat)
+        self.assertIn("g_TipRangePass.LineRange(static_cast<M1rNs::Piece>(g_TipTypeLinePiece), rangeKey)", stat)
+        # The scope is set before the anchor's early return, so every path puts it back.
+        self.assertLess(stat.index("const TipRangeStatScope rangeStat("), stat.index("if (g_TipRowsPending && argc > 5"))
+        # Shift, then the original, then the range: in that order, on the
+        # non-anchor path only (the forged rows' anchor logic is unchanged).
+        shift = stat.index("rangeLine.emplace(A, rangeText);")
+        original = stat.rindex("g_Orig_DrawInventoryStatsNew(S, O, R, argc, A)")
+        draw = stat.index("TipRangeDraw(rangeText, lineDrawn);")
+        self.assertLess(shift, original)
+        self.assertLess(original, draw)
+        self.assertLess(stat.index("rangeLine.reset();"), draw)
+        anchor = stat[stat.index("if (anchors) {"):stat.index("const std::string rangeText = ")]
+        self.assertNotIn("TipRangeDraw", anchor)
+        self.assertNotIn("rangeLine", anchor)
+        # The range is drawn before the stat id is put back, so Item Truth
+        # records it under the line's stat as it records the game's.
+        self.assertLess(draw, stat.rindex("g_Tip.statId = outerStat;"))
+        line = strip_comments(function_body(self.plugin, "struct TipRangeLineScope {"))
+        self.assertIn('"string_width", { RValue(text) }', line)
+        self.assertIn("shifted = RValue(M1rNs::RangeShiftedX(A[0]->ToDouble(), w));", line)
+        self.assertIn("if (slot) *slot = saved;", line)
+        rng = strip_comments(function_body(self.plugin, "static void TipRangeDraw("))
+        self.assertIn('g_Yytk->CallBuiltin("draw_set_colour", { RValue((double)M1rNs::kColourRange) });', rng)
+        self.assertIn('g_Yytk->CallBuiltin("draw_set_halign", { RValue(0.0) });', rng)
+        self.assertIn("RValue(M1rNs::RangeRightEdge(last.x, last.width, last.halign)), RValue(last.y), RValue(text)", rng)
+        for restore in ('"draw_set_colour", { prevColour }', '"draw_set_halign", { prevHalign }', '"draw_set_font", { prevFont }'):
+            with self.subTest(restore=restore):
+                self.assertIn(restore, rng)
+                self.assertLess(rng.index('"draw_text"'), rng.index(restore))
+        # Its own text is never fed back to the pass.
+        self.assertLess(rng.index("g_TipRangeOwnDraw = true;"), rng.index('"draw_text"'))
+        self.assertLess(rng.index('"draw_text"'), rng.rindex("g_TipRangeOwnDraw = false;"))
+        # The pass's draw_text feeds the pass and swaps the header's and the
+        # sockets row's range for the piece's own, where the type line is swapped.
+        hook = self.shipped[self.shipped.index("static void Hook_TipBuiltinText("):]
+        hook = hook[:hook.index("\n}\n") + 2]
+        self.assertLess(hook.index("TipTypeLineDraw(Result, S, O, argc, Args)"),
+                        hook.index("if (g_TipTypeLinePiece >= 0 && TipRangeTextDraw(Result, S, O, argc, Args)) return;"))
+        text = strip_comments(function_body(self.plugin, "static bool TipRangeTextDraw("))
+        self.assertIn("if (g_TipRangeOwnDraw || g_TipTypeLinePiece < 0", text)
+        self.assertIn("g_TipRangePass.OnGameText(static_cast<M1rNs::Piece>(g_TipTypeLinePiece), drawn,", text)
+        self.assertIn("g_TipRangeInStat, g_TipRangeStatKeyed)", text)
+        self.assertLess(text.index("if (swap.empty()) return false;"), text.index("args[2] = RValue(swap);"))
+        # A fresh pass wherever a pass is armed or cleared.
+        self.assertIn("g_TipRangePass = M1rNs::RangePass{};", function_body(self.shipped, "static void TipSetBlockClear()"))
+        # The counts: the player's own calls only, on the first stat line after `typeline-hook=`.
+        for counter in ("g_TipRangesDrawn", "g_TipRangeSwaps", "g_TipRangeMisses"):
+            with self.subTest(counter=counter):
+                self.assertEqual(re.findall(r"\+\+" + counter + r"\b", self.shipped), ["++" + counter])
+                self.assertRegex(self.shipped, r"if \([^)]*g_TipSetOnScreen\) \+\+" + counter + r";")
+                self.assertNotIn(counter, strip_comments(function_body(self.shipped, "static bool TipDrawOne(")))
+        self.assertIn("+ M1rNs::RangeCountsText(g_TipRangesDrawn, g_TipRangeSwaps, g_TipRangeMisses);", self.body("stat_fields"))
+        # One range table: the adapter names no range of its own.
+        for literal in ('" [60-80]"', '" [1-2]"', '"[120-180]"', "8421504"):
+            with self.subTest(literal=literal):
+                self.assertNotIn(literal, self.shipped)
 
     def test_cost_answers_through_the_dispatcher_consumer(self):
         consumer = self.body("bonus_consumer")

@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdint>
 #include <initializer_list>
+#include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -267,6 +268,166 @@ inline std::vector<std::pair<int, int>> StatsFor(const Rolled& r)
     for (int k = 0; k < row.fixedCount && k < kMaxFixed; ++k) out.emplace_back(row.fixed[k].key, row.fixed[k].value);
     if (sockets >= 0) out.emplace_back(kKeySockets, sockets);
     return out;
+}
+
+// ---- the roll ranges in the information view ------------------------------------
+//
+// The game draws a line's roll range inside DrawInventoryStatsNew as a third
+// text after the value and the label: ` [lo-hi]`, grey (8421504), left-aligned
+// at the label's right edge, the whole line centred on the tooltip (measured,
+// Live 1's Item Truth journal: Zealot's Book's line 203 draws `+11`, its label,
+// then ` [7-12]`). It draws one for the header (`Defense: N [base] [lo-hi]`)
+// and for the `Sockets (N)` row too, in the information view. A piece's
+// stand-in is a set item whose own per-line ranges the game never finds, so
+// its rolled lines draw no range and its header and sockets row show the
+// stand-in's ranges, not the piece's.
+//
+// So the adapter draws them as the game does, from this table and never a
+// second copy: a rolled line gets its range after the game's call; the
+// header's range and the sockets row's range are swapped for the piece's own.
+// The fixed lines (Vitality, Faster Hit Recovery, All Attributes) are fixed
+// values, and the game draws no range on a fixed line.
+//
+// The pass rule: ranges are drawn in a pass only after the game drew a range
+// of its own earlier in that pass (the header's, which every stand-in draws in
+// the information view), so they follow the game's own view rule.
+
+// The colour the game draws a range in (measured, Live 1's journal).
+inline constexpr int kColourRange = 8421504;
+
+// One rolled stat's inclusive range.
+struct RangeEntry {
+    int key = 0;
+    int lo = 0;
+    int hi = 0;
+};
+
+// A piece's rolled stats' ranges, in table order (Defense and Sockets included,
+// for the header and the sockets row; the fixed stats none).
+struct PieceRanges {
+    int        count = 0;
+    RangeEntry entry[kMaxRolls] = {};
+
+    bool Find(int key, RangeEntry& out) const
+    {
+        for (int k = 0; k < count; ++k)
+            if (entry[k].key == key) { out = entry[k]; return true; }
+        return false;
+    }
+};
+
+inline PieceRanges RangesFor(Piece p)
+{
+    PieceRanges out;
+    const int i = static_cast<int>(p);
+    if (i < 0 || i >= kPieceCount) return out;
+    const PieceRolls& r = kPieceRolls[i];
+    for (int k = 0; k < r.rolledStats && k < kMaxRolls; ++k)
+        out.entry[out.count++] = RangeEntry{ r.rolls[k].key, r.rolls[k].lo, r.rolls[k].hi };
+    return out;
+}
+
+// The range's text as the game draws it: a leading space, then `[lo-hi]`.
+inline std::string RangeText(int lo, int hi)
+{
+    return " [" + std::to_string(lo) + "-" + std::to_string(hi) + "]";
+}
+
+// Whether a drawn text is a range in the game's shape, ` [lo-hi]` with whole
+// numbers. The header's white ` [80]` (the item's own base value) is not one.
+inline bool IsRangeText(std::string_view t)
+{
+    if (t.size() < 6 || t.substr(0, 2) != " [" || t.back() != ']') return false;
+    const std::string_view body = t.substr(2, t.size() - 3);
+    const size_t dash = body.find('-');
+    if (dash == std::string_view::npos || dash == 0 || dash + 1 >= body.size()) return false;
+    for (size_t k = 0; k < body.size(); ++k)
+        if (k != dash && (body[k] < '0' || body[k] > '9')) return false;
+    return true;
+}
+
+// A key whose own stat line carries a range: a rolled stat, but not Defense
+// (the header) or Sockets (the sockets row), whose ranges are swapped instead.
+inline bool RangeOnLine(Piece p, long long key)
+{
+    if (key == kKeyDefense || key == kKeySockets) return false;
+    RangeEntry e;
+    return key >= 0 && key <= 100000 && RangesFor(p).Find(static_cast<int>(key), e);
+}
+
+// Where a stat call's x goes so the line, its range included, stays centred:
+// left by half the range text's width.
+inline double RangeShiftedX(double x, double rangeWidth)
+{
+    return x - rangeWidth / 2.0;
+}
+
+// The right edge of a drawn text from its x, its width and the alignment it
+// was drawn in (0 left, 1 centre, 2 right): where the range text starts.
+inline double RangeRightEdge(double x, double width, double halign)
+{
+    if (halign == 1.0) return x + width / 2.0;
+    if (halign == 2.0) return x;
+    return x + width;
+}
+
+// One piece's tooltip pass, as far as the ranges go. The adapter makes a fresh
+// one wherever it arms or clears a pass, feeds it every text the game draws in
+// the pass (never its own), and asks it for each stat call's range.
+class RangePass {
+public:
+    // One text the game drew: whether the call it sits in is a stat call, and
+    // whether that call names a stat key (the header's names none). Returns
+    // the text to draw in its place, or "" to leave it: the header's range
+    // (the first range inside a keyless stat call) becomes the piece's Defense
+    // range, and the range right after a `Sockets (N)` text outside the stat
+    // calls becomes the piece's sockets range (helmet and body; boots and
+    // gloves roll no sockets and keep the game's).
+    std::string OnGameText(Piece p, std::string_view text, bool insideStatCall, bool statCallHasKey)
+    {
+        const bool afterSockets = afterSockets_;
+        afterSockets_ = !insideStatCall && text.substr(0, 9) == "Sockets (";
+        if (!IsRangeText(text)) return {};
+        gameDrew_ = true;
+        const PieceRanges ranges = RangesFor(p);
+        RangeEntry e;
+        std::string swap;
+        if (insideStatCall && !statCallHasKey && !headerSeen_) {
+            headerSeen_ = true;
+            if (ranges.Find(kKeyDefense, e)) swap = RangeText(e.lo, e.hi);
+        } else if (!insideStatCall && afterSockets && ranges.Find(kKeySockets, e)) {
+            swap = RangeText(e.lo, e.hi);
+        }
+        return swap == text ? std::string() : swap;
+    }
+
+    // Whether the game drew a range of its own earlier in this pass.
+    bool GameDrewRange() const { return gameDrew_; }
+
+    // The range a stat call of `key` draws after the game's line, "" for none:
+    // only once the game drew a range in this pass, and only for a rolled line.
+    std::string LineRange(Piece p, long long key) const
+    {
+        if (!gameDrew_ || !RangeOnLine(p, key)) return {};
+        RangeEntry e;
+        RangesFor(p).Find(static_cast<int>(key), e);
+        return RangeText(e.lo, e.hi);
+    }
+
+private:
+    bool gameDrew_ = false;
+    bool headerSeen_ = false;
+    bool afterSockets_ = false;
+};
+
+// The ranges' counters on `mark1set stat`'s first line, beside `tip=`:
+// ranges drawn after a rolled line, header and sockets ranges swapped, and
+// rolled lines whose call drew text the adapter could not place a range after
+// (the draw_text hook not in).
+inline std::string RangeCountsText(uint64_t drawn, uint64_t swapped, uint64_t missed)
+{
+    return " ranges=" + std::to_string(drawn) + " range-swaps=" + std::to_string(swapped)
+        + " range-miss=" + std::to_string(missed);
 }
 
 // ---- the set bonus ----------------------------------------------------------------

@@ -22405,6 +22405,28 @@ static uint64_t g_TipTypeLines = 0;
 static uint64_t g_TipTypeLineMisses = 0;
 static uint64_t g_TipSetCallsCached = 0;   // `tip-cached=`: calls armed for a piece that drew nothing
 static uint64_t g_TipTypeLineSwaps = 0;   // type lines the detour drew, in any call
+// A Mark 1 piece's roll ranges in the information view (Mark1Rolls.hpp's
+// RangePass, one per armed pass): the pass's draw_text feeds it every text the
+// game draws, and swaps the header's and the sockets row's range for the
+// piece's own; the stat detour draws a rolled line's range after the game's
+// call, at the right edge of the last text that call drew, once the game drew
+// a range of its own in the pass. `mark1set stat`'s first line counts the
+// player's own (on-screen) calls: `ranges=` drawn, `range-swaps=` swapped,
+// `range-miss=` rolled lines drawn with no text seen to place a range after.
+static M1rNs::RangePass g_TipRangePass;
+static bool g_TipRangeInStat = false;      // inside a DrawInventoryStatsNew call
+static bool g_TipRangeStatKeyed = false;   // that call names a stat key (the header's names none)
+static bool g_TipRangeInLine = false;      // inside a rolled line's call: its last text is kept
+static bool g_TipRangeOwnDraw = false;     // the adapter's own range text: never fed to the pass
+struct TipRangeLast {
+    bool drawn = false;
+    double x = 0.0, y = 0.0, width = 0.0, halign = 0.0;
+    RValue font;
+};
+static TipRangeLast g_TipRangeLast;
+static uint64_t g_TipRangesDrawn = 0;
+static uint64_t g_TipRangeSwaps = 0;
+static uint64_t g_TipRangeMisses = 0;
 // A Mark 1 piece's block anchors after the piece's own stat lines
 // (Mark1Set.hpp's BlockAnchor, armed by Mark1TooltipRows for the pass), never
 // at ForgedTooltipRows.hpp's first present stat; every other forged item keeps
@@ -22423,6 +22445,7 @@ static void TipSetBlockClear()
     g_TipSetOnScreen = false;
     g_TipTypeLinePiece = -1;
     g_TipM1AnchorOn = false;
+    g_TipRangePass = M1rNs::RangePass{};
 }
 
 // A Mark 1 piece's rows: the core's set block from one worn read, and its type
@@ -22855,9 +22878,89 @@ static RValue& Hook_DrawInventoryItemV2(CInstance* S, CInstance* O, RValue& R, i
     return r;
 }
 
+// Which stat call the pass's texts sit in, for a Mark 1 piece's ranges
+// (g_TipRangePass): set for the call, put back when it returns on any path.
+struct TipRangeStatScope {
+    bool in, keyed;
+    explicit TipRangeStatScope(bool callKeyed) : in(g_TipRangeInStat), keyed(g_TipRangeStatKeyed)
+    {
+        g_TipRangeInStat = true;
+        g_TipRangeStatKeyed = callKeyed;
+    }
+    ~TipRangeStatScope() { g_TipRangeInStat = in; g_TipRangeStatKeyed = keyed; }
+    TipRangeStatScope(const TipRangeStatScope&) = delete;
+    TipRangeStatScope& operator=(const TipRangeStatScope&) = delete;
+};
+
+// A rolled line's call, while its range is due: the call's x shifted left by
+// half the range's width (Mark1Rolls.hpp's RangeShiftedX) so the whole line
+// stays centred, and its texts kept (g_TipRangeInLine); both put back when the
+// call returns on any path.
+struct TipRangeLineScope {
+    RValue shifted;
+    RValue** slot = nullptr;
+    RValue* saved = nullptr;
+    TipRangeLineScope(RValue** A, const std::string& text)
+    {
+        try {
+            const double w = g_Yytk->CallBuiltin("string_width", { RValue(text) }).ToDouble();
+            if (std::isfinite(w) && w > 0.0) {
+                shifted = RValue(M1rNs::RangeShiftedX(A[0]->ToDouble(), w));
+                slot = &A[0];
+                saved = A[0];
+                A[0] = &shifted;
+            }
+        } catch (...) {}
+        g_TipRangeLast = TipRangeLast{};
+        g_TipRangeInLine = true;
+    }
+    ~TipRangeLineScope()
+    {
+        g_TipRangeInLine = false;
+        if (slot) *slot = saved;
+    }
+    TipRangeLineScope(const TipRangeLineScope&) = delete;
+    TipRangeLineScope& operator=(const TipRangeLineScope&) = delete;
+};
+
+// A rolled line's range, drawn as the game draws its own: ` [lo-hi]` in the
+// game's range grey, left-aligned at the right edge of the last text the
+// game's call drew, at that text's y and in its font; the colour, alignment
+// and font put back. A line the call drew with no text seen (the draw_text
+// hook not in) counts in `range-miss=`.
+static void TipRangeDraw(const std::string& text, bool lineDrawn)
+{
+    const TipRangeLast last = g_TipRangeLast;
+    if (!last.drawn) {
+        if (lineDrawn && g_TipSetOnScreen) ++g_TipRangeMisses;
+        return;
+    }
+    try {
+        const RValue prevColour = g_Yytk->CallBuiltin("draw_get_colour", {});
+        const RValue prevHalign = g_Yytk->CallBuiltin("draw_get_halign", {});
+        const RValue prevFont = g_Yytk->CallBuiltin("draw_get_font", {});
+        const bool font = last.font.m_Kind != VALUE_UNDEFINED && last.font.m_Kind != VALUE_UNSET;
+        if (font) g_Yytk->CallBuiltin("draw_set_font", { last.font });
+        g_Yytk->CallBuiltin("draw_set_halign", { RValue(0.0) });
+        g_Yytk->CallBuiltin("draw_set_colour", { RValue((double)M1rNs::kColourRange) });
+        g_TipRangeOwnDraw = true;
+        try {
+            g_Yytk->CallBuiltin("draw_text", { RValue(M1rNs::RangeRightEdge(last.x, last.width, last.halign)), RValue(last.y), RValue(text) });
+        } catch (...) {}
+        g_TipRangeOwnDraw = false;
+        g_Yytk->CallBuiltin("draw_set_colour", { prevColour });
+        g_Yytk->CallBuiltin("draw_set_halign", { prevHalign });
+        if (font) g_Yytk->CallBuiltin("draw_set_font", { prevFont });
+        if (g_TipSetOnScreen) ++g_TipRangesDrawn;
+    } catch (...) { g_TipRangeOwnDraw = false; }
+}
+
 static RValue& Hook_DrawInventoryStatsNew(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) {
     ++g_TipStatCallsTotal;
     ++g_TipStatCallsInTooltip;
+    // A Mark 1 piece's pass: the call's stat key, for its roll ranges.
+    const long long rangeKey = g_TipTypeLinePiece >= 0 ? TipStatIdOf(argc, A) : -1;
+    const TipRangeStatScope rangeStat(rangeKey >= 0);
 #ifndef FORGEPACT_RELEASE
     bool trace = false;
     if (g_TipTraceLeft > 0) {
@@ -22912,9 +23015,21 @@ static RValue& Hook_DrawInventoryStatsNew(CInstance* S, CInstance* O, RValue& R,
             } catch (...) { g_TipRowsPending = false; }
         }
     }
+    // A Mark 1 piece's rolled line, once the game drew a range of its own in
+    // the pass (Mark1Rolls.hpp's RangePass): its range after the game's call.
+    const std::string rangeText = (g_TipTypeLinePiece >= 0 && argc > 1 && A && isNum(A[0]) && isNum(A[1]))
+        ? g_TipRangePass.LineRange(static_cast<M1rNs::Piece>(g_TipTypeLinePiece), rangeKey) : std::string();
+    std::optional<TipRangeLineScope> rangeLine;
+    if (!rangeText.empty()) rangeLine.emplace(A, rangeText);
     g_TipInsideStat = g_TipRowsPending;
     RValue& r = g_Orig_DrawInventoryStatsNew ? g_Orig_DrawInventoryStatsNew(S, O, R, argc, A) : R;
     g_TipInsideStat = false;
+    if (rangeLine) {
+        rangeLine.reset();
+        bool lineDrawn = false;
+        try { lineDrawn = isNum(&r) && r.ToDouble() > 0.0; } catch (...) {}
+        TipRangeDraw(rangeText, lineDrawn);
+    }
     TipNoteStat(argc, A, r);
     g_Tip.statId = outerStat;
 #ifndef FORGEPACT_RELEASE
@@ -22993,11 +23108,47 @@ static bool TipTypeLineDraw(RValue& Result, CInstance* S, CInstance* O, int argc
     return true;
 }
 
+// A Mark 1 piece's roll ranges (g_TipRangePass): while a piece's pass is
+// armed, every text the game draws through draw_text is fed to the pass
+// (never the adapter's own range, g_TipRangeOwnDraw), and inside a rolled
+// line's call its position, width, alignment and font are kept, the last one
+// winning, for the range drawn after the call. A range the pass swaps (the
+// header's, the sockets row's) is drawn as the piece's own from a copy of the
+// arguments and recorded as drawn. True when it drew.
+static bool TipRangeTextDraw(RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args)
+{
+    if (g_TipRangeOwnDraw || g_TipTypeLinePiece < 0 || argc < 3 || !Args || Args[2].m_Kind != VALUE_STRING) return false;
+    const std::string drawn = Args[2].ToString();
+    if (g_TipRangeInLine) {
+        try {
+            TipRangeLast last;
+            last.x = Args[0].ToDouble();
+            last.y = Args[1].ToDouble();
+            last.width = g_Yytk->CallBuiltin("string_width", { RValue(drawn) }).ToDouble();
+            last.halign = g_Yytk->CallBuiltin("draw_get_halign", {}).ToDouble();
+            last.font = g_Yytk->CallBuiltin("draw_get_font", {});
+            last.drawn = std::isfinite(last.x) && std::isfinite(last.y) && std::isfinite(last.width);
+            if (last.drawn) g_TipRangeLast = last;
+        } catch (...) {}
+    }
+    const std::string swap = g_TipRangePass.OnGameText(static_cast<M1rNs::Piece>(g_TipTypeLinePiece), drawn,
+                                                       g_TipRangeInStat, g_TipRangeStatKeyed);
+    if (swap.empty()) return false;
+    if (g_TipSetOnScreen) ++g_TipRangeSwaps;
+    std::vector<RValue> args(Args, Args + argc);
+    args[2] = RValue(swap);
+    TipNoteText(kTipBuiltinText[0], argc, args.data());
+    TipDepthGuard depth(g_Tip.textDepth);
+    if (g_Orig_TipBuiltinText[0]) g_Orig_TipBuiltinText[0](Result, S, O, argc, args.data());
+    return true;
+}
+
 template <size_t N>
 static void Hook_TipBuiltinText(RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args)
 {
     if constexpr (N == 0) {
         if (g_TipTypeLinePiece >= 0 && TipTypeLineDraw(Result, S, O, argc, Args)) return;
+        if (g_TipTypeLinePiece >= 0 && TipRangeTextDraw(Result, S, O, argc, Args)) return;
     }
     TipNoteText(kTipBuiltinText[N], argc, Args);
     TipDepthGuard depth(g_Tip.textDepth);
@@ -65312,7 +65463,11 @@ static M1sNs::StatFields Mark1SetStatFields()
     f.tipCached = g_TipSetCallsCached;    // on-screen calls armed for a piece that drew nothing
     // The type line's install: not tried, or draw_text's hook in (by it or by
     // Item Truth's earlier install) or not.
-    f.typeLineHook = std::string(M1sNs::TypeLineHookName(g_TipTypeLineTried, g_Orig_TipBuiltinText[0] != nullptr));
+    // The roll ranges' counts (Mark1Rolls.hpp's RangeCountsText) follow it,
+    // the last fields of the tooltip's group: `ranges=`, `range-swaps=`,
+    // `range-miss=`, the player's own calls only.
+    f.typeLineHook = std::string(M1sNs::TypeLineHookName(g_TipTypeLineTried, g_Orig_TipBuiltinText[0] != nullptr))
+        + M1rNs::RangeCountsText(g_TipRangesDrawn, g_TipRangeSwaps, g_TipRangeMisses);
     const ForgePact::Mark1Automation& automation = ForgePact::Mark1Automation::Instance();
     for (int i = 0; i < M1sNs::kColumnCount; ++i) {
         const ForgePact::Mark1ColumnCounters k = automation.Counters(ForgePact::kMark1FirstColumn + i);
