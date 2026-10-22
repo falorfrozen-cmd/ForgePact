@@ -16,23 +16,36 @@ pieces" below.
 - **Mark 1 set (#166).** Mark 1 is an item set of ForgePact's own: the
   **Mark 1 Helmet**, **Mark 1 Body Armor**, **Mark 1 Boots** and **Mark 1
   Gloves**, four Satanic pieces like the game's own set pieces, each with its
-  own icon in the bag and on the ground, and no stats of their own. Each
-  piece's tooltip reads `Satanic Set <type>` under its name and shows the set
-  the way the game shows its own sets: the set's bonus, **+1 to Automation**,
-  with what Automation does underneath, lit while the bonus is active, then
-  the set's name and its four pieces, the ones you wear in green. The set's bonus works only while you wear all four and the new switch
-  (Mods → Items → **Mark 1 set**, off by default) is on.
-  - **Your skills cast themselves.** The skills on your Q, E, R and Y slots
-    are cast for you whenever the game would let you cast them: the game still
-    checks the cooldown, the mana and every other requirement, and aims each
-    one where it aims that key press. The skills take turns: one is pressed
-    at a time, and once it is cast the next press goes to the skill that has
-    waited longest, so a skill with no cooldown, such as Shadow Bolt, cannot
-    keep the one beside it from ever being cast, and a skill that cannot be
-    cast yet gives up its turn for a short while instead of holding up the
-    others. Each of those slots is outlined. A
-    toggle skill is switched on and left on, so you cannot switch it off while
-    the bonus is active; an aura slot and an empty slot are left alone.
+  own icon in the bag and on the ground.
+  - **Their own stats.** Each piece rolls its own stats within a range, like
+    any item: Defense and Enhanced Defense on every piece, and All
+    Resistances, All Skills, Life, Life after each Kill, Vitality, Faster Hit
+    Recovery or All Attributes depending on the piece; the helmet has 1 or 2
+    sockets and the body armor 3 or 4. A piece's stats count whatever the
+    switches say and stay the same after saving and loading.
+  - **The set bonus, by pieces worn**, while the new switch (Mods → Items →
+    **Mark 1 set**, off by default) is on: with 2 pieces `+500 Defense`; with
+    3 also `+35% to All Resistances` and `Replenish Life 25%`; with all 4
+    also `+1 to Automation`, `+5 to All Skills`, `+750 to Life`, `Physical
+    Damage Taken Reduced by 20%` and `-50% Movement Speed`. Each piece's
+    tooltip reads `Satanic Set <type>` under its name and shows its own
+    stats, then the set's bonus lines the way the game shows its own sets,
+    each lit while you wear enough pieces for it, with what Automation does
+    underneath in the game's smaller grey description text, then the set's
+    name and its four pieces, the ones you wear in green.
+  - **Your skills cast themselves.** With all four worn, the skills on your
+    Q, E, R and Y slots are cast for you whenever the game would let you
+    cast them: the game still checks the cooldown, the mana and every other
+    requirement, and aims each one where it aims that key press. A skill
+    with a cooldown is cast first, in Q, E, R, Y order, as soon as it is
+    ready; a skill with no cooldown, such as Shadow Bolt, is cast
+    continuously, the way holding its key casts it. Holding a button
+    yourself, such as the right mouse button, no longer keeps an automated
+    skill from being cast. A skill under automation cannot be cast by hand,
+    and its icon on the skill bar is drawn grey, the way the game greys a
+    skill you cannot use; each of those slots is also outlined. A toggle
+    skill is switched on and left on, so you cannot switch it off while the
+    bonus is active; an aura slot and an empty slot are left alone.
   - **Your jump goes three times as far.** The universal jump always goes
     three times your normal reach toward your cursor, passes over rocks,
     fences, carts and other scenery, and lands only where you could walk.
@@ -43,7 +56,7 @@ pieces" below.
     scenery; until it is learned, or while a reach learned on a character who
     jumps farther is in use, a jump can stop short of its landing, somewhere
     along the way that was not checked.
-  - **In exchange, you walk at half speed.** The set halves your walk through
+  - **In exchange, you walk at half speed** (`-50% Movement Speed`). The set halves your walk through
     your movement speed, so what else reads your movement speed, such as the
     character sheet, can show the changed value while the bonus is on.
     Casting a skill still slows your walk for about a second, as it does
@@ -71,8 +84,9 @@ pieces" below.
   The set was checked in play on a research build of the plugin: the
   pieces, their art, the outlines and the jump worked, and in that session,
   with every slot pressed at once, Shadow Bolt was cast 20 times and Heavenly
-  Fire beside it not once; the turns make sure no one skill is pressed every
-  time. A second session checked the turns on that same bar: in about 32
+  Fire beside it not once, which is why one skill is pressed at a time. A
+  second session checked the earlier rule, the skills taking turns, on that
+  same bar: in about 32
   seconds with no key pressed, Shadow Bolt was cast 31 times, Heavenly Fire 30
   and Healing Zone 3. It also measured the walk at half speed with the set on,
   and a cast's slowdown on top of that: while a cast slows you, you walk at
@@ -86,8 +100,11 @@ pieces" below.
   and loading the character; and each piece's tooltip showed the set the way
   the game shows its own, on the ground, in the bag and worn, the names of
   the pieces you wear in green and `+1 to Automation` lit only with the set's
-  switch on, every line inside the tooltip. A toggle skill on the bar, and a
-  piece dropping from a vault, have not been checked in play yet.
+  switch on, every line inside the tooltip. A toggle skill on the bar, a
+  piece dropping from a vault, and the pieces' stats, the set bonus, the
+  priority order, casting through a held button, the lock on casting an
+  automated skill by hand and the grey icons have not been checked in play
+  yet.
 
 ## Fixed
 
