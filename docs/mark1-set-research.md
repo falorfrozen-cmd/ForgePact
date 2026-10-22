@@ -4468,10 +4468,36 @@ Stats live 1 results, below, say why each step is shaped as it is.
   (Shadow Bolt on Y), Mana Orb on Q (the skill the game refused by key), the
   toggle on R (Soul Spurn), a held right button, each piece's tooltip once,
   and one session with no reload. Not every skill or stat.
-- **Debugger:** none. Every question here is a count or a value the plugin
-  prints (`statask`, `procgaps`, `bonusread`, the stat lines, the probe's
-  rows) or a drawn text the Item Truth journal records. Stats live 1 traced
-  the getters' call rates, and no check asks which code runs.
+- **Debugger:** the hub's x64dbg MCP, for one question: whether the game
+  itself ever asks for the player's Defense (id 92) or Physical Damage
+  Taken Reduced (id 97), and with which self. `statask` cannot answer it:
+  it is our own call of the dispatcher, with self the local player, and the
+  set's consumer answers exactly that self, so it shows only that the
+  consumer adds the line to our own question. `bonusread` cannot answer it
+  alone either: it records only calls whose self is the local player, the
+  same filter the consumer applies, so a game call with another self (a
+  hit path, the character sheet) is invisible to it. Attached under the
+  session's lease after S2 (D1) and detached after S5c (D2), before S6 and
+  S7's walk (a per-frame logpoint moves the walk's modal step, § Mod live
+  procedure 3). Non-breaking logpoints, at most four, each named here by
+  what it watches; their addresses stay with the workorder. `mark1probe
+  hook` (S1) detours `PlayerMovement` and `mark1set` holds
+  `ReturnSpecificStat`, so those two are armed without matching the file's
+  bytes (as is a getter a ForgePact hook detours, such as `StatDefense`
+  once a `defense` multiplier is set, which this session does not do) and
+  the first bytes each reports are recorded, as § The debugger logpoints
+  did. `dbg-control` on `PlayerMovement` (about once a frame, as
+  in Stats live 1) is the attach's positive control. `dbg-defense` on
+  `StatDefense`'s own address and `dbg-pdr` on
+  `StatPhysicalDamageReduction`'s count every call of the getter whatever
+  its caller and self; each one's positive control is `statask 92` (or
+  `97`), which reaches the getter through the dispatcher and must add at
+  least one hit. `dbg-ask` on `ReturnSpecificStat`'s entry logs only the
+  calls whose id argument is 92 or 97, with the call's self; the self it
+  logs for `statask 92` is the local player's, the reference every other
+  logged self is compared with. Every other question here is a count or a
+  value the plugin prints (`statask`, `procgaps`, `bonusread`, the stat
+  lines, the probe's rows) or a drawn text the Item Truth journal records.
 - **Relies on:** everything Stats live procedure 1 relies on, and:
   `ReturnSpecificStat`'s argument shape the adapter already reads with (self
   and other the local player, then 1, the id and 0, element 0 of an array
@@ -4493,6 +4519,16 @@ Stats live 1 results, below, say why each step is shaped as it is.
   (the owner's word, not measured); and, as in Stats live 1, the HUD's life
   and mana `current / max` read from cropped screenshots, `tgprobe hook
   TalentUseClass` and `tgprobe verbose on`, and `statadd castrate <n>`.
+  For the game-side reads: `bonusread` records each watched id's last local
+  call, `statask`'s included, as original -> answer (the guide's Command
+  Reference, the `mark1probe` row), so a record read after the switch went
+  on, with no `statask` and no hover since a switch-off `statask` of that
+  id, can only be a game call; id 36 is asked with the local self about
+  once a second in town (Stats live 1, `getter-reads: periodic`); the
+  waypoint to Outskirts of Inoya (`Act_01_01`) and back, opened with F, as
+  in § Mod live procedure 6. Not found in the shared references, read from
+  screenshots: how the character sheet opens (its HUD button or key,
+  recorded as found).
 
 **Steps:**
 
@@ -4530,11 +4566,27 @@ Stats live 1 results, below, say why each step is shaped as it is.
   `roll-lines` and `tip-order` as Stats live 1's S4, from the same
   screenshots and records, with every row inside the box recorded beside
   them.
+- D1: attach; arm `dbg-control`, then `dbg-defense`, `dbg-pdr` and
+  `dbg-ask`, each first-bytes line recorded; `dbg-control` logs about once
+  a frame over a 10 s idle (`dbg-control`, validity for the logpoints).
+  `mark1probe statask 92,97`: `dbg-defense` and `dbg-pdr` each up by at
+  least 1 and `dbg-ask` two lines, whose self is the reference
+  (`dbg-getters`, validity for `dbg-defense`, `dbg-pdr` and `dbg-ask`).
 - S3, switch off: wear the helmet and the body (right click each).
   `mark1probe statask 92`; `mark1set bonus 1`; hover a worn piece and
-  screenshot; `mark1probe statask 92`. `bonus-2`: the second answer is the
-  first plus 500, with `pieces=2 lit=1/0/0`. `tip-lit`, part 1: `+500
-  Defense` lit, the rest grey, two names green.
+  screenshot; `mark1probe statask 92`. The arithmetic: the second answer is
+  the first plus 500, with `pieces=2 lit=1/0/0`. `tip-lit`, part 1: `+500
+  Defense` lit, the rest grey, two names green. Then the game-side read,
+  with no hover and no `statask` inside it: `mark1set bonus 0`, `statask
+  92`, `mark1probe bonusread` (92 reads A->A); `mark1set bonus 1`; the
+  three logpoints' counts; open the character sheet, 3 s, screenshot,
+  close it; the counts again; `bonusread`. `bonus-2` passes on both: the
+  arithmetic, and 92's record reading A'->A'+500 (a game call with the
+  local self after the switch went on). If 92 still reads A->A, the
+  window's `dbg-defense` and `dbg-ask` decide it: no rise with
+  `dbg-control` logging leaves the game-side part open for S5c, and a rise,
+  or a logged self other than the reference, fails `bonus-2` (the game asks
+  for Defense with another self, so the line is inert in play).
 - S4: wear the boots. `mark1set bonus 0`, `mark1probe statask
   38,161,162`; `mark1set bonus 1`, `statask 38,161,162`. `bonus-3`: 38 up
   25 and 161 up 35, with `pieces=3 lit=1/1/0`. `allres-route` (research):
@@ -4543,10 +4595,37 @@ Stats live 1 results, below, say why each step is shaped as it is.
   screenshot: `tip-lit`, part 2, the three-piece lines lit and three names
   green.
 - S5: wear the gloves. `mark1set bonus 0`, `statask 2,36,97`; `mark1set
-  bonus 1`, `statask 2,36,97`. `bonus-4`: 2 up 5, 36 up 750 and 97 up 20,
-  with `pieces=4 lit=1/1/1 active=yes`, and the HUD life maximum moving by
-  750 between the two (screenshots). Hover: `tip-lit`, part 3, every line
-  lit and four names green. `tip-lit` passes on all three parts.
+  bonus 1`, `statask 2,36,97`. The arithmetic: 2 up 5, 36 up 750 and 97
+  up 20, with `pieces=4 lit=1/1/1 active=yes`, and the HUD life maximum
+  moving by 750 between the two (screenshots). Hover: `tip-lit`, part 3,
+  every line lit and four names green. `tip-lit` passes on all three parts.
+- S5b, the character sheet with the full set, no hover and no `statask`
+  inside the window: `mark1set bonus 0`, `statask 36,92,97`, `bonusread`
+  (each reads X->X); `mark1set bonus 1`; the logpoints' counts; open the
+  character sheet, 3 s, screenshot, close it; the counts again;
+  `bonusread`. `game-control`: 36 reads Y->Y+750 (the game asked for the
+  maximum life with the local self after the switch went on); without it
+  the window's `bonusread` is no evidence and S5b's reads are not-observed
+  (instrument). Record 92's and 97's records, the three counts' rises and
+  each self `dbg-ask` logged.
+- S5c, hits taken outside town, the full set, switch on: `mark1set bonus
+  0`, `statask 36,92,97`, `bonusread`; `mark1set bonus 1`; the counts;
+  the waypoint to Outskirts of Inoya (`Act_01_01`); stand where monsters
+  reach Sorak until the HUD life has fallen at least three times
+  (screenshots), the operator's own window, no `statask`; the counts again
+  and `bonusread`; the waypoint back to Inoya. `game-control` as in S5b.
+  `bonus-2`'s game-side part, if S3 left it open, and `bonus-4`'s id-97
+  part, from S5b and S5c together: pass when 92's record (or 97's) reads
+  X'->X'+500 (or X'->X'+20) after either window; fail when, with
+  `game-control` and `dbg-control` passed, `dbg-defense` (or `dbg-pdr`)
+  rose in a window, or `dbg-ask` logged a self other than the reference,
+  while the record still read X->X (the game asks with another self, so
+  the line is inert in play); not-observed when neither window shows a
+  game call of the id at all (no rise, no `dbg-ask` line, the record
+  X->X). `bonus-4` passes only on the arithmetic and that id-97 part; a
+  `bonus-2` or `bonus-4` left not-observed records its line as not
+  observed in play, never as passed.
+- D2: the counts and the `dbg-ask` lines recorded; detach.
 - S6 (research), switch off: `piece-sheet`: `statask 2,36,161`; take the
   helmet off (right click; it goes to the bag); `statask 2,36,161`; wear it
   again. Pass when 2 is down 3, 161 down 30 and 36 down. `bonus-equip`,
@@ -4640,7 +4719,10 @@ Stats live 1 results, below, say why each step is shaped as it is.
   inspect clean, `hs_lease_release`.
 
 **Checks.** Session validity, all required: `dll-hash`, `control`,
-`marker` and `proc-control`. Acceptance, all required: `ranges`,
+`marker` and `proc-control`. Validity for the logpoints and the
+game-side reads: `dbg-control`, `dbg-getters` and `game-control`; a
+game-side part whose control failed is not-observed (instrument), and so
+is its check. Acceptance, all required: `ranges`,
 `range-header`, `roll-lines`, `tip-order`, `tip-lit`, `bonus-2`, `bonus-3`,
 `bonus-4`, `ms-applies`, `prio-order`, `proc-casts`, `free-continuous`,
 `held-procs`, `held-continues`, `lock-key`, `icon-grey`, `icon-clear` and
@@ -4757,8 +4839,13 @@ Bolt 0.25 (no cooldown).
 - **A proc column's clock is forgotten on every room change** (implementation,
   the round-0 reviewer), so a cooldown skill procs again on entering a room.
 - **Ids not asked in town.** 92, 97, 162, 163, 164 and 165 had no local
-  dispatcher call in the whole session, and 21 none either; Stats live 2
-  asks the dispatcher itself (`mark1probe statask`).
+  dispatcher call in the whole session, and 21 none either. `bonusread`
+  records only calls whose self is the local player, so a game call with
+  another self would not show there either. Stats live 2 asks the
+  dispatcher itself (`mark1probe statask`) for the arithmetic only, since
+  the consumer answers that self by construction, and reads 92 and 97
+  game-side from the character sheet and from hits taken outside town,
+  with logpoints on their getters and on the dispatcher.
 - **The cached `fcr=` drifted**: it read 55, 106, 54, 68, 106, 56, 57, 70,
   102, 106, 192 (with castrate 100), 55 and 54 across the session.
 - **The pieces' rolled lines draw no roll range**, the owner's note after
