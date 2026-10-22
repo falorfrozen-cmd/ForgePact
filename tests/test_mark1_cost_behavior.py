@@ -1,0 +1,162 @@
+"""Run the real ForgePact Mark1Cost core against controlled stat calls.
+
+On the proc route the Mark 1 automation fires its skills the way the game
+fires an item proc, which costs no mana, so the owner asked for a price on it
+(2026-10-22). Mana itself is never written: the set bonus's consumer answers
+the local player's ReturnSpecificStat calls for id 42 (the mana replenish)
+with a drain of kMark1DrainPctPerSecond % of maximum mana a second per proc
+column, never below minus the maximum, or, as the documented alternative, id
+37 (maximum mana) cut by kMark1MaxManaCutPct % per proc column.
+
+Baseline: no proc column, the cost off, another self, another stat id, no
+readable id: the answer reaches the caller as the game gave it and nothing is
+counted. Target: the drain scales with the proc columns and stops at minus the
+maximum, the cut takes 20% a column, and every `drain` and `maxmana` case of
+the hub's hs-game-sdk/curated/mark1_automation_cases.json (computed by
+hs_game_sdk.mark1_automation_model) comes out of the C++ core unchanged. The
+consumer in ModuleMain.cpp (the shared ReturnSpecificStat detour, the local
+player, no mana write) is pinned by test_mark1_set_contract.py.
+"""
+import json
+import os
+import shutil
+import subprocess
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+HUB = ROOT.parent
+HEADER = ROOT / "plugin/include/ForgePact/Mark1Cost.hpp"
+CASES = HUB / "hs-game-sdk/curated/mark1_automation_cases.json"
+
+
+class Mark1CostBehaviorTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        header = HEADER.read_text(encoding="utf-8")
+        cls.header = header
+        klass = "\n".join(line for line in header.split("\n") if not line.strip().startswith("#pragma once"))
+        out = ROOT / "build/mark1-cost-behavior"
+        out.mkdir(parents=True, exist_ok=True)
+        code = (ROOT / "tests/mark1_cost_harness.cpp").read_text(encoding="utf-8")
+        code = code.replace("// PRODUCTION_MARK1COST", klass)
+        cpp = out / "mark1cost.cpp"
+        cpp.write_text(code, encoding="utf-8")
+        cls.binary = out / ("mark1cost.exe" if os.name == "nt" else "mark1cost")
+        if os.name == "nt":
+            vswhere = Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Microsoft Visual Studio/Installer/vswhere.exe"
+            if not vswhere.is_file():
+                raise unittest.SkipTest("Visual Studio C++ compiler is required for native behavior tests")
+            install = subprocess.check_output(
+                [str(vswhere), "-latest", "-products", "*", "-requires",
+                 "Microsoft.VisualStudio.Component.VC.Tools.x86.x64", "-property", "installationPath"],
+                text=True).strip()
+            if not install:
+                raise unittest.SkipTest("Visual Studio C++ toolchain not installed")
+            vcvars = Path(install) / "VC/Auxiliary/Build/vcvars64.bat"
+            batch = out / "compile.cmd"
+            batch.write_text(
+                f'@echo off\ncall "{vcvars}" >nul\nif errorlevel 1 exit /b 1\n'
+                f'cl /nologo /std:c++20 /EHsc /O2 /W4 /I "{ROOT / "plugin/include"}" "{cpp}" /Fe:"{cls.binary}" /Fo:"{out / "mark1cost.obj"}"\n'
+                f'exit /b %errorlevel%\n', encoding="utf-8")
+            command = ["cmd", "/d", "/c", str(batch)]
+        else:
+            compiler = shutil.which("c++")
+            if not compiler:
+                raise unittest.SkipTest("A C++20 compiler is required for native behavior tests")
+            command = [compiler, "-std=c++20", "-O2", "-I", str(ROOT / "plugin/include"), str(cpp), "-o", str(cls.binary)]
+        # The compiler speaks the machine's locale; decode leniently so a
+        # localized diagnostic cannot itself crash the test.
+        result = subprocess.run(command, cwd=out, capture_output=True, text=True, encoding="utf-8", errors="replace")
+        (out / "compile.log").write_text(result.stdout + result.stderr, encoding="utf-8")
+        if result.returncode:
+            raise AssertionError(result.stdout + result.stderr)
+        run = subprocess.run([str(cls.binary)], capture_output=True, text=True, encoding="utf-8", errors="replace")
+        cls.output = run.stdout
+        (out / "run.log").write_text(run.stdout + run.stderr, encoding="utf-8")
+
+    def line(self, label):
+        for line in self.output.split("\n"):
+            if line.split(" ")[1:2] == [label]:
+                return line
+        raise AssertionError(f"scenario {label!r} not in harness output:\n{self.output}")
+
+    def assertScenario(self, label):
+        self.assertTrue(self.line(label).startswith("PASS "), self.line(label))
+
+    def run_cases(self, lines):
+        """The core's answers for `lines`, one case a line, through the
+        harness's `cases` mode."""
+        run = subprocess.run([str(self.binary), "cases"], input="\n".join(lines) + "\n",
+                             capture_output=True, text=True, encoding="utf-8", errors="replace")
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        answers = [line.split() for line in run.stdout.splitlines() if line.strip()]
+        self.assertEqual(len(answers), len(lines), run.stdout)
+        return answers
+
+    def test_all_scenarios_pass(self):
+        self.assertIn("RESULT OK", self.output, self.output)
+
+    # ---- baseline: vanilla stays vanilla ------------------------------------
+    def test_cost_baseline_no_proc_column_answers_originals(self):
+        self.assertScenario("baseline/off_no_column_answers_originals")
+        self.assertScenario("baseline/no_proc_column_answers_originals")
+        self.assertScenario("baseline/off_with_columns_answers_originals")
+        self.assertScenario("baseline/other_self_untouched")
+        self.assertScenario("baseline/other_stat_ids_untouched")
+        self.assertScenario("baseline/no_stat_id_untouched")
+        self.assertScenario("baseline/scope_control")
+        self.assertScenario("baseline/one_cost_at_a_time")
+
+    # ---- target -----------------------------------------------------------------
+    def test_cost_target_drain_scales_with_proc_columns(self):
+        self.assertScenario("target/drain_scales_with_proc_columns")
+        self.assertScenario("target/drain_linear_in_columns")
+        self.assertScenario("target/repeated_calls_never_compound")
+        self.assertScenario("target/columns_capped_at_four")
+        self.assertScenario("target/not_a_number_untouched_and_counted")
+
+    def test_cost_target_drain_never_below_minus_max_mana(self):
+        self.assertScenario("target/drain_never_below_minus_max_mana")
+        self.assertScenario("target/drain_needs_a_maximum")
+
+    def test_cost_target_maxmana_cuts_twenty_percent_each(self):
+        self.assertScenario("target/maxmana_cuts_twenty_percent_each")
+        self.assertScenario("target/maxmana_never_below_zero")
+
+    def test_cost_target_matches_the_shared_cases(self):
+        cases = json.loads(CASES.read_text(encoding="utf-8"))
+        drain, maxmana = cases["drain"], cases["maxmana"]
+        self.assertTrue(drain and maxmana, "the cases file carries no drain or maxmana case")
+        answers = self.run_cases(
+            [f"drain {c['columns']} {c['percent']} {c['max_mana']} {c['unit']} {c['original']}" for c in drain]
+            + [f"maxmana {c['columns']} {c['cut_pct']} {c['original']}" for c in maxmana])
+        for case, got in zip(drain, answers[:len(drain)]):
+            with self.subTest(case["label"]):
+                self.assertEqual(got[0], "drain", got)
+                self.assertAlmostEqual(float(got[1]), case["expected_drain"], places=6)
+                self.assertAlmostEqual(float(got[2]), case["expected_answer"], places=6)
+        for case, got in zip(maxmana, answers[len(drain):]):
+            with self.subTest(case["label"]):
+                self.assertEqual(got[0], "maxmana", got)
+                self.assertAlmostEqual(float(got[1]), case["expected_answer"], places=6)
+
+    # ---- the research overrides and the shipped values -------------------------
+    def test_cost_research_overrides(self):
+        self.assertScenario("override/percent_and_cost")
+        self.assertScenario("override/words")
+
+    def test_cost_shipped_values(self):
+        self.assertScenario("route/constants")
+        self.assertIn("inline constexpr Mark1ManaCost kMark1ManaCost = Mark1ManaCost::Drain;", self.header)
+
+    def test_the_core_is_game_independent(self):
+        # Numbers in, numbers out: no instance, no RValue, no game call, and
+        # never a mana write.
+        for token in ("RValue", "CInstance", "g_Yytk", "HookOneScript", "#include \"Common.hpp\"",
+                      "windows.h", "PlayerManaUpdate", "SetVariable"):
+            self.assertNotIn(token, self.header, token)
+
+
+if __name__ == "__main__":
+    unittest.main()
