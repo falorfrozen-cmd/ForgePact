@@ -1360,7 +1360,7 @@ int main()
         const std::string expected =
             "mark1set bonus: pieces=0 lit=0/0/0 answered=0/0/0/0/0/0 not-number=0 gear-reads=0 gear-unread=0"
             " | auto talents=-/-/-/- free=-/-/-/- masked=0 held-seen=0 hold=4 yield=61 rest=24 mask=0,1,2,7,8,9,10,11,27,40"
-            " route=proc procs=0 proc-fail=0 locked=0 cost=maxmana drain=1.00 drained=0 cast-base=0.86 fcr=- haste=- stat-fail=0"
+            " route=proc procs=0 proc-fail=0 locked=0 cost=drain drain=1.00 drained=0 cast-base=0.86 fcr=- haste=- stat-fail=0"
             " | tip desc-font=not-drawn grey=0 grey-box=0 | rolls dressed=0 legacy=0 drop-rolls=0";
         check("stat/second_line_fresh_exact", fresh == expected, fresh);
         BonusStatFields f;

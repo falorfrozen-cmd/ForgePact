@@ -19,12 +19,13 @@ namespace ForgePact {
 // checks it against its own history (static reading, the hub's RDM § 7.7 and
 // § 7.8), so the cost goes through the stat dispatcher (ReturnSpecificStat)
 // alone, as one more answer the set bonus's consumer gives the local player:
-//   - Drain (planned): id 42, the mana replenish, is answered with its original
+//   - Drain (shipped): id 42, the mana replenish, is answered with its original
 //     minus columns x kMark1DrainPctPerSecond % of maximum mana x
 //     kMark1ReplenishUnit, never below minus the maximum, so mana falls
 //     through the game's own update.
-//   - MaxMana (the documented alternative): id 37, maximum mana, is answered
-//     with its original less kMark1MaxManaCutPct % per column, never below 0.
+//   - MaxMana (the documented alternative, still built): id 37, maximum mana,
+//     is answered with its original less kMark1MaxManaCutPct % per column,
+//     never below 0.
 //   - Off: nothing is answered.
 // The arithmetic is the hub's hs_game_sdk/mark1_automation_model.py
 // (replenish_answer, cut_max_mana; spec docs/models/mark1-automation-spec.md),
@@ -39,22 +40,29 @@ namespace ForgePact {
 
 enum class Mark1ManaCost { Drain, MaxMana, Off };
 
-// Which cost ships: the maximum-mana cut, which Stats live 1's
-// `maxmana-applies` measured (decision key `cost:`). The drain stays built,
-// research form `mark1probe autocost drain`, and unmeasured until Stats live 2;
-// the owner's numbers decide the final one.
-inline constexpr Mark1ManaCost kMark1ManaCost = Mark1ManaCost::MaxMana;
-// The drain per automated (proc) skill, in % of maximum mana a second. Proposed
-// by the plan, not measured: half the assumed 2% baseline replenish, so one or
-// two skills sustain themselves and four empty a full pool in about 50 s at
-// baseline (the hub model's DRAIN_PCT_PER_SECOND). The owner's call.
+// Which cost ships: the drain, the owner's choice (2026-10-22, "id really want
+// to go with mana drain option instead of flat 20% mana decrease per automated
+// skill"; decision key `cost: drain`). Stats live 2 backs it: its
+// `drain-applies` saw the lowered id-42 answer reach the game's regen (the 3 s
+// gain halved with half the answer), and its `proc-mana` that procs are free,
+// so a cost is needed. The maximum-mana cut, which Stats live 1's
+// `maxmana-applies` measured, stays built behind `mark1probe autocost maxmana`.
+inline constexpr Mark1ManaCost kMark1ManaCost = Mark1ManaCost::Drain;
+// The drain per automated (proc) skill, in % of maximum mana a second: half the
+// assumed 2% baseline replenish, so one or two skills sustain themselves and
+// four empty a full pool in about 50 s at baseline (the hub model's
+// DRAIN_PCT_PER_SECOND). Adopted by the owner (2026-10-22); Stats live 2's
+// numbers did not argue otherwise (Sorak's replenish 257 with Mana Orb unbound:
+// two columns take 47 of it, four 94).
 inline constexpr double kMark1DrainPctPerSecond = 1.0;
 // The alternative's cut per automated skill, in % of maximum mana: the owner's
 // own figure (2026-10-22, "20% per each automated skill"); 20% left at four.
 inline constexpr double kMark1MaxManaCutPct = 20.0;
-// What one mana a second is in id 42's answer. Assumption, provisional: 1.0
-// reads the answer as mana per second; Live 1 `regen-units` measures it (the
-// hub model's REPLENISH_UNIT).
+// What one mana a second is in id 42's answer. Provisional: 1.0 reads the
+// answer as mana per second. Stats live 2's `regen-units` read about 0.883 mana
+// a second per unit from HUD crops (one 2.98 s window), so the shipped 1%
+// takes about 0.88% a second; Stats live 3 measures it in process, and a
+// change is this constant plus the hub model's REPLENISH_UNIT.
 inline constexpr double kMark1ReplenishUnit = 1.0;
 
 // The dispatcher ids the cost answers (rss_cases.json, static reading).

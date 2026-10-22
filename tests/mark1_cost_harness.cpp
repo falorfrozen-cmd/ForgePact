@@ -37,8 +37,9 @@ static void check(const std::string& label, bool ok, const std::string& detail =
 
 static std::string Num(double v) { std::ostringstream o; o << v; return o.str(); }
 static bool Near(double a, double b) { return std::fabs(a - b) <= 1e-9 * (1 + std::fabs(b)); }
-// Since Stats live 1 the shipped cost is the maximum-mana cut (kMark1ManaCost);
-// the drain's scenarios pin the drain, as `mark1probe autocost drain` does.
+// The shipped cost is the drain (kMark1ManaCost, the owner's choice after Stats
+// live 2); the drain's scenarios still pin it by name, as `mark1probe autocost
+// drain` does, so they hold whichever cost ships.
 struct DrainCost : Mark1Cost { DrainCost() { SetCost(Mark1ManaCost::Drain); } };
 
 // One ReturnSpecificStat call through the core, the way the consumer runs it:
@@ -302,16 +303,29 @@ int main(int argc, char** argv) {
 
     // ---- the shipped values -----------------------------------------------------
     {
-        // The shipped cost, as Stats live 1 measured it (`maxmana-applies`: id 37
-        // answered at 40% with three proc columns): the maximum cut, the
-        // replenish left alone.
+        // The shipped cost, the drain (the owner, 2026-10-22), on Stats live 2's
+        // numbers: Sorak's 2352 mana and a replenish of 257 with Mana Orb
+        // unbound, two proc columns (E, Y). Id 42 loses 2 x 1% x 2352 = 47.04,
+        // id 37 is left alone.
         Mark1Cost shipped;
-        const Seen m = Run(shipped, Call{ true, true, 37, true, 2352 }, 3, 2352);
-        const Seen r = Run(shipped, Call{ true, true, 42, true, replenish }, 3, 2352);
-        check("route/shipped_cost_cuts_max_mana", m.changed && Near(m.answer, 940.8) && !r.changed && r.answer == replenish,
+        const Seen r = Run(shipped, Call{ true, true, 42, true, 257 }, 2, 2352);
+        const Seen m = Run(shipped, Call{ true, true, 37, true, 2352 }, 2, 2352);
+        check("route/shipped_cost_drains_replenish", r.changed && Near(r.answer, 209.96) && !m.changed && m.answer == 2352
+              && shipped.Stats().drained == 1,
+              "42=" + Num(r.answer) + " 37=" + Num(m.answer));
+    }
+    {
+        // The alternative stays built: set by `mark1probe autocost maxmana`, the
+        // cut answers id 37 as Stats live 1 measured it (`maxmana-applies`: 40%
+        // with three proc columns) and leaves the replenish alone.
+        Mark1Cost cut;
+        cut.SetCost(Mark1ManaCost::MaxMana);
+        const Seen m = Run(cut, Call{ true, true, 37, true, 2352 }, 3, 2352);
+        const Seen r = Run(cut, Call{ true, true, 42, true, replenish }, 3, 2352);
+        check("route/cut_still_answers_max_mana", m.changed && Near(m.answer, 940.8) && !r.changed && r.answer == replenish,
               "37=" + Num(m.answer) + " 42=" + Num(r.answer));
     }
-    check("route/constants", kMark1ManaCost == Mark1ManaCost::MaxMana && kMark1DrainPctPerSecond == 1.0
+    check("route/constants", kMark1ManaCost == Mark1ManaCost::Drain && kMark1DrainPctPerSecond == 1.0
           && kMark1MaxManaCutPct == 20.0 && kMark1ReplenishUnit == 1.0 && kMark1MaxManaStatId == 37
           && kMark1ReplenishStatId == 42 && kMark1DrainPctMax == 10.0);
 
