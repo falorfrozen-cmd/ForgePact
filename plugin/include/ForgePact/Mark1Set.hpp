@@ -289,7 +289,7 @@ struct ColumnCounts {
     uint64_t pressWriteFailed = 0;    // the press could not be written
     uint64_t restoreFailed = 0;       // the original value could not be put back
     // The turn rule's (Mark1Automation.hpp's counters of the same names).
-    uint64_t landed = 0;              // a cast landed during a call that pressed this column
+    uint64_t landed = 0;              // a cast landed during a gate call that pressed this column (the press route; a proc counts in procs= only)
     uint64_t skipTurn = 0;            // eligible, but another column held the turn (or this one rested)
     uint64_t yielded = 0;             // gave up the turn after its patience ran out without a landing
 };
@@ -540,8 +540,8 @@ struct BonusStatFields {
     uint64_t statFail = 0;
     // the tooltip
     DescFont descFont = DescFont::NotDrawn;
-    uint64_t grey = 0;                         // columns drawn grey by the redraw in the last HUD draw
-    uint64_t greyBox = 0;                      // columns that fell back to the dark box in it
+    uint64_t grey = 0;                         // columns greyed in the last HUD draw: their `enabled` written (the redraw under the research look)
+    uint64_t greyBox = 0;                      // columns that fell back to the dark box in it (research looks only)
     // the rolls
     uint64_t dressed = 0;                      // pieces dressed with a band seed
     uint64_t legacy = 0;                       // pieces dressed with a legacy seed

@@ -32171,6 +32171,24 @@ static bool HandleMenuProbeCommand(const std::string& lc, const std::string& res
     return false;
 }
 
+// A live instance as the game passes one: the runtime's own `id` of instance
+// <n> (instance_exists first, then variable_instance_get(<n>, "id"), the kind
+// a logged `ref instance N` argument has). The one way to build it, in both
+// builds: the research build's `id:<n>` argument (CpResolveArg, for `call`,
+// `callm` and `skillprobe call`) and the Mark 1 proc route's `player` token
+// (Mark1PlayerRef) both come here. False, with `why` set, when the instance is
+// gone or its id cannot be read.
+static bool InstanceIdRef(double id, RValue& out, std::string& why)
+{
+    const RValue handle(id);
+    bool alive = false;
+    try { alive = g_Yytk->CallBuiltin("instance_exists", { handle }).ToBoolean(); } catch (...) {}
+    if (!alive) { why = "instance_exists is false"; return false; }
+    try { out = g_Yytk->CallBuiltin("variable_instance_get", { handle, RValue("id") }); }
+    catch (...) { why = "its id could not be read"; return false; }
+    return true;
+}
+
 #ifndef FORGEPACT_RELEASE
 // ---- craftprobe: the crafting-materials Phase 0 instrument (issue #14) ------
 // docs/crafting-materials-research.md holds the static search, the vanilla
@@ -35028,12 +35046,8 @@ static bool CpResolveArg(const std::string& tag, const std::string& a, CInstance
         const std::string text = a.substr(3);
         try { id = std::stoll(text, &used); } catch (...) { used = 0; }
         if (text.empty() || used != text.size()) { Out(tag + ": refused - " + a + ": id:<n> needs a whole instance id; nothing was called"); return false; }
-        const RValue handle((double)id);
-        bool alive = false;
-        try { alive = g_Yytk->CallBuiltin("instance_exists", { handle }).ToBoolean(); } catch (...) {}
-        if (!alive) { Out(tag + ": refused - " + a + ": instance_exists is false; nothing was called"); return false; }
-        try { v = g_Yytk->CallBuiltin("variable_instance_get", { handle, RValue("id") }); }
-        catch (...) { Out(tag + ": refused - " + a + ": its id could not be read; nothing was called"); return false; }
+        std::string gone;
+        if (!InstanceIdRef((double)id, v, gone)) { Out(tag + ": refused - " + a + ": " + gone + "; nothing was called"); return false; }
     } else if (la.rfind("obj:", 0) == 0) {
         const std::string objName = a.substr(4);
         RValue index;
@@ -63875,6 +63889,24 @@ static bool Mark1PlayerResolves()
     return ok;
 }
 
+// The character's name: the player instance's `name`, when it is text
+// (measured holding the character's name, LaCharacterName's note); "" when it
+// does not read, which decides nothing. A room's first
+// ticks can answer nothing (RDM: the tracker's read on a room change's own
+// tick), so the caller asks again until it reads.
+static std::string Mark1CharacterName(CInstance* player)
+{
+    if (!player) return "";
+    try {
+        const RValue n = g_Yytk->CallBuiltin("variable_instance_get", { player->ToRValue(), RValue("name") });
+        if (n.m_Kind == VALUE_STRING) return n.ToString();
+    } catch (...) {}
+    return "";
+}
+
+static std::string g_M1sCharacter;        // the last character name read; "" before the first
+static bool g_M1sCharacterOwed = false;   // a new player instance whose name has not read yet
+
 static void Mark1RefreshPlayer()
 {
     CInstance* inst = nullptr;
@@ -63884,9 +63916,23 @@ static void Mark1RefreshPlayer()
         RValue p;
         if (HhResolveLocalPlayer(p)) inst = HhResolveInstance(p);
     } catch (...) { inst = nullptr; }
+    // A new instance is a room: Player_obj gets a new instance id in every
+    // room (RDM, measured), so the toggle settle windows and the priority's
+    // frame state are forgotten and the proc clocks are kept.
+    if (inst != g_M1sPlayer) ForgePact::Mark1Automation::Instance().ForgetRoom();
+    if (inst && inst != g_M1sPlayer) g_M1sCharacterOwed = true;
+    // A new character also clears the proc clocks. It is told by the
+    // character's name, read once it reads; an unreadable name decides
+    // nothing, and the first name read is only recorded.
+    if (inst && g_M1sCharacterOwed) {
+        const std::string name = Mark1CharacterName(inst);
+        if (!name.empty()) {
+            if (!g_M1sCharacter.empty() && name != g_M1sCharacter) ForgePact::Mark1Automation::Instance().ForgetCharacter();
+            g_M1sCharacter = name;
+            g_M1sCharacterOwed = false;
+        }
+    }
     g_M1sBusy = busy;
-    // A new character: every column's toggle settle window is forgotten.
-    if (inst != g_M1sPlayer) ForgePact::Mark1Automation::Instance().ForgetPresses();
     g_M1sPlayer = inst;
 }
 
@@ -64253,28 +64299,30 @@ static void Mark1BorderDraw()
 
 // ---- Mark 1 set (Mark1Priority.hpp): the grey icon ----
 // An automated column cannot be cast by hand, and its bar icon says so in the
-// game's own "cannot use" look: the button's own icon drawn again with the
-// dark-grey blend UI_Talent_Button_obj's Draw GUI event gives a button it
-// will not use (0x303030; static reading, the hub's RDM § 7.10). From
-// Hook_DrawHudBuffs, after the game's original and after the border, for the
-// core's grey mask (the border's columns, Mark1GreyMask): each column's
-// element of `row0` (as the border reads it) redrawn with its own
-// sprite_index, image_index, x, y, image_xscale, image_yscale and
-// image_angle; when one of those reads fails, a dark box over its navBbox*
-// instead (0x303030 at alpha 0.6). Colour and alpha are put back on every
-// path, and nothing of the game's is written. `grey=` and `grey-box=` count
-// the columns of the last draw. The research build adds an `autogrey` form
-// (box, enabled, off); the player build always redraws.
+// game's own "cannot use" look: UI_Talent_Button_obj's Draw GUI event draws a
+// button whose own `enabled` reads false with the dark-grey blend (0x303030;
+// static reading, the hub's RDM § 7.10). Live 1 (replan 1) measured that look
+// drawing Q, E, R and Y dark, with the tooltip and the left click (which opens
+// the bar editor) unchanged, while a redraw from this hook darkened nothing
+// (the buttons draw their icons after DrawHudBuffs, inferred). So, in both
+// builds: from Hook_DrawHudBuffs, after the game's original and after the
+// border, each column of the core's grey mask (the border's columns,
+// Mark1GreyMask) has its element of `row0` (as the border reads it) written
+// `enabled` false, the value read just before kept. Every kept value is put
+// back first on every draw: before the next write, when the bonus ends, and
+// when the look changes. `grey=` counts the columns written in the last draw.
+// The research build keeps the redraw and the dark box as research looks (an
+// `autogrey` form), which draw over the icon and write nothing; `grey-box=`
+// counts the box.
 static constexpr double kMark1GreyBlend = 3158064.0;   // 0x303030, the button's own disabled blend
 static constexpr double kMark1GreyBoxAlpha = 0.6;
 enum class Mark1GreyLook { Redraw, Box, Enabled, Off };
-static uint64_t g_M1gGrey = 0;      // columns the last draw redrew grey
-static uint64_t g_M1gGreyBox = 0;   // columns the last draw boxed instead
+static uint64_t g_M1gGrey = 0;      // columns the last draw greyed
+static uint64_t g_M1gGreyBox = 0;   // columns the last draw boxed instead (research looks)
 #ifndef FORGEPACT_RELEASE
-static Mark1GreyLook g_M1gLook = Mark1GreyLook::Redraw;   // `mark1probe autogrey`
-// `mark1probe autogrey enabled`: each button written `enabled` false, with the
-// value read before, put back on another look, when the bonus ends and before
-// the next write.
+static Mark1GreyLook g_M1gLook = Mark1GreyLook::Enabled;   // the research build's `autogrey`
+#endif
+// Each `enabled` written, with the value read before it, newest last.
 struct Mark1GreyEnabledSaved { RValue element; RValue original; };
 static std::vector<Mark1GreyEnabledSaved> g_M1gEnabledSaved;
 static void Mark1GreyEnabledRestore()
@@ -64284,7 +64332,6 @@ static void Mark1GreyEnabledRestore()
     }
     g_M1gEnabledSaved.clear();
 }
-#endif
 
 // One member of a bar button, as a number: the instance's own variable first,
 // then the struct's member.
@@ -64301,11 +64348,13 @@ static bool Mark1GreyMember(const RValue& e, const char* name, double& out)
 
 static void Mark1GreyDraw()
 {
-    Mark1GreyLook look = Mark1GreyLook::Redraw;
+    Mark1GreyLook look = Mark1GreyLook::Enabled;
 #ifndef FORGEPACT_RELEASE
     look = g_M1gLook;
-    if (look != Mark1GreyLook::Enabled || !g_Mark1.ActiveCached()) Mark1GreyEnabledRestore();
 #endif
+    // Every kept `enabled` goes back first: before this draw's write, and for
+    // good when the bonus has ended or the look writes none.
+    Mark1GreyEnabledRestore();
     g_M1gGrey = 0;
     g_M1gGreyBox = 0;
     if (!g_Mark1.ActiveCached() || look == Mark1GreyLook::Off) return;
@@ -64318,10 +64367,9 @@ static void Mark1GreyDraw()
         return c.read;
     });
     if (mask == 0u) return;
-#ifndef FORGEPACT_RELEASE
     if (look == Mark1GreyLook::Enabled) {
-        // Research only: the game draws the button dark itself.
-        Mark1GreyEnabledRestore();
+        // The game draws the button dark itself; the value read is kept so
+        // the next restore puts back exactly what was there.
         for (int i = 0; i < ForgePact::kMark1ColumnCount; ++i) {
             if (!(mask & (1u << i))) continue;
             try {
@@ -64329,11 +64377,13 @@ static void Mark1GreyDraw()
                 const RValue original = g_Yytk->CallBuiltin("variable_instance_get", { e, RValue("enabled") });
                 g_Yytk->CallBuiltin("variable_instance_set", { e, RValue("enabled"), RValue(false) });
                 g_M1gEnabledSaved.push_back({ e, original });
+                ++g_M1gGrey;
             } catch (...) {}
         }
         return;
     }
-#endif
+#ifndef FORGEPACT_RELEASE
+    // The research looks: the redraw, and the dark box when a member read fails.
     try {
         const RValue prevColour = g_Yytk->CallBuiltin("draw_get_colour", {});
         const RValue prevAlpha = g_Yytk->CallBuiltin("draw_get_alpha", {});
@@ -64365,6 +64415,7 @@ static void Mark1GreyDraw()
         try { g_Yytk->CallBuiltin("draw_set_alpha", { prevAlpha }); } catch (...) {}
         try { g_Yytk->CallBuiltin("draw_set_colour", { prevColour }); } catch (...) {}
     } catch (...) {}   // the state reads themselves failed: nothing was set, so there is nothing to put back
+#endif
 }
 
 // ---- the landing detour (the turns) ----
@@ -64419,7 +64470,11 @@ static RValue& Mark1HookTalentUseSetSpeed(CInstance* S, CInstance* O, RValue& R,
 // `proc-fail=`, prints one line naming why and returns the route to the
 // press for the rest of the session (the core's ProcDone). Its own calls run
 // outside the busy flag, so the set bonus answers the proc's stat reads too;
-// a gate call it makes itself passes the detour by (g_M1aProcRunning).
+// a gate call it makes itself passes the detour by (g_M1aProcRunning). The
+// shape's `player` token is the local player instance as the game passes it
+// (Mark1PlayerRef: Live 1's P5 had only a literal number, kind real, where the
+// game and `id:<n>` pass a ref). Answers whether the proc returned and was
+// recorded; a proc counts `procs=` only, never `landed=`.
 static bool g_M1aProcRunning = false;
 static bool Mark1JumpPosition(double& x, double& y);   // the local player's position; defined with the jump
 #ifndef FORGEPACT_RELEASE
@@ -64428,10 +64483,23 @@ static bool Mark1JumpPosition(double& x, double& y);   // the local player's pos
 static void M1pNoteProc(int column, long long nowMs, double intervalMs);
 #endif
 
-static void Mark1FireProc(const ForgePact::Mark1FramePlan& plan)
+// The local player's ref: its instance number read off the instance, then
+// built by InstanceIdRef, the one way `id:<n>` builds it.
+static bool Mark1PlayerRef(RValue& out, std::string& why)
+{
+    if (!g_M1sPlayer) { why = "player: no local player"; return false; }
+    double id = std::nan("");
+    try { id = g_Yytk->CallBuiltin("variable_instance_get", { g_M1sPlayer->ToRValue(), RValue("id") }).ToDouble(); } catch (...) {}
+    if (!std::isfinite(id) || id < 0) { why = "player: its instance id could not be read"; return false; }
+    std::string refused;
+    if (!InstanceIdRef(id, out, refused)) { why = "player: " + refused; return false; }
+    return true;
+}
+
+static bool Mark1FireProc(const ForgePact::Mark1FramePlan& plan)
 {
     ForgePact::Mark1Automation& automation = ForgePact::Mark1Automation::Instance();
-    if (!plan.active || !ForgePact::Mark1IsAutomatedColumn(plan.procColumn) || !g_M1sPlayer) return;
+    if (!plan.active || !ForgePact::Mark1IsAutomatedColumn(plan.procColumn) || !g_M1sPlayer) return false;
     std::string why;
     double x = std::nan(""), y = std::nan("");
     Mark1JumpPosition(x, y);
@@ -64447,11 +64515,18 @@ static void Mark1FireProc(const ForgePact::Mark1FramePlan& plan)
             try { index = g_Yytk->CallBuiltin("asset_get_index", { RValue(std::string(script)) }).ToDouble(); } catch (...) { index = -1; }
             if (!std::isfinite(index) || index < 0) why = std::string("asset_get_index found no ") + script;
         }
+        RValue playerRef;
+        bool havePlayerRef = false;
+        for (const ForgePact::Mark1ProcValue& v : values) {
+            if (!why.empty() || v.kind != ForgePact::Mark1ProcValue::Kind::Player || havePlayerRef) continue;
+            havePlayerRef = Mark1PlayerRef(playerRef, why);
+        }
         if (why.empty()) {
             std::vector<RValue> args{ RValue(index) };
             for (const ForgePact::Mark1ProcValue& v : values) {
                 if (v.kind == ForgePact::Mark1ProcValue::Kind::Number) args.push_back(RValue(v.number));
                 else if (v.kind == ForgePact::Mark1ProcValue::Kind::Bool) args.push_back(RValue(v.flag));
+                else if (v.kind == ForgePact::Mark1ProcValue::Kind::Player) args.push_back(playerRef);
                 else args.push_back(RValue());
             }
             RValue res;
@@ -64469,10 +64544,11 @@ static void Mark1FireProc(const ForgePact::Mark1FramePlan& plan)
             g_M1aProcRunning = outer;
         }
     }
-    automation.ProcDone(plan, outcome);
+    const bool recorded = automation.ProcDone(plan, outcome);
     if (outcome != ForgePact::Mark1ProcOutcome::Returned)
         Out("mark1set: proc route refused - " + why + " (column " + std::to_string(plan.procColumn)
             + "); the automation presses for the rest of the session");
+    return recorded;
 }
 
 // ---- the CheckTalentUse detour ----
@@ -64570,18 +64646,17 @@ static RValue& Mark1HookCheckTalentUse(CInstance* S, CInstance* O, RValue& R, in
         // The proc route: the core's proc column, fired once the original
         // returned, outside the gate.
         if (plan.procColumn) {
+            bool fired = false;
+            try { fired = Mark1FireProc(plan); } catch (...) {}
 #ifndef FORGEPACT_RELEASE
-            // `mark1probe procgaps`: a proc the core recorded as fired (ProcDone
-            // counts landed= for a proc column only when it returned).
-            const long landedBefore = automation.Counters(plan.procColumn).landed;
-#endif
-            try { Mark1FireProc(plan); } catch (...) {}
-#ifndef FORGEPACT_RELEASE
-            if (automation.Counters(plan.procColumn).landed > landedBefore) {
+            // `mark1probe procgaps`: a proc that returned and that the core
+            // recorded (its clock started).
+            if (fired) {
                 const int i = plan.procColumn - ForgePact::kMark1FirstColumn;
                 M1pNoteProc(plan.procColumn, plan.clock.nowMs, automation.Priority().IntervalMs(plan.columns[i], plan.clock));
             }
 #endif
+            (void)fired;
         }
         return result;
     } catch (...) {
@@ -68992,10 +69067,10 @@ static void M1pAuto(const M1pNs::Command& c)
     if (c.form == M1pNs::Form::AutoGrey) {
         Mark1GreyEnabledRestore();
         switch (c.grey) {
+        case M1pNs::GreyLook::Redraw: g_M1gLook = Mark1GreyLook::Redraw; break;
         case M1pNs::GreyLook::Box: g_M1gLook = Mark1GreyLook::Box; break;
-        case M1pNs::GreyLook::Enabled: g_M1gLook = Mark1GreyLook::Enabled; break;
         case M1pNs::GreyLook::Off: g_M1gLook = Mark1GreyLook::Off; break;
-        default: g_M1gLook = Mark1GreyLook::Redraw; break;
+        default: g_M1gLook = Mark1GreyLook::Enabled; break;   // the shipped look
         }
         Out(std::string("mark1probe autogrey: look=") + M1pNs::GreyLookText(c.grey));
         return;

@@ -157,6 +157,25 @@ class Mark1PriorityBehaviorTests(unittest.TestCase):
                              "route/shape_parsed", "route/shape_unknown_token_refused_by_name",
                              "route/clear_returns_to_the_press")
 
+    def test_priority_target_proc_shape_player_token(self):
+        # Live 1 (replan 1): the template had no token for the local player,
+        # so P5 passed a1 as a number where the game passes a ref. `player`
+        # parses, formats back and reaches the adapter as its own kind; a
+        # literal instance number still parses as a number, and a near miss is
+        # refused by name.
+        self.assertScenarios("shape/player_token_parsed", "shape/literal_instance_number_is_a_number",
+                             "shape/near_miss_refused", "shape/player_built_for_the_adapter",
+                             "shape/literal_built_as_a_number", "shape/player_through_the_automation")
+
+    def test_priority_target_proc_clocks_survive_a_room_change(self):
+        # Round 0's review: every room change forgot the proc clocks, so a
+        # cooldown skill procced again on entering a room. A room keeps them
+        # (and still forgets the press route's state); a new character clears
+        # them.
+        self.assertScenarios("room/core_room_keeps_the_proc_clock", "room/core_room_forgets_the_press_state",
+                             "room/core_new_character_clears_the_clock", "room/proc_clock_survives_a_room_change",
+                             "room/new_character_clears_the_proc_clock", "room/bonus_again_keeps_the_proc_clock")
+
     def test_priority_target_proc_route_bypasses_the_gate(self):
         self.assertScenarios("proc/fired_never_pressed", "proc/never_masked", "proc/args_from_the_shape",
                              "proc/counted", "proc/a_throw_falls_back_to_the_press",

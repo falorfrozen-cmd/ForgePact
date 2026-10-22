@@ -206,9 +206,12 @@ inline double Mark1ProcIntervalMs(double abilityCooldown, double haste, double f
 
 // ---- the proc call's shape -----------------------------------------------------
 
-// Tokens: `id` (the column's talent id), `x` and `y` (the local player's
-// position), `true`, `false`, `undefined`, and numbers.
-enum class Mark1ProcToken { TalentId, X, Y, True, False, Undefined, Number };
+// Tokens: `id` (the column's talent id), `player` (the local player instance,
+// which the adapter builds as the game passes it: the runtime's own `id`
+// ref, the kind `skillprobe call`'s `id:<n>` argument builds), `x` and `y`
+// (the local player's position), `true`, `false`, `undefined`, and numbers. A
+// literal instance number is a number, not the player.
+enum class Mark1ProcToken { TalentId, Player, X, Y, True, False, Undefined, Number };
 
 struct Mark1ProcArg {
     Mark1ProcToken token = Mark1ProcToken::Undefined;
@@ -253,6 +256,7 @@ inline Mark1ProcShape Mark1ParseProcShape(std::string_view text)
         const std::string_view token = Mark1Trim(text.substr(0, comma));
         Mark1ProcArg arg;
         if (token == "id") arg.token = Mark1ProcToken::TalentId;
+        else if (token == "player") arg.token = Mark1ProcToken::Player;
         else if (token == "x") arg.token = Mark1ProcToken::X;
         else if (token == "y") arg.token = Mark1ProcToken::Y;
         else if (token == "true") arg.token = Mark1ProcToken::True;
@@ -281,6 +285,7 @@ inline std::string Mark1ProcTokenText(const Mark1ProcArg& a)
 {
     switch (a.token) {
         case Mark1ProcToken::TalentId: return "id";
+        case Mark1ProcToken::Player:   return "player";
         case Mark1ProcToken::X:        return "x";
         case Mark1ProcToken::Y:        return "y";
         case Mark1ProcToken::True:     return "true";
@@ -308,8 +313,10 @@ inline std::string Mark1FormatProcShape(const std::vector<Mark1ProcArg>& args)
 }
 
 // One argument of the proc call, as the adapter turns it into a runtime value.
+// `Player` carries no value: the adapter builds the local player's ref itself
+// and refuses the call when it cannot.
 struct Mark1ProcValue {
-    enum class Kind { Number, Bool, Undefined } kind = Kind::Undefined;
+    enum class Kind { Number, Bool, Undefined, Player } kind = Kind::Undefined;
     double number = 0;
     bool flag = false;
 };
@@ -328,6 +335,7 @@ inline bool Mark1BuildProcArgs(const std::vector<Mark1ProcArg>& shape, double ta
             case Mark1ProcToken::TalentId:
                 if (!std::isfinite(talentId) || !(talentId > 0)) { why = "talent id unreadable"; out.clear(); return false; }
                 v.kind = Mark1ProcValue::Kind::Number; v.number = talentId; break;
+            case Mark1ProcToken::Player: v.kind = Mark1ProcValue::Kind::Player; break;
             case Mark1ProcToken::X:
                 if (!std::isfinite(x)) { why = "x unreadable"; out.clear(); return false; }
                 v.kind = Mark1ProcValue::Kind::Number; v.number = x; break;
@@ -706,14 +714,16 @@ public:
         return Mark1ProcIntervalMs(c.abilityCooldown, clock.haste, clock.fcr, m_Settings.baseCastSeconds);
     }
 
-    // A new character, a room, or the bonus active again: the rests, the
-    // yield, the free columns' turn and every proc clock are forgotten. The
-    // settings, the counters and a proc failure this session are kept.
-    void Reset()
+    // A room (Player_obj gets a new instance id in each, so the frame state
+    // of the last one means nothing) or the bonus active again: the rests,
+    // the yield and the free columns' turn are forgotten. Every proc clock is
+    // kept, so a cooldown skill does not proc again on entering a room before
+    // its interval has run (round 0's review). The settings, the counters and
+    // a proc failure this session are kept too.
+    void ForgetRoom()
     {
         for (int i = 0; i < kMark1ColumnCount; ++i) {
             m_Resting[i] = false; m_RestStart[i] = 0; m_RestFrames[i] = 0;
-            m_HasClock[i] = false; m_FiredAt[i] = 0; m_NextDue[i] = 0;
         }
         m_Yielding = false;
         m_LandedFrame = 0;
@@ -721,6 +731,13 @@ public:
         m_RunColumn = -1;
         m_RunStart = 0;
         m_ProcColumns.store(0);
+    }
+
+    // A new character: everything ForgetRoom forgets, and every proc clock.
+    void Reset()
+    {
+        ForgetRoom();
+        for (int i = 0; i < kMark1ColumnCount; ++i) { m_HasClock[i] = false; m_FiredAt[i] = 0; m_NextDue[i] = 0; }
     }
 
     // Inside column index i's rest. A frame counter that went backwards ends

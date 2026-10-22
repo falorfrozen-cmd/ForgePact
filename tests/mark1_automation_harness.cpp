@@ -45,6 +45,8 @@ struct Column {
     bool aura = false;
     bool toggle = false;
     Mark1ToggleState state = Mark1ToggleState::Off;
+    bool cooldownRead = false;  // the talent's abilityCooldown read (the proc route needs it)
+    double cooldown = 0;
 };
 struct Bar {
     std::map<int, Column> columns;          // keyed by bar column 0..9
@@ -84,6 +86,8 @@ static Mark1ColumnRead readColumn(int column) {
     r.talentId = c.talentId;
     r.aura = c.aura;
     r.toggle = c.toggle;
+    r.cooldownRead = c.cooldownRead;
+    r.abilityCooldown = c.cooldown;
     return r;
 }
 static Mark1ToggleState readToggle(int column) {
@@ -455,6 +459,42 @@ int main() {
         } catch (...) { escaped = true; }
         check("columns/throwing_reads_contained", !escaped && !plan.Press(3) && !plan.Press(4)
             && a.Counters(4).unreadable == 1 && a.Counters(3).toggleUnreadable == 1);
+    }
+    {
+        // The proc route: a proc that returned counts procs= only, never
+        // landed=, which stays "a cast landed during a gate call that pressed
+        // this column" (Live 1: on the proc route landed= had counted calls
+        // that returned, not casts).
+        resetBar(); resetSlot();
+        bar.columns[4].talentId = 601; bar.columns[4].cooldownRead = true; bar.columns[4].cooldown = 14;
+        Mark1Automation a;
+        a.Priority().SetShape(ForgePact::Mark1ParseProcShape("id"));
+        a.Priority().SetRoute(ForgePact::Mark1Route::Proc);
+        ForgePact::Mark1GateClock clock;
+        clock.haveMs = true;
+        clock.nowMs = 0;
+        const Mark1FramePlan plan = a.Plan(true, 0, clock, readColumn, readToggle);
+        a.PressAround<double>(plan, readEntry, writeEntry, []() { return 0.0; });
+        a.Landing(plan, true);                                           // a cast seen in the window: no press, not credited
+        const bool recorded = a.ProcDone(plan, ForgePact::Mark1ProcOutcome::Returned);
+        check("proc/returned_counts_procs_not_landed", plan.procColumn == 4 && recorded
+            && a.Priority().Counters().procs == 1 && a.Counters(4).landed == 0 && a.Counters(4).presses == 0,
+            "landed=" + std::to_string(a.Counters(4).landed) + " procs=" + std::to_string(a.Priority().Counters().procs));
+        // Once per plan, and a throw is no proc recorded either.
+        const bool twice = a.ProcDone(plan, ForgePact::Mark1ProcOutcome::Returned);
+        clock.nowMs = 15000;
+        const Mark1FramePlan again = a.Plan(true, 1, clock, readColumn, readToggle);
+        const bool threw = a.ProcDone(again, ForgePact::Mark1ProcOutcome::Threw);
+        check("proc/recorded_once_and_never_on_a_throw", !twice && again.procColumn == 4 && !threw
+            && a.Priority().Counters().procs == 2 && a.Priority().Counters().procFail == 1 && a.Counters(4).landed == 0);
+        // Positive control: on the press route a landing still counts landed=.
+        resetBar(); resetSlot();
+        bar.columns[4].talentId = 601;
+        Mark1Automation p;
+        const Mark1FramePlan pp = p.Plan(true, 0, readColumn, readToggle);
+        p.PressAround<double>(pp, readEntry, writeEntry, []() { return 0.0; });
+        p.Landing(pp, true);
+        check("proc/press_landing_counts_landed", pp.Press(4) && p.Counters(4).landed == 1 && p.Priority().Counters().procs == 0);
     }
 
     std::cout << (failures ? "RESULT FAIL" : "RESULT OK") << "\n";

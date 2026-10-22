@@ -211,7 +211,10 @@ SIGNATURES = {
     "bonus_pieces": "static bool Mark1BonusPieces(M1sNs::SetRead& read)",
     "gear_prints": "static bool Mark1GearPrints(std::array<std::string, M1sNs::kGearSlotCount>& out)",
     "bonus_fields": "static M1sNs::BonusStatFields Mark1BonusStatFields()",
-    "fire_proc": "static void Mark1FireProc(const ForgePact::Mark1FramePlan& plan)",
+    "fire_proc": "static bool Mark1FireProc(const ForgePact::Mark1FramePlan& plan)",
+    "player_ref": "static bool Mark1PlayerRef(RValue& out, std::string& why)",
+    "instance_id_ref": "static bool InstanceIdRef(double id, RValue& out, std::string& why)",
+    "character_name": "static std::string Mark1CharacterName(CInstance* player)",
     "grey": "static void Mark1GreyDraw()",
     "grey_member": "static bool Mark1GreyMember(const RValue& e, const char* name, double& out)",
     "read_stat": "static bool Mark1ReadStatByName(int id, double& out)",
@@ -228,7 +231,7 @@ SHIPPED = ("decode", "of", "entry", "final", "icon_index", "icon_path", "icons_l
            "jump_position", "jump_cursor", "jump_family", "jump_gate", "jump_kind", "jump_grid", "jump_max", "jump_learn",
            "jump_entry", "jump_exit", "jump_builtin", "jump_install", "jump_tick", "leap", "leap_install", "resolve_objects",
            "walk", "walk_install", "bonus_consumer", "bonus_pieces", "gear_prints", "bonus_fields", "fire_proc", "grey",
-           "grey_member", "read_stat", "refresh_stats", "cooldown_of")
+           "grey_member", "read_stat", "refresh_stats", "cooldown_of", "player_ref", "instance_id_ref", "character_name")
 JUMP_HEADER = ROOT / "plugin" / "include" / "ForgePact" / "Mark1Jump.hpp"
 AUTOMATION_HEADER = ROOT / "plugin" / "include" / "ForgePact" / "Mark1Automation.hpp"
 PRIORITY_HEADER = ROOT / "plugin" / "include" / "ForgePact" / "Mark1Priority.hpp"
@@ -535,16 +538,16 @@ class Mark1SetContract(unittest.TestCase):
         # The one array_set and the one write path in the adapter.
         self.assertEqual(self.code.count('"array_set"'), 1)
         self.assertNotIn("variable_global_set", self.code)
-        # The adapter's two variable_instance_set calls in the player build:
-        # the ground consumer's sprite, and the jump's scaled position, written
-        # only after a skillsLeap call's original returned (jump-adapter). The
-        # research build adds two, the grey icon's `autogrey enabled` write
-        # and its put-back (the 2026-10-22 playtest).
+        # The adapter's four variable_instance_set calls, in both builds: the
+        # ground consumer's sprite, the jump's scaled position, written only
+        # after a skillsLeap call's original returned (jump-adapter), and the
+        # grey look's `enabled` write and its put-back (Live 1, replan 1: the
+        # shipped look; test_grey_look_enabled_written_and_restored).
         player = strip_comments(strip_research_blocks(self.reads + self.adapter))
-        self.assertEqual(player.count('"variable_instance_set"'), 2)
+        self.assertEqual(player.count('"variable_instance_set"'), 4)
         self.assertEqual(self.code.count('"variable_instance_set"'), 4)
         self.assertEqual(self.code.count('RValue("enabled")'), 3)
-        self.assertNotIn('RValue("enabled")', player)
+        self.assertEqual(player.count('RValue("enabled")'), 3)
         self.assertIn('"variable_instance_set"', self.body("ground"))
         self.assertIn('"variable_instance_set"', self.body("jump_exit"))
         self.assertEqual(len(re.findall(r"\bMark1InputSet\(", self.code)), 2)   # definition and the detour's write
@@ -1882,6 +1885,56 @@ class Mark1SetContract(unittest.TestCase):
         self.assertLess(detour.index("feedLanding();"), detour.index("Mark1FireProc(plan)"))
         # A gate call the proc makes itself passes the detour by.
         self.assertIn("|| g_M1aProcRunning ||", detour)
+        # `mark1probe procgaps` is fed by the proc's own answer, never by
+        # landed= (a proc counts procs= only).
+        self.assertIn("fired = Mark1FireProc(plan);", detour)
+        self.assertNotIn(".landed", detour)
+        self.assertIn("const bool recorded = automation.ProcDone(plan, outcome);", fire)
+        self.assertIn("return recorded;", fire)
+
+    def test_proc_shape_player_token_is_the_id_ref(self):
+        # The `player` token is built as the game passes the instance: the
+        # runtime's own `id` ref, by the one helper `id:<n>` also uses.
+        fire = self.body("fire_proc")
+        self.assertIn("ForgePact::Mark1ProcValue::Kind::Player", fire)
+        self.assertIn("Mark1PlayerRef(playerRef, why)", fire)
+        self.assertLess(fire.index("Mark1PlayerRef(playerRef, why)"), fire.index('"script_execute"'))
+        self.assertIn("args.push_back(playerRef);", fire)
+        player = strip_research_blocks(self.plugin)
+        ref = strip_comments(function_body(player, SIGNATURES["player_ref"]))
+        self.assertIn('"variable_instance_get", { g_M1sPlayer->ToRValue(), RValue("id") }', ref)
+        self.assertIn("InstanceIdRef(id, out, refused)", ref)
+        shared = strip_comments(function_body(player, SIGNATURES["instance_id_ref"]))
+        self.assertLess(shared.index('"instance_exists"'), shared.index('"variable_instance_get", { handle, RValue("id") }'))
+        # `id:<n>` (research build: `call`, `callm`, `skillprobe call`) uses
+        # the same helper, so there is one way to build the ref.
+        resolve = strip_comments(function_body(self.plugin, "static bool CpResolveArg("))
+        self.assertIn("InstanceIdRef((double)id, v, gone)", resolve)
+        self.assertNotIn('"instance_exists"', resolve)
+
+    def test_room_change_keeps_proc_clocks_a_new_character_clears_them(self):
+        refresh = self.body("refresh")
+        # Player_obj gets a new instance id on every room change (RDM): a new
+        # instance forgets the room's state only; the clocks go only when the
+        # character's name changes, read when it is readable.
+        self.assertIn("if (inst != g_M1sPlayer) ForgePact::Mark1Automation::Instance().ForgetRoom();", refresh)
+        self.assertNotIn("ForgetPresses", refresh)
+        self.assertIn("Mark1CharacterName(inst)", refresh)
+        self.assertIn("ForgePact::Mark1Automation::Instance().ForgetCharacter();", refresh)
+        self.assertLess(refresh.index("ForgetRoom();"), refresh.index("ForgetCharacter();"))
+        self.assertIn("!g_M1sCharacter.empty() && name != g_M1sCharacter", refresh)
+        name = self.body("character_name")
+        self.assertIn('RValue("name")', name)
+        self.assertIn("VALUE_STRING", name)
+        auto = self.automation_header()
+        room = function_body(auto, "void ForgetRoom()")
+        clear = function_body(auto, "void ClearPriority()")
+        character = function_body(auto, "void ForgetCharacter()")
+        self.assertIn("ClearPriority();", room)
+        self.assertIn("m_Core.ForgetRoom();", clear)
+        for body in (room, clear):
+            self.assertNotIn("m_Core.Reset();", body)
+        self.assertIn("m_Core.Reset();", character)
 
     def test_grey_icon_drawn_after_the_hud_original(self):
         hud = self.body("hud")
@@ -1891,16 +1944,58 @@ class Mark1SetContract(unittest.TestCase):
         grey = strip_comments(function_body(strip_research_blocks(self.plugin), SIGNATURES["grey"]))
         self.assertIn("if (!g_Mark1.ActiveCached() || look == Mark1GreyLook::Off) return;", grey)
         self.assertIn(".GreyMask(true,", grey)
-        self.assertIn('"draw_sprite_ext"', grey)
-        self.assertIn("RValue(kMark1GreyBlend), RValue(1.0)", grey)
-        self.assertIn('"draw_rectangle"', grey)
-        self.assertIn('g_Yytk->CallBuiltin("draw_set_alpha", { prevAlpha })', grey)
-        self.assertIn('g_Yytk->CallBuiltin("draw_set_colour", { prevColour })', grey)
-        # The player build writes no `enabled` (nor anything else of the game's).
-        for banned in ('"enabled"', "variable_instance_set", "variable_struct_set"):
-            with self.subTest(banned=banned):
-                self.assertNotIn(banned, grey)
-        self.assertNotIn('RValue("enabled")', strip_comments(strip_research_blocks(self.adapter)))
+        # The shipped look (Live 1, replan 1): the buttons' own `enabled`,
+        # written from this same hook, after the original, in both builds
+        # (test_grey_look_enabled_written_and_restored pins the writes).
+        self.assertLess(grey.index(".GreyMask(true,"), grey.index('RValue("enabled"), RValue(false)'))
+        # The redraw and the box are research looks only (`mark1probe
+        # autogrey`), drawn after the original too, colour and alpha put back.
+        research = self.body("grey")
+        for gone in ('"draw_sprite_ext"', '"draw_rectangle"', "kMark1GreyBlend", "prevAlpha"):
+            with self.subTest(player_build_lacks=gone):
+                self.assertNotIn(gone, grey)
+        self.assertIn('"draw_sprite_ext"', research)
+        self.assertIn("RValue(kMark1GreyBlend), RValue(1.0)", research)
+        self.assertIn('"draw_rectangle"', research)
+        self.assertIn('g_Yytk->CallBuiltin("draw_set_alpha", { prevAlpha })', research)
+        self.assertIn('g_Yytk->CallBuiltin("draw_set_colour", { prevColour })', research)
+        # Nothing of the game's but `enabled` is written.
+        self.assertNotIn("variable_struct_set", grey)
+
+    def test_grey_look_enabled_written_and_restored(self):
+        player = strip_research_blocks(self.plugin)
+        grey = strip_comments(function_body(player, SIGNATURES["grey"]))
+        restore = strip_comments(function_body(player, "static void Mark1GreyEnabledRestore()"))
+        # The shipped look is `enabled`, in both builds; the research build
+        # starts on it too.
+        self.assertIn("Mark1GreyLook look = Mark1GreyLook::Enabled;", grey)
+        self.assertIn("static Mark1GreyLook g_M1gLook = Mark1GreyLook::Enabled;", strip_comments(self.plugin))
+        # Every kept value is put back before anything else: when the bonus
+        # ends, when the look changes, and before the next write.
+        self.assertLess(grey.index("Mark1GreyEnabledRestore();"),
+                        grey.index("if (!g_Mark1.ActiveCached() || look == Mark1GreyLook::Off) return;"))
+        self.assertEqual(grey.count("Mark1GreyEnabledRestore();"), 1)
+        # Each automated column: the value read first is kept, then written
+        # false; grey= counts the columns written.
+        read = grey.index('"variable_instance_get", { e, RValue("enabled") }')
+        write = grey.index('"variable_instance_set", { e, RValue("enabled"), RValue(false) }')
+        keep = grey.index("g_M1gEnabledSaved.push_back({ e, original });")
+        count = grey.index("++g_M1gGrey;")
+        self.assertLess(read, write)
+        self.assertLess(write, keep)
+        self.assertLess(keep, count)
+        self.assertIn("if (!(mask & (1u << i))) continue;", grey)
+        # The restore puts each kept value back, newest first, and forgets them.
+        self.assertIn('"variable_instance_set", { it->element, RValue("enabled"), it->original }', restore)
+        self.assertIn("g_M1gEnabledSaved.rbegin()", restore)
+        self.assertIn("g_M1gEnabledSaved.clear();", restore)
+        # `autogrey` puts back what the previous look wrote before it changes.
+        probe = strip_comments(function_body(self.plugin, "static void M1pAuto(const M1pNs::Command& c)"))
+        self.assertLess(probe.index("Mark1GreyEnabledRestore();"), probe.index("g_M1gLook = "))
+        self.assertIn("default: g_M1gLook = Mark1GreyLook::Enabled; break;", probe)
+        # Only these two functions write `enabled` in the adapter.
+        shipped_adapter = strip_comments(strip_research_blocks(self.adapter))
+        self.assertEqual(len(re.findall(r'variable_instance_set", \{ [^}]*RValue\("enabled"\)', shipped_adapter)), 2)
 
     def test_cost_answers_through_the_dispatcher_consumer(self):
         consumer = self.body("bonus_consumer")

@@ -434,6 +434,44 @@ int main() {
         check("route/clear_returns_to_the_press", procOk && cl.RouteInForce() == Mark1Route::Press);
     }
 
+    // ---- the proc shape's player token ------------------------------------------------------
+    {
+        // Live 1's decided shape names the local player instance; the core
+        // marks it for the adapter, which builds the ref the game passes.
+        const Mark1ProcShape s = Mark1ParseProcShape("id,player,1,false,false,0,x,y");
+        check("shape/player_token_parsed", s.ok && s.args.size() == 8 && s.args[1].token == Mark1ProcToken::Player
+            && Mark1FormatProcShape(s.args) == "id,player,1,false,false,0,x,y", Mark1FormatProcShape(s.args));
+        // A literal instance number (P5's 261723) still parses, as a number.
+        const Mark1ProcShape lit = Mark1ParseProcShape("id,261723,x");
+        check("shape/literal_instance_number_is_a_number", lit.ok && lit.args.size() == 3
+            && lit.args[1].token == Mark1ProcToken::Number && lit.args[1].number == 261723
+            && Mark1FormatProcShape(lit.args) == "id,261723,x", Mark1FormatProcShape(lit.args));
+        // Negative control: a near miss is refused by name, not read as the player.
+        const Mark1ProcShape near = Mark1ParseProcShape("id,players");
+        check("shape/near_miss_refused", !near.ok && near.bad == "players" && near.args.empty());
+        std::vector<Mark1ProcValue> v;
+        std::string why;
+        const bool built = Mark1BuildProcArgs(s.args, 501, 120.5, -40, v, why);
+        check("shape/player_built_for_the_adapter", built && v.size() == 8 && v[0].kind == Mark1ProcValue::Kind::Number
+            && v[0].number == 501 && v[1].kind == Mark1ProcValue::Kind::Player && v[2].kind == Mark1ProcValue::Kind::Number
+            && v[2].number == 1 && v[3].kind == Mark1ProcValue::Kind::Bool && !v[3].flag && v[6].number == 120.5 && v[7].number == -40,
+            why);
+        const bool litBuilt = Mark1BuildProcArgs(lit.args, 501, 0, 0, v, why);
+        check("shape/literal_built_as_a_number", litBuilt && v.size() == 3 && v[1].kind == Mark1ProcValue::Kind::Number
+            && v[1].number == 261723);
+        // Through the automation: the plan's proc column gets the player token.
+        resetBar(); resetSlot();
+        bar.columns[3].talentId = 501; bar.columns[3].cooldown = 14;
+        Mark1Automation a;
+        a.Priority().SetShape(s);
+        a.Priority().SetRoute(Mark1Route::Proc);
+        const Mark1FramePlan p = a.Plan(true, 0, at(0), readColumn, readToggle);
+        std::vector<Mark1ProcValue> pv;
+        const bool pb = a.ProcArgs(p, 10, 20, pv, why);
+        check("shape/player_through_the_automation", p.procColumn == 3 && pb && pv.size() == 8
+            && pv[1].kind == Mark1ProcValue::Kind::Player && pv[0].number == 501, why);
+    }
+
     // ---- the proc route bypasses the gate -------------------------------------------------
     {
         resetBar(); resetSlot();
@@ -459,7 +497,8 @@ int main() {
         check("proc/never_masked", c.seen[1] == kMark1InputHeld && writesOnlyNone && a.Priority().Counters().masked == 0);
         check("proc/args_from_the_shape", built && args.size() == 4 && args[0].number == 501 && args[1].number == 120.5
             && args[2].number == -40 && args[3].kind == Mark1ProcValue::Kind::Bool && !args[3].flag, why);
-        check("proc/counted", a.Priority().Counters().procs == 1 && a.Counters(3).landed == 1 && a.Priority().ProcColumnCount() == 1);
+        // A proc that returned counts procs= only: landed= is the press route's.
+        check("proc/counted", a.Priority().Counters().procs == 1 && a.Counters(3).landed == 0 && a.Priority().ProcColumnCount() == 1);
         // A throw returns the route to the press for the session.
         const Call d = gate(a, true, 1, at(1000 + 15000), noLanding);   // due again: fired, reported returned by gate()
         Mark1FramePlan e = a.Plan(true, 2, at(1000 + 30000), readColumn, readToggle);
@@ -539,6 +578,51 @@ int main() {
         check("interval/clock_reset_is_due", back.Decide(0, c.c, at(60000)).procColumn == 0 && back.Decide(1, c.c, at(10)).procColumn == 3);
     }
 
+    // ---- a proc clock across a room change and a new character -------------------------------
+    {
+        // The core: a room forgets the press route's state and keeps the clocks;
+        // a new character forgets the clocks too.
+        Mark1PriorityCore k;
+        k.SetShape(Mark1ParseProcShape("id"));
+        k.SetRoute(Mark1Route::Proc);
+        const Cols proc = cols(cdCol(14), none(), none(), none());
+        k.ProcFired(3, 0, 15000);
+        Mark1PriorityCore press;
+        const Cols pc = cols(none(), cdCol(14), none(), none());
+        step(press, 0, pc, never);                                       // E pressed, not landed: E rests
+        const bool restedBefore = press.Resting(1, 1);
+        k.ForgetRoom();
+        press.ForgetRoom();
+        const bool waits = k.Decide(0, proc.c, at(1000)).procColumn == 0;
+        const bool dueAfter = k.Decide(1, proc.c, at(15000)).procColumn == 3;
+        check("room/core_room_keeps_the_proc_clock", waits && dueAfter);
+        check("room/core_room_forgets_the_press_state", restedBefore && !press.Resting(1, 1) && step(press, 1, pc, never) == 4);
+        k.ProcFired(3, 15000, 15000);
+        k.Reset();
+        check("room/core_new_character_clears_the_clock", k.Decide(2, proc.c, at(16000)).procColumn == 3);
+
+        // Through the automation, as the adapter's two triggers call it.
+        resetBar(); resetSlot();
+        bar.columns[4].talentId = 601; bar.columns[4].cooldown = 14;     // E: Healing Zone's 14 s
+        Mark1Automation a;
+        a.Priority().SetShape(Mark1ParseProcShape("id"));
+        a.Priority().SetRoute(Mark1Route::Proc);
+        const Call first = gate(a, true, 0, at(0), noLanding);           // fired: next due at 15 s
+        a.ForgetRoom();                                                  // a room change
+        const Call inRoom = gate(a, true, 1, at(1000), noLanding);
+        const Call due = gate(a, true, 2, at(15000), noLanding);
+        check("room/proc_clock_survives_a_room_change", first.plan.procColumn == 4 && inRoom.plan.procColumn == 0
+            && inRoom.plan.decision[1] == Mark1ColumnDecision::SkipTurn && due.plan.procColumn == 4,
+            "inRoom=" + std::to_string(inRoom.plan.procColumn) + " due=" + std::to_string(due.plan.procColumn));
+        a.ForgetCharacter();                                             // a new character
+        const Call fresh = gate(a, true, 3, at(16000), noLanding);
+        check("room/new_character_clears_the_proc_clock", fresh.plan.procColumn == 4);
+        // The bonus off and on again is no new character either: the clock is kept.
+        gate(a, false, 4, at(17000), noLanding);
+        const Call again = gate(a, true, 5, at(18000), noLanding);
+        check("room/bonus_again_keeps_the_proc_clock", again.plan.procColumn == 0);
+    }
+
     // ---- free columns on the proc route fire each cast time --------------------------------
     {
         resetBar(); resetSlot();
@@ -584,7 +668,7 @@ int main() {
             if (c.plan.procColumn == 3 || (c.plan.procMask & 1u)) toggleProc = true;
             if (c.seen[3] == kMark1PressValue) ++toggleSeenPressed;
         }
-        check("toggle/never_fired", !toggleProc && a.Counters(4).landed >= 1);
+        check("toggle/never_fired", !toggleProc && a.Priority().Counters().procs >= 1);   // column 4 alone procs
         check("toggle/takes_the_press", toggleSeenPressed >= 1 && a.Counters(3).presses == toggleSeenPressed,
             "pressed=" + std::to_string(toggleSeenPressed));
         Mark1PriorityCore k;

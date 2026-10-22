@@ -168,7 +168,7 @@ struct Mark1ColumnCounters {
     long originalUnreadable = 0;  // planned, but the entry's own value could not be read to put back
     long pressWriteFailed   = 0;
     long restoreFailed      = 0;
-    long landed             = 0;  // a cast landed during a call that pressed this column, or a proc of it returned
+    long landed             = 0;  // a cast landed during a call that pressed this column (the press route; a proc counts procs= only)
     long skipTurn           = 0;  // eligible, not pressed: the yield, a rest, another column pressing, a proc not due
     long yielded            = 0;  // rests begun: a cooldown press that did not land, or a free column's patience out
 };
@@ -192,7 +192,8 @@ public:
     // that pass, the priority presses at most one and, on the proc route,
     // names at most one to fire; the others count skip-turn. Inactive: no
     // callable is invoked and nothing is counted, and the next active call
-    // starts the priority afresh. With no clock nothing is fired.
+    // starts the priority afresh (the proc clocks kept, as on a room change).
+    // With no clock nothing is fired.
     template <class ReadColumn, class ReadToggle>
     Mark1FramePlan Plan(bool bonusActive, long long frame, ReadColumn&& readColumn, ReadToggle&& readToggle)
     {
@@ -278,24 +279,26 @@ public:
     }
 
     // How the proc call for the plan's proc column went, once per plan. A
-    // call that returned counts procs= and landed= and starts the column's
-    // clock on its interval (cooldown at the haste plus cast time at the
-    // Faster Cast Rate the plan was made with); one that threw or was refused
-    // counts proc-fail= and returns the route to the press for the session.
-    void ProcDone(const Mark1FramePlan& plan, Mark1ProcOutcome outcome)
+    // call made counts procs=; one that returned starts the column's clock on
+    // its interval (cooldown at the haste plus cast time at the Faster Cast
+    // Rate the plan was made with) and answers true. It never counts landed=:
+    // a call that returned is not a cast seen (Live 1), and landed= stays the
+    // press route's. One that threw or was refused counts proc-fail= and
+    // returns the route to the press for the session.
+    bool ProcDone(const Mark1FramePlan& plan, Mark1ProcOutcome outcome)
     {
-        if (!plan.active || plan.call == 0 || plan.call != m_ProcCall) return;
-        if (!Mark1IsAutomatedColumn(plan.procColumn)) return;
+        if (!plan.active || plan.call == 0 || plan.call != m_ProcCall) return false;
+        if (!Mark1IsAutomatedColumn(plan.procColumn)) return false;
         m_ProcCall = 0;
         const int i = plan.procColumn - kMark1FirstColumn;
         if (outcome != Mark1ProcOutcome::Refused) m_Core.CountProc();
         if (outcome == Mark1ProcOutcome::Returned) {
-            ++m_Counters[i].landed;
             m_Core.ProcFired(plan.procColumn, plan.clock.nowMs, m_Core.IntervalMs(plan.columns[i], plan.clock));
-            return;
+            return true;
         }
         m_Core.CountProcFail();
         m_Core.ProcFailed();
+        return false;
     }
 
     // The automated columns that wear the toggle-skill border: bit (column -
@@ -503,13 +506,22 @@ public:
                                               : Mark1ColumnKind::NotEligible;
     }
 
-    // A new character or room: every column's settle window is forgotten, and
-    // so is the priority's state (the rests, the yield, the free columns'
-    // turn and the proc clocks).
-    void ForgetPresses()
+    // A room (the local player's instance changed: Player_obj gets a new
+    // instance id in every room): every column's settle window is forgotten,
+    // and so is the priority's frame state (the rests, the yield, the free
+    // columns' turn). The proc clocks are kept, so entering a room does not
+    // fire a cooldown skill before its interval has run.
+    void ForgetRoom()
     {
         for (int i = 0; i < kMark1ColumnCount; ++i) { m_HasPressed[i] = false; m_LastPress[i] = 0; }
         ClearPriority();
+    }
+
+    // A new character: everything a room forgets, and every proc clock.
+    void ForgetCharacter()
+    {
+        ForgetRoom();
+        m_Core.Reset();
     }
 
 private:
@@ -533,9 +545,11 @@ private:
         } catch (...) { return false; }
     }
 
+    // The priority's frame state, for a room or the bonus active again; the
+    // proc clocks are kept (only ForgetCharacter clears them).
     void ClearPriority()
     {
-        m_Core.Reset();
+        m_Core.ForgetRoom();
         m_PressedCall = 0;
         m_ProcCall = 0;
     }

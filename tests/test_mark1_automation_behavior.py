@@ -177,6 +177,15 @@ class Mark1AutomationBehaviorTests(unittest.TestCase):
     def test_a_failed_restore_is_counted_not_hidden(self):
         self.assertScenario("press/restore_failure_counted")
 
+    # ---- the proc route's counters -----------------------------------------
+    def test_proc_route_counts_no_landing(self):
+        # Live 1 (replan 1): on the proc route `landed=` counted calls that
+        # returned, not casts. A returned proc counts `procs=` only; the press
+        # route's landing is the positive control.
+        self.assertScenario("proc/returned_counts_procs_not_landed")
+        self.assertScenario("proc/recorded_once_and_never_on_a_throw")
+        self.assertScenario("proc/press_landing_counts_landed")
+
 
 if __name__ == "__main__":
     unittest.main()
