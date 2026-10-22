@@ -4038,7 +4038,21 @@ approved):
   and on a mismatch can report the client, so mana is never written and the
   update never called. The planned cost, (a), answers the local player's
   mana replenish (id 42) with its original minus n × 1% of maximum mana a
-  second for n proc columns, so mana falls through the game's own update.
+  second for n proc columns, so that mana is planned to fall through the
+  game's own update if the regen reads id 42 through the dispatcher each
+  time (not read). A byte scan (2026-10-22, `FindCallers.java` headless,
+  `-readOnly`, positive control `CheckTalentUse` <- `PlayerMovement` found
+  in the same run) finds exactly one direct caller of `StatManaReplenish`
+  and one of `StatMaxMana`, both `ReturnSpecificStat`: the same shape as
+  the life and defence getters above, so every direct-call reader of ids
+  42 and 37 goes through the dispatcher the consumer answers. Two things
+  the scan cannot settle stay **not established**: calls through the
+  script table or a method value, which it cannot see, and whether the
+  regen asks for id 42 on every update or keeps an earlier answer
+  (`PlayerRegenSet`, which about two dozen skill, projectile and hurt sites
+  call directly, is one candidate for such a store; its body was not read).
+  Stats live 1's `drain-applies` measures the route itself, with a drain
+  smaller than the regen so the clamp cannot hide it.
   The alternative, (b), cuts maximum mana (id 37) by 20% per proc column.
   `StatManaReplenish` follows Energy and takes maximum mana only through one
   part (id 43), so (b) plausibly leaves most of the regen in place. The
@@ -4135,7 +4149,10 @@ files and not tracked. Every `mark1set stat` pair of lines read is recorded.
   control kept: `dbg-manaregen` on `StatManaReplenish`, `dbg-maxmana` on
   `StatMaxMana` and `dbg-manaupdate` on `PlayerManaUpdate`, read before and
   after a 10 s idle and before and after five key casts of the free skill
-  2 s apart.
+  2 s apart. `dbg-manaregen` counts calls at the getter's own address, so it
+  fires the same whether its caller is the dispatcher or not: it gives a
+  rate, not the route, and P9's `drain-applies` is what tells whether the
+  drained answer reaches the regen.
 - **Relies on:** `CheckTalentUse`, the `inputState` entries 3 to 6, the
   press value 4 and the landing through `TalentUseSetSpeed` (hub RDM § 7.7,
   measured); a held key repeating its cast every 57 frames (§ 7.2);
@@ -4323,18 +4340,41 @@ files and not tracked. Every `mark1set stat` pair of lines read is recorded.
   pass when the two agree within 15%, both recorded either way.
 - P9, the HUD mana read from cropped screenshots; every part after
   `regen-units` runs on the proc route and is not run without a passing P2
-  shape. Switch off: cast the free skill five times 2 s apart, screenshot,
-  stand 10 s, screenshot, `mark1probe bonusread` (ids 42's and 37's
-  originals): `regen-units` is the mana gained over 10 s, over id 42's
-  original. Switch on, full set, `mark1probe autoproc <the passing shape>`,
-  `mark1probe autoroute proc` (n proc columns, from `free=` and the toggle
-  table), `mark1probe autocost drain`, `mark1probe autodrain 5`:
-  screenshot, 10 s, screenshot. `drain-applies`: mana fell by at least half
-  of n × 5% × the maximum × 10 s, net of the regen `regen-units` measured,
-  with `drained=` rising; the control in the same window, `mark1probe
-  autocost off` and 10 s, mana rises. `drain-zero`: `autocost drain` until
-  the HUD reads 0 mana: the game still runs, `procs=` keeps rising, and
-  nothing on screen reports a problem. `maxmana-applies`: `mark1probe
+  shape. Every 10 s window below counts only when both of its screenshots
+  read below the HUD maximum (a full pool hides both the regen and the
+  drain); otherwise cast the free skill with the switch off until mana is
+  low and run the window again. Switch off: cast the free skill five times
+  2 s apart, screenshot, stand 10 s, screenshot, `mark1probe bonusread`
+  (ids 42's and 37's originals): `regen-units` is the mana gained over
+  10 s, over id 42's original, and R, that gain as a percent of the maximum
+  a second, is the baseline the next window is set against.
+  `drain-applies`, whether the lowered answer reaches the regen, with a
+  drain smaller than the regen so that a clamp at zero cannot look like
+  the answer not arriving: still switched off, cast the free skill five
+  times 2 s apart again, then at once switch on, full set, `mark1probe
+  autoproc <the passing shape>`, `mark1probe autoroute proc` (n proc
+  columns, from `free=` and the toggle table), `mark1probe autocost drain`,
+  `mark1probe autodrain d` with d = R / (2 × n) rounded to two decimals
+  (0.25 at n = 4 and R = 2), so the drain is about half the regen:
+  `mark1probe show` (`drained=`), screenshot, 10 s, screenshot, `mark1probe
+  show`. The control in the same window, straight after: `mark1probe
+  autocost off`, screenshot, 10 s, screenshot (the proc route alone, no
+  drain). Pass (the answer reaches the regen) when the drain window's rise
+  is lower than the control's by at least half of n × d / 100 × the
+  maximum × 10, with `drained=` rising. Record it as not observed (the
+  answer does not reach the regen, or not through this hook) when the two
+  rises agree within that half while `drained=` rises: `drained=` counts
+  every id-42 answer the consumer changes, HUD and other dispatcher calls
+  included, so it alone shows the hook ran, not that the regen used it.
+  Not run when the control's rise differs from `regen-units`' by more than
+  half (the proc route then changes the regen itself). `drain-zero`, only
+  after `drain-applies` passed, settles whether a replenish below zero
+  drains: `autocost drain`, `mark1probe autodrain 5` (n × 5% against R),
+  screenshot, 10 s, screenshot, then until the HUD reads 0 mana or 60 s:
+  record which, mana falling to 0 (a negative replenish drains) or holding
+  where it was (clamped at zero); pass when either way the game still
+  runs, `procs=` keeps rising, and nothing on screen reports a problem.
+  `maxmana-applies`: `mark1probe
   autocost maxmana`: the HUD maximum within 1 of the original × (1 − 0.2 ×
   n), and `bonusread` id 37's answer the same; then `mark1probe autocost
   drain`, `mark1probe autodrain 1` and `mark1probe autoroute press`.
