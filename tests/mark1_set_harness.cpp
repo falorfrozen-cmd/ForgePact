@@ -1359,8 +1359,8 @@ int main()
         const std::string fresh = BonusStatLine(BonusStatFields{});
         const std::string expected =
             "mark1set bonus: pieces=0 lit=0/0/0 answered=0/0/0/0/0/0 not-number=0 gear-reads=0 gear-unread=0"
-            " | auto talents=-/-/-/- free=-/-/-/- masked=0 held-seen=0 hold=4 yield=56 rest=24 mask=0,1,2,7,8,9,10,11"
-            " route=press procs=0 proc-fail=0 locked=0 cost=drain drain=1.00 drained=0 cast-base=1.00 fcr=- haste=- stat-fail=0"
+            " | auto talents=-/-/-/- free=-/-/-/- masked=0 held-seen=0 hold=4 yield=61 rest=24 mask=0,1,2,7,8,9,10,11,27,40"
+            " route=proc procs=0 proc-fail=0 locked=0 cost=maxmana drain=1.00 drained=0 cast-base=0.86 fcr=- haste=- stat-fail=0"
             " | tip desc-font=not-drawn grey=0 grey-box=0 | rolls dressed=0 legacy=0 drop-rolls=0";
         check("stat/second_line_fresh_exact", fresh == expected, fresh);
         BonusStatFields f;
@@ -1372,7 +1372,7 @@ int main()
         f.talents[2] = 71;
         f.free[0] = 1;
         f.free[2] = 0;
-        f.route = "proc";
+        f.route = "press";
         f.drain = 1.25;
         f.castBase = 0.5;
         f.haveFcr = true;
@@ -1384,7 +1384,7 @@ int main()
         f.legacy = 4;
         const std::string line = BonusStatLine(f);
         const bool ok = has(line, "pieces=3 lit=1/1/0 answered=7/0/0/0/0/2 ") && has(line, " talents=23/-/71/- free=1/-/0/- ")
-            && has(line, " route=proc ") && has(line, " drain=1.25 ") && has(line, " cast-base=0.50 ") && has(line, " fcr=40 haste=12.5 ")
+            && has(line, " route=press ") && has(line, " drain=1.25 ") && has(line, " cast-base=0.50 ") && has(line, " fcr=40 haste=12.5 ")
             && has(line, " desc-font=small grey=2 ") && has(line, " legacy=4 ") && !has(line, "  ")
             && std::string(DescFontName(DescFont::Unresolved)) == "unresolved" && AnsweredIndex(163) == 1 && AnsweredIndex(64) == -1;
         check("stat/second_line_filled", ok, line);

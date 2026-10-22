@@ -105,13 +105,13 @@ class Mark1PriorityBehaviorTests(unittest.TestCase):
 
     def test_priority_constants_and_their_sources(self):
         self.assertScenarios("constants/values", "constants/settings_start_at_the_constants")
-        for line in ("inline constexpr long long kMark1YieldFrames = 56;",
+        for line in ("inline constexpr long long kMark1YieldFrames = 61;",
                      "inline constexpr long long kMark1ProbeRestFrames = 24;",
                      "inline constexpr double kMark1FreePressValue = 4.0;",
                      "inline constexpr double kMark1FreeCooldownFloor = 0.25;",
-                     "inline constexpr Mark1Route kMark1AutoRoute = Mark1Route::Press;",
-                     'inline constexpr const char* kMark1ProcShape = "";',
-                     "inline constexpr double kMark1BaseCastSeconds = 1.0;",
+                     "inline constexpr Mark1Route kMark1AutoRoute = Mark1Route::Proc;",
+                     'inline constexpr const char* kMark1ProcShape = "id,player,1,false,false,0,x,y";',
+                     "inline constexpr double kMark1BaseCastSeconds = 0.86;",
                      "inline constexpr long long kMark1StatRefreshMs = 1000;"):
             with self.subTest(line=line):
                 self.assertIn(line, self.header)
@@ -149,6 +149,7 @@ class Mark1PriorityBehaviorTests(unittest.TestCase):
         self.assertScenarios("mask/asking_entries_rested_during_the_press", "mask/put_back_after_the_call",
                              "mask/counted", "mask/nothing_masked_without_a_press",
                              "mask/off_reads_and_writes_nothing_but_the_press", "mask/entry_list_in_force",
+                             "mask/held_right_button_entries_rested",
                              "mask/put_back_after_a_throw", "mask/parse_refuses", "mask/plan_needs_a_press")
 
     # ---- the routes ------------------------------------------------------------------

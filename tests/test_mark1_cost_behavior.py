@@ -3,10 +3,11 @@
 On the proc route the Mark 1 automation fires its skills the way the game
 fires an item proc, which costs no mana, so the owner asked for a price on it
 (2026-10-22). Mana itself is never written: the set bonus's consumer answers
-the local player's ReturnSpecificStat calls for id 42 (the mana replenish)
+the local player's ReturnSpecificStat calls for id 37 (maximum mana) cut by
+kMark1MaxManaCutPct % per proc column, the cost Stats live 1 measured and
+the one that ships, or, built and unmeasured, id 42 (the mana replenish)
 with a drain of kMark1DrainPctPerSecond % of maximum mana a second per proc
-column, never below minus the maximum, or, as the documented alternative, id
-37 (maximum mana) cut by kMark1MaxManaCutPct % per proc column.
+column, never below minus the maximum.
 
 Baseline: no proc column, the cost off, another self, another stat id, no
 readable id: the answer reaches the caller as the game gave it and nothing is
@@ -148,7 +149,8 @@ class Mark1CostBehaviorTests(unittest.TestCase):
 
     def test_cost_shipped_values(self):
         self.assertScenario("route/constants")
-        self.assertIn("inline constexpr Mark1ManaCost kMark1ManaCost = Mark1ManaCost::Drain;", self.header)
+        self.assertScenario("route/shipped_cost_cuts_max_mana")
+        self.assertIn("inline constexpr Mark1ManaCost kMark1ManaCost = Mark1ManaCost::MaxMana;", self.header)
 
     def test_the_core_is_game_independent(self):
         # Numbers in, numbers out: no instance, no RValue, no game call, and

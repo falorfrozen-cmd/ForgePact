@@ -39,9 +39,11 @@ namespace ForgePact {
 
 enum class Mark1ManaCost { Drain, MaxMana, Off };
 
-// Which cost ships. Drain is the plan's proposal; Live 1 measures both
-// (`mark1probe autocost`) and the owner's numbers decide the adopted one.
-inline constexpr Mark1ManaCost kMark1ManaCost = Mark1ManaCost::Drain;
+// Which cost ships: the maximum-mana cut, which Stats live 1's
+// `maxmana-applies` measured (decision key `cost:`). The drain stays built,
+// research form `mark1probe autocost drain`, and unmeasured until Stats live 2;
+// the owner's numbers decide the final one.
+inline constexpr Mark1ManaCost kMark1ManaCost = Mark1ManaCost::MaxMana;
 // The drain per automated (proc) skill, in % of maximum mana a second. Proposed
 // by the plan, not measured: half the assumed 2% baseline replenish, so one or
 // two skills sustain themselves and four empty a full pool in about 50 s at

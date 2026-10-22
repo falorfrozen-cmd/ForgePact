@@ -2660,7 +2660,7 @@ int main()
         bool ok = parsed("autohold 3").form == Form::AutoHold && parsed("autohold 4").autoValue == 4
             && why("autohold 5") != "ACCEPTED" && why("autohold") != "ACCEPTED"
             && parsed("automask off").form == Form::AutoMask && !parsed("automask off").autoMask.on
-            && parsed("automask 0,1,9").autoMask.count == 3 && parsed("automask default").autoMask.count == 8
+            && parsed("automask 0,1,9").autoMask.count == 3 && parsed("automask default").autoMask.count == ForgePact::kMark1DefaultMaskEntryCount
             && why("automask 3").find("automated column") != std::string::npos
             && why("automask 64") != "ACCEPTED"
             && parsed("autoyield 0").form == Form::AutoYield && parsed("autoyield 600").autoFrames == 600
@@ -2682,9 +2682,12 @@ int main()
         check("auto/parse_and_refuse", ok);
 
         // ApplyAuto: each override changes the value in force and answers it;
-        // `autoroute proc` with no shape is refused and the press stays.
+        // `autoroute proc` with no shape is refused and the press stays. The
+        // shipped core carries the decided shape and the proc route, so the
+        // shape is cleared first.
         ForgePact::Mark1PriorityCore core;
         ForgePact::Mark1Cost cost;
+        ApplyAuto(parsed("autoproc clear"), core, cost);
         const std::string refused = ApplyAuto(parsed("autoroute proc"), core, cost);
         const bool pressStays = core.RouteInForce() == ForgePact::Mark1Route::Press;
         const std::string shape = ApplyAuto(parsed("autoproc id,x,y,false"), core, cost);

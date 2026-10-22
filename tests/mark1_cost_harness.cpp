@@ -37,6 +37,9 @@ static void check(const std::string& label, bool ok, const std::string& detail =
 
 static std::string Num(double v) { std::ostringstream o; o << v; return o.str(); }
 static bool Near(double a, double b) { return std::fabs(a - b) <= 1e-9 * (1 + std::fabs(b)); }
+// Since Stats live 1 the shipped cost is the maximum-mana cut (kMark1ManaCost);
+// the drain's scenarios pin the drain, as `mark1probe autocost drain` does.
+struct DrainCost : Mark1Cost { DrainCost() { SetCost(Mark1ManaCost::Drain); } };
 
 // One ReturnSpecificStat call through the core, the way the consumer runs it:
 // the scope is asked first, the cost only for a call in scope.
@@ -108,9 +111,9 @@ int main(int argc, char** argv) {
               "42=" + Num(r.answer) + " 37=" + Num(m.answer));
     }
     {
-        // The shipped cost (Drain) with no proc column: the press route's casts
-        // pay the game's own mana, so nothing is answered.
-        Mark1Cost cost;
+        // Either cost with no proc column: the press route's casts pay the
+        // game's own mana, so nothing is answered.
+        DrainCost cost;
         bool same = true;
         for (double id : { 37.0, 42.0 }) {
             const Seen s = Run(cost, Call{ true, true, id, true, id == 42 ? replenish : maxMana }, 0, maxMana);
@@ -168,7 +171,7 @@ int main(int argc, char** argv) {
     }
     {
         // Under Drain id 37 is left alone, under MaxMana id 42: one cost at a time.
-        Mark1Cost drain;
+        DrainCost drain;
         const Seen m = Run(drain, Call{ true, true, 37, true, maxMana }, 4, maxMana);
         Mark1Cost cut;
         cut.SetCost(Mark1ManaCost::MaxMana);
@@ -184,7 +187,7 @@ int main(int argc, char** argv) {
         const double expected[] = { 30, 15, 0, -15, -30 };
         uint64_t changedCount = 0;
         for (int n = 0; n <= 4; ++n) {
-            Mark1Cost cost;
+            DrainCost cost;
             const Seen s = Run(cost, Call{ true, true, 42, true, replenish }, n, maxMana);
             if (!Near(s.answer, expected[n]) || s.changed != (n > 0)) ok = false;
             changedCount += cost.Stats().drained;
@@ -201,7 +204,7 @@ int main(int argc, char** argv) {
     }
     {
         // The floor: a drain past the pool stops at minus the maximum.
-        Mark1Cost cost;
+        DrainCost cost;
         const bool set = cost.SetDrainPct(10);
         const Seen s = Run(cost, Call{ true, true, 42, true, 0 }, 4, 1000);
         const double big = Mark1DrainAnswer(50, 4, 100000, 30, 1);
@@ -212,7 +215,7 @@ int main(int argc, char** argv) {
     }
     {
         // No maximum read yet (0), or an unreadable one: nothing to drain from.
-        Mark1Cost cost;
+        DrainCost cost;
         const Seen zero = Run(cost, Call{ true, true, 42, true, replenish }, 4, 0);
         const Seen nan = Run(cost, Call{ true, true, 42, true, replenish }, 4, std::numeric_limits<double>::quiet_NaN());
         const Seen neg = Run(cost, Call{ true, true, 42, true, replenish }, 4, -1500);
@@ -221,7 +224,7 @@ int main(int argc, char** argv) {
     }
     {
         // Repeated calls in one frame each answer from their own original.
-        Mark1Cost cost;
+        DrainCost cost;
         bool same = true;
         for (int i = 0; i < 5; ++i) {
             const Seen s = Run(cost, Call{ true, true, 42, true, replenish }, 4, maxMana);
@@ -232,13 +235,13 @@ int main(int argc, char** argv) {
     }
     {
         // A column count past the bar counts as four.
-        Mark1Cost cost;
+        DrainCost cost;
         const Seen s = Run(cost, Call{ true, true, 42, true, replenish }, 9, maxMana);
         check("target/columns_capped_at_four", Near(s.answer, -30), "answer=" + Num(s.answer));
     }
     {
         // A non-number reaches the caller as the game gave it, counted apart.
-        Mark1Cost cost;
+        DrainCost cost;
         const Seen s = Run(cost, Call{ true, true, 42, false, replenish }, 4, maxMana);
         double inf = std::numeric_limits<double>::infinity();
         const bool infKept = !cost.Answer(42, true, inf, 4, maxMana) && std::isinf(inf);
@@ -268,6 +271,7 @@ int main(int argc, char** argv) {
     {
         Mark1Cost cost;
         const bool shipped = cost.Cost() == kMark1ManaCost && cost.DrainPct() == kMark1DrainPctPerSecond;
+        cost.SetCost(Mark1ManaCost::Drain);
         const bool okHalf = cost.SetDrainPct(0.75);
         const Seen s = Run(cost, Call{ true, true, 42, true, replenish }, 4, maxMana);
         const bool refused = !cost.SetDrainPct(10.5) && !cost.SetDrainPct(-0.1)
@@ -297,7 +301,17 @@ int main(int argc, char** argv) {
     }
 
     // ---- the shipped values -----------------------------------------------------
-    check("route/constants", kMark1ManaCost == Mark1ManaCost::Drain && kMark1DrainPctPerSecond == 1.0
+    {
+        // The shipped cost, as Stats live 1 measured it (`maxmana-applies`: id 37
+        // answered at 40% with three proc columns): the maximum cut, the
+        // replenish left alone.
+        Mark1Cost shipped;
+        const Seen m = Run(shipped, Call{ true, true, 37, true, 2352 }, 3, 2352);
+        const Seen r = Run(shipped, Call{ true, true, 42, true, replenish }, 3, 2352);
+        check("route/shipped_cost_cuts_max_mana", m.changed && Near(m.answer, 940.8) && !r.changed && r.answer == replenish,
+              "37=" + Num(m.answer) + " 42=" + Num(r.answer));
+    }
+    check("route/constants", kMark1ManaCost == Mark1ManaCost::MaxMana && kMark1DrainPctPerSecond == 1.0
           && kMark1MaxManaCutPct == 20.0 && kMark1ReplenishUnit == 1.0 && kMark1MaxManaStatId == 37
           && kMark1ReplenishStatId == 42 && kMark1DrainPctMax == 10.0);
 

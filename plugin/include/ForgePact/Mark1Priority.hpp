@@ -90,10 +90,10 @@ inline constexpr double kMark1FreePressValue = 4.0;
 // § 7.1, measured; the model's NO_COOLDOWN_SECONDS).
 inline constexpr double kMark1FreeCooldownFloor = 0.25;
 
-// After a landed cast the gate is left alone this many frames: a held key
-// repeats its cast every 57 frames (RDM § 7.2). Provisional: Live 1 measures
-// the game's own hold cadence (`hold-cadence`) and `adopt` sets it.
-inline constexpr long long kMark1YieldFrames = 56;
+// After a landed cast the gate is left alone this many frames: Stats live 1's
+// `hold-cadence` measured about 62 frames between the casts of a held key
+// (docs/mark1-set-research.md, decision key `yield-frames:`).
+inline constexpr long long kMark1YieldFrames = 61;
 
 // How long a cooldown column rests after a press that did not land.
 // Provisional (Live 1's `prio-order`).
@@ -106,22 +106,25 @@ inline constexpr long long kMark1ProbeRestFrames = 24;
 inline constexpr long long kMark1TurnPatienceFrames = 90;
 inline constexpr long long kMark1TurnRestFrames = 288;
 
-// The route the automation casts by. Press is the measured route and the
-// default until `adopt` applies Live 1's `auto-route:`.
+// The route the automation casts by. Stats live 1 adopted the proc route
+// (decision key `auto-route:`): its proc checks passed, and a toggle column
+// still takes the press. The press stays the fall-back for the session when a
+// proc fails.
 enum class Mark1Route { Press, Proc };
-inline constexpr Mark1Route kMark1AutoRoute = Mark1Route::Press;
+inline constexpr Mark1Route kMark1AutoRoute = Mark1Route::Proc;
 
 // The proc route's `TalentUseClass` call shape, a comma-separated template of
-// its arguments in order (tokens below). Empty until `adopt` writes the shape
-// Live 1 decides; an empty template refuses the proc route.
-inline constexpr const char* kMark1ProcShape = "";
+// its arguments in order (tokens below): Stats live 1's shape B, which cast
+// both talents with `TalentUse` unmoved, with the local player's ref in place
+// of the literal instance number Live 1 passed (decision key `proc-shape:`).
+// An empty template refuses the proc route.
+inline constexpr const char* kMark1ProcShape = "id,player,1,false,false,0,x,y";
 
-// The base cast time, in seconds, a cast at Faster Cast Rate 0 takes: the
-// stat's own description in the semantics file ("Faster Cast Rate is always
-// calculated using 1 Cast Per Second", keys 196 and 197). Provisional: Live 1's
-// `cast-interval` and `cast-interval-fcr` measure it (decision key
-// `cast-base:`).
-inline constexpr double kMark1BaseCastSeconds = 1.0;
+// The base cast time, in seconds, a cast at Faster Cast Rate 0 takes. Stats
+// live 1's `cast-interval` read 417 ms at Faster Cast Rate 106, 0.417 x
+// (1 + 106 / 100) = 0.86 s (decision key `cast-base:`); that rate was a stale
+// read, so Stats live 2 measures it again.
+inline constexpr double kMark1BaseCastSeconds = 0.86;
 
 // How often the adapter reads the player's maximum mana, Skill Haste and
 // Faster Cast Rate by name, at most (the owner's proc design, Amendment 2).
@@ -136,12 +139,12 @@ inline constexpr double kMark1CastDivisorFloor = 0.1;
 
 // The mask's default entries: the bar columns other than Q, E, R and Y, on
 // the reading that column c uses entry c (measured for 3 to 6 only, RDM § 7.7
-// `slot-keys`). Live 1's `held-entry` measures which entry a held right mouse
-// button moves.
+// `slot-keys`), and 27 and 40, which Stats live 1's `held-entry` saw a held
+// right mouse button set beside entry 2 (decision key `mask-entries:`).
 inline constexpr int kMark1MaxMaskEntries = 16;
 inline constexpr int kMark1HighestInputEntry = 63;
-inline constexpr int kMark1DefaultMaskEntryCount = 8;
-inline constexpr int kMark1DefaultMaskEntries[kMark1DefaultMaskEntryCount] = { 0, 1, 2, 7, 8, 9, 10, 11 };
+inline constexpr int kMark1DefaultMaskEntryCount = 10;
+inline constexpr int kMark1DefaultMaskEntries[kMark1DefaultMaskEntryCount] = { 0, 1, 2, 7, 8, 9, 10, 11, 27, 40 };
 
 // The research overrides' ranges (mark1probe, research build only).
 inline constexpr long long kMark1MaxOverrideFrames = 600;
@@ -357,7 +360,7 @@ inline bool Mark1BuildProcArgs(const std::vector<Mark1ProcArg>& shape, double ta
 struct Mark1MaskSetting {
     bool on = true;   // off: the entries are still read (held-seen counts), never written
     int count = kMark1DefaultMaskEntryCount;
-    int entry[kMark1MaxMaskEntries] = { 0, 1, 2, 7, 8, 9, 10, 11 };
+    int entry[kMark1MaxMaskEntries] = { 0, 1, 2, 7, 8, 9, 10, 11, 27, 40 };
 };
 
 // `off`, `default` or a comma-separated list of entries. An automated

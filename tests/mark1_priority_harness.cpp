@@ -57,6 +57,12 @@ static int step(Mark1PriorityCore& core, long long frame, const Cols& c, Lands&&
     return d.pressColumn;
 }
 static bool never(int, long long) { return false; }
+// Since Stats live 1 the shipped route is the proc route (kMark1AutoRoute), on
+// which a non-toggle column is fired, never pressed. The scenarios written
+// for the press route (the cycle, the yield, the rests, the mask, the
+// lockout around a press) pin it, as `mark1probe autoroute press` does.
+struct PressCore : Mark1PriorityCore { PressCore() { SetRoute(Mark1Route::Press); } };
+struct PressAutomation : Mark1Automation { PressAutomation() { Priority().SetRoute(Mark1Route::Press); } };
 static std::string seq(const std::vector<int>& v) { std::string s; for (int c : v) s += std::to_string(c); return s; }
 
 // ---- the controlled bar and profile slot (through Mark1Automation) -------------------
@@ -70,10 +76,13 @@ struct Column {
     double cooldown = 14;
 };
 struct Bar { std::map<int, Column> columns; long reads = 0; };
+// Every `inputState` entry a mask may name (0 to kMark1HighestInputEntry), so
+// the adopted mask entries 27 and 40 are readable and writable here too.
+constexpr int kSlotEntries = kMark1HighestInputEntry + 1;
 struct Slot {
-    double entries[16] = {};
+    double entries[kSlotEntries] = {};
     long reads = 0, writes = 0;
-    bool writeFails[16] = {};
+    bool writeFails[kSlotEntries] = {};
     std::vector<std::pair<int, double>> writeLog;
 };
 static Bar bar;
@@ -91,14 +100,14 @@ static Mark1ColumnRead readColumn(int column) {
 static Mark1ToggleState readToggle(int column) { return bar.columns[column].state; }
 static bool readEntry(int entry, double& out) {
     ++slot.reads;
-    if (entry < 0 || entry >= 16) return false;
+    if (entry < 0 || entry >= kSlotEntries) return false;
     out = slot.entries[entry];
     return true;
 }
 static bool writeEntry(int entry, const double& value) {
     ++slot.writes;
     slot.writeLog.push_back({ entry, value });
-    if (entry < 0 || entry >= 16 || slot.writeFails[entry]) return false;
+    if (entry < 0 || entry >= kSlotEntries || slot.writeFails[entry]) return false;
     slot.entries[entry] = value;
     return true;
 }
@@ -107,7 +116,7 @@ static bool writeEntry(int entry, const double& value) {
 // route) the proc reported as returned.
 struct Call {
     Mark1FramePlan plan;
-    double seen[16] = {};
+    double seen[kSlotEntries] = {};
 };
 template <class Lands>
 static Call gate(Mark1Automation& a, bool active, long long frame, const Mark1GateClock& clock, Lands&& lands) {
@@ -115,7 +124,7 @@ static Call gate(Mark1Automation& a, bool active, long long frame, const Mark1Ga
     c.plan = a.Plan(active, frame, clock, readColumn, readToggle);
     bool landed = false;
     a.PressAround<double>(c.plan, readEntry, writeEntry, [&]() -> double {
-        for (int i = 0; i < 16; ++i) c.seen[i] = slot.entries[i];
+        for (int i = 0; i < kSlotEntries; ++i) c.seen[i] = slot.entries[i];
         landed = lands(c.plan);
         return 7.0;
     });
@@ -136,16 +145,16 @@ static const IntervalCase kIntervalCases[] = {
 
 int main() {
     // ---- constants ---------------------------------------------------------------
-    check("constants/values", kMark1YieldFrames == 56 && kMark1ProbeRestFrames == 24 && kMark1FreePressValue == 4.0
-        && kMark1FreeCooldownFloor == 0.25 && kMark1AutoRoute == Mark1Route::Press && std::string(kMark1ProcShape).empty()
-        && kMark1BaseCastSeconds == 1.0 && kMark1StatRefreshMs == 1000 && kMark1TurnPatienceFrames == 90
-        && kMark1TurnRestFrames == 288 && kMark1DefaultMaskEntryCount == 8);
+    check("constants/values", kMark1YieldFrames == 61 && kMark1ProbeRestFrames == 24 && kMark1FreePressValue == 4.0
+        && kMark1FreeCooldownFloor == 0.25 && kMark1AutoRoute == Mark1Route::Proc && std::string(kMark1ProcShape) == "id,player,1,false,false,0,x,y"
+        && kMark1BaseCastSeconds == 0.86 && kMark1StatRefreshMs == 1000 && kMark1TurnPatienceFrames == 90
+        && kMark1TurnRestFrames == 288 && kMark1DefaultMaskEntryCount == 10);
     {
         Mark1PriorityCore core;
-        check("constants/settings_start_at_the_constants", core.Settings().holdValue == 4.0 && core.Settings().yieldFrames == 56
-            && core.Settings().restFrames == 24 && core.RouteInForce() == Mark1Route::Press && core.Settings().shape.empty()
-            && core.Settings().lockout && core.Settings().baseCastSeconds == 1.0
-            && Mark1FormatMaskSetting(core.Settings().mask) == "0,1,2,7,8,9,10,11");
+        check("constants/settings_start_at_the_constants", core.Settings().holdValue == 4.0 && core.Settings().yieldFrames == 61
+            && core.Settings().restFrames == 24 && core.RouteInForce() == Mark1Route::Proc && Mark1FormatProcShape(core.Settings().shape) == "id,player,1,false,false,0,x,y"
+            && core.Settings().lockout && core.Settings().baseCastSeconds == 0.86
+            && Mark1FormatMaskSetting(core.Settings().mask) == "0,1,2,7,8,9,10,11,27,40");
     }
 
     // ---- baseline: the bonus inactive --------------------------------------------
@@ -181,7 +190,7 @@ int main() {
 
     // ---- cooldown columns first, in Q, E, R, Y order ------------------------------
     {
-        Mark1PriorityCore core;
+        PressCore core;
         const Cols c = cols(freeCol(), cdCol(14), cdCol(8), freeCol(0));
         Mark1PriorityDecision d;
         const int first = step(core, 0, c, never, &d);
@@ -192,7 +201,7 @@ int main() {
         check("cooldown/next_cooldown_column_while_the_first_rests", second == 5, "second=" + std::to_string(second));
         check("cooldown/free_column_only_when_every_cooldown_column_rests", third == 3, "third=" + std::to_string(third));
 
-        Mark1PriorityCore all;
+        PressCore all;
         const Cols four = cols(cdCol(), cdCol(), cdCol(), cdCol());
         std::vector<int> order;
         for (long long f = 0; f < 5; ++f) order.push_back(step(all, f, four, never));
@@ -200,7 +209,7 @@ int main() {
 
         // A cooldown column back from cooldown takes the next call ahead of a
         // free column that is being pressed.
-        Mark1PriorityCore back;
+        PressCore back;
         const Cols qr = cols(freeCol(), none(), cdCol(), none());
         std::vector<int> o2;
         for (long long f = 0; f <= kMark1ProbeRestFrames + 1; ++f) o2.push_back(step(back, f, qr, never));
@@ -217,7 +226,7 @@ int main() {
 
     // ---- a free column is pressed until it lands -----------------------------------
     {
-        Mark1PriorityCore core;
+        PressCore core;
         const Cols c = cols(freeCol(), none(), none(), none());
         long pressed = 0;
         for (long long f = 0; f < 60; ++f) if (step(core, f, c, never) == 3) ++pressed;
@@ -227,7 +236,7 @@ int main() {
         check("free/pressed_on_every_call_until_it_lands", pressed == 60 && noRest && landsAt60 == 3 && after == 0,
             "pressed=" + std::to_string(pressed) + " after=" + std::to_string(after));
 
-        Mark1PriorityCore p;
+        PressCore p;
         std::vector<int> v;
         for (long long f = 0; f < kMark1TurnPatienceFrames + kMark1TurnRestFrames + 1; ++f) v.push_back(step(p, f, c, never));
         bool restQuiet = true;
@@ -236,10 +245,10 @@ int main() {
         check("free/patience_then_rest", v[(size_t)kMark1TurnPatienceFrames - 1] == 3 && restQuiet && p.Yielded(0) == 1
             && v[(size_t)(kMark1TurnPatienceFrames + kMark1TurnRestFrames)] == 3, "yielded=" + std::to_string(p.Yielded(0)));
         Mark1PriorityDecision d;
-        Mark1PriorityCore hv;
+        PressCore hv;
         hv.SetHoldValue(3.0);
         step(hv, 0, c, never, &d);
-        Mark1Automation a;
+        PressAutomation a;
         resetBar(); resetSlot();
         bar.columns[3].talentId = 101; bar.columns[3].cooldown = 0.25;
         const Call fc = gate(a, true, 0, Mark1GateClock{}, noLanding);
@@ -251,7 +260,7 @@ int main() {
 
     // ---- the yield after a landing ----------------------------------------------------
     {
-        Mark1PriorityCore core;
+        PressCore core;
         const Cols c = cols(cdCol(), none(), none(), freeCol());
         std::vector<int> v;
         for (long long f = 0; f < 10 + kMark1YieldFrames + 2; ++f)
@@ -260,7 +269,7 @@ int main() {
         for (long long f = 10 + 1; f < 10 + kMark1YieldFrames; ++f) if (v[(size_t)f] != 0) quiet = false;
         check("yield/no_press_for_the_yield_window", v[10] == 6 && quiet && v[(size_t)(10 + kMark1YieldFrames)] != 0,
             "after=" + std::to_string(v[(size_t)(10 + kMark1YieldFrames)]));
-        Mark1PriorityCore k2;
+        PressCore k2;
         step(k2, 0, c, [](int, long long) { return true; });
         const Mark1PriorityDecision d = k2.Decide(5, c.c, Mark1GateClock{});
         check("yield/decision_names_the_yield", d.yielding && d.pressColumn == 0 && d.why[0] == Mark1PriorityWhy::Yield
@@ -269,14 +278,14 @@ int main() {
         // Nothing is masked during the yield: a held key carries on.
         resetBar(); resetSlot();
         bar.columns[3].talentId = 101;
-        Mark1Automation a;
+        PressAutomation a;
         gate(a, true, 0, Mark1GateClock{}, [](const Mark1FramePlan&) { return true; });   // Q lands
         slot.entries[1] = kMark1InputHeld;
         const long writes = slot.writes;
         const Call y = gate(a, true, 1, Mark1GateClock{}, noLanding);
         check("yield/held_key_untouched_during_the_yield", y.plan.PressCount() == 0 && y.seen[1] == kMark1InputHeld
             && slot.writes == writes && a.Counters(3).skipTurn == 1 && a.Counters(3).landed == 1);
-        Mark1PriorityCore zero;
+        PressCore zero;
         zero.SetYieldFrames(0);
         std::vector<int> z;
         for (long long f = 0; f < 3; ++f) z.push_back(step(zero, f, c, [](int, long long) { return true; }));
@@ -285,7 +294,7 @@ int main() {
 
     // ---- a cooldown press that does not land rests the column -------------------------
     {
-        Mark1PriorityCore core;
+        PressCore core;
         const Cols c = cols(freeCol(), cdCol(), none(), none());
         std::vector<int> v;
         for (long long f = 0; f <= kMark1ProbeRestFrames; ++f) v.push_back(step(core, f, c, never));
@@ -294,36 +303,36 @@ int main() {
         check("rest/failed_press_rests_the_probe_rest", v[0] == 4 && freeBetween && v[(size_t)kMark1ProbeRestFrames] == 4,
             "order=" + seq(v));
         check("rest/counted_yielded", core.Yielded(1) == 2 && core.Yielded(0) == 0, "yieldedE=" + std::to_string(core.Yielded(1)));
-        Mark1PriorityCore r;
+        PressCore r;
         r.SetRestFrames(5);
         std::vector<int> w;
         for (long long f = 0; f < 7; ++f) w.push_back(step(r, f, c, never));
         check("rest/the_rest_in_force_is_used", seq(w) == "4333343", "order=" + seq(w));
-        Mark1PriorityCore back;
+        PressCore back;
         for (long long f = 0; f <= kMark1ProbeRestFrames; ++f) step(back, f, c, never);   // E's rest begins again at 24
         check("rest/frame_reset_ends_a_rest", back.Resting(1, kMark1ProbeRestFrames) && step(back, 5, c, never) == 4);
         // A cooldown column that lands is not rested.
-        Mark1PriorityCore land;
+        PressCore land;
         step(land, 0, c, [](int, long long) { return true; });
         check("rest/a_landing_is_no_rest", land.Yielded(1) == 0 && !land.Resting(1, 1));
     }
 
     // ---- free columns take turns -------------------------------------------------------
     {
-        Mark1PriorityCore core;
+        PressCore core;
         core.SetYieldFrames(0);
         const Cols c = cols(freeCol(), none(), freeCol(0), freeCol());
         std::vector<int> v;
         for (long long f = 0; f < 6; ++f) v.push_back(step(core, f, c, [](int, long long) { return true; }));
         check("turns/one_cast_each_in_q_e_r_y_order", seq(v) == "356356", "order=" + seq(v));
-        Mark1PriorityCore p;
+        PressCore p;
         const Cols qr = cols(freeCol(), none(), freeCol(), none());
         std::vector<int> w;
         for (long long f = 0; f <= kMark1TurnPatienceFrames + 1; ++f) w.push_back(step(p, f, qr, never));
         check("turns/patience_passes_the_turn", w[0] == 3 && w[(size_t)kMark1TurnPatienceFrames - 1] == 3
             && w[(size_t)kMark1TurnPatienceFrames] == 5 && p.Yielded(0) == 1, "at90=" + std::to_string(w[(size_t)kMark1TurnPatienceFrames]));
         // The turn skips a free column that rests or is not eligible.
-        Mark1PriorityCore s;
+        PressCore s;
         s.SetYieldFrames(0);
         std::vector<int> x;
         x.push_back(step(s, 0, qr, [](int, long long) { return true; }));                  // Q lands: R's turn
@@ -340,7 +349,7 @@ int main() {
         slot.entries[7] = 2.0;                                       // a key on its release
         slot.entries[0] = kMark1InputResting;
         slot.entries[12] = kMark1InputHeld;                          // not a mask entry
-        Mark1Automation a;
+        PressAutomation a;
         const Call c = gate(a, true, 0, Mark1GateClock{}, noLanding);
         check("mask/asking_entries_rested_during_the_press", c.seen[3] == 4.0 && c.seen[1] == 1.0 && c.seen[2] == 1.0
             && c.seen[7] == 2.0 && c.seen[0] == 1.0 && c.seen[12] == kMark1InputHeld,
@@ -356,7 +365,7 @@ int main() {
         // Off: read (held-seen counts) but never written.
         resetSlot();
         slot.entries[1] = kMark1InputHeld;
-        Mark1Automation off;
+        PressAutomation off;
         Mark1MaskSetting m;
         std::string why;
         Mark1ParseMaskSetting("off", m, why);
@@ -368,15 +377,26 @@ int main() {
         // An entry list of its own.
         resetSlot();
         slot.entries[1] = kMark1InputHeld; slot.entries[9] = kMark1InputHeld;
-        Mark1Automation own;
+        PressAutomation own;
         Mark1ParseMaskSetting("9", m, why);
         own.Priority().SetMask(m);
         const Call w = gate(own, true, 0, Mark1GateClock{}, noLanding);
         check("mask/entry_list_in_force", w.seen[9] == 1.0 && w.seen[1] == kMark1InputHeld && slot.entries[9] == kMark1InputHeld);
+        // The default list's 27 and 40, the entries Stats live 1's `held-entry`
+        // saw a held right mouse button set: rested during the press and put
+        // back after it. 41 is no mask entry (the negative control).
+        resetSlot();
+        slot.entries[27] = kMark1InputHeld; slot.entries[40] = kMark1InputPressed; slot.entries[41] = kMark1InputHeld;
+        PressAutomation rb;
+        const Call h = gate(rb, true, 0, Mark1GateClock{}, noLanding);
+        check("mask/held_right_button_entries_rested", h.seen[3] == 4.0 && h.seen[27] == 1.0 && h.seen[40] == 1.0
+            && h.seen[41] == kMark1InputHeld && slot.entries[27] == kMark1InputHeld && slot.entries[40] == kMark1InputPressed
+            && rb.Priority().Counters().heldSeen == 1,
+            "seen27=" + num(h.seen[27]) + " seen40=" + num(h.seen[40]) + " seen41=" + num(h.seen[41]));
         // Restored after a throw.
         resetSlot();
         slot.entries[1] = kMark1InputHeld;
-        Mark1Automation t;
+        PressAutomation t;
         const Mark1FramePlan tp = t.Plan(true, 0, readColumn, readToggle);
         double during = -1;
         bool threw = false;
@@ -388,7 +408,7 @@ int main() {
         Mark1MaskSetting keep;
         check("mask/parse_refuses", !Mark1ParseMaskSetting("3", keep, why) && !Mark1ParseMaskSetting("1,1", keep, why)
             && !Mark1ParseMaskSetting("x", keep, why) && !Mark1ParseMaskSetting("64", keep, why)
-            && Mark1ParseMaskSetting("default", keep, why) && Mark1FormatMaskSetting(keep) == "0,1,2,7,8,9,10,11");
+            && Mark1ParseMaskSetting("default", keep, why) && Mark1FormatMaskSetting(keep) == "0,1,2,7,8,9,10,11,27,40");
         // The pure plan: mask entries only with a press.
         bool pressedNone[kMark1ColumnCount] = {};
         bool pressedQ[kMark1ColumnCount] = { true, false, false, false };
@@ -397,15 +417,19 @@ int main() {
         const Mark1InputPlan qp = Mark1PlanInputs(true, true, 0u, pressedQ, value, Mark1MaskSetting{});
         const bool ok[4] = { true, true, true, false };
         const double vals[4] = { 1, 3, 4, 3 };
-        check("mask/plan_needs_a_press", np.maskCount == 0 && qp.maskCount == 8 && qp.maskWrites
+        check("mask/plan_needs_a_press", np.maskCount == 0 && qp.maskCount == 10 && qp.maskWrites
             && Mark1EntriesToRest(4, ok, vals) == 0x6u && Mark1EntriesToRest(4, ok, vals, false) == 0u);
     }
 
     // ---- baseline: the press route without a shape --------------------------------------
     {
+        // The shipped core carries the decided shape; cleared, a proc route
+        // asked for is refused and the press stays.
         Mark1PriorityCore core;
+        const bool shippedProc = core.RouteInForce() == Mark1Route::Proc;
+        core.SetShape(Mark1ParseProcShape(""));
         const Mark1RouteReply reply = core.SetRoute(Mark1Route::Proc);
-        Mark1PriorityCore plain;
+        PressCore plain;
         const Cols c = cols(freeCol(), cdCol(), freeCol(0), none());
         bool same = true;
         for (long long f = 0; f < 600; ++f) {
@@ -415,7 +439,7 @@ int main() {
             const int y = step(plain, f, c, lands, &b);
             if (x != y || a.procColumn != 0 || a.procMask != 0u) same = false;
         }
-        check("route/proc_without_a_shape_refused", reply == Mark1RouteReply::ShapeUnset && core.RouteInForce() == Mark1Route::Press
+        check("route/proc_without_a_shape_refused", shippedProc && reply == Mark1RouteReply::ShapeUnset && core.RouteInForce() == Mark1Route::Press
             && core.Settings().route == Mark1Route::Press);
         check("route/press_decisions_unchanged", same);
         // A template: parsed by token, an unknown token refused by name.
@@ -483,7 +507,7 @@ int main() {
         Call c;
         c.plan = a.Plan(true, 0, at(1000), readColumn, readToggle);
         bool ran = false;
-        a.PressAround<double>(c.plan, readEntry, writeEntry, [&]() -> double { for (int i = 0; i < 16; ++i) c.seen[i] = slot.entries[i]; ran = true; return 7.0; });
+        a.PressAround<double>(c.plan, readEntry, writeEntry, [&]() -> double { for (int i = 0; i < kSlotEntries; ++i) c.seen[i] = slot.entries[i]; ran = true; return 7.0; });
         a.Landing(c.plan, false);
         std::vector<Mark1ProcValue> args;
         std::string why;
@@ -543,6 +567,7 @@ int main() {
         Mark1Automation a;
         a.Priority().SetShape(Mark1ParseProcShape("id"));
         a.Priority().SetRoute(Mark1Route::Proc);
+        a.Priority().SetBaseCastSeconds(1.0);                            // the arithmetic below takes a 1 s cast
         // Haste 100 and Faster Cast Rate 100: 14 / 1.5 + 1 / 2 = 9.8333 s.
         const Call first = gate(a, true, 0, at(0, 100, 100), noLanding);
         const Call before = gate(a, true, 1, at(9832, 100, 100), noLanding);
@@ -555,6 +580,7 @@ int main() {
         Mark1Automation b;
         b.Priority().SetShape(Mark1ParseProcShape("id"));
         b.Priority().SetRoute(Mark1Route::Proc);
+        b.Priority().SetBaseCastSeconds(1.0);
         gate(b, true, 0, at(0), noLanding);
         const Call b1 = gate(b, true, 1, at(14999, 300, 0), noLanding);
         const Call b2 = gate(b, true, 2, at(15000, 300, 0), noLanding);
@@ -562,12 +588,12 @@ int main() {
         const Call b4 = gate(b, true, 4, at(15000 + 8000, 300, 0), noLanding);
         check("interval/next_due_time_set_when_fired", b1.plan.procColumn == 0 && b2.plan.procColumn == 4
             && b3.plan.procColumn == 0 && b4.plan.procColumn == 4);
-        // The base cast seconds in force.
+        // The base cast seconds in force: the shipped one, then an override.
         Mark1PriorityCore k;
         Mark1PriorityColumn hz = cdCol(14);
         const double i1 = k.IntervalMs(hz, at(0));
         k.SetBaseCastSeconds(2.0);
-        check("interval/base_cast_seconds_in_force", std::fabs(i1 - 15000) < 1e-6 && std::fabs(k.IntervalMs(hz, at(0)) - 16000) < 1e-6
+        check("interval/base_cast_seconds_in_force", std::fabs(i1 - (14000 + kMark1BaseCastSeconds * 1000)) < 1e-6 && std::fabs(k.IntervalMs(hz, at(0)) - 16000) < 1e-6
             && !k.SetBaseCastSeconds(0.05) && !k.SetBaseCastSeconds(5.5) && k.Settings().baseCastSeconds == 2.0);
         // A clock that went backwards makes the column due again.
         Mark1PriorityCore back;
@@ -587,7 +613,7 @@ int main() {
         k.SetRoute(Mark1Route::Proc);
         const Cols proc = cols(cdCol(14), none(), none(), none());
         k.ProcFired(3, 0, 15000);
-        Mark1PriorityCore press;
+        PressCore press;
         const Cols pc = cols(none(), cdCol(14), none(), none());
         step(press, 0, pc, never);                                       // E pressed, not landed: E rests
         const bool restedBefore = press.Resting(1, 1);
@@ -631,6 +657,7 @@ int main() {
         Mark1Automation a;
         a.Priority().SetShape(Mark1ParseProcShape("id"));
         a.Priority().SetRoute(Mark1Route::Proc);
+        a.Priority().SetBaseCastSeconds(1.0);                            // a 1 s cast: ten in 10 s
         std::vector<int> fired;
         for (long long ms = 0; ms < 10000; ms += 50) {
             for (int call = 0; call < 2; ++call) {                     // the gate runs more than once a frame
@@ -648,6 +675,7 @@ int main() {
         Mark1Automation f;
         f.Priority().SetShape(Mark1ParseProcShape("id"));
         f.Priority().SetRoute(Mark1Route::Proc);
+        f.Priority().SetBaseCastSeconds(1.0);
         long n = 0;
         for (long long ms = 0; ms < 10000; ms += 50) if (gate(f, true, ms, at(ms, 0, 100), noLanding).plan.procColumn) ++n;
         check("procfree/faster_cast_rate_halves_the_interval", n == 40, "procs=" + std::to_string(n));
@@ -701,7 +729,7 @@ int main() {
             && slot.reads == 0 && slot.writes == 0 && a.Priority().Counters().locked == 0);
         // The control: the lockout off, a key held on an automated column is
         // not rested (its press still is the automation's).
-        Mark1Automation off;
+        PressAutomation off;
         off.Priority().SetLockout(false);
         gate(off, true, 0, Mark1GateClock{}, [](const Mark1FramePlan&) { return true; });   // Q lands: the yield
         const Call y = gate(off, true, 1, Mark1GateClock{}, noLanding);
@@ -720,7 +748,7 @@ int main() {
         slot.entries[4] = kMark1InputPressed;                            // and presses E
         slot.entries[5] = kMark1InputHeld;                               // R's key held
         slot.entries[6] = kMark1InputPressed;                            // Y's key pressed
-        Mark1Automation a;
+        PressAutomation a;
         const Call c = gate(a, true, 0, Mark1GateClock{}, noLanding);
         check("lock/automated_held_and_pressed_rested", c.seen[4] == kMark1InputResting && c.plan.lockMask == 0x3u,
             "seen4=" + num(c.seen[4]));
@@ -733,7 +761,7 @@ int main() {
         // 1 (resting) and 2 (release) are left alone; nothing locked, nothing counted.
         resetSlot();
         slot.entries[3] = 2.0; slot.entries[4] = kMark1InputResting;
-        Mark1Automation b;
+        PressAutomation b;
         gate(b, true, 0, Mark1GateClock{}, [](const Mark1FramePlan&) { return true; });   // Q lands: the yield
         const long writes = slot.writes;
         const Call y = gate(b, true, 1, Mark1GateClock{}, noLanding);
@@ -756,7 +784,7 @@ int main() {
         // A throw puts the locked entry back.
         resetSlot();
         slot.entries[4] = kMark1InputHeld;
-        Mark1Automation t;
+        PressAutomation t;
         const Mark1FramePlan tp = t.Plan(true, 0, readColumn, readToggle);
         bool threw = false;
         try { t.PressAround<double>(tp, readEntry, writeEntry, []() -> double { throw std::runtime_error("gate"); }); }

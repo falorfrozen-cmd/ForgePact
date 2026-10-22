@@ -22,7 +22,9 @@ pieces" below.
     Resistances, All Skills, Life, Life after each Kill, Vitality, Faster Hit
     Recovery or All Attributes depending on the piece; the helmet has 1 or 2
     sockets and the body armor 3 or 4. A piece's stats count whatever the
-    switches say and stay the same after saving and loading.
+    switches say and stay the same after saving and loading. Wherever the
+    game shows its own items' roll ranges, each rolled line shows its range
+    in grey after it, as theirs do.
   - **The set bonus, by pieces worn**, while the new switch (Mods → Items →
     **Mark 1 set**, off by default) is on: with 2 pieces `+500 Defense`; with
     3 also `+35% to All Resistances` and `Replenish Life 25%`; with all 4
@@ -34,18 +36,20 @@ pieces" below.
     underneath in the game's smaller grey description text, then the set's
     name and its four pieces, the ones you wear in green.
   - **Your skills cast themselves.** With all four worn, the skills on your
-    Q, E, R and Y slots are cast for you whenever the game would let you
-    cast them: the game still checks the cooldown, the mana and every other
-    requirement, and aims each one where it aims that key press. A skill
-    with a cooldown is cast first, in Q, E, R, Y order, as soon as it is
-    ready; a skill with no cooldown, such as Shadow Bolt, is cast
-    continuously, the way holding its key casts it. Holding a button
-    yourself, such as the right mouse button, no longer keeps an automated
-    skill from being cast. A skill under automation cannot be cast by hand,
-    and its icon on the skill bar is drawn grey, the way the game greys a
-    skill you cannot use; each of those slots is also outlined. A toggle
-    skill is switched on and left on, so you cannot switch it off while the
-    bonus is active; an aura slot and an empty slot are left alone.
+    Q, E, R and Y slots are cast for you. A skill that is not a toggle fires
+    the way an item's proc fires a skill: at once, with no cast time, so a
+    button you hold yourself, such as the right mouse button, never keeps it
+    from firing. Each fires on its own timer, its cooldown (shortened by
+    your Skill Haste) plus its cast time (shortened by your Faster Cast
+    Rate), so a skill with no cooldown, such as Shadow Bolt, fires
+    continuously; when two are due at once they go in Q, E, R, Y order.
+    These casts cost no mana, so **each automated skill lowers your maximum
+    mana by 20%** while the bonus is on. A skill under automation cannot be
+    cast by hand, and its icon on the skill bar is drawn grey, the way the
+    game greys a skill you cannot use; each of those slots is also outlined.
+    A toggle skill is still pressed for you and switched on and left on, so
+    you cannot switch it off while the bonus is active; an aura slot and an
+    empty slot are left alone.
   - **Your jump goes three times as far.** The universal jump always goes
     three times your normal reach toward your cursor, passes over rocks,
     fences, carts and other scenery, and lands only where you could walk.
@@ -100,10 +104,11 @@ pieces" below.
   and loading the character; and each piece's tooltip showed the set the way
   the game shows its own, on the ground, in the bag and worn, the names of
   the pieces you wear in green and `+1 to Automation` lit only with the set's
-  switch on, every line inside the tooltip. A toggle skill on the bar, a
-  piece dropping from a vault, and the pieces' stats, the set bonus, the
-  priority order, casting through a held button, the lock on casting an
-  automated skill by hand and the grey icons have not been checked in play
+  switch on, every line inside the tooltip. A later session checked the
+  skills firing with no cast time, through a held button, the lock on casting
+  them by hand, the grey icons and the 20% lower maximum mana with three
+  automated skills. A toggle skill on the bar, a piece dropping from a vault,
+  the set bonus's lines and the roll ranges have not been checked in play
   yet.
 
 ## Fixed

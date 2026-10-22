@@ -1787,25 +1787,34 @@ any item's, and the set gives more for every piece you wear.
   while you wear enough pieces for it and grey otherwise, with what
   Automation does underneath `+1 to Automation` in the game's smaller grey
   description text, then the set's name and its four pieces, the ones you
-  wear in green. The piece's sockets are listed under the set.
+  wear in green. The piece's sockets are listed under the set. Wherever the
+  game shows its own items' roll ranges, each rolled stat line shows its
+  range after it in grey, as theirs do, for example
+  ` [120-180]`, and the Defense line and the sockets line show the piece's
+  own ranges; the fixed lines (Vitality, Faster Hit Recovery, All
+  Attributes) show none.
 - **Your skills cast themselves.** With all four worn, the skills on your
-  skill bar's Q, E, R and Y slots are cast for you whenever the game would
-  let you cast them: the game still checks the cooldown, the mana and every
-  other requirement, and aims each one where it aims that key press. They
-  are cast by priority: a skill with a cooldown comes first, in Q, E, R, Y
-  order, and is cast as soon as it is ready; a skill with no cooldown, such
-  as Shadow Bolt, is cast continuously, the way holding its key casts it,
-  whenever no skill with a cooldown is ready. Holding a button yourself, such
-  as the right mouse button, no longer keeps an automated skill from being
-  cast: the automated skill is cast, and what you hold carries on between
-  casts. A skill under automation cannot be cast by hand: pressing its key
-  does nothing while the set casts it for you, and its icon on the skill bar
-  is drawn grey, the way the game greys a skill you cannot use. Each of
-  those slots is also outlined, as Mark A Running Toggle Skill outlines a
-  running toggle. A toggle skill is switched on and left on: it is pressed
-  only while it is off, so you cannot switch it off while the bonus is
-  active. An aura slot and an empty slot are left alone. A skill that needs a
-  second click or a held key is cast as one press at a time.
+  skill bar's Q, E, R and Y slots are cast for you. A skill that is not a
+  toggle fires the way an item's proc fires a skill: at once, with no cast
+  time, and without the game's usual checks before a cast, so holding a
+  button yourself, such as the right mouse button, never keeps it from
+  firing. Each one fires on its own timer: its cooldown (shortened by your
+  Skill Haste) plus its cast time (shortened by your Faster Cast Rate), so a
+  skill with no cooldown, such as Shadow Bolt, fires continuously, and when
+  two are due at once they go in Q, E, R, Y order. These casts cost no mana,
+  so **each automated skill lowers your maximum mana by 20%** while the
+  bonus is on (four leave you a fifth of your pool), and the price falls on
+  the skills you cast yourself. A skill under automation cannot be cast by
+  hand: pressing its key does nothing while the set casts it for you, and
+  its icon on the skill bar is drawn grey, the way the game greys a skill
+  you cannot use. Each of those slots is also outlined, as Mark A Running
+  Toggle Skill outlines a running toggle. A toggle skill is still pressed for
+  you, as its key would be, and the game checks it as usual: it is switched
+  on and left on, pressed only while it is off, so you cannot switch it off
+  while the bonus is active. An aura slot and an empty slot are left alone.
+  Because a fired skill skips the game's checks, a skill the game would
+  sometimes refuse to cast, such as Mana Orb while its orb is still out,
+  can be fired anyway; whether that stacks has not been checked in play.
 - **Your jump goes three times as far.** The universal jump always goes three
   times your jump's normal reach, in the direction of your cursor however near
   the cursor is, and passes over rocks, fences, carts and other scenery. It
@@ -1908,8 +1917,13 @@ after it.
 
 The pieces' stats, the set bonus, the priority order, the casting through a
 held button, the lock on casting an automated skill by hand and the grey
-icons came from the owner's playtest (2026-10-22) and have not been checked
-in play yet.
+icons came from the owner's playtest (2026-10-22). A session later that day
+on a research build checked the skills firing like procs (with no cast time,
+at the skill's own level, through a held button), the lock on casting them
+by hand, the grey icons in the game's own look and the 20% lower maximum
+mana with three automated skills, and found the roll ranges missing from the
+pieces' lines, which they now show. The set bonus's lines, the ranges and
+these settings together have not been checked in play yet.
 
 ## Goburin's Head pity
 
