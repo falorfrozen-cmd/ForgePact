@@ -1918,12 +1918,13 @@ after it.
 The pieces' stats, the set bonus, the priority order, the casting through a
 held button, the lock on casting an automated skill by hand and the grey
 icons came from the owner's playtest (2026-10-22). A session later that day
-on a research build checked the skills firing like procs (with no cast time,
-at the skill's own level, through a held button), the lock on casting them
-by hand, the grey icons in the game's own look and the 20% lower maximum
-mana with three automated skills, and found the roll ranges missing from the
-pieces' lines, which they now show. The set bonus's lines, the ranges and
-these settings together have not been checked in play yet.
+on a research build checked that a skill fired the way an item's proc fires
+one is cast at the skill's own level, the grey icons in the game's own dark
+look and the 20% lower maximum mana with three automated skills, and found
+the roll ranges missing from the pieces' lines, which they now show. The
+skills firing with no cast time, firing while you hold a button, the lock on
+casting them by hand, the set bonus's lines, the ranges and these settings
+together have not been checked in play yet.
 
 ## Goburin's Head pity
 
