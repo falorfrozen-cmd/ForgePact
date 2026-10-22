@@ -4444,63 +4444,389 @@ tokens: `allres-route:`, `hold-value:`, `held-route:`, `desc-view:`,
 
 ### Stats live procedure 2
 
-The final confirmation, on the build that applies Stats live 1's decision,
-of what that decision changed and of the pieces, the bonus and the
-priority cycle. The capture is the playtest workorder's live capture 2,
+The re-checks of Stats live 1's failed and unread checks, on the build that
+applies Stats live 1's decision (the proc route, the maximum-mana cost and
+the `enabled` grey look) and adds the pieces' roll ranges and replan 1's
+research forms (`mark1probe statask`, `manaregen` and `procgaps`). The
+capture is the playtest workorder's live capture 2,
 `forgepact-166-mark1-set-playtest2-live-2.md`, kept with the hub's workorder
-files and not tracked.
+files and not tracked. Every `mark1set stat` pair of lines read is recorded.
+Stats live 1 results, below, say why each step is shaped as it is.
 
 **Setup:**
 
 - **Build:** the research build at the ForgePact commit that applies Stats
   live 1's decision; its path and SHA-256 are recorded with the workorder,
-  and `dll-hash` compares it. The owner is asked before it is installed.
-- **Character:** save slot 14, "Sorak", saves backed up first and restored
-  at the end.
-- **Control:** `ping` answers `pong (YYTK 4.0.1)` (`control`).
-- **Cases:** one piece's tooltip, the full set's bonus, the free and the
-  cooldown column, the held right button, a held key on an automated
-  column, the bar's icons, and on the proc route the adopted cost.
-- **Debugger:** none. Stats live 1 traced the getters, and every check here
-  is a count on the stat lines or the probe's rows.
-- **Relies on:** as Stats live procedure 1, plus its results and its
-  decision.
+  and `dll-hash` compares the installed DLL with it. The owner is asked
+  before it is installed.
+- **Character:** save slot 14, "Sorak" (White Mage), saves backed up first
+  (`hs_saves_backup` and a manual copy) and restored at the end, so the bar
+  binds, the pieces and the stats vanish with the restore.
+- **Control:** `ping` answers `pong (YYTK 4.0.1)` (`control`). The mana
+  checks carry their own positive control, `mana-control`.
+- **Cases:** one cooldown column (Healing Zone on E), one no-cooldown column
+  (Shadow Bolt on Y), Mana Orb on Q (the skill the game refused by key), the
+  toggle on R (Soul Spurn), a held right button, each piece's tooltip once,
+  and one session with no reload. Not every skill or stat.
+- **Debugger:** none. Every question here is a count or a value the plugin
+  prints (`statask`, `procgaps`, `bonusread`, the stat lines, the probe's
+  rows) or a drawn text the Item Truth journal records. Stats live 1 traced
+  the getters' call rates, and no check asks which code runs.
+- **Relies on:** everything Stats live procedure 1 relies on, and:
+  `ReturnSpecificStat`'s argument shape the adapter already reads with (self
+  and other the local player, then 1, the id and 0, element 0 of an array
+  answer; hub RDM § 7.5), read without a failure through Stats live 1
+  (`stat-fail=0`); Item Truth's tooltip journal, kept on (its
+  `capture.request` exists on this machine, each record carries each drawn
+  text with its stat and colour, and it records the first pass of each item
+  in a session; the guide's Item Truth section); `mark1probe hold
+  player.playerEffect[199] <v> during <row> [frames]` and `mark1probe count
+  <object> <frames>` (the guide's Command Reference, the `mark1probe` row;
+  the hold measured on that member); `skillstate`'s `effect=`, the instance
+  count of the skill's object (hub RDM § 7.3, measured for Mana Orb, Healing
+  Zone and Shadow Bolt in Stats live 1's P2); the skill-bar editor, which a
+  left click on any bar icon opens (Stats live 1, P6): to bind, the slot,
+  then the skill in the list above the bar; to unbind, the slot, then the
+  same skill again in the list above the equipped skills; a left click on
+  open ground closes it (the owner's method, not found in the shared
+  references); Healing Zone's constant life drain and Mana Orb's mana regen
+  (the owner's word, not measured); and, as in Stats live 1, the HUD's life
+  and mana `current / max` read from cropped screenshots, `tgprobe hook
+  TalentUseClass` and `tgprobe verbose on`, and `statadd castrate <n>`.
 
 **Steps:**
 
-- S1: `dll-hash` and `control`; a bare `mark1probe` answers `mark1probe:
-  research build`, and the fresh second line shows the adopted `hold=`,
-  `yield=`, `mask=`, `route=`, `cost=`, `drain=` and `cast-base=`
-  (`marker`).
-- S2: `playerwarp 912 960`, `mark1probe spawn set top`, pick up, open the
-  bag, hover the body: Stats live 1's S4 body lines and order (`roll-lines`,
-  `tip-order`).
-- S3: wear all four, `mark1set bonus 1`, `mark1probe bonusread`: Stats live
-  1's `bonus-4` deltas, and with `allres-route: elements` each element id +
-  35 (`bonus-4`).
-- S4: `mark1probe hook`, and with `route=proc` also `tgprobe hook
-  TalentUseClass` and `tgprobe verbose on`, since `TalentUse` does not see a
-  proc. Switch off: hold the free column's key 10 s and count its casts
-  (N_hold); switch on: 10 s with no key, its casts (N_auto: `TalentUse`
-  casts on the press route, its `tgprobe` `TalentUseClass` lines on the
-  proc route). `free-continuous`: N_auto is at least 0.8 × N_hold. Then
-  30 s: `prio-order` as in Stats live procedure 1.
-- S5: hold the right button 8 s with the switch on: the automated landings
-  (press route) or `procs=` (proc route) during the hold (`held-mask`), and
-  the right button's skill's casts in the window (`held-continues`).
-- S6: `lock-key` as Stats live 1's P6 (`autoyield 600`, the two 4 s holds)
-  and `icon-grey` as its P7, with the adopted look. With `route=proc`:
-  `proc-interval` as its P5 (each column's mean spacing within 15% of its
-  computed interval) and `cost-applies`: the HUD mana before and after 10 s
-  with no key, falling at the adopted cost's rate net of `regen-units`
-  (`cost: drain`), or the HUD maximum at the adopted cut (`cost: maxmana`);
-  not run on the press route.
-- S7: teardown as Stats live 1's S13.
+- S0, setup: `dll-hash`; `ping` (`control`); a bare `mark1probe` answers
+  `mark1probe: research build`, and the first `mark1set stat` second line
+  reads `hold=4 yield=61 rest=24 mask=0,1,2,7,8,9,10,11,27,40 route=proc
+  procs=0 proc-fail=0 locked=0 cost=maxmana`, `cast-base=0.86` and `grey=0
+  grey-box=0` (`marker`). `skillstate` records the bar. If Shadow Bolt is
+  not on 0,6 (Y), the operator binds it: a left click on Q's icon (client
+  136,1220) opens the editor, a left click on the Y slot (about 392,1220), a
+  screenshot, a left click on Shadow Bolt in the list above the bar, and a
+  left click on open ground (1500,500); `skillstate` then reads `slot=0,6
+  ... ability=shadowBolt`. Each click is recorded as a step of the
+  operator's, not the owner's.
+- S1 (`proc-control`, validity for the proc checks): switch off; `tgprobe
+  hook TalentUseClass`, `tgprobe verbose on`, `mark1probe hook`,
+  `mark1probe show reset`; Y pressed once; `mark1probe show`. Pass: one
+  `TalentUseClass` line with self `Player_obj` and a0 239, and
+  `casts=239:1`.
+- S2: `playerwarp 912 960`; `mark1probe spawn set top`; pick up the four
+  (hover the name label, then F); open the bag (C). Hover each piece 1 s and
+  screenshot. Then read the session's Item Truth journal (the newest
+  `live-*-<pid>-1.ndjson` for this game's pid) with a script kept outside
+  the repository, each piece's tooltip record by its first text. `ranges`
+  (acceptance): every rolled line has its ` [lo-hi]` text, with that stat's
+  id and colour 8421504, drawn right of its label on the same y: the helmet
+  29 ` [120-180]`, 173 ` [10-30]` and 201 ` [2-3]`; the body 29
+  ` [220-280]`, 52 ` [300-400]` and 201 ` [3-4]`; the boots 29
+  ` [150-200]`, 59 ` [15-25]` and 173 ` [20-30]`; the gloves 29 ` [75-100]`
+  and 201 ` [2-3]`; and the fixed lines 48, 170 and 51 have none.
+  `range-header` (acceptance): the headers' grey ranges read helmet
+  ` [60-80]`, body ` [210-240]`, boots ` [72-90]` and gloves ` [46-68]`, the
+  sockets rows helmet ` [1-2]` and body ` [3-4]`, and none of ` [26-38]`,
+  ` [10-18]`, ` [2-6]`, ` [1-3]` or ` [1-4]` is drawn for a piece.
+  `roll-lines` and `tip-order` as Stats live 1's S4, from the same
+  screenshots and records, with every row inside the box recorded beside
+  them.
+- S3, switch off: wear the helmet and the body (right click each).
+  `mark1probe statask 92`; `mark1set bonus 1`; hover a worn piece and
+  screenshot; `mark1probe statask 92`. `bonus-2`: the second answer is the
+  first plus 500, with `pieces=2 lit=1/0/0`. `tip-lit`, part 1: `+500
+  Defense` lit, the rest grey, two names green.
+- S4: wear the boots. `mark1set bonus 0`, `mark1probe statask
+  38,161,162`; `mark1set bonus 1`, `statask 38,161,162`. `bonus-3`: 38 up
+  25 and 161 up 35, with `pieces=3 lit=1/1/0`. `allres-route` (research):
+  162's change (up 35: the element resistances take the all-resistance
+  answer through the dispatcher; unchanged: they do not). Hover and
+  screenshot: `tip-lit`, part 2, the three-piece lines lit and three names
+  green.
+- S5: wear the gloves. `mark1set bonus 0`, `statask 2,36,97`; `mark1set
+  bonus 1`, `statask 2,36,97`. `bonus-4`: 2 up 5, 36 up 750 and 97 up 20,
+  with `pieces=4 lit=1/1/1 active=yes`, and the HUD life maximum moving by
+  750 between the two (screenshots). Hover: `tip-lit`, part 3, every line
+  lit and four names green. `tip-lit` passes on all three parts.
+- S6 (research), switch off: `piece-sheet`: `statask 2,36,161`; take the
+  helmet off (right click; it goes to the bag); `statask 2,36,161`; wear it
+  again. Pass when 2 is down 3, 161 down 30 and 36 down. `bonus-equip`,
+  switch on: `statask 36`; take the gloves off; screenshots of the HUD life
+  maximum at about 0.4, 1.5 and 3 s; `statask 36`; then the same pair with
+  the switch off. Pass when the switch-on drop is the switch-off drop plus
+  750 (within 1) and the HUD maximum reaches it within 3 s. Wear the gloves
+  again.
+- S7 (`ms-applies`): `playerwarp 912 822`; D held 1.5 s first; in one
+  command file `mark1probe hold player.playerEffect[199] 1 during
+  PlayerMovement 300` and `mark1probe pos 300`; switch off, then switch on,
+  each from `playerwarp 912 822`. Pass: the switch-on mode is 0.47 to 0.53
+  of the switch-off mode, over at least 60 moving samples each. `ms-cast`
+  (research): the same switch-on walk without the hold, with `mark1probe
+  watch effect 300` beside it: the mode against 0.5 × `playerEffect[199]`
+  as read. Then `playerwarp 912 960`.
+- S8, switch on, full set, the proc route in force: `tgprobe reset` and
+  `tgprobe verbose on` (S1 spent the three-line budget), `mark1probe
+  procgaps reset`, `mark1probe show reset`, 30 s with no key, then
+  `mark1probe procgaps`, `mark1probe show`, `mark1set stat`, `skillstate`
+  and `mark1probe count White_Mage_Mana_Orb_obj 1`. `prio-order`: Q, E and
+  Y each fired at least once (the `procgaps` counts), R stays on (a toggle,
+  pressed only when off), and `proc-fail=0`. `proc-casts`: the first three
+  `tgprobe` `TalentUseClass` lines read self `Player_obj` and a1 `kind=15
+  ... ref instance <the player's id>`, the `TalentUse` row of `mark1probe
+  show` is unmoved for 253, 252 and 239, and `skillstate` reads Healing
+  Zone's `effect=` at least 1 within 1 s of one of its procs (one
+  `skillstate` straight after a `procgaps` line shows a new E proc).
+  `proc-interval` (research): each column's minimum gap is at least 0.9 ×,
+  and its mean gap within 15% of, the interval `procgaps` prints.
+  `proc-stack` (research): the Mana Orb count at the window's end; more than
+  1 means the proc fired a skill the game would have refused.
+- S9: `free-continuous`: switch off, `show reset`, Y held 10 s, the
+  `TalentUse` casts of 239 (N_hold); switch on, `procgaps reset`, 10 s, Y's
+  proc count (N_auto). Pass: N_auto at least 0.8 × N_hold. `held-procs`:
+  switch on, `procgaps reset`, `show reset`, the right button held 8 s on
+  open ground beside Sorak: procs keep rising (Y's count in the 8 s at
+  least 0.64 × N_auto). `held-continues`: the right button's skill's
+  `TalentUse` casts in that window at least 1.
+- S10 (`lock-key`), switch on: `mark1probe autolock off`, `show reset`, Y
+  held 4 s, `mark1probe show`: 239's `TalentUse` casts above 0 (the
+  control: the key casts by hand). `mark1probe autolock on`, `show reset`,
+  Y held 4 s: 239's `TalentUse` casts 0, `locked=` up and `procs=` up.
+  Pass: both windows.
+- S11, switch on: screenshot the bar and crop it; `mark1set stat`.
+  `icon-grey`: Q, E, R and Y each read darker (the mean luminance of the
+  slot box) than the same slot 18 s after the switch goes off, `grey=`
+  equals the automated columns, and `procs=` kept rising while the look was
+  on. `icon-clear`: `mark1set bonus 0`; 18 s; screenshot: every slot back
+  to its switch-off look, `grey=0`; hover Y: its tooltip shows; `mark1set
+  bonus 1`.
+- S12, switch off (research): `stat-read`: `statask 106` three times 1 s
+  apart; `statadd castrate 100`; `statask 106` three times; pass when the
+  medians differ by 100 ± 2. `cast-base`: `statask 106` and Y held 10 s
+  (the `TalentUse` casts of 239), and the same with `castrate 100`, before
+  `statadd castrate 0`: base = (10 s / casts) × (1 + F / 100) per window;
+  pass when the two agree within 15%; both recorded.
+- S13, switch on, Q still bound: `maxmana-applies` (acceptance, the adopted
+  cost): with n the proc columns (`free=` and the toggle table), the HUD
+  maximum within 1 of the original × (1 − 0.2 n) and `statask 37`'s answer
+  the same.
+- S14, the mana instrument: unbind Mana Orb from Q (a left click on any bar
+  icon, on the Q slot, on Mana Orb in the list above the equipped skills,
+  then on open ground; `skillstate` shows 0,3 empty); `mark1probe count
+  White_Mage_Mana_Orb_obj 1` until it reads 0. Switch off. `mark1probe
+  manaregen 0`; `statask 42` reads 0. Screenshot; Y held 10 s; screenshot
+  at once (`mana-control`: mana at least 1% of the maximum lower); 5 s;
+  screenshot (`regen-zero`: no rise, within 0.5% of the maximum). Idle
+  10 s, screenshots either side: D0 (`toggle-drain`, research, recorded).
+  The checks below run only with `mana-control` passed; otherwise each is
+  not-run with that reason.
+- S15, regen still 0: `proc-mana` (research): switch on (proc route),
+  `mark1probe autocost off`, screenshot, 10 s, screenshot: Dq; then
+  `mark1probe autoroute press`, 10 s: Dp (the automation's key casts pay,
+  the window's control); `mark1probe autoroute proc`. Free: Dq − D0 within
+  0.5% of the maximum while Dp − D0 is at least 1%; costs: Dq − D0 at least
+  1%; not-observed when Dp − D0 is under 1%.
+- S16 (research): `regen-units`: switch off, `manaregen off`, `statask 42`
+  (R); screenshot, 3 s, screenshot: (gain / 3 s) / R. The window must not
+  reach the maximum (spend first with `manaregen 0` and Y held, then
+  `manaregen off`). `drain-applies`: switch on, proc route, `mark1probe
+  autocost drain`, `mark1probe autodrain <p>` with p = 50 × R / (n × M),
+  two decimals, M the maximum, and `statask 42` between 0.4 R and 0.6 R;
+  from below the maximum (spend: `mark1probe autocost maxmana` 2 s, then
+  `autocost drain`), screenshot, 3 s, screenshot: pass when the gain is at
+  most 0.75 × `regen-units`' 3 s gain. `drain-below`: `mark1probe manaregen
+  -<R>` (R rounded), screenshot, 10 s, screenshot: mana falls (a replenish
+  below zero drains) or holds within 0.5% (it stops at zero), recorded as
+  one or the other. Then `manaregen off`, `autocost maxmana`, `autodrain 1`.
+- S17, teardown: `hs_stop_game`, `hs_saves_inspect`, `hs_saves_restore`,
+  inspect clean, `hs_lease_release`.
 
-**Checks.** Session validity, all required: `dll-hash`, `control` and
-`marker`. Acceptance, all required: `roll-lines`, `tip-order`, `bonus-4`,
-`free-continuous`, `prio-order`, `held-mask`, `lock-key` and `icon-grey`.
-Research, never required: `held-continues`, `proc-interval` and
-`cost-applies`. If Stats live 1's decision reads both `held-route:
-not-observed` and `auto-route: press`, the owner is asked before this
-session runs.
+**Checks.** Session validity, all required: `dll-hash`, `control`,
+`marker` and `proc-control`. Acceptance, all required: `ranges`,
+`range-header`, `roll-lines`, `tip-order`, `tip-lit`, `bonus-2`, `bonus-3`,
+`bonus-4`, `ms-applies`, `prio-order`, `proc-casts`, `free-continuous`,
+`held-procs`, `held-continues`, `lock-key`, `icon-grey`, `icon-clear` and
+`maxmana-applies`. Research, never required: `allres-route`,
+`piece-sheet`, `bonus-equip`, `ms-cast`, `proc-interval`, `proc-stack`,
+`stat-read`, `cast-base`, `mana-control`, `regen-zero`, `toggle-drain`,
+`proc-mana`, `regen-units`, `drain-applies` and `drain-below`.
+
+### Stats live 1 results
+
+Stats live procedure 1 ran once on 2026-10-22 (12:43 to 14:52 UTC), on save
+slot 14, "Sorak" (White Mage), in town, and restored its saves clean at the
+end. It ran the research build from ForgePact `13c9c1b` (DLL SHA-256
+`c5f3376b9e5d42f939d300d7cdd5a33a1017f06901b20692a134806be57eefe1`), with
+the hub's x64dbg MCP attached from D1, after S2, until its detach after D3.
+The capture is the playtest workorder's
+`forgepact-166-mark1-set-playtest2-live-1.md`, kept with the hub's workorder
+files and not tracked. The steps ran in this order: S1, S2, D1, S3 to S7,
+D2, D3, the detach, S8 to S10, P1 to P9, S11 to S13.
+
+`tools/live_checks.py` reads 61 checks: 40 pass, 8 fail, 9 not-observed
+and 4 not-run. All five session-validity checks passed. Of the 17
+acceptance checks, 9 passed, 5 failed (`bonus-3`, `ms-applies`,
+`prio-order`, `lock-key` and `icon-grey`) and 3 were not observed
+(`tip-lit`, `bonus-2` and `bonus-4`). Of the 39 research checks, 26
+passed, 3 failed, 6 were not observed and 4 were not run. Each verdict that
+is not a pass names its class: an implementation defect, a wrong model of
+the game, or a procedure or instrument defect. A negative here is "not
+observed" unless a control in the same window backs it.
+
+**The bar as read** (`skillstate`, D3): row 0 held Dark Oath (242) at 0,0,
+Chain of Holy Light (250, the right button's skill in S10) at 0,2, Mana Orb
+(253) at 0,3 (Q), Healing Zone (252) at 0,4 (E) and Soul Spurn (240, a
+toggle) at 0,5 (R). Shadow Bolt (239) was learned but not on the drawn bar.
+After `hs_skill_bind` refused and the operator's input was blocked by the
+permission classifier, the owner bound Shadow Bolt to 0,6 (Y) by hand
+through the bar editor, a manual step; from then the automated columns read
+`talents=253/252/240/239 free=0/0/-/1`. `tgprobe talents`, at game speed
+144: Mana Orb `abilityCooldown` 6, Healing Zone 14, Soul Spurn and Shadow
+Bolt 0.25 (no cooldown).
+
+| Check | Verdict | What it showed |
+|---|---|---|
+| `dll-hash` | pass | The lease hashed the installed DLL as `c5f3376b…eefe1`, the Live 1 build. |
+| `control` | pass | `pong (YYTK 4.0.1)`. |
+| `marker` | pass | `mark1probe: research build`; the first `mark1set stat` second line read `hold=4 yield=56 rest=24 mask=0,1,2,7,8,9,10,11 route=press procs=0 proc-fail=0 locked=0 cost=drain drain=1.00 drained=0 cast-base=1.00` and `grey=0 grey-box=0`, with `dressed=0 legacy=0` (Sorak's save held no piece). |
+| `dbg-control` | pass | The logpoint on `PlayerMovement` logged from `pm #698` at arming to `pm #452325` at D3's end, about 73 a second; the attach tool proved the instrument by the game's frame counter (9004 to 9148 before arming, no answer at the control's hold, 9311 after). |
+| `roll-spawn` | pass | Four `dressed=yes tier=5 roll=top` lines, `a=1000107603` (helmet), `1001763963` (body), `1002117248` (boots) and `1003001195` (gloves); `dressed=` 0 to 4. |
+| `roll-lines` | pass | In the bag, none worn: the helmet `+180% Enhanced Defense`, `+3 to All Skills`, `+35 to Vitality`, `+30% to All Resistances` and `Sockets (2)`; the body `+280% Enhanced Defense`, `+4 to All Skills`, `+400 to Life`, `+125% Faster Hit Recovery` and `Sockets (4)`; the boots `+200% Enhanced Defense`, `+25 Life After each Kill` and `+30% to All Resistances`; the gloves `+100% Enhanced Defense`, `+3 to All Skills` and `+20 to All Attributes`; each under a `Defense:` header. |
+| `tip-order` | pass | On all four: the piece's own lines, the set block in the table's order with the description under `+1 to Automation`, `Mark 1` and the four names, `Sockets (N)` where the piece has one, then the footer. |
+| `tip-layout` | pass | Every row inside the box, none cut or over another (the cursor sprite covers some text in the shots). |
+| `tip-lit` | not-observed | Procedure. S5 (two pieces: `+500 Defense` lit, the rest grey, two names green) and S7 (every line lit, four names green) read as designed; no hover was taken at S6. |
+| `desc-font` | pass | `desc-font=small`; the description's capitals about 17 px high against the bonus lines' 22 px, at 2560 × 1440. |
+| `ms-line` | pass | `-50% Movement Speed` a row of its own; the description no longer says "half speed". |
+| `bonus-2` | not-observed | Instrument. `pieces=2 lit=1/0/0` and every id read at its original, but id 92 (Defense) had no local dispatcher call in the whole session, so its answer was never read (`92=-`). |
+| `bonus-3` | fail | Instrument. `pieces=3 lit=1/1/0` and 161 266 to 301, up 35, but 38 read `46->46` in two reads. `bonusread` shows each id's last local dispatcher call, and 38's consumer count stayed 0 at S6 (`answered=0/4/0/0/0/0`) while 161's rose: the game made no id-38 call after the boots went on, so `46->46` predates the third piece. At S7, with the automation casting Healing Zone, 38 was asked again and read `159->184`, up 25, the core's three-piece answer. 38's original moving from 46 to 159 and 242 is plausibly Healing Zone's own replenish while it runs (not established). |
+| `bonus-4` | not-observed | Instrument. `pieces=4 lit=1/1/1 bonus=on active=yes`; 2 read 28 to 33, 36 read 4901 to 5651, and the HUD life maximum moved between 4901 and 5651 with `mark1set bonus 0` and `1`; id 97 (Physical Damage Taken Reduced) was never asked (`97=-`). |
+| `bonus-off` | pass | With `mark1set bonus 0` every answer equalled its original, and `answered=0/185/457/455/50/0` read the same in two reads 5 s apart. |
+| `ms-applies` | fail | Procedure. `playerEffect[199]` read 0.65 (briefly 0.67) on every watched frame of the switch-on walk: Shadow Bolt, automated and cast continuously, slows the walk (the cast's slowdown). No frame read 1, so the check had nothing to measure. The modes were 0.775 against 2.385 px a frame (means 0.788 and 2.393, 295 and 298 moving samples), a ratio of 0.325, which is 0.50 × 0.65: the half walk applies exactly and compounds with the cast's slowdown. |
+| `prio-order` | fail | Wrong model of the game, on the press route. In the 30 s window Q's Mana Orb took 74 presses and landed none, E landed 2 (its 10.94 s cooldown at Skill Haste 56) and Y 72; R's Soul Spurn was already on and was not pressed. `free=0/0/-/1` was right, and the probe's `casts=239:72,252:2` equalled the landings. The game refuses Mana Orb by key for a reason beyond its 6 s cooldown, plausibly while its orb lives (not established); the core pressed Q first, as designed. |
+| `roll-save` | pass | After `hs_exit_to_menu`, a restart and `hs_select_character 14`: `dressed=8`, and each worn piece showed its S4 lines, the helmet with S11's gem lines merged in. |
+| `lock-key` | fail | Procedure. The lock-off control held Q, whose key casts the game refused (above): Mana Orb cast 0 times and landed 0, so the window could not show key casts landing in the yield. The lock-on half read as designed: 253 cast once and landed once, `locked=` 0 to 576. |
+| `icon-grey` | fail | Implementation. `grey=4 grey-box=0` with four automated columns, and the slot boxes' mean luminance with the switch on, against 18 s after it went off, read Q 44.9 against 46.2, E 17.8 against 46.1, R 54.4 against 54.4 and Y 14.8 against 40.6. E's and Y's darkness was the game's own (E still dark 2.5 s after the switch went off, during its cooldown; Y cast continuously): the redraw from `DrawHudBuffs` darkened nothing. The red outline drawn from the same hook shows, because it lies around the icon. |
+| `icon-clear` | pass | `mark1set bonus 0`: `grey=0 grey-box=0`, and every icon at its normal look 18 s later (E dark at 2.5 s, in its cooldown). |
+| `dbg-maxlife` | pass | Research. `StatMaxLife` about once a second idle (10 in 10.26 s), 4 in the 3.6 s around taking the gloves off and 16 in the 15 s around wearing them again. |
+| `dbg-allres` | pass | Research. `StatAllResistances` about twice a second idle (20 in 10.26 s), 10 in the same 3.6 s and 48 in the same 15 s. |
+| `dbg-fireres` | not-observed | Instrument. `StatFireResist`'s own address logged no hit over D1 to D2 while the control logged more than 25,000. The game asks it on events the town did not produce (plausibly a hit taken or the character sheet; not established). |
+| `def-header` | pass | Research. The helmet's header read `Defense: 224 [80] [26-38]`: 224 is 80 × 2.8, and the grey ` [26-38]` is the stand-in Satanic Set piece's range, not ours. |
+| `desc-match` | pass | Research. Our description and Zealot's Book of Prophecy's grant description have the same letter height and line pitch. |
+| `desc-view` | pass | Research. The Book read the same in both ALT states, its ranges (` [31-36]`, ` [7-12]`, ` [10-20]`) and its grant description in both; Options › Gameplay showed `Show Item Information` on, so both were the information view. |
+| `piece-sheet` | fail | Procedure. Against S2: 2 25 to 25, 161 240 to 236, 36 4374 to 4718. The pieces replaced worn items, so the baseline held the old helmet's and body's stats. |
+| `allres-route` | not-observed | Instrument. 162 had no local dispatcher call with the switch on or off. Beside it, 167's original read 339 with the switch off and 374 with it on, up 35. |
+| `bonus-equip` | fail | Procedure. Taking the gloves off with the switch on: 0.4 s later the HUD read 5188 / 5651, the maximum not yet down, with `pieces=3`; about 7 s later 4520 / 4718, down 933, the bonus's 750 plus plausibly the gloves' own All Attributes' life (an inferred split). The screenshot came before the game's next maximum-life read (about one a second idle, `dbg-maxlife`). The maximum was back at 5651 once they were worn again. |
+| `hold-cadence` | pass | Research. Switch off, Y held 10 s: 24 Shadow Bolt casts; at 149 gate calls a second, about 62 frames between casts. |
+| `free-cadence` | pass | Research. Switch on, 10 s with no key: 26 Shadow Bolt casts with the press held 4 frames, 25 with 3. |
+| `held-entry` | pass | Research. The right button held: `inputState` entries 2, 27 and 40 read 4 for one frame, then 3 for the hold. |
+| `held-blocks` | pass | Research. Mask off, the right button held 8 s: automated landings Q 0, E 1, R 0 and Y 20; the right button's skill (Chain of Holy Light, 250) cast 18 times. |
+| `held-mask` | pass | Research. The default mask (`0,1,2,7,8,9,10,11`, which holds 2 but not 27 or 40) and the same hold: landings Q 0, E 1, R 0 and Y 21; 250 cast once. |
+| `held-continues` | not-observed | Procedure. 250 cast once in the masked window; the 3 s after, switch off, ran without the button held (`casts=none`). |
+| `proc-control` | pass | Switch off, Y then E pressed once each: a `TalentUseClass` line with self `Player_obj`, argc 10, a0 239 (and 252), a1 a ref (kind 15) to the player's instance, a2 1, a3 false, a4 true, a5 0, a6 and a7 -1; inside it a nested call with a0 243 (an integer), a4 false and a5 55; `casts=239:1,252:1`. A third line was the double-cast proc: self `Universal_Double_Cast_obj`, a0 239, a4 false, a6 109.17 and a7 3.15. |
+| `proc-cast` | pass | Research. Through `skillprobe call TalentUseClass Player_obj 0 … confirm`, argc 8: shape A (P1's arguments) and shape B (a4 false, a6 and a7 Sorak's x 912 and y 960) both cast Shadow Bolt (`effect=` 0 to 1) and Healing Zone (the zone in the screenshot) with no throw and the `TalentUse` row at 0. Shape A made the nested 243 call (and for Healing Zone a double-cast proc); shape B made neither. Shape B is the passing shape. |
+| `proc-cooldown` | pass | Research. The control: E pressed twice 0.5 s apart cast once. After a proc of Healing Zone, E pressed within 1 s landed (`casts=252:1`): the proc set no cooldown the key respects. |
+| `proc-mana` | not-run | Instrument. Five key casts of Y 2 s apart left the HUD at 2352 / 2352 before and after: the control did not fall, so the proc calls were not run. |
+| `proc-level` | pass | Research. `White_Mage_Healing_Zone_obj` after a key cast and after a proc: `heal` 17, `augmentLevel` 0, `deadly` 1, `skillId` 252, `isProc` false and `tick_frequency` 144 in both, and every member equal but `deltaTimer`, `destroyTimer`, `inviewCheck`, `trail_x` and `trail_y`. |
+| `proc-cd` | pass | Research. Switch off, E held 30 s: 3 casts over 31.25 s, 10.42 s each; `abilityCooldown` 14, `fcr=106 haste=56`. The model's cooldown 14 / 1.28 = 10.94 s plus its cast time 1 / 2.06 = 0.49 s is 11.42 s, within 15%; the longer of the two, 10.94 s, is closer. |
+| `proc-auto` | not-observed | Procedure. With `autoproc id,261723,1,false,false,0,x,y` and `autoroute proc`: `route=proc`, `procs=` 0 to 57 in 30 s, `proc-fail=0`, Y 48 landings against the 37 needed (0.8 × 30 s over 0.649 s at `fcr=54`), Healing Zone 3 calls, and the `TalentUse` row moved only for one press of R, the toggle. Healing Zone's per-call spacing was never printed. |
+| `proc-held` | pass | Research. Proc route, the right button held 8 s: `procs=` 90 to 106, and 250 cast 16 times. |
+| `socket-fill` | pass | Research. A green gem clicked onto the helmet: the gem drawn in its icon, the gem's lines (Attack Rating, Life and Mana stolen per Hit, Mana) merged into the piece's own with no separate socket line, and the required level 26 to 67. |
+| `dbg-manaregen` | pass | Research. `StatManaReplenish`: none in a 10.26 s idle; 20 over five key casts of Y in 14.7 s. |
+| `dbg-maxmana` | pass | Research. `StatMaxMana`: 11 in the idle; 14 over the casts. |
+| `dbg-manaupdate` | pass | Research. `PlayerManaUpdate`: none in the idle; 25 over the five casts. |
+| `proc-interval` | pass | Research. The mean spacing over P5's 30.05 s against the computed interval: Q 5.0 s against 4.69 s, E 10.0 s against 10.94 s, Y 0.63 s against 0.649 s. |
+| `lock-click` | not-observed | Procedure. A left click on a bar icon opens the game's skill-bar editor and casts nothing, with the lock off too, so there is no click-cast path to lock and the lock-on window was not run. A left click on open ground closes the editor; Escape does not. |
+| `lock-proc` | pass | Research. Proc route, lock on, Q held 5 s: `procs=` 106 to 119, and Mana Orb's `TalentUse` casts 0. |
+| `grey-enabled` | pass | Research. `autogrey enabled`: Q, E, R and Y drawn dark in the game's own look; Shadow Bolt's tooltip showed on hover, and a left click opened the bar editor as without it. `autogrey box` drew red boxes and darkened no icon. |
+| `grey-game` | not-run | Procedure. No skill on the bar failed its requirement. |
+| `cast-interval` | pass | Research. Switch off, `fcr=106`, Y held 10 s: 24 casts, 417 ms apart. |
+| `cast-interval-fcr` | pass | Research. With `statadd castrate 100`: 30 casts, 333 ms apart. |
+| `stat-read` | fail | Instrument. `fcr=` read 106 then 192, up 86, the second read with the switch on. `fcr=` is the adapter's cached read, refreshed only while the bonus is active, and it moved between 54 and 106 across the session (plausibly a skill effect; not established), so one read either side cannot isolate the 100. |
+| `interval-model` | pass | Research. Base = interval × (1 + fcr / 100): 0.858 s and 0.973 s, 13.4% apart with `fcr=` as read (18.9% with 206). |
+| `regen-units` | not-observed | Instrument. Mana stayed at 2352 / 2352 before and after the 10 s; id 42's original read 415. |
+| `drain-applies` | not-run | Instrument. The one window that started below the maximum reached it, 983 to 2352 within 10 s, at least 137 a second; key casts moved no HUD mana, so no window could be held below the maximum. |
+| `maxmana-applies` | pass | Research. `autocost maxmana` with n = 3 proc columns (Q, E and Y; R a toggle): the HUD read 941 / 940.80 and id 37's answer 940.8, which is 2352 × (1 − 0.2 × 3). |
+| `drain-zero` | not-run | `drain-applies` did not pass. |
+
+**What else the session showed.**
+
+- **The proc template has no player token** (implementation). `mark1probe
+  autoproc` takes only `id`, `x`, `y`, `true`, `false`, `undefined` and
+  numbers, so P5 passed a1 as the number 261723, a real, where the game's
+  own call and `skillprobe call`'s `id:` pass a ref (kind 15). Whether those
+  procs cast is not established, because on the proc route `landed=` counts
+  calls that returned, not casts.
+- **A proc column's clock is forgotten on every room change** (implementation,
+  the round-0 reviewer), so a cooldown skill procs again on entering a room.
+- **Ids not asked in town.** 92, 97, 162, 163, 164 and 165 had no local
+  dispatcher call in the whole session, and 21 none either; Stats live 2
+  asks the dispatcher itself (`mark1probe statask`).
+- **The cached `fcr=` drifted**: it read 55, 106, 54, 68, 106, 56, 57, 70,
+  102, 106, 192 (with castrate 100), 55 and 54 across the session.
+- **The pieces' rolled lines draw no roll range**, the owner's note after
+  the session, confirmed from the session's Item Truth journal: the header's
+  grey range and the sockets row's range are the stand-ins' (headers
+  ` [26-38]`, ` [10-18]`, ` [2-6]` and ` [1-3]`; sockets ` [1-3]` and
+  ` [1-4]`), and the rolled lines draw value and label only.
+- **The owner's other notes.** The low life with the switch on (as low as
+  531 / 5651 in P6) is Healing Zone's own constant life drain, not Mark 1;
+  the maximum-life reads are unaffected. Mana Orb raises mana regen and
+  passive regen exists as well, so the HUD cannot show a mana cost while
+  regen refills it; Stats live 2 turns every regen source off first.
+- The spawned pieces went to the bag's first Extra tab, not Main.
+- The `watch effect` window hit its 400-line cap, so `playerEffect[199]`
+  was visible for about the first 130 frames of each walk only.
+
+### Stats live 1 decision
+
+Recorded on 2026-10-22 from Stats live 1 (results above) and replan 1's
+reading of them. Each key takes exactly one value, on a line of its own,
+with its reason on the line below.
+
+allres-route: dispatcher
+Id 162 was never asked in town (`allres-route` not observed), so the shipped default stays and Stats live 2's `allres-route` reads it through `statask`.
+
+hold-value: 4
+`free-cadence` counted 26 Shadow Bolt casts in 10 s with the press held 4 frames against 25 with it held 3.
+
+yield-frames: 61
+`hold-cadence` measured about 62 frames between the casts of a held key.
+
+held-route: mask
+`held-mask` counted 22 automated landings during the hold while the right button's skill fell from 18 casts to 1, and with the mask off the hold blocked nothing either (21 landings); on the proc route the mask acts only on a toggle's press.
+
+mask-entries: 0,1,2,7,8,9,10,11,27,40
+`held-entry` saw the held right button set entries 2, 27 and 40, and the default mask lacked 27 and 40.
+
+getter-reads: periodic
+`StatMaxLife` was read about once a second and `StatAllResistances` about twice a second while idle, both faster around an equip change, and `StatFireResist` was not observed.
+
+desc-view: both
+Zealot's Book drew its ranges and its grant description in both ALT states, with Show Item Information on.
+
+auto-route: proc
+`proc-control`, `proc-cast`, `proc-level`, `proc-cd`, `proc-held`, `lock-proc` and `maxmana-applies` passed and `proc-auto`'s only unread part was Healing Zone's per-call spacing, so the proc route is adopted, the default of the open question "Adopting the proc route".
+
+proc-shape: id,player,1,false,false,0,x,y
+Shape B cast both talents with `TalentUse` unmoved, and it is written with a player token in place of the literal instance number P5 passed as a real.
+
+cast-base: 0.86
+`cast-interval`'s 417 ms × (1 + 106 / 100) gives 0.86 s from a `fcr=` read that was stale, so Stats live 2's `cast-base` measures it again with fresh reads.
+
+replenish-unit: 1.00
+Not observed: no mana window stayed below the maximum, so the planned unit stays.
+
+drain-route: not-observed
+An instrument defect, neither `blind` nor `cached`: `drain-applies` was not run because the HUD could not hold a window below the maximum, so Stats live 2 measures it with every regen source off.
+
+cost: maxmana
+`maxmana-applies` read the HUD maximum at 940.80 and id 37's answer at 940.8 with three proc columns, while the drain stayed unmeasured.
+
+grey-look: enabled
+The redraw and the box drew nothing visible on the icons, and `enabled` drew all four in the game's own dark look with the tooltip and the click unchanged.
+
+baseline-regen: not-observed
+No 10 s window stayed below the maximum mana.
+
+These set the workorder's route tokens `auto-route: proc`, `cost: maxmana`,
+`grey-look: enabled`, `hold-value: 4`, `held-route: mask`, `desc-view:
+both` and `allres-route: dispatcher`. Stats live procedure 2, above, runs
+on the build that applies them.
