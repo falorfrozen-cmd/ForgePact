@@ -250,6 +250,25 @@ class Mark1ProbeBehaviorTests(unittest.TestCase):
         self.assertIn("mark1probe bonusothers: 92:Mercenary_obj*344=120->120@a0=1",
                       self.line("bonusothers/line_none_one_order_cap_and_a0"))
 
+    def test_probe_vitals_line(self):
+        # Replan 4: `vitals [<frames>]` parses (1..3600); the pair parser takes
+        # `<number> / <number>` with spaces optional and decimals (the HUD drew
+        # `941 / 940.80`) and nothing else; the reading line, the unread line,
+        # and the window's end line with dt and the gains from the two draws'
+        # clocks; an unread start opens no window, and a window with no new
+        # draw ends unread 120 frames after its end.
+        self.assertScenarios("vitals/parse", "vitals/pair_parser", "vitals/line")
+        self.assertIn("mark1probe vitals: life=5651/5651 mana=941/940.8 frame=1000 t=50000", self.line("vitals/line"))
+
+    def test_probe_vitals_pairs_matched_by_maximum(self):
+        # Life and mana are told apart by each pair's maximum against the
+        # dispatcher's answers for 36 and 37 (within 1), never by order: the
+        # same pairs in either order read the same, a pair matching neither is
+        # ignored, one part missing is `unread` naming which, and a pair that
+        # matches both is never taken (the negative control). Texts outside a
+        # DrawHud call are not kept.
+        self.assertScenario("vitals/pairs_matched_by_maximum")
+
     def test_automation_overrides_parse_apply_and_refuse(self):
         # `autohold` ... `autocast`: each takes its own range, answers the
         # value now in force, and `autoroute proc` with no shape set answers

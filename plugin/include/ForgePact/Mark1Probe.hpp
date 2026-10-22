@@ -70,7 +70,8 @@ namespace ForgePact::Mark1Probe {
 // replenish, id 42, answered with a set value whatever the switch says) and
 // `procgaps` (each automated column's procs, gaps and interval). Replan 4
 // adds `bonusothers` (the dispatcher calls of the watch list whose self is not
-// the local player, per asking object).
+// the local player, per asking object) and `vitals` (current and maximum life
+// and mana as the HUD draws them, read in process).
 //
 // The drops (phase 3, Mark1Drops.hpp) add three forms for their live session:
 // `heroic <n>` calls the Heroic roll by name and tallies what it placed, the
@@ -444,8 +445,9 @@ enum class Form : int {
     // The replan's research forms (Live procedure 2): the dispatcher asked
     // directly, the mana replenish's forced answer, and the proc gaps.
     StatAsk, ManaRegen, ProcGaps, ProcGapsReset,
-    // Replan 4: the watch list's calls from selves other than the local player.
-    BonusOthers, BonusOthersReset,
+    // Replan 4: the watch list's calls from selves other than the local player,
+    // and life and mana as the HUD draws them.
+    BonusOthers, BonusOthersReset, Vitals,
 };
 
 // `spawn`'s roll word: every stat at the top of its range, every stat at the
@@ -510,7 +512,7 @@ inline const char* DrawSideText(DrawSide s)
 struct Command {
     Form        form = Form::Status;
     Lever       lever;                     // Set, Scale, Move, Stat, Hold, Statpin
-    int64_t     frames = 0;                // Watch, Count, Pos, Statlog
+    int64_t     frames = 0;                // Watch, Count, Pos, Statlog; Vitals: the window (0: none)
     int         count = 0;                 // Args: calls to print; WalkScan: points; Heroic, Unique: calls; Pool:
                                            // the sub-list (Mark1Drops' default when not given); Copies: the copies;
                                            // KillgateSet: the lever, 0 or 1; DrawsSet: the watch,
@@ -795,6 +797,13 @@ inline bool Parse(const std::vector<std::string>& tok, Command& c, std::string& 
         why = "usage: mark1probe bonusothers [reset]";
         return false;
     }
+    if (head == "vitals") {
+        if (n == 1) { c.form = Form::Vitals; return true; }
+        if (n != 2) { why = "usage: mark1probe vitals [<frames>]"; return false; }
+        if (!detail::ParseFrames(tok[1], c.frames, why)) return false;
+        c.form = Form::Vitals;
+        return true;
+    }
     if (head == "statask") {
         const std::string usage = "usage: statask <id>[,<id>...], at most " + std::to_string(kMaxStatAskIds)
             + " ids, each a whole number 0.." + std::to_string(kMaxStatId);
@@ -1028,7 +1037,7 @@ inline bool Parse(const std::vector<std::string>& tok, Command& c, std::string& 
     }
     why = "unknown form " + tok[0]
         + " (hook, off, show, args, watch, set, scale, hold, move, stat, statpin, statlog, count, pos, base, spawn, heroic,"
-          " unique, pool, copies, killgate, draws, walkable, bonusread, bonusothers, statask, manaregen, procgaps, autohold, automask,"
+          " unique, pool, copies, killgate, draws, walkable, bonusread, bonusothers, statask, manaregen, procgaps, vitals, autohold, automask,"
           " autoyield, autorest, autoroute, autoproc, autolock, autogrey, autocost, autodrain or autocast)";
     return false;
 }
@@ -1057,6 +1066,7 @@ inline std::vector<std::string> Usage()
         "  mark1probe statask <id>[,<id>...]                    ask the stat dispatcher for each id (at most 8) now, as a game call would",
         "  mark1probe manaregen <value>|off                     answer the local player's mana replenish (id 42) with the value, switch on or off",
         "  mark1probe procgaps [reset]                          per automated column: procs, the smallest and mean gap in ms, the interval",
+        "  mark1probe vitals [<frames>]                         life and mana as the HUD draws them; with frames (1..3600), an end line with the gains",
         "  mark1probe autohold 3|4                              the value a no-cooldown column is pressed with, this session",
         "  mark1probe automask off|default|<e>[,<e>...]         the entries rested while the automation presses, this session",
         "  mark1probe autoyield <0-600> | autorest <0-600>      the frames left alone after a landing / a cooldown column rests",
@@ -1378,6 +1388,223 @@ private:
         double    intervalMs = 0;
     };
     std::array<Column, kMark1ColumnCount> columns_{};
+};
+
+// ---- `vitals` (replan 4) ----------------------------------------------------------------
+// The local player's current and maximum life and mana as the HUD draws them,
+// read inside the game's process rather than by eye on the screen. The
+// adapter marks the scope of each DrawHud call (a research-only hook by its
+// hs-game-sdk name) and, while it runs, offers every text the runner's text
+// builtins draw to the recorder below, which keeps the texts of the shape
+// `<number> / <number>` of the last DrawHud call, with its frame and a
+// monotonic millisecond time. Which pair is life and which is mana is decided
+// by its maximum equalling, within kVitalsMatchWithin, the dispatcher's
+// answer for id 36 (StatMaxLife) and id 37 (StatMaxMana), asked as `statask`
+// asks: never by draw order or position. `vitals <frames>` prints the reading
+// at once and, once the window has run, an end line with the gains, timed by
+// the recorded draws rather than by when the operator asks.
+inline constexpr long long kVitalsLifeStatId = 36;    // StatMaxLife
+inline constexpr long long kVitalsManaStatId = 37;    // StatMaxMana
+inline constexpr double    kVitalsMatchWithin = 1.0;  // a pair's maximum against the dispatcher's answer
+inline constexpr int64_t   kVitalsStaleFrames = 120;  // the last DrawHud call older than this is no reading
+inline constexpr size_t    kVitalsMaxPairs = 32;      // pairs kept per DrawHud call; the rest are not kept
+
+struct VitalsPair {
+    double current = 0;
+    double maximum = 0;
+};
+
+namespace detail {
+
+inline std::string_view TrimSpaces(std::string_view s)
+{
+    while (!s.empty() && s.front() == ' ') s.remove_prefix(1);
+    while (!s.empty() && s.back() == ' ') s.remove_suffix(1);
+    return s;
+}
+
+// One part of a pair: digits with an optional fraction, no sign.
+inline bool ParseVitalsPart(std::string_view s, double& out)
+{
+    s = TrimSpaces(s);
+    if (s.empty() || s[0] < '0' || s[0] > '9') return false;
+    return ParseNumber(s, out);
+}
+
+} // namespace detail
+
+// `<number> / <number>`, spaces optional around either number, decimals
+// allowed (the HUD drew `941 / 940.80`), and nothing else in the text.
+inline bool ParseVitalsPair(std::string_view text, VitalsPair& out)
+{
+    const size_t slash = text.find('/');
+    if (slash == std::string_view::npos || text.find('/', slash + 1) != std::string_view::npos) return false;
+    VitalsPair p;
+    if (!detail::ParseVitalsPart(text.substr(0, slash), p.current) || !detail::ParseVitalsPart(text.substr(slash + 1), p.maximum))
+        return false;
+    out = p;
+    return true;
+}
+
+// One DrawHud call as the recorder saw it.
+struct VitalsDraw {
+    bool                    seen = false;   // a DrawHud call has completed
+    int64_t                 frame = 0;
+    long long               ms = 0;         // the monotonic clock when the call began
+    uint64_t                texts = 0;      // texts offered during the call
+    std::vector<VitalsPair> pairs;          // those of the pair shape, in draw order
+};
+
+// Begin and End bracket a DrawHud call (a nested call is part of the outer
+// one); Offer outside a call does nothing. The last completed call is kept.
+class VitalsRecorder {
+public:
+    void Begin(int64_t frame, long long ms)
+    {
+        if (depth_++ == 0) current_ = VitalsDraw{ true, frame, ms, 0, {} };
+    }
+    void Offer(std::string_view text)
+    {
+        if (depth_ <= 0) return;
+        ++current_.texts;
+        VitalsPair p;
+        if (current_.pairs.size() < kVitalsMaxPairs && ParseVitalsPair(text, p)) current_.pairs.push_back(p);
+    }
+    void End()
+    {
+        if (depth_ <= 0) return;
+        if (--depth_ == 0) last_ = current_;
+    }
+    bool InScope() const { return depth_ > 0; }
+    const VitalsDraw& Last() const { return last_; }
+
+private:
+    int        depth_ = 0;
+    VitalsDraw current_;
+    VitalsDraw last_;
+};
+
+// The dispatcher's answer for 36 or 37: `known` false when it gave no number.
+struct VitalsMax {
+    bool   known = false;
+    double value = 0;
+};
+
+struct VitalsReading {
+    bool        ok = false;
+    std::string reason;      // why it is unread (ok false)
+    VitalsPair  life;
+    VitalsPair  mana;
+    int64_t     frame = 0;   // the DrawHud call's
+    long long   ms = 0;
+};
+
+inline VitalsReading VitalsUnread(std::string reason)
+{
+    VitalsReading r;
+    r.reason = std::move(reason);
+    return r;
+}
+
+// The last DrawHud call's pairs against the dispatcher's two maxima. A pair
+// whose maximum matches neither is ignored; one that matches both cannot be
+// told apart and is counted, never taken; the last pair matching one part
+// wins (the HUD may draw a text twice, an outline under it).
+inline VitalsReading ReadVitals(const VitalsDraw& draw, int64_t nowFrame, VitalsMax life, VitalsMax mana)
+{
+    if (!draw.seen || draw.texts == 0 || nowFrame - draw.frame > kVitalsStaleFrames)
+        return VitalsUnread("no DrawHud text in the last " + std::to_string(kVitalsStaleFrames) + " frames");
+    if (!life.known || !mana.known) {
+        std::string which = !life.known && !mana.known ? "36 or 37" : !life.known ? "36" : "37";
+        return VitalsUnread("the dispatcher gave no number for " + which);
+    }
+    VitalsReading r;
+    bool haveLife = false, haveMana = false;
+    int both = 0;
+    for (const VitalsPair& p : draw.pairs) {
+        const bool isLife = std::fabs(p.maximum - life.value) <= kVitalsMatchWithin;
+        const bool isMana = std::fabs(p.maximum - mana.value) <= kVitalsMatchWithin;
+        if (isLife && isMana) { ++both; continue; }
+        if (isLife) { r.life = p; haveLife = true; }
+        if (isMana) { r.mana = p; haveMana = true; }
+    }
+    if (!haveLife || !haveMana) {
+        std::string missing;
+        if (!haveLife) missing = "no pair matched 36 (life max " + NumberText(life.value) + ")";
+        if (!haveMana) missing += std::string(missing.empty() ? "" : ", ") + "no pair matched 37 (mana max " + NumberText(mana.value) + ")";
+        missing += "; " + std::to_string(draw.pairs.size()) + " pairs drawn";
+        if (both) missing += ", " + std::to_string(both) + " matching both";
+        return VitalsUnread(missing);
+    }
+    r.ok = true;
+    r.frame = draw.frame;
+    r.ms = draw.ms;
+    return r;
+}
+
+inline std::string VitalsPairText(const VitalsPair& p)
+{
+    return NumberText(p.current) + "/" + NumberText(p.maximum);
+}
+
+inline std::string VitalsBody(const VitalsReading& r)
+{
+    return "life=" + VitalsPairText(r.life) + " mana=" + VitalsPairText(r.mana) + " frame=" + std::to_string(r.frame)
+        + " t=" + std::to_string(r.ms);
+}
+
+// `mark1probe vitals: life=<cur>/<max> mana=<cur>/<max> frame=<f> t=<ms>`, or
+// `mark1probe vitals: unread (<reason>)`.
+inline std::string VitalsLine(const VitalsReading& r)
+{
+    return "mark1probe vitals: " + (r.ok ? VitalsBody(r) : "unread (" + r.reason + ")");
+}
+
+// The window's end line: the end reading, then dt (the two draws' clocks),
+// each part's gain in current value and the mana gained per second (`?` with
+// no time between the two draws).
+inline std::string VitalsEndLine(const VitalsReading& start, const VitalsReading& end)
+{
+    if (!end.ok) return "mark1probe vitals end: unread (" + end.reason + ")";
+    const long long dt = end.ms - start.ms;
+    const double manaGain = end.mana.current - start.mana.current;
+    return "mark1probe vitals end: " + VitalsBody(end) + " dt=" + std::to_string(dt)
+        + " life-gain=" + NumberText(end.life.current - start.life.current) + " mana-gain=" + NumberText(manaGain)
+        + " mana-per-s=" + (dt > 0 ? NumberText(manaGain * 1000.0 / static_cast<double>(dt)) : std::string("?"));
+}
+
+// `vitals <frames>`: started on a read start (an unread one starts nothing),
+// due once the window has run and a DrawHud call at or after its end was
+// recorded, or kVitalsStaleFrames after its end in any case (that reading is
+// then unread). A new start replaces a running window.
+class VitalsWindow {
+public:
+    bool Start(const VitalsReading& start, int64_t nowFrame, int64_t frames)
+    {
+        running_ = start.ok;
+        if (!running_) return false;
+        start_ = start;
+        due_ = nowFrame + frames;
+        return true;
+    }
+    bool Running() const { return running_; }
+    int64_t DueFrame() const { return due_; }
+    bool Due(int64_t nowFrame, const VitalsDraw& last) const
+    {
+        if (!running_ || nowFrame < due_) return false;
+        return (last.seen && last.frame >= due_) || nowFrame - due_ >= kVitalsStaleFrames;
+    }
+    // The end line; the window ends.
+    std::string Finish(const VitalsReading& end)
+    {
+        running_ = false;
+        return VitalsEndLine(start_, end);
+    }
+
+private:
+    bool          running_ = false;
+    int64_t       due_ = 0;
+    VitalsReading start_;
 };
 
 // ---- the automation's overrides (`autohold` ... `autocast`) -----------------------

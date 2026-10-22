@@ -2525,7 +2525,7 @@ int main()
     }
     {
         const std::vector<std::pair<std::string, std::string>> refused = {
-            { "bogus", "unknown form bogus (hook, off, show, args, watch, set, scale, hold, move, stat, statpin, statlog, count, pos, base, spawn, heroic, unique, pool, copies, killgate, draws, walkable, bonusread, bonusothers, statask, manaregen, procgaps, autohold, automask, autoyield, autorest, autoroute, autoproc, autolock, autogrey, autocost, autodrain or autocast)" },
+            { "bogus", "unknown form bogus (hook, off, show, args, watch, set, scale, hold, move, stat, statpin, statlog, count, pos, base, spawn, heroic, unique, pool, copies, killgate, draws, walkable, bonusread, bonusothers, statask, manaregen, procgaps, vitals, autohold, automask, autoyield, autorest, autoroute, autoproc, autolock, autogrey, autocost, autodrain or autocast)" },
             { "heroic", "usage: heroic <n>, n a whole number 1..20" },
             { "heroic 0", "usage: heroic <n>, n a whole number 1..20, not 0" },
             { "heroic 21", "usage: heroic <n>, n a whole number 1..20, not 21" },
@@ -2631,7 +2631,7 @@ int main()
         bool every = true;
         for (const char* f : { "hook", "off", "show", "args", "watch", "set", "scale", "hold", "move", "stat", "statpin", "statlog",
                                "count", "pos", "base", "spawn", "heroic", "unique", "pool", "pool kill", "copies", "killgate", "draws", "draws push", "pool draw", "walkable",
-                               "statask", "manaregen", "procgaps" }) {
+                               "statask", "manaregen", "procgaps", "vitals" }) {
             bool found = false;
             for (const std::string& l : usage) found = found || l.find(std::string("mark1probe ") + f) != std::string::npos;
             every = every && found;
@@ -2810,6 +2810,122 @@ int main()
                   && several == "mark1probe procgaps: Q=3/6000/6250/5501 E=2/11000/11000/10940 R=- Y=1/-/-/?"
                   && q == 3 && reset == zero,
               zero + " | " + one + " | " + several + " | " + reset);
+    }
+
+    // ---- replan 4: vitals, life and mana as the HUD draws them -------------------------
+    {
+        // The form: alone, or with a window of 1..3600 frames.
+        const bool parse = parsed("vitals").form == Form::Vitals && parsed("vitals").frames == 0
+            && parsed("vitals 300").form == Form::Vitals && parsed("vitals 300").frames == 300 && parsed("VITALS 3600").frames == 3600
+            && why("vitals 0") == "frames must be a whole number 1..3600, not 0"
+            && why("vitals 3601") == "frames must be a whole number 1..3600, not 3601"
+            && why("vitals 1.5") == "frames must be a whole number 1..3600, not 1.5"
+            && why("vitals 60 now") == "usage: mark1probe vitals [<frames>]";
+        check("vitals/parse", parse);
+
+        // The pair parser: spaces optional, decimals allowed, nothing else.
+        VitalsPair p;
+        bool pairs = ParseVitalsPair("941 / 940.80", p) && p.current == 941 && p.maximum == 940.8
+            && ParseVitalsPair("5651/5651", p) && p.current == 5651 && p.maximum == 5651
+            && ParseVitalsPair(" 12.5 /3000 ", p) && p.current == 12.5 && p.maximum == 3000;
+        for (const char* text : { "941", "941 /", "/ 940", "a / 2", "1 / 2 / 3", "-5 / 10", "Life 941 / 940", "941 / 940%", "", "1e3 / 2" }) {
+            VitalsPair q;
+            pairs = pairs && !ParseVitalsPair(text, q);
+        }
+        check("vitals/pair_parser", pairs);
+
+        // The lines: the reading, the unread line, and the window's end line
+        // with its gains timed by the two draws.
+        VitalsRecorder rec;
+        rec.Begin(1000, 50000);
+        rec.Offer("941 / 940.80");
+        rec.Offer("5651 / 5651");
+        rec.End();
+        const VitalsReading start = ReadVitals(rec.Last(), 1010, VitalsMax{ true, 5651 }, VitalsMax{ true, 941 });
+        const std::string line = VitalsLine(start);
+        rec.Begin(1300, 55000);
+        rec.Offer("5600 / 5651");
+        rec.Offer("891.3 / 940.80");
+        rec.End();
+        VitalsWindow window;
+        const bool started = window.Start(start, 1010, 290);
+        const bool early = window.Due(1299, rec.Last());
+        const bool due = window.Due(1300, rec.Last());
+        const std::string end = window.Finish(ReadVitals(rec.Last(), 1300, VitalsMax{ true, 5651 }, VitalsMax{ true, 941 }));
+        const std::string unread = VitalsLine(VitalsUnread("no DrawHud text in the last 120 frames"));
+        const std::string sameTime = VitalsEndLine(start, start);
+        const std::string endUnread = VitalsEndLine(start, VitalsUnread("the dispatcher gave no number for 37"));
+        // An unread start starts no window; a window with no new draw is due
+        // 120 frames after its end, and that reading is unread.
+        VitalsWindow none;
+        const bool noStart = !none.Start(VitalsUnread("x"), 1010, 10) && !none.Running();
+        VitalsWindow stale;
+        stale.Start(start, 1010, 10);
+        VitalsRecorder quiet;
+        quiet.Begin(1015, 50100);
+        quiet.Offer("5651 / 5651");
+        quiet.End();
+        const bool staleDue = !stale.Due(1139, quiet.Last()) && stale.Due(1140, quiet.Last());
+        const std::string staleEnd = stale.Finish(ReadVitals(quiet.Last(), 1140, VitalsMax{ true, 5651 }, VitalsMax{ true, 941 }));
+        check("vitals/line",
+              line == "mark1probe vitals: life=5651/5651 mana=941/940.8 frame=1000 t=50000"
+                  && started && !early && due && !window.Running()
+                  && end == "mark1probe vitals end: life=5600/5651 mana=891.3/940.8 frame=1300 t=55000 dt=5000 life-gain=-51"
+                            " mana-gain=-49.7 mana-per-s=-9.94"
+                  && unread == "mark1probe vitals: unread (no DrawHud text in the last 120 frames)"
+                  && sameTime.find(" dt=0 ") != std::string::npos && sameTime.substr(sameTime.size() - 13) == " mana-per-s=?"
+                  && endUnread == "mark1probe vitals end: unread (the dispatcher gave no number for 37)"
+                  && noStart && staleDue
+                  && staleEnd == "mark1probe vitals end: unread (no DrawHud text in the last 120 frames)",
+              line + " | " + end + " | " + sameTime + " | " + staleEnd);
+
+        // Life and mana are told apart by their maxima, never by order: the
+        // same two pairs in either order read the same; a pair matching
+        // neither is ignored; one part missing is `unread`, naming which; a
+        // pair whose maximum matches both is counted and never taken.
+        auto draw = [](std::initializer_list<const char*> texts, int64_t frame = 500) {
+            VitalsRecorder r;
+            r.Begin(frame, 9000);
+            for (const char* t : texts) r.Offer(t);
+            r.End();
+            return r.Last();
+        };
+        const VitalsMax life{ true, 4901 }, mana{ true, 1200 };
+        const VitalsReading forward = ReadVitals(draw({ "4000 / 4901", "800 / 1200" }), 510, life, mana);
+        const VitalsReading backward = ReadVitals(draw({ "800 / 1200", "Level 52", "4000 / 4901" }), 510, life, mana);
+        const VitalsReading noise = ReadVitals(draw({ "3 / 10", "800 / 1200.4", "12 / 40", "4000 / 4900.2" }), 510, life, mana);
+        const VitalsReading noMana = ReadVitals(draw({ "4000 / 4901", "3 / 10" }), 510, life, mana);
+        const VitalsReading noLife = ReadVitals(draw({ "800 / 1200" }), 510, life, mana);
+        const VitalsReading neither = ReadVitals(draw({ "Gold 5" }), 510, life, mana);
+        const VitalsReading close = ReadVitals(draw({ "900 / 1000", "950 / 1001.5" }), 510, VitalsMax{ true, 1000 }, VitalsMax{ true, 1001 });
+        const VitalsReading noAnswer = ReadVitals(draw({ "4000 / 4901", "800 / 1200" }), 510, life, VitalsMax{});
+        const VitalsReading old = ReadVitals(draw({ "4000 / 4901", "800 / 1200" }), 631, life, mana);
+        const VitalsReading never = ReadVitals(VitalsDraw{}, 510, life, mana);
+        // Outside a DrawHud call nothing is kept; a nested call is part of the outer one.
+        VitalsRecorder scoped;
+        scoped.Offer("1 / 4901");
+        const bool outsideIgnored = !scoped.Last().seen && !scoped.InScope();
+        scoped.Begin(700, 1);
+        scoped.Begin(700, 2);
+        scoped.Offer("4000 / 4901");
+        scoped.End();
+        const bool nestedOpen = scoped.InScope() && !scoped.Last().seen;
+        scoped.Offer("800 / 1200");
+        scoped.End();
+        const VitalsReading nested = ReadVitals(scoped.Last(), 700, life, mana);
+        check("vitals/pairs_matched_by_maximum",
+              forward.ok && backward.ok && VitalsLine(forward) == "mark1probe vitals: life=4000/4901 mana=800/1200 frame=500 t=9000"
+                  && VitalsLine(backward) == VitalsLine(forward)
+                  && noise.ok && VitalsPairText(noise.life) == "4000/4900.2" && VitalsPairText(noise.mana) == "800/1200.4"
+                  && VitalsLine(noMana) == "mark1probe vitals: unread (no pair matched 37 (mana max 1200); 2 pairs drawn)"
+                  && VitalsLine(noLife) == "mark1probe vitals: unread (no pair matched 36 (life max 4901); 1 pairs drawn)"
+                  && VitalsLine(neither) == "mark1probe vitals: unread (no pair matched 36 (life max 4901), no pair matched 37"
+                                            " (mana max 1200); 0 pairs drawn)"
+                  && VitalsLine(close) == "mark1probe vitals: unread (no pair matched 36 (life max 1000); 2 pairs drawn, 1 matching both)"
+                  && VitalsLine(noAnswer) == "mark1probe vitals: unread (the dispatcher gave no number for 37)"
+                  && VitalsLine(old) == "mark1probe vitals: unread (no DrawHud text in the last 120 frames)"
+                  && !never.ok && outsideIgnored && nestedOpen && nested.ok && nested.ms == 1,
+              VitalsLine(forward) + " | " + VitalsLine(noise) + " | " + VitalsLine(close) + " | " + VitalsLine(nested));
     }
 
     std::cout << (failures ? "RESULT FAIL " + std::to_string(failures) : std::string("RESULT OK")) << std::endl;

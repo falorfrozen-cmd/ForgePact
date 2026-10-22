@@ -244,12 +244,13 @@ class Mark1ProbeContract(unittest.TestCase):
         self.assertNotIn('"gml_Script_', self.code)
 
         install = self.body("static void M1pInstall()")
-        # Three install sites: M1pInstall's rows, killgate's LoadDrops and the draws watch's
-        # count-only ReturnRandomSatanic (each pinned by its own test below).
-        self.assertEqual(self.code.count("HookOneScript("), 3,
-                         "three install sites, M1pInstall, M1pKillgateInstall and M1pDrawsInstall")
+        # Four install sites: M1pInstall's rows, killgate's LoadDrops, the draws watch's
+        # count-only ReturnRandomSatanic and vitals' DrawHud (each pinned by its own test below).
+        self.assertEqual(self.code.count("HookOneScript("), 4,
+                         "four install sites, M1pInstall, M1pKillgateInstall, M1pDrawsInstall and M1pVitalsInstall")
         self.assertEqual(self.body("static void M1pKillgateInstall()").count("HookOneScript("), 1)
         self.assertEqual(self.body("static void M1pDrawsInstall()").count("HookOneScript("), 1)
+        self.assertEqual(self.body("static bool M1pVitalsInstall(std::string& why)").count("HookOneScript("), 1)
         self.assertIn("HookOneScript(t.shortName, t.hookId, t.detour, &t.orig, &native)", install)
         # Counted only with the inline detour; a table-only install is failed.
         self.assertIn("native ? M1pNs::HookState::Detoured : M1pNs::HookState::Failed", install)
@@ -927,6 +928,60 @@ class Mark1ProbeContract(unittest.TestCase):
         # The line is the core's pure function (tests/mark1_probe_harness.cpp runs it).
         self.assertIn("Out(g_M1pProcGaps.Line());", self.body("static void M1pProcGaps(const M1pNs::Command& c)"))
         self.assertIn("class ProcGaps {", self.header)
+
+    def test_vitals_is_research_only(self):
+        # Replan 4's `vitals`: the DrawHud hook, the scope flag and the
+        # recorder are the probe's, and nothing of them reaches the player build.
+        for name in ("static M1pNs::VitalsRecorder g_M1pVitals;", "static M1pNs::VitalsWindow   g_M1pVitalsWindow;",
+                     "static RValue& M1pVitalsHud(", "struct M1pVitalsHudScope {", "static bool M1pVitalsInstall(",
+                     "static M1pNs::VitalsReading M1pVitalsRead()", "static void M1pVitals(", "static void M1pVitalsOffer("):
+            with self.subTest(name=name):
+                self.assertIn(name, self.code)
+                self.assertNotIn(name, self.shipped)
+        player_text = strip_research_blocks(self.plugin)
+        for word in ("g_M1pVitalsInHud", "M1pVitalsOffer", "VitalsRecorder", "fp_m1p_vitals_hud"):
+            self.assertIn(word, self.plugin)
+            self.assertNotIn(word, player_text)
+        # The scope flag is declared, and read by the text detours, only under the guard.
+        self.assertIn("#ifndef FORGEPACT_RELEASE\n// `mark1probe vitals`", self.plugin)
+        self.assertIn("static int g_M1pVitalsInHud = 0;", self.plugin)
+        detour = self.plugin[self.plugin.index("static void Hook_TipBuiltinText("):]
+        detour = detour[:detour.index("\n}\n") + 2]
+        self.assertIn("#ifndef FORGEPACT_RELEASE\n    if (g_M1pVitalsInHud > 0) M1pVitalsOffer(argc, Args);\n#endif\n", detour)
+        shipped_detour = player_text[player_text.index("static void Hook_TipBuiltinText("):]
+        shipped_detour = shipped_detour[:shipped_detour.index("\n}\n") + 2]
+        self.assertIn("TipNoteText(kTipBuiltinText[N], argc, Args);", shipped_detour)   # control: the detour itself ships
+        self.assertNotIn("Vitals", shipped_detour)
+        # Only the DrawHud hook's scope sets the flag, and it ends on a throw too.
+        self.assertEqual(len(re.findall(r"\+\+g_M1pVitalsInHud", self.plugin)), 1)
+        self.assertEqual(len(re.findall(r"--g_M1pVitalsInHud", self.plugin)), 1)
+        scope = self.code[self.code.index("struct M1pVitalsHudScope {"):]
+        scope = scope[:scope.index("\n};")]
+        self.assertIn("~M1pVitalsHudScope() { g_M1pVitals.End(); --g_M1pVitalsInHud; }", scope)
+        hud = self.body("static RValue& M1pVitalsHud(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)")
+        self.assertLess(hud.index("M1pVitalsHudScope scope;"), hud.index("g_M1pVitalsOrigHud(S, O, R, argc, A)"))
+        # DrawHud by its SDK constant, both routes, never by a literal; a held
+        # DrawHud is left to its holder; the text detours through their installer.
+        install = self.body("static bool M1pVitalsInstall(std::string& why)")
+        self.assertIn("HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_DrawHud), \"fp_m1p_vitals_hud\","
+                      " (PVOID)M1pVitalsHud,", install)
+        self.assertNotIn('"DrawHud"', install)
+        self.assertNotIn('"gml_Script_DrawHud"', self.plugin)
+        self.assertIn("InstallTipBuiltinTextHooks(std::make_index_sequence<kTipBuiltinTextCount>{});", install)
+        self.assertLess(install.index("TgProbeSpriteHudRowAttached()"), install.index("HookOneScript("))
+        self.assertLess(install.index("M1pTableHeld(HeroSiege::Scripts::gml_Script_DrawHud)"), install.index("HookOneScript("))
+        # 36 and 37 are asked as statask asks them, and matched in the core.
+        read = self.body("static M1pNs::VitalsReading M1pVitalsRead()")
+        self.assertIn("M1pStatAskOne(player, M1pNs::kVitalsLifeStatId)", read)
+        self.assertIn("M1pStatAskOne(player, M1pNs::kVitalsManaStatId)", read)
+        self.assertIn("M1pNs::ReadVitals(g_M1pVitals.Last(),", read)
+        self.assertIn("inline constexpr long long kVitalsLifeStatId = 36;", self.header)
+        self.assertIn("inline constexpr long long kVitalsManaStatId = 37;", self.header)
+        # The command, and the window's end line from the frame tick.
+        self.assertIn("case M1pNs::Form::Vitals: M1pVitals(c); return;", self.body("static void M1pCommand(const std::string& rest)"))
+        tick = self.body("static void M1pFrameTick()")
+        self.assertIn("if (g_M1pVitalsWindow.Due(frame, g_M1pVitals.Last())) Out(g_M1pVitalsWindow.Finish(M1pVitalsRead()));", tick)
+        self.assertIn("g_M1pTicking = true;", self.body("static void M1pVitals(const M1pNs::Command& c)"))
 
     def test_research_only_the_profile_scope_says_which_it_read(self):
         resolve = self.body("static bool M1pResolveScope(CInstance* player, M1pNs::Scope scope, M1pScopeRef& out, std::string& why)")

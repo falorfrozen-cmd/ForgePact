@@ -23143,9 +23143,21 @@ static bool TipRangeTextDraw(RValue& Result, CInstance* S, CInstance* O, int arg
     return true;
 }
 
+#ifndef FORGEPACT_RELEASE
+// `mark1probe vitals` (replan 4, defined with the probe): above zero while
+// the probe's DrawHud hook is inside a DrawHud call, when each text these
+// detours see is offered to its recorder. Zero otherwise, and then the
+// detours do exactly what they did before.
+static int g_M1pVitalsInHud = 0;
+static void M1pVitalsOffer(int argc, RValue* Args);
+#endif
+
 template <size_t N>
 static void Hook_TipBuiltinText(RValue& Result, CInstance* S, CInstance* O, int argc, RValue* Args)
 {
+#ifndef FORGEPACT_RELEASE
+    if (g_M1pVitalsInHud > 0) M1pVitalsOffer(argc, Args);
+#endif
     if constexpr (N == 0) {
         if (g_TipTypeLinePiece >= 0 && TipTypeLineDraw(Result, S, O, argc, Args)) return;
         if (g_TipTypeLinePiece >= 0 && TipRangeTextDraw(Result, S, O, argc, Args)) return;
@@ -69396,6 +69408,103 @@ static void M1pAuto(const M1pNs::Command& c)
     Out(M1pNs::ApplyAuto(c, ForgePact::Mark1Automation::Instance().Priority(), g_M1aCost));
 }
 
+// ---- replan 4: vitals, life and mana as the HUD draws them --------------------------
+
+// The recorder (the core's VitalsRecorder) is fed by the runner's text
+// builtins' detours (Hook_TipBuiltinText, through M1pVitalsOffer) while
+// g_M1pVitalsInHud is set, which only the DrawHud hook below does.
+static M1pNs::VitalsRecorder g_M1pVitals;
+static M1pNs::VitalsWindow   g_M1pVitalsWindow;
+static PFUNC_YYGMLScript     g_M1pVitalsOrigHud = nullptr;   // DrawHud's trampoline (table-only: the table's entry)
+static bool                  g_M1pVitalsTried = false;
+static std::string           g_M1pVitalsWhy;                 // why DrawHud is not hooked, or is only table-routed
+
+static long long M1pVitalsNowMs()
+{
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+// A drawn text: the third argument of every one of the eight text builtins.
+static void M1pVitalsOffer(int argc, RValue* Args)
+{
+    if (argc < 3 || !Args || Args[2].m_Kind != VALUE_STRING) return;
+    try { g_M1pVitals.Offer(Args[2].ToString()); } catch (...) {}
+}
+
+// The scope around the original, ended also when it throws.
+struct M1pVitalsHudScope {
+    M1pVitalsHudScope() { ++g_M1pVitalsInHud; g_M1pVitals.Begin((int64_t)g_RuntimeFrame, M1pVitalsNowMs()); }
+    ~M1pVitalsHudScope() { g_M1pVitals.End(); --g_M1pVitalsInHud; }
+};
+
+static RValue& M1pVitalsHud(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    if (!g_M1pVitalsOrigHud) return R;
+    M1pVitalsHudScope scope;
+    return g_M1pVitalsOrigHud(S, O, R, argc, A);
+}
+
+// Once: the text builtins' detours (each only if not in yet) and DrawHud by
+// its hs-game-sdk name, both routes, unless another hook holds it (tgprobe's
+// DrawHud row, or any thunk in its table entry). False with `why` when
+// DrawHud is not hooked.
+static bool M1pVitalsInstall(std::string& why)
+{
+    if (!g_M1pVitalsTried) {
+        g_M1pVitalsTried = true;
+        InstallTipBuiltinTextHooks(std::make_index_sequence<kTipBuiltinTextCount>{});
+        if (TgProbeSpriteHudRowAttached()) {
+            g_M1pVitalsWhy = "DrawHud is held by tgprobe's DrawHud row, so it is not hooked";
+        } else if (M1pTableHeld(HeroSiege::Scripts::gml_Script_DrawHud)) {
+            g_M1pVitalsWhy = "DrawHud is held by another hook, so it is not hooked";
+        } else {
+            bool native = false;
+            if (!HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_DrawHud), "fp_m1p_vitals_hud", (PVOID)M1pVitalsHud,
+                               &g_M1pVitalsOrigHud, &native) || !g_M1pVitalsOrigHud)
+                g_M1pVitalsWhy = "DrawHud did not hook (see the hook line above)";
+            else if (!native)
+                g_M1pVitalsWhy = "DrawHud is table-only here: compiled GML's direct calls bypass it";
+        }
+    }
+    why = g_M1pVitalsWhy;
+    return g_M1pVitalsOrigHud != nullptr;
+}
+
+// The last DrawHud call's pairs against 36 and 37, asked of the dispatcher
+// as `statask` asks them (M1pStatAskOne: the set's consumer answers as for a
+// game call). A table-only hook's note rides an unread reason.
+static M1pNs::VitalsReading M1pVitalsRead()
+{
+    CInstance* player = g_M1pPlayer;
+    if (!player) return M1pNs::VitalsUnread("no local player (load a character first)");
+    const M1pNs::StatAskEntry life = M1pStatAskOne(player, M1pNs::kVitalsLifeStatId);
+    const M1pNs::StatAskEntry mana = M1pStatAskOne(player, M1pNs::kVitalsManaStatId);
+    M1pNs::VitalsReading r = M1pNs::ReadVitals(g_M1pVitals.Last(), (int64_t)g_RuntimeFrame,
+        M1pNs::VitalsMax{ life.result == M1pNs::StatAskResult::Number, life.value },
+        M1pNs::VitalsMax{ mana.result == M1pNs::StatAskResult::Number, mana.value });
+    if (!r.ok && !g_M1pVitalsWhy.empty()) r.reason += "; " + g_M1pVitalsWhy;
+    return r;
+}
+
+// `vitals [<frames>]`: the reading now; with frames, a window whose end line
+// M1pFrameTick prints once it has run. The first call installs the hook, so
+// it reads nothing yet (`no DrawHud text`): ask again a frame later.
+static void M1pVitals(const M1pNs::Command& c)
+{
+    std::string why;
+    if (!M1pVitalsInstall(why)) { Out(M1pNs::VitalsLine(M1pNs::VitalsUnread(why))); return; }
+    M1pRefreshPlayer();
+    const M1pNs::VitalsReading r = M1pVitalsRead();
+    Out(M1pNs::VitalsLine(r));
+    if (c.frames <= 0) return;
+    if (g_M1pVitalsWindow.Start(r, (int64_t)g_RuntimeFrame, c.frames)) {
+        g_M1pTicking = true;
+        Out("  window: the end line at frame " + std::to_string(g_M1pVitalsWindow.DueFrame()) + " or the first HUD draw after it");
+    } else {
+        Out("  no window: the start is unread");
+    }
+}
+
 // ---- the command and the frame -----------------------------------------------------
 
 static void M1pCommand(const std::string& rest)
@@ -69461,6 +69570,7 @@ static void M1pCommand(const std::string& rest)
     case M1pNs::Form::BonusRead: M1pBonusRead(); return;
     case M1pNs::Form::BonusOthers:
     case M1pNs::Form::BonusOthersReset: M1pBonusOthers(c); return;
+    case M1pNs::Form::Vitals: M1pVitals(c); return;
     case M1pNs::Form::StatAsk: M1pStatAsk(c); return;
     case M1pNs::Form::ManaRegen: M1pManaRegen(c); return;
     case M1pNs::Form::ProcGaps:
@@ -69482,8 +69592,9 @@ static void M1pCommand(const std::string& rest)
 // The one per-frame piece, from FrameCallback: refreshes the local player
 // the detours compare their self against, samples `watch` and `count`,
 // samples `pos` (with the wall clock, for its `ms=`), prints `pos`' and
-// `statlog`'s lines, ends whatever ran out of frames and writes back a
-// hold that ended. Returns at once until a form needed it.
+// `statlog`'s lines, ends whatever ran out of frames, writes back a hold
+// that ended and prints a `vitals` window's end line once it is due.
+// Returns at once until a form needed it.
 static void M1pFrameTick()
 {
     if (!g_M1pTicking) return;
@@ -69517,6 +69628,7 @@ static void M1pFrameTick()
     for (const std::string& l : g_M1pProbe.TakeLines()) Out(l);
     for (const std::string& l : g_M1pProbe.Tick(frame)) Out(l);
     M1pRestoreHold(frame, false);
+    if (g_M1pVitalsWindow.Due(frame, g_M1pVitals.Last())) Out(g_M1pVitalsWindow.Finish(M1pVitalsRead()));
 }
 
 // Dispatched from its own function for the same C1061 reason as
