@@ -34,7 +34,9 @@ pieces" below.
     stats, then the set's bonus lines the way the game shows its own sets,
     each lit while you wear enough pieces for it, with what Automation does
     underneath in the game's smaller grey description text, then the set's
-    name and its four pieces, the ones you wear in green.
+    name and its four pieces, the ones you wear in green. Your character
+    sheet (the talent screen, T) shows the set's Life, Defense and its other
+    lines too; your mercenary and monsters never get the set bonus.
   - **Your skills cast themselves.** With all four worn, the skills on your
     Q, E, R and Y slots are cast for you. A skill that is not a toggle fires
     the way an item's proc fires a skill: at once, with no cast time, so a
@@ -43,8 +45,10 @@ pieces" below.
     your Skill Haste) plus its cast time (shortened by your Faster Cast
     Rate), so a skill with no cooldown, such as Shadow Bolt, fires
     continuously; when two are due at once they go in Q, E, R, Y order.
-    These casts cost no mana, so **each automated skill lowers your maximum
-    mana by 20%** while the bonus is on. A skill under automation cannot be
+    These casts cost no mana, so instead **each automated skill drains about
+    1% of your maximum mana a second** while the bonus is on, taken off your
+    mana regeneration: good regeneration keeps one or two automated skills
+    going, and four drain your mana. A skill under automation cannot be
     cast by hand, and its icon on the skill bar is drawn grey, the way the
     game greys a skill you cannot use; each of those slots is also outlined.
     A toggle skill is still pressed for you and switched on and left on, so

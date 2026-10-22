@@ -1781,7 +1781,9 @@ any item's, and the set gives more for every piece you wear.
   also `+35% to All Resistances` and `Replenish Life 25%`. With all 4: also
   `+1 to Automation` (below), `+5 to All Skills`, `+750 to Life`, `Physical
   Damage Taken Reduced by 20%` and `-50% Movement Speed`. The set bonus works
-  only while the **Mark 1 set** switch is on.
+  only while the **Mark 1 set** switch is on. Your character sheet (the
+  talent screen, T) shows the set's Life, Defense and its other lines too,
+  as your HUD does; your mercenary and monsters never get the set bonus.
 - **The tooltip.** Each piece's tooltip reads `Satanic Set <type>` under its
   name, shows the piece's own stats, then the set's bonus lines, each lit
   while you wear enough pieces for it and grey otherwise, with what
@@ -1802,9 +1804,11 @@ any item's, and the set gives more for every piece you wear.
   Skill Haste) plus its cast time (shortened by your Faster Cast Rate), so a
   skill with no cooldown, such as Shadow Bolt, fires continuously, and when
   two are due at once they go in Q, E, R, Y order. These casts cost no mana,
-  so **each automated skill lowers your maximum mana by 20%** while the
-  bonus is on (four leave you a fifth of your pool), and the price falls on
-  the skills you cast yourself. A skill under automation cannot be cast by
+  so instead **each automated skill drains about 1% of your maximum mana a
+  second** while the bonus is on, taken off your mana regeneration: with
+  good mana regeneration one or two automated skills keep your mana up, and
+  four drain it, so the skills you cast yourself have less to spend. When
+  your mana runs out the automated skills keep firing. A skill under automation cannot be cast by
   hand: pressing its key does nothing while the set casts it for you, and
   its icon on the skill bar is drawn grey, the way the game greys a skill
   you cannot use. Each of those slots is also outlined, as Mark A Running
