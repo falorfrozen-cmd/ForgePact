@@ -1,10 +1,13 @@
 #pragma once
 
 #include "Common.hpp"
+#include "Mark1Priority.hpp"
 #include <atomic>
 #include <exception>
+#include <string>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 namespace ForgePact {
 
@@ -20,32 +23,31 @@ namespace ForgePact {
 // never writes a cooldown, mana or talent state and never presses a key.
 //
 // This header holds only the game-independent part, so every branch is
-// unit-testable without a game process (tests/test_mark1_automation_behavior.py):
+// unit-testable without a game process (tests/test_mark1_automation_behavior.py
+// and tests/test_mark1_priority_behavior.py):
 //   - which columns are eligible: an empty column (talent id 0) and an aura
 //     are skipped; a toggle - a row of ToggleSkillMod.hpp's table - only while
 //     the toggle read answers Off and outside the settle window after this
 //     column's own last press, never while the read is Unreadable; anything
 //     else is eligible on every gate call;
-//   - the turn rule: one eligible column is pressed per gate call, the one
-//     that has waited longest since its last landed cast (ties to the lower
-//     column), so a skill with no cooldown cannot keep the others from ever
-//     being cast (Live 2b: Shadow Bolt on Q took 20 casts, Heavenly Fire on R
-//     none, with every column pressed on every call). Which of several
-//     pressed slots the game's gate takes is not established, so the rule
-//     never presses two. The adapter reports after each call whether a cast
-//     landed (Landing); a landing sends that column to the back of the
-//     queue. A holder pressed for kMark1TurnPatienceFrames without a landing
-//     (on cooldown, short of mana) rests for kMark1TurnRestFrames, unless no
-//     other eligible column is free to take the turn;
-//   - which columns wear the toggle-skill border: every automated column
-//     that is neither empty nor an aura;
-//   - the press itself: the value, the column-to-entry mapping, and the
-//     restore in every path.
-// The reads behind it (the bar element's talent id and aura flag, the toggle
-// state through ToggleIndicatorRead, the `inputState` entries of the profile
-// slot the gate's third argument names) live in ModuleMain.cpp, resolved by
-// name, and are handed in as callables. With the bonus inactive nothing is
-// read, written or counted.
+//   - which eligible column is pressed, and with which value, is the cast
+//     priority's (Mark1Priority.hpp): cooldown columns first in Q, E, R, Y
+//     order, a column with no cooldown pressed until it lands, the yield after
+//     a landing and the rests. The adapter reports after each call whether a
+//     cast landed (Landing); on the proc route the core names a column to fire
+//     straight into `TalentUseClass` after the original, and the adapter
+//     reports how that call went (ProcDone);
+//   - which columns wear the toggle-skill border, and are drawn grey: every
+//     automated column that is neither empty nor an aura;
+//   - the writes around the original, each put back in every path: the
+//     lockout (an automated column's own entry the player holds or presses is
+//     rested), the press itself (the value and the column-to-entry mapping),
+//     and the mask (another key held during a press is rested).
+// The reads behind it (the bar element's talent id, aura flag and cooldown,
+// the toggle state through ToggleIndicatorRead, the `inputState` entries of
+// the profile slot the gate's third argument names) live in ModuleMain.cpp,
+// resolved by name, and are handed in as callables. With the bonus inactive
+// nothing is read, written or counted.
 //
 // Known limits, by design: a skill that wants a second input (a target
 // click) or a held key is cast as one press each gate call; an automated
@@ -53,16 +55,13 @@ namespace ForgePact {
 // re-presses it whenever it reads Off; a key the player presses during a gate
 // call that pressed a column counts as that column's landing.
 
-// The automated bar columns (Q, E, R, Y).
-inline constexpr int kMark1FirstColumn = 3;
-inline constexpr int kMark1LastColumn = 6;
-inline constexpr int kMark1ColumnCount = kMark1LastColumn - kMark1FirstColumn + 1;
-
 // What a key's press frame leaves in a profile slot's `inputState` entry
 // (docs/mark1-set-research.md, Live 1 `slot-keys`: an entry rests at 1, reads
 // 4 on the press frame, 3 while held and 2 on release). `cast-input` measured
 // that writing it during the gate's own call, and restoring it after, casts
-// that slot with no key pressed.
+// that slot with no key pressed. A cooldown column is pressed with it; a free
+// column with the hold value in force (Mark1Priority.hpp's
+// kMark1FreePressValue).
 inline constexpr double kMark1PressValue = 4.0;
 
 // How many frames after its own press a toggle column is left alone, so the
@@ -71,27 +70,6 @@ inline constexpr double kMark1PressValue = 4.0;
 // on 19 frames later (docs/mark1-set-research.md, which the behavior test pins
 // this against); the window is that plus 10 frames of margin.
 inline constexpr long long kMark1ToggleSettleFrames = 29;
-
-// The turn rule's two windows, both provisional (Live 1 of the turns
-// workorder records the casts per column they give). Patience has to outlast
-// the gap between two casts while every column is refused: Live 2b saw Shadow
-// Bolt cast about every 60 frames at 144 fps, and a held key repeats every 57
-// frames (RDM § 7.2). The rest, 2 s at 144 fps, caps what a column on cooldown
-// costs the others at about a quarter of the time.
-inline constexpr long long kMark1TurnPatienceFrames = 90;
-inline constexpr long long kMark1TurnRestFrames = 288;
-
-inline constexpr bool Mark1IsAutomatedColumn(int column)
-{
-    return column >= kMark1FirstColumn && column <= kMark1LastColumn;
-}
-
-// The `inputState` entry a column presses: the entry of the same index.
-// Anything outside the automated columns has no entry (-1).
-inline constexpr int Mark1InputEntryForColumn(int column)
-{
-    return Mark1IsAutomatedColumn(column) ? column : -1;
-}
 
 // What ToggleIndicatorRead answered for a toggle column (the adapter maps
 // ToggleIndicatorState onto this, so this header needs no game object table).
@@ -103,6 +81,8 @@ struct Mark1ColumnRead {
     double talentId = 0;      // 0 (or below): an empty column
     bool   aura     = false;  // the column's `auraSkill` is set
     bool   toggle   = false;  // the talent is a row of ToggleSkillMod.hpp's table
+    bool   cooldownRead    = false;  // the talent's `abilityCooldown` read as a number
+    double abilityCooldown = 0;      // seconds, from `global.talentStructMap` (static data)
 };
 
 enum class Mark1ColumnDecision {
@@ -114,7 +94,8 @@ enum class Mark1ColumnDecision {
     SkipToggleSettling,    // inside this column's own settle window
     SkipToggleOn,
     SkipToggleUnreadable,
-    SkipTurn,              // eligible, but another column holds this call's turn (or this one rests)
+    SkipTurn,              // eligible, not pressed: the yield, a rest, another column pressing, or a proc not due
+    Proc,                  // eligible, fired on the proc route after the original
 };
 
 inline const char* Mark1ColumnDecisionName(Mark1ColumnDecision d)
@@ -128,21 +109,30 @@ inline const char* Mark1ColumnDecisionName(Mark1ColumnDecision d)
         case Mark1ColumnDecision::SkipToggleSettling:   return "settling";
         case Mark1ColumnDecision::SkipToggleOn:         return "toggle-on";
         case Mark1ColumnDecision::SkipTurn:             return "skip-turn";
+        case Mark1ColumnDecision::Proc:                 return "proc";
         default:                                        return "toggle-unreadable";
     }
 }
 
 // One gate call's decision for every automated column. Plan presses at most
-// one column, the turn's holder; a plan built by hand may press several.
+// one column, the priority's pick; a plan built by hand may press several.
 struct Mark1FramePlan {
     bool active = false;
     long long frame = 0;
-    int holder = 0;                 // the column Plan gave this call's turn; 0: none
+    int holder = 0;                 // the column Plan pressed this call; 0: none
+    bool pressFree = false;         // the holder was pressed as a free column
     unsigned long long call = 0;    // which Plan call made it (0: not made by Plan); Landing matches on it
     Mark1ColumnDecision decision[kMark1ColumnCount] = {
         Mark1ColumnDecision::SkipInactive, Mark1ColumnDecision::SkipInactive,
         Mark1ColumnDecision::SkipInactive, Mark1ColumnDecision::SkipInactive,
     };
+    double value[kMark1ColumnCount] = { kMark1PressValue, kMark1PressValue, kMark1PressValue, kMark1PressValue };
+    unsigned lockMask = 0;          // bit i: column kMark1FirstColumn + i is locked out of manual casts this call
+    int procColumn = 0;             // the column to fire after the original on the proc route; 0: none
+    unsigned procMask = 0;          // bit i: column kMark1FirstColumn + i is on the proc route this call
+    Mark1GateClock clock;           // the clock and stats the proc's interval is computed from
+    Mark1PriorityColumn columns[kMark1ColumnCount];
+    double talentId[kMark1ColumnCount] = {};
 
     bool Press(int column) const
     {
@@ -155,7 +145,14 @@ struct Mark1FramePlan {
         for (int i = 0; i < kMark1ColumnCount; ++i) if (decision[i] == Mark1ColumnDecision::Press) ++n;
         return n;
     }
+    // Whether the call reads the profile slot's entries at all: to press, or
+    // to lock an automated column out.
+    bool NeedsInput() const { return active && (PressCount() > 0 || lockMask != 0u); }
 };
+
+// How the adapter's proc call went: it returned, it threw, or it was never
+// made (a name that did not resolve, a refused argument).
+enum class Mark1ProcOutcome { Returned, Threw, Refused };
 
 // Per-column counters, for the `mark1set stat` line: every press and every
 // reason a column was not pressed, so "reports itself on while doing
@@ -171,9 +168,9 @@ struct Mark1ColumnCounters {
     long originalUnreadable = 0;  // planned, but the entry's own value could not be read to put back
     long pressWriteFailed   = 0;
     long restoreFailed      = 0;
-    long landed             = 0;  // a cast landed during a call that pressed this column
-    long skipTurn           = 0;  // eligible, not pressed: another column held the turn, or this one rested
-    long yielded            = 0;  // gave up the turn after kMark1TurnPatienceFrames without a landing
+    long landed             = 0;  // a cast landed during a call that pressed this column, or a proc of it returned
+    long skipTurn           = 0;  // eligible, not pressed: the yield, a rest, another column pressing, a proc not due
+    long yielded            = 0;  // rests begun: a cooldown press that did not land, or a free column's patience out
 };
 
 class Mark1Automation {
@@ -183,52 +180,122 @@ public:
         return s_Instance;
     }
 
+    // The cast priority, its settings in force (the research overrides) and
+    // the second stat line's counters.
+    Mark1PriorityCore& Priority() { return m_Core; }
+    const Mark1PriorityCore& Priority() const { return m_Core; }
+
     // Decide every automated column for one gate call. `readColumn(int column)`
     // returns a Mark1ColumnRead; `readToggle(int column)` returns a
     // Mark1ToggleState and is asked only for a toggle column outside its
     // settle window. A read that throws counts as unreadable. Of the columns
-    // that pass, only the turn's holder is pressed; the others count
-    // skip-turn. Inactive: no callable is invoked and nothing is counted, and
-    // the next active call starts the turns afresh.
+    // that pass, the priority presses at most one and, on the proc route,
+    // names at most one to fire; the others count skip-turn. Inactive: no
+    // callable is invoked and nothing is counted, and the next active call
+    // starts the priority afresh. With no clock nothing is fired.
     template <class ReadColumn, class ReadToggle>
     Mark1FramePlan Plan(bool bonusActive, long long frame, ReadColumn&& readColumn, ReadToggle&& readToggle)
     {
+        return Plan(bonusActive, frame, Mark1GateClock{}, readColumn, readToggle);
+    }
+
+    template <class ReadColumn, class ReadToggle>
+    Mark1FramePlan Plan(bool bonusActive, long long frame, const Mark1GateClock& clock, ReadColumn&& readColumn, ReadToggle&& readToggle)
+    {
         Mark1FramePlan plan;
         plan.frame = frame;
-        if (!bonusActive) { m_WasActive = false; return plan; }
-        if (!m_WasActive) { ClearTurns(); m_WasActive = true; }
+        if (!bonusActive) {
+            if (m_WasActive) ClearPriority();
+            m_WasActive = false;
+            return plan;
+        }
+        if (!m_WasActive) { ClearPriority(); m_WasActive = true; }
         plan.active = true;
         plan.call = ++m_PlanCalls;
+        plan.clock = clock;
         bool eligible[kMark1ColumnCount] = {};
+        unsigned bordered = 0u;
         for (int column = kMark1FirstColumn; column <= kMark1LastColumn; ++column) {
             const int i = column - kMark1FirstColumn;
-            plan.decision[i] = DecideColumn(column, frame, readColumn, readToggle);
+            Mark1ColumnRead r;
+            bool threw = false;
+            try { r = readColumn(column); } catch (...) { threw = true; r = Mark1ColumnRead{}; }
+            plan.decision[i] = threw ? Mark1ColumnDecision::SkipUnreadable : DecideColumn(column, frame, r, readToggle);
             eligible[i] = plan.decision[i] == Mark1ColumnDecision::Press;
+            if (!threw && Bordered(r)) bordered |= 1u << i;
+            plan.columns[i].kind = Mark1ClassifyColumn(eligible[i], r.toggle, r.cooldownRead, r.abilityCooldown);
+            plan.columns[i].toggle = r.toggle;
+            plan.columns[i].cooldownRead = r.cooldownRead;
+            plan.columns[i].abilityCooldown = r.abilityCooldown;
+            plan.talentId[i] = r.readable ? r.talentId : 0;
+            m_LastTalent[i].store(r.readable && r.talentId > 0 ? r.talentId : 0.0);
+            m_LastKind[i].store((int)plan.columns[i].kind);
         }
-        const int holder = TakeTurn(eligible, frame);
+        if (m_Core.Settings().lockout) plan.lockMask = bordered;
+        const Mark1PriorityDecision d = m_Core.Decide(frame, plan.columns, clock);
         for (int i = 0; i < kMark1ColumnCount; ++i) {
-            if (eligible[i] && i != holder) plan.decision[i] = Mark1ColumnDecision::SkipTurn;
+            if (eligible[i]) {
+                const int column = kMark1FirstColumn + i;
+                if (column == d.pressColumn) plan.decision[i] = Mark1ColumnDecision::Press;
+                else if (column == d.procColumn) plan.decision[i] = Mark1ColumnDecision::Proc;
+                else plan.decision[i] = Mark1ColumnDecision::SkipTurn;
+            }
             Count(i, plan.decision[i]);
         }
-        if (holder >= 0) plan.holder = kMark1FirstColumn + holder;
+        plan.holder = d.pressColumn;
+        plan.pressFree = d.pressFree;
+        if (Mark1IsAutomatedColumn(d.pressColumn))
+            plan.value[d.pressColumn - kMark1FirstColumn] = d.pressFree ? m_Core.Settings().holdValue : kMark1PressValue;
+        plan.procColumn = d.procColumn;
+        plan.procMask = d.procMask;
+        m_ProcCall = plan.procColumn ? plan.call : 0;
         return plan;
     }
 
     // What the adapter saw once the original gate returned or threw: whether
-    // a cast landed during that call. A landing counts for the plan's holder
-    // only if PressAround wrote its press in that same call, and only once;
-    // it restarts the holder's wait, so the next call goes to whichever column
-    // has now waited longest. Anything else is ignored.
+    // a cast landed during that call. It counts for the plan's holder only if
+    // PressAround wrote its press in that same call, and only once. A landing
+    // opens the yield window; a cooldown press that did not land rests that
+    // column (Mark1Priority.hpp). Anything else is ignored.
     void Landing(const Mark1FramePlan& plan, bool landed)
     {
-        if (!landed || !plan.active || plan.call == 0 || plan.call != m_PressedCall) return;
+        if (!plan.active || plan.call == 0 || plan.call != m_PressedCall) return;
         if (!Mark1IsAutomatedColumn(plan.holder)) return;
         m_PressedCall = 0;
         const int i = plan.holder - kMark1FirstColumn;
-        m_LandedAt[i] = ++m_Landings;
-        m_Resting[i] = false;
-        if (m_RunColumn == i) m_RunColumn = -1;
-        ++m_Counters[i].landed;
+        m_Core.Landed(plan.holder, plan.frame, landed, plan.pressFree);
+        if (landed) ++m_Counters[i].landed;
+    }
+
+    // The proc call's arguments for the plan's proc column, from the shape in
+    // force, the column's talent id and the local player's position. False
+    // (and `why` set) when there is no proc column or an argument is refused.
+    bool ProcArgs(const Mark1FramePlan& plan, double x, double y, std::vector<Mark1ProcValue>& out, std::string& why) const
+    {
+        out.clear();
+        if (!plan.active || !Mark1IsAutomatedColumn(plan.procColumn)) { why = "no proc column"; return false; }
+        return Mark1BuildProcArgs(m_Core.Settings().shape, plan.talentId[plan.procColumn - kMark1FirstColumn], x, y, out, why);
+    }
+
+    // How the proc call for the plan's proc column went, once per plan. A
+    // call that returned counts procs= and landed= and starts the column's
+    // clock on its interval (cooldown at the haste plus cast time at the
+    // Faster Cast Rate the plan was made with); one that threw or was refused
+    // counts proc-fail= and returns the route to the press for the session.
+    void ProcDone(const Mark1FramePlan& plan, Mark1ProcOutcome outcome)
+    {
+        if (!plan.active || plan.call == 0 || plan.call != m_ProcCall) return;
+        if (!Mark1IsAutomatedColumn(plan.procColumn)) return;
+        m_ProcCall = 0;
+        const int i = plan.procColumn - kMark1FirstColumn;
+        if (outcome != Mark1ProcOutcome::Refused) m_Core.CountProc();
+        if (outcome == Mark1ProcOutcome::Returned) {
+            ++m_Counters[i].landed;
+            m_Core.ProcFired(plan.procColumn, plan.clock.nowMs, m_Core.IntervalMs(plan.columns[i], plan.clock));
+            return;
+        }
+        m_Core.CountProcFail();
+        m_Core.ProcFailed();
     }
 
     // The automated columns that wear the toggle-skill border: bit (column -
@@ -247,40 +314,92 @@ public:
         return mask;
     }
 
+    // The columns whose bar icon is drawn grey: the border's.
+    template <class ReadColumn>
+    unsigned GreyMask(bool bonusActive, ReadColumn&& readColumn) const
+    {
+        return Mark1GreyMask(BorderMask(bonusActive, readColumn));
+    }
+
     static bool Bordered(const Mark1ColumnRead& r)
     {
         return r.readable && !IsEmpty(r) && !r.aura;
     }
 
-    // Run `call` (the original gate) with every planned column pressed, and
-    // put each pressed entry's own original value back afterwards - after a
-    // return and after a throw alike, the throw then rethrown. `read(int
-    // entry, Value& out) -> bool` and `write(int entry, const Value&) -> bool`
-    // reach the profile slot's `inputState` entries; `Value` is built from
-    // kMark1PressValue for the press. An entry whose original cannot be read
-    // is never pressed, because it could not be put back. Returns what `call`
-    // returns.
+    // Run `call` (the original gate) with the plan's writes in place, and put
+    // each written entry's own original value back afterwards - after a
+    // return and after a throw alike, the throw then rethrown. In order:
+    //   - the lockout: each locked column's own entry that reads 3 or 4 is
+    //     written 1 (locked= once per call);
+    //   - the press: each planned column's entry gets its press value; an
+    //     entry the lockout rested keeps the player's value as its original;
+    //   - the mask, only once a press was written: each mask entry that reads
+    //     3 or 4 is written 1 (masked=; held-seen= even with the mask off).
+    // `read(int entry, Value& out) -> bool` and `write(int entry, const
+    // Value&) -> bool` reach the profile slot's `inputState` entries; `Value`
+    // is built from a double. An entry whose original cannot be read is never
+    // written, because it could not be put back. Returns what `call` returns.
     template <class Value, class Read, class Write, class Call>
     decltype(auto) PressAround(const Mark1FramePlan& plan, Read&& read, Write&& write, Call&& call)
     {
-        Value originals[kMark1ColumnCount] = {};
+        constexpr int kMaxWrites = 2 * kMark1ColumnCount + kMark1MaxMaskEntries;
+        int writtenEntry[kMaxWrites] = {};
+        int writtenColumn[kMaxWrites] = {};   // the column a restore failure counts for; -1: a mask entry
+        Value writtenOriginal[kMaxWrites] = {};
+        int written = 0;
         bool pressed[kMark1ColumnCount] = {};
         if (plan.active) {
+            bool planned[kMark1ColumnCount] = {};
+            for (int i = 0; i < kMark1ColumnCount; ++i) planned[i] = plan.decision[i] == Mark1ColumnDecision::Press;
+            const Mark1InputPlan inputs = Mark1PlanInputs(true, true, plan.lockMask, planned, plan.value, m_Core.Settings().mask);
+
+            // The lockout, before the press.
+            bool lockedAny = false;
+            for (int k = 0; k < inputs.lockCount; ++k) {
+                const int entry = inputs.lockEntry[k];
+                Value original{};
+                bool readOk = false;
+                try { readOk = read(entry, original); } catch (...) { readOk = false; }
+                if (!readOk || !Asks(original)) continue;
+                bool wrote = false;
+                try { wrote = write(entry, Value(kMark1InputResting)); } catch (...) { wrote = false; }
+                if (!wrote) { try { (void)write(entry, original); } catch (...) {} continue; }
+                writtenEntry[written] = entry;
+                writtenColumn[written] = entry;
+                writtenOriginal[written] = original;
+                ++written;
+                lockedAny = true;
+            }
+            if (lockedAny) m_Core.CountLocked();
+
+            // The press.
+            Value originals[kMark1ColumnCount] = {};
             for (int column = kMark1FirstColumn; column <= kMark1LastColumn; ++column) {
                 const int i = column - kMark1FirstColumn;
                 if (!plan.Press(column)) continue;
                 const int entry = Mark1InputEntryForColumn(column);
-                bool readOk = false;
-                try { readOk = read(entry, originals[i]); } catch (...) { readOk = false; }
+                int lockedAt = -1;
+                for (int w = 0; w < written; ++w) if (writtenEntry[w] == entry) lockedAt = w;
+                bool readOk = lockedAt >= 0;
+                if (!readOk) {
+                    try { readOk = read(entry, originals[i]); } catch (...) { readOk = false; }
+                }
                 if (!readOk) { ++m_Counters[i].originalUnreadable; continue; }
                 bool wrote = false;
-                try { wrote = write(entry, Value(kMark1PressValue)); } catch (...) { wrote = false; }
+                try { wrote = write(entry, Value(plan.value[i])); } catch (...) { wrote = false; }
                 if (!wrote) {
                     // The write may have landed partly; put the original back
-                    // all the same, and never count it as a press.
+                    // all the same (a locked entry's goes back with the
+                    // lockout's), and never count it as a press.
                     ++m_Counters[i].pressWriteFailed;
-                    try { (void)write(entry, originals[i]); } catch (...) {}
+                    if (lockedAt < 0) { try { (void)write(entry, originals[i]); } catch (...) {} }
                     continue;
+                }
+                if (lockedAt < 0) {
+                    writtenEntry[written] = entry;
+                    writtenColumn[written] = column;
+                    writtenOriginal[written] = originals[i];
+                    ++written;
                 }
                 pressed[i] = true;
                 ++m_Counters[i].presses;
@@ -288,13 +407,40 @@ public:
                 m_HasPressed[i] = true;
                 if (column == plan.holder) m_PressedCall = plan.call;
             }
+
+            // The mask, only on a call that pressed.
+            bool anyPressed = false;
+            for (int i = 0; i < kMark1ColumnCount; ++i) anyPressed = anyPressed || pressed[i];
+            if (anyPressed) {
+                bool heldSeen = false, maskedAny = false;
+                for (int k = 0; k < inputs.maskCount && written < kMaxWrites; ++k) {
+                    const int entry = inputs.maskEntry[k];
+                    Value original{};
+                    bool readOk = false;
+                    try { readOk = read(entry, original); } catch (...) { readOk = false; }
+                    if (!readOk || !Asks(original)) continue;
+                    heldSeen = true;
+                    if (!inputs.maskWrites) continue;
+                    bool wrote = false;
+                    try { wrote = write(entry, Value(kMark1InputResting)); } catch (...) { wrote = false; }
+                    if (!wrote) { try { (void)write(entry, original); } catch (...) {} continue; }
+                    writtenEntry[written] = entry;
+                    writtenColumn[written] = -1;
+                    writtenOriginal[written] = original;
+                    ++written;
+                    maskedAny = true;
+                }
+                if (heldSeen) m_Core.CountHeldSeen();
+                if (maskedAny) m_Core.CountMasked();
+            }
         }
         auto restore = [&]() {
-            for (int i = 0; i < kMark1ColumnCount; ++i) {
-                if (!pressed[i]) continue;
+            for (int w = written - 1; w >= 0; --w) {
                 bool ok = false;
-                try { ok = write(Mark1InputEntryForColumn(kMark1FirstColumn + i), originals[i]); } catch (...) { ok = false; }
-                if (!ok) ++m_Counters[i].restoreFailed;
+                try { ok = write(writtenEntry[w], writtenOriginal[w]); } catch (...) { ok = false; }
+                if (ok) continue;
+                if (Mark1IsAutomatedColumn(writtenColumn[w])) ++m_Counters[writtenColumn[w] - kMark1FirstColumn].restoreFailed;
+                else ++m_MaskRestoreFailed;
             }
         };
         // The put-back runs on the way out either way, from a guard rather
@@ -325,7 +471,8 @@ public:
     {
         Mark1ColumnCounters c;
         if (!Mark1IsAutomatedColumn(column)) return c;
-        const Counter& k = m_Counters[column - kMark1FirstColumn];
+        const int i = column - kMark1FirstColumn;
+        const Counter& k = m_Counters[i];
         c.presses            = k.presses.load();
         c.unreadable         = k.unreadable.load();
         c.empty              = k.empty.load();
@@ -338,17 +485,31 @@ public:
         c.restoreFailed      = k.restoreFailed.load();
         c.landed             = k.landed.load();
         c.skipTurn           = k.skipTurn.load();
-        c.yielded            = k.yielded.load();
+        c.yielded            = m_Core.Yielded(i);
         return c;
     }
     long CallsThrew() const { return m_CallsThrew.load(); }
+    long MaskRestoreFailed() const { return m_MaskRestoreFailed.load(); }
+
+    // The second stat line's `talents=` and `free=`: each column's talent id
+    // at the last active gate call (0: empty or unread), and its kind.
+    double LastTalent(int column) const
+    {
+        return Mark1IsAutomatedColumn(column) ? m_LastTalent[column - kMark1FirstColumn].load() : 0.0;
+    }
+    Mark1ColumnKind LastKind(int column) const
+    {
+        return Mark1IsAutomatedColumn(column) ? (Mark1ColumnKind)m_LastKind[column - kMark1FirstColumn].load()
+                                              : Mark1ColumnKind::NotEligible;
+    }
 
     // A new character or room: every column's settle window is forgotten, and
-    // so are the turns (the waits, the rests and the holder's run).
+    // so is the priority's state (the rests, the yield, the free columns'
+    // turn and the proc clocks).
     void ForgetPresses()
     {
         for (int i = 0; i < kMark1ColumnCount; ++i) { m_HasPressed[i] = false; m_LastPress[i] = 0; }
-        ClearTurns();
+        ClearPriority();
     }
 
 private:
@@ -356,75 +517,27 @@ private:
         std::atomic<long> presses{ 0 }, unreadable{ 0 }, empty{ 0 }, aura{ 0 },
             toggleSettling{ 0 }, toggleOn{ 0 }, toggleUnreadable{ 0 },
             originalUnreadable{ 0 }, pressWriteFailed{ 0 }, restoreFailed{ 0 },
-            landed{ 0 }, skipTurn{ 0 }, yielded{ 0 };
+            landed{ 0 }, skipTurn{ 0 };
     };
 
     static bool IsEmpty(const Mark1ColumnRead& r) { return !(r.talentId > 0); }
 
-    void ClearTurns()
+    // An entry's original reads held (3) or pressed (4); a value that does
+    // not read as a number does not ask.
+    template <class Value>
+    static bool Asks(const Value& v)
     {
-        for (int i = 0; i < kMark1ColumnCount; ++i) { m_LandedAt[i] = 0; m_Resting[i] = false; m_RestStart[i] = 0; }
-        m_Landings = 0;
-        m_RunColumn = -1;
-        m_RunStart = 0;
+        try {
+            if constexpr (std::is_arithmetic_v<Value>) return Mark1EntryAsks(true, (double)v);
+            else return Mark1EntryAsks(true, v.ToDouble());
+        } catch (...) { return false; }
+    }
+
+    void ClearPriority()
+    {
+        m_Core.Reset();
         m_PressedCall = 0;
-    }
-
-    // Column index a has waited longer than b: waits are ordered by landing,
-    // not by frame, so a frame counter that goes backwards cannot reorder
-    // them. Never landed (0) is the longest wait; ties go to the lower column.
-    bool WaitedLonger(int a, int b) const
-    {
-        if (m_LandedAt[a] != m_LandedAt[b]) return m_LandedAt[a] < m_LandedAt[b];
-        return a < b;
-    }
-
-    // Inside this column's rest. A frame counter that went backwards ends the
-    // rest rather than leaving it open-ended.
-    bool Resting(int i, long long frame) const
-    {
-        if (!m_Resting[i]) return false;
-        if (frame < m_RestStart[i]) return false;
-        return frame - m_RestStart[i] < kMark1TurnRestFrames;
-    }
-
-    // The eligible column, not resting, that has waited longest; -1 when
-    // none. With `ignoreRest` a resting column counts as free.
-    int Longest(const bool (&eligible)[kMark1ColumnCount], long long frame, bool ignoreRest, int except = -1) const
-    {
-        int best = -1;
-        for (int i = 0; i < kMark1ColumnCount; ++i) {
-            if (!eligible[i] || i == except) continue;
-            if (!ignoreRest && Resting(i, frame)) continue;
-            if (best < 0 || WaitedLonger(i, best)) best = i;
-        }
-        return best;
-    }
-
-    // This call's holder (a column index, -1 when nothing is eligible). A
-    // holder whose run has lasted kMark1TurnPatienceFrames rests, and counts
-    // yielded, when another eligible column is free to take the turn; its
-    // wait is not restarted. When every eligible column rests, the longest
-    // waiting is pressed all the same: a lone eligible column is pressed on
-    // every call.
-    int TakeTurn(const bool (&eligible)[kMark1ColumnCount], long long frame)
-    {
-        int holder = Longest(eligible, frame, false);
-        if (holder >= 0 && holder == m_RunColumn) {
-            if (frame < m_RunStart) m_RunStart = frame;
-            if (frame - m_RunStart >= kMark1TurnPatienceFrames) {
-                const int next = Longest(eligible, frame, false, holder);
-                if (next >= 0) {
-                    m_Resting[holder] = true;
-                    m_RestStart[holder] = frame;
-                    ++m_Counters[holder].yielded;
-                    holder = next;
-                }
-            }
-        }
-        if (holder < 0) holder = Longest(eligible, frame, true);
-        if (holder != m_RunColumn) { m_RunColumn = holder; m_RunStart = frame; }
-        return holder;
+        m_ProcCall = 0;
     }
 
     // Within the window after this column's own last press. A frame counter
@@ -436,11 +549,9 @@ private:
         return frame - m_LastPress[i] < kMark1ToggleSettleFrames;
     }
 
-    template <class ReadColumn, class ReadToggle>
-    Mark1ColumnDecision DecideColumn(int column, long long frame, ReadColumn& readColumn, ReadToggle& readToggle) const
+    template <class ReadToggle>
+    Mark1ColumnDecision DecideColumn(int column, long long frame, const Mark1ColumnRead& r, ReadToggle& readToggle) const
     {
-        Mark1ColumnRead r;
-        try { r = readColumn(column); } catch (...) { return Mark1ColumnDecision::SkipUnreadable; }
         if (!r.readable) return Mark1ColumnDecision::SkipUnreadable;
         if (IsEmpty(r)) return Mark1ColumnDecision::SkipEmpty;
         if (r.aura) return Mark1ColumnDecision::SkipAura;
@@ -465,26 +576,21 @@ private:
             case Mark1ColumnDecision::SkipToggleOn:         ++k.toggleOn; break;
             case Mark1ColumnDecision::SkipToggleUnreadable: ++k.toggleUnreadable; break;
             case Mark1ColumnDecision::SkipTurn:             ++k.skipTurn; break;
-            default: break;   // a press is counted when it is written (PressAround)
+            default: break;   // a press is counted when it is written (PressAround), a proc when it is done (ProcDone)
         }
     }
 
+    Mark1PriorityCore m_Core;
     Counter m_Counters[kMark1ColumnCount];
     std::atomic<long> m_CallsThrew{ 0 };
+    std::atomic<long> m_MaskRestoreFailed{ 0 };
     long long m_LastPress[kMark1ColumnCount] = {};
     bool m_HasPressed[kMark1ColumnCount] = {};
-
-    // The turns. m_LandedAt orders the waits (0: no landing since the turns
-    // were last cleared); the run is how long the current holder has held the
-    // turn without a landing.
-    unsigned long long m_LandedAt[kMark1ColumnCount] = {};
-    unsigned long long m_Landings = 0;
-    bool m_Resting[kMark1ColumnCount] = {};
-    long long m_RestStart[kMark1ColumnCount] = {};
-    int m_RunColumn = -1;
-    long long m_RunStart = 0;
+    std::atomic<double> m_LastTalent[kMark1ColumnCount] = {};
+    std::atomic<int> m_LastKind[kMark1ColumnCount] = {};
     unsigned long long m_PlanCalls = 0;
     unsigned long long m_PressedCall = 0;   // the Plan call whose holder PressAround last pressed; 0: none pending
+    unsigned long long m_ProcCall = 0;      // the Plan call whose proc is not yet reported; 0: none pending
     bool m_WasActive = false;
 };
 

@@ -9,9 +9,8 @@
 // the profile slot's entries, so every scenario can see exactly which columns
 // were read, which entries were written, with what, and in which order.
 //
-// The turn rule's scenarios also run against a gate model (GateModel below):
-// a test-side stand-in for which pressed column the game's gate casts, built
-// from Live 2b's bar and timings. It is a model, not the game.
+// The cast priority (which eligible column is pressed, the mask, the lockout
+// and the proc route) has its own harness, mark1_priority_harness.cpp.
 #include <cstdint>
 #include <functional>
 #include <iostream>
@@ -32,8 +31,6 @@ using ForgePact::kMark1FirstColumn;
 using ForgePact::kMark1LastColumn;
 using ForgePact::kMark1PressValue;
 using ForgePact::kMark1ToggleSettleFrames;
-using ForgePact::kMark1TurnPatienceFrames;
-using ForgePact::kMark1TurnRestFrames;
 
 static int failures = 0;
 static void check(const std::string& label, bool ok, const std::string& detail = "") {
@@ -135,7 +132,7 @@ static long totalCounted(const Mark1Automation& a) {
 }
 
 // A plan built by hand with several columns pressed: the old press-every-column
-// shape. Plan never presses two columns any more, so the scenarios that pin
+// shape. Plan never presses two columns, so the scenarios that pin
 // PressAround's mechanics on several entries at once build it this way.
 static Mark1FramePlan handPlan(long long frame, std::initializer_list<int> columns) {
     Mark1FramePlan p;
@@ -143,86 +140,6 @@ static Mark1FramePlan handPlan(long long frame, std::initializer_list<int> colum
     p.frame = frame;
     for (int c : columns) p.decision[c - kMark1FirstColumn] = Mark1ColumnDecision::Press;
     return p;
-}
-
-// The columns whose entry holds the press value right now (inside the call).
-static std::vector<int> pressedNow() {
-    std::vector<int> v;
-    for (int c = kMark1FirstColumn; c <= kMark1LastColumn; ++c)
-        if (slot.entries[c] == kMark1PressValue) v.push_back(c);
-    return v;
-}
-
-// One gate call under the turn rule: Plan, press around a stand-in original,
-// then report to the core whether a cast landed. `lands(column)` is asked with
-// the lowest pressed column (0 when none) and answers whether it cast.
-// Returns the plan's holder; `pressed` gets how many entries the call saw
-// pressed.
-template <class Lands>
-static int turnCall(Mark1Automation& a, long long frame, Lands&& lands, int* pressed = nullptr) {
-    const Mark1FramePlan plan = a.Plan(true, frame, readColumn, readToggle);
-    bool landed = false;
-    a.PressAround<double>(plan, readEntry, writeEntry, [&]() -> double {
-        const std::vector<int> now = pressedNow();
-        if (pressed) *pressed = (int)now.size();
-        landed = lands(now.empty() ? 0 : now.front());
-        return 7.0;
-    });
-    a.Landing(plan, landed);
-    return plan.holder;
-}
-static bool neverLands(int) { return false; }
-static bool alwaysLands(int column) { return column != 0; }
-
-// ---- the gate model (a test-side stand-in, labelled as a model, not the game)
-// Once a frame, the gate casts at most one pressed column: the first, in the
-// model's order (lowest column first, or highest first), that is past its own
-// cooldown, and only when the frame is past the cast lock (60 frames after any
-// landing). Live 2b's bar: Shadow Bolt on Q and Heavenly Fire on R, 36 frames
-// each; Healing Zone on E, 700; Y empty.
-struct GateModel {
-    bool highestFirst = false;
-    long long lastAny = -1;
-    long long last[10];
-    long long cooldown[10] = {};
-    long landings[10] = {};
-    GateModel() {
-        for (long long& l : last) l = -1;
-        cooldown[3] = 36; cooldown[4] = 700; cooldown[5] = 36;
-    }
-    bool Cast(long long frame) {
-        if (lastAny >= 0 && frame - lastAny < 60) return false;
-        for (int k = 0; k < kMark1ColumnCount; ++k) {
-            const int c = highestFirst ? kMark1LastColumn - k : kMark1FirstColumn + k;
-            if (slot.entries[c] != kMark1PressValue) continue;
-            if (last[c] >= 0 && frame - last[c] < cooldown[c]) continue;
-            last[c] = frame;
-            lastAny = frame;
-            ++landings[c];
-            return true;
-        }
-        return false;
-    }
-};
-static void liveTwoBBar() {
-    resetBar(); resetSlot();
-    bar.columns[3].talentId = 101;   // Shadow Bolt
-    bar.columns[4].talentId = 102;   // Healing Zone
-    bar.columns[5].talentId = 103;   // Heavenly Fire
-    bar.columns[6].talentId = 0;     // empty
-}
-// 3600 frames of the turn rule against the model; the landings per column.
-static GateModel runTurnsUnderModel(bool highestFirst) {
-    liveTwoBBar();
-    GateModel m;
-    m.highestFirst = highestFirst;
-    Mark1Automation a;
-    for (long long f = 0; f < 3600; ++f) turnCall(a, f, [&](int) { return m.Cast(f); });
-    return m;
-}
-static std::string landingsText(const GateModel& m) {
-    return "Q=" + std::to_string(m.landings[3]) + " E=" + std::to_string(m.landings[4])
-        + " R=" + std::to_string(m.landings[5]) + " Y=" + std::to_string(m.landings[6]);
 }
 
 int main() {
@@ -369,7 +286,7 @@ int main() {
         // A frame counter that went backwards (a restart of whatever counts
         // frames) never leaves a toggle stuck inside a window that cannot end:
         // both toggles are eligible again (neither counts as settling), and
-        // under the turn rule the lower one takes the call.
+        // the priority presses the first in Q, E, R, Y order.
         double sr[10] = {};
         gateCall(c, true, 5, sr);
         check("toggle/settle_survives_frame_reset", sr[3] == kMark1PressValue && sr[6] == kRest
@@ -428,11 +345,11 @@ int main() {
     {
         resetBar(); resetSlot();
         for (int c = 0; c < 10; ++c) bar.columns[c].talentId = 200 + c;   // every column holds a skill
-        for (int i = 0; i < 10; ++i) slot.entries[i] = 1.0 + i;            // distinct originals
+        for (int i = 0; i < 10; ++i) slot.entries[i] = 10.0 + i;           // distinct originals, none of them held (3) or pressed (4)
         Mark1Automation a;
         double seen[10] = {};
         // Every automated column pressed in one call: a plan built by hand,
-        // since Plan presses one column per call under the turn rule.
+        // since Plan presses one column per call.
         const double result = a.PressAround<double>(handPlan(0, { 3, 4, 5, 6 }), readEntry, writeEntry, [&]() -> double {
             for (int i = 0; i < 10; ++i) seen[i] = slot.entries[i];
             return 7.0;
@@ -443,7 +360,7 @@ int main() {
             if (ForgePact::Mark1InputEntryForColumn(c) != c) mapping = false;
         }
         for (int i = 0; i < 10; ++i)
-            if ((i < kMark1FirstColumn || i > kMark1LastColumn) && seen[i] != 1.0 + i) others = false;
+            if ((i < kMark1FirstColumn || i > kMark1LastColumn) && seen[i] != 10.0 + i) others = false;
         check("press/value_4_written", value4 && kMark1PressValue == 4.0);
         check("press/column_entry_mapping", mapping && kMark1FirstColumn == 3 && kMark1LastColumn == 6 && kMark1ColumnCount == 4);
         check("press/outside_columns_rejected",
@@ -455,7 +372,7 @@ int main() {
         check("press/only_planned_entries_written", onlyPlanned && others && slot.writeLog.size() == 8,
             "writes=" + std::to_string(slot.writeLog.size()));
         bool restored = true;
-        for (int i = 0; i < 10; ++i) if (slot.entries[i] != 1.0 + i) restored = false;
+        for (int i = 0; i < 10; ++i) if (slot.entries[i] != 10.0 + i) restored = false;
         check("press/restored_after_return", restored);
         check("press/original_return_passed_through", result == 7.0);
         check("press/value_seen_by_the_call", seen[3] == 4.0 && seen[6] == 4.0);
@@ -538,228 +455,6 @@ int main() {
         } catch (...) { escaped = true; }
         check("columns/throwing_reads_contained", !escaped && !plan.Press(3) && !plan.Press(4)
             && a.Counters(4).unreadable == 1 && a.Counters(3).toggleUnreadable == 1);
-    }
-
-    // ---- baseline: what the old press-every-column rule did ----------------------
-    {
-        // Live 2b's shape under the gate model: with Q, E and R pressed on
-        // every call and the lowest pressed column taking the cast, R (column
-        // 5) never lands while Q does. (The model starves E too, which Live 2b
-        // did not, so nothing is asserted about column 4.)
-        liveTwoBBar();
-        GateModel m;
-        Mark1Automation a;
-        for (long long f = 0; f < 3600; ++f)
-            a.PressAround<double>(handPlan(f, { 3, 4, 5 }), readEntry, writeEntry, [&]() -> double { m.Cast(f); return 7.0; });
-        check("baseline/gate_model_press_every_column_starves_column_5", m.landings[5] == 0 && m.landings[3] > 0,
-            landingsText(m));
-    }
-    {
-        // One eligible column alone is pressed on every gate call, a cast or not.
-        resetBar(); resetSlot();
-        bar.columns[3].talentId = 101;
-        Mark1Automation a;
-        long pressedCalls = 0;
-        for (long long f = 0; f < 1000; ++f) if (turnCall(a, f, neverLands) == 3) ++pressedCalls;
-        check("baseline/lone_eligible_column_pressed_every_call",
-            pressedCalls == 1000 && a.Counters(3).presses == 1000 && a.Counters(3).yielded == 0,
-            "pressed=" + std::to_string(pressedCalls) + " yielded=" + std::to_string(a.Counters(3).yielded));
-    }
-
-    // ---- turns: one column per gate call, the longest-waiting first ---------------
-    {
-        liveTwoBBar();
-        GateModel m;
-        Mark1Automation a;
-        bool onePerCall = true;
-        for (long long f = 0; f < 3600; ++f) {
-            int pressed = -1;
-            const int holder = turnCall(a, f, [&](int) { return m.Cast(f); }, &pressed);
-            if (pressed != 1 || holder < 3 || holder > 5) onePerCall = false;
-        }
-        check("turns/one_column_per_call", onePerCall);
-        long skips = 0, presses = 0;
-        for (int c = 3; c <= 5; ++c) { skips += a.Counters(c).skipTurn; presses += a.Counters(c).presses; }
-        check("turns/others_counted_skip_turn", presses == 3600 && skips == 7200
-            && a.Counters(6).skipTurn == 0 && a.Counters(6).empty == 3600,
-            "presses=" + std::to_string(presses) + " skipTurn=" + std::to_string(skips));
-    }
-    {
-        // Landings decide the order: a column that has never landed has waited
-        // longest (ties to the lower column), a landed one goes to the back.
-        liveTwoBBar();
-        Mark1Automation a;
-        std::vector<int> order;
-        for (long long f = 0; f < 10; ++f)
-            order.push_back(turnCall(a, f, [&](int column) { return column != 0 && f != 6; }));
-        const std::vector<int> want = { 3, 4, 5, 3, 4, 5, 3, 3, 4, 5 };
-        std::string got;
-        for (int c : order) got += std::to_string(c);
-        check("turns/ties_go_to_the_lower_column", order.size() == 10 && order[0] == 3 && order[1] == 4);
-        check("turns/longest_waiting_first", order == want, "order=" + got);
-        check("turns/landed_column_goes_to_the_back", order[3] == 3 && order[4] == 4 && order[8] == 4 && order[9] == 5,
-            "order=" + got);
-        check("turns/landing_counted", a.Counters(3).landed == 3 && a.Counters(4).landed == 3 && a.Counters(5).landed == 3
-            && a.Counters(3).presses == 4 && a.Counters(4).presses == 3 && a.Counters(5).presses == 3
-            && a.Counters(6).landed == 0,
-            "landed=" + std::to_string(a.Counters(3).landed) + "/" + std::to_string(a.Counters(4).landed)
-            + "/" + std::to_string(a.Counters(5).landed));
-    }
-    {
-        // A landing counts only for a column this call actually pressed.
-        liveTwoBBar();
-        Mark1Automation a;
-        const Mark1FramePlan inactive = a.Plan(false, 0, readColumn, readToggle);
-        a.Landing(inactive, true);
-        const bool inactiveNothing = totalCounted(a) == 0 && bar.columnReads == 0;
-        const Mark1FramePlan hp = handPlan(0, { 3, 4 });
-        a.PressAround<double>(hp, readEntry, writeEntry, []() { return 7.0; });
-        a.Landing(hp, true);
-        const bool handNothing = a.Counters(3).landed == 0 && a.Counters(4).landed == 0;
-
-        Mark1Automation b;
-        slot.writeFails[3] = true;                                     // the press cannot be written
-        turnCall(b, 0, [](int) { return true; });                      // a cast landed all the same: the player's key
-        slot.writeFails[3] = false;
-        const bool failedNothing = b.Counters(3).landed == 0 && b.Counters(3).pressWriteFailed == 1;
-        const int next = turnCall(b, 1, neverLands);                    // a landing=false call counts nothing
-        check("turns/landing_needs_a_written_press", inactiveNothing && handNothing && failedNothing
-            && next == 3 && b.Counters(3).landed == 0,
-            "next=" + std::to_string(next));
-
-        Mark1Automation c;
-        const Mark1FramePlan p = c.Plan(true, 0, readColumn, readToggle);
-        c.PressAround<double>(p, readEntry, writeEntry, []() { return 7.0; });
-        c.Landing(p, true);
-        c.Landing(p, true);                                            // the same call reported twice
-        check("turns/one_landing_per_call", c.Counters(3).landed == 1 && turnCall(c, 1, neverLands) == 4);
-    }
-    {
-        // Patience and rest: Q and E, neither ever casting. Q is pressed for 90
-        // frames, then rests 288 while E takes the turn; E's own patience runs
-        // out with Q resting, so E is not rested (no other column is free);
-        // Q's wait was never restarted, so it is first again when its rest ends.
-        resetBar(); resetSlot();
-        bar.columns[3].talentId = 101; bar.columns[4].talentId = 102;
-        Mark1Automation a;
-        std::vector<int> holder;
-        long yieldedQAt377 = -1, skipQAt377 = -1;
-        for (long long f = 0; f <= 600; ++f) {
-            holder.push_back(turnCall(a, f, neverLands));
-            if (f == 377) { yieldedQAt377 = a.Counters(3).yielded; skipQAt377 = a.Counters(3).skipTurn; }
-        }
-        auto all = [&](long long from, long long to, int column) {
-            for (long long f = from; f <= to; ++f) if (holder[(size_t)f] != column) return false;
-            return true;
-        };
-        const long long p = kMark1TurnPatienceFrames, r = kMark1TurnRestFrames;
-        check("turns/patience_then_rest", all(0, p - 1, 3) && holder[(size_t)p] == 4 && yieldedQAt377 == 1,
-            "holder@90=" + std::to_string(holder[(size_t)p]) + " yieldedQ=" + std::to_string(yieldedQAt377));
-        check("turns/rest_lasts_its_frames", all(p, p + r - 1, 4) && holder[(size_t)(p + r)] == 3
-            && skipQAt377 == r, "skipTurnQ=" + std::to_string(skipQAt377));
-        check("turns/rest_needs_another_free_column", a.Counters(4).yielded == 0 && all(p + p, p + r - 1, 4),
-            "yieldedE=" + std::to_string(a.Counters(4).yielded));
-        check("turns/rest_keeps_the_wait", all(p + r, p + r + p - 1, 3) && holder[(size_t)(p + r + p)] == 4
-            && a.Counters(3).yielded == 2 && a.Counters(3).landed == 0,
-            "yieldedQ=" + std::to_string(a.Counters(3).yielded));
-        check("turns/constants_90_and_288", kMark1TurnPatienceFrames == 90 && kMark1TurnRestFrames == 288);
-    }
-    {
-        // A holder that stops being eligible loses the turn at once, and gets
-        // it back (with a fresh run) as soon as it is eligible again.
-        liveTwoBBar();
-        Mark1Automation a;
-        std::vector<int> holder;
-        for (long long f = 0; f <= 101; ++f) {
-            bar.columns[3].aura = f == 10;
-            holder.push_back(turnCall(a, f, neverLands));
-        }
-        check("turns/holder_losing_eligibility_loses_the_turn",
-            holder[9] == 3 && holder[10] == 4 && holder[11] == 3 && holder[100] == 3 && holder[101] == 4
-            && a.Counters(3).yielded == 1 && a.Counters(3).aura == 1,
-            "holder@10=" + std::to_string(holder[10]) + " holder@101=" + std::to_string(holder[101]));
-    }
-    {
-        // ForgetPresses clears the waits, the rests and the run.
-        liveTwoBBar();
-        Mark1Automation a;
-        turnCall(a, 0, alwaysLands);                                   // Q lands
-        turnCall(a, 1, alwaysLands);                                   // E lands; R would be next
-        a.ForgetPresses();
-        const int afterWaits = turnCall(a, 2, neverLands);
-
-        resetBar(); resetSlot();
-        bar.columns[3].talentId = 101; bar.columns[4].talentId = 102;
-        Mark1Automation b;
-        for (long long f = 0; f <= kMark1TurnPatienceFrames; ++f) turnCall(b, f, neverLands);   // Q resting from 90
-        b.ForgetPresses();
-        std::vector<int> holder;
-        for (long long f = 91; f <= 181; ++f) holder.push_back(turnCall(b, f, neverLands));
-        check("turns/forget_presses_clears_the_turns", afterWaits == 3 && a.Counters(3).landed == 1
-            && holder.front() == 3 && holder[180 - 91] == 3 && holder[181 - 91] == 4,
-            "afterWaits=" + std::to_string(afterWaits) + " holder@91=" + std::to_string(holder.front()));
-    }
-    {
-        // The bonus going inactive and active again starts the turns afresh
-        // (an inactive call still reads, writes and counts nothing).
-        liveTwoBBar();
-        Mark1Automation a;
-        turnCall(a, 0, alwaysLands);
-        turnCall(a, 1, alwaysLands);
-        const long counted = totalCounted(a);
-        const long reads = bar.columnReads;
-        gateCall(a, false, 2);
-        const bool inactiveNothing = totalCounted(a) == counted && bar.columnReads == reads;
-        check("turns/reactivation_clears_the_turns", inactiveNothing && turnCall(a, 3, neverLands) == 3);
-    }
-    {
-        // A frame counter that went backwards ends a rest rather than leaving
-        // it open-ended.
-        resetBar(); resetSlot();
-        bar.columns[3].talentId = 101; bar.columns[4].talentId = 102;
-        Mark1Automation a;
-        int at90 = 0;
-        for (long long f = 0; f <= kMark1TurnPatienceFrames; ++f) at90 = turnCall(a, f, neverLands);
-        check("turns/frame_reset_ends_a_rest", at90 == 4 && turnCall(a, 5, neverLands) == 3);
-    }
-
-    // ---- no_starvation: the turn rule under the gate model ------------------------
-    {
-        const GateModel lo = runTurnsUnderModel(false);
-        const GateModel hi = runTurnsUnderModel(true);
-        auto fair = [](const GateModel& m) {
-            const long d = m.landings[3] - m.landings[5];
-            return d <= 1 && d >= -1 && m.landings[3] > 0 && m.landings[4] >= 3 && m.landings[6] == 0;
-        };
-        check("no_starvation/lowest_pressed_column_casts", fair(lo), landingsText(lo));
-        check("no_starvation/highest_pressed_column_casts", fair(hi), landingsText(hi));
-        bool same = true;
-        for (int c = kMark1FirstColumn; c <= kMark1LastColumn; ++c) if (lo.landings[c] != hi.landings[c]) same = false;
-        check("no_starvation/gate_order_does_not_change_the_result", same, landingsText(lo) + " vs " + landingsText(hi));
-    }
-
-    // ---- lone_column: the one eligible column is never rested ----------------------
-    {
-        resetBar(); resetSlot();
-        bar.columns[3].talentId = 101;                                  // ordinary
-        bar.columns[4].talentId = 102; bar.columns[4].aura = true;      // an aura
-        bar.columns[5].talentId = 103; bar.columns[5].toggle = true; bar.columns[5].state = Mark1ToggleState::On;
-        bar.columns[6].talentId = 0;                                    // empty
-        Mark1Automation a;
-        long pressedCalls = 0;
-        for (long long f = 0; f < 1000; ++f) if (turnCall(a, f, neverLands) == 3) ++pressedCalls;
-        check("lone_column/beside_ineligible_columns_pressed_every_call",
-            pressedCalls == 1000 && a.Counters(3).yielded == 0 && a.Counters(4).skipTurn == 0
-            && a.Counters(5).skipTurn == 0 && a.Counters(5).toggleOn == 1000,
-            "pressed=" + std::to_string(pressedCalls));
-
-        resetBar(); resetSlot();
-        bar.columns[5].talentId = 103;
-        Mark1Automation b;
-        long pressedB = 0;
-        for (long long f = 0; f < 1000; ++f) if (turnCall(b, f, [&](int c) { return c != 0 && f % 60 == 0; }) == 5) ++pressedB;
-        check("lone_column/landing_keeps_it_pressed", pressedB == 1000 && b.Counters(5).landed == 17 && b.Counters(5).yielded == 0,
-            "pressed=" + std::to_string(pressedB) + " landed=" + std::to_string(b.Counters(5).landed));
     }
 
     std::cout << (failures ? "RESULT FAIL" : "RESULT OK") << "\n";
