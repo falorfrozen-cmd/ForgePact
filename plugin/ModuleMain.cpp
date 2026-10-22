@@ -63808,7 +63808,8 @@ static void GambaPityCommand(const std::string& rest)
 //     order, a column with no cooldown pressed until it lands), then the
 //     held-input mask, all in the profile slot's `inputState` and put back
 //     after the original; a landing seen by the TalentUseSetSpeed detour, part
-//     of the install below. On the proc route (research until adopted) a
+//     of the install below. On the proc route (adopted after Stats live 1;
+//     a failed proc falls back to the press for the session) a
 //     non-toggle column is fired straight into TalentUseClass by name after
 //     the original, at the interval of its cooldown at the player's Skill
 //     Haste plus its cast time at the Faster Cast Rate, both read by name
