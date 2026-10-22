@@ -318,7 +318,12 @@ class Mark1DropsContract(unittest.TestCase):
         self.assertIn("d.hitRoll = heroic ? M1dNs::Roll::Heroic : M1dNs::Roll::Kill;", attribute)
         self.assertIn("d.core.NoteOurs(piece, d.hitRoll);", attribute)
         before = self.body("before_create")
-        self.assertIn("M1dNs::RewriteFor(static_cast<M1sNs::Piece>(i))", before)
+        # The piece's roll drawn from TyRng(), as the flight charms' rewrite
+        # draws theirs, and counted (`drop-rolls=`), before the rewrite.
+        self.assertIn("const double u = std::uniform_real_distribution<double>(0.0, 1.0)(TyRng());", before)
+        self.assertIn("++g_M1rDropRolls;", before)
+        self.assertIn("M1dNs::RewriteFor(static_cast<M1sNs::Piece>(i), u)", before)
+        self.assertLess(before.index("(TyRng())"), before.index("M1dNs::RewriteFor("))
         self.assertIn("SignatureRewriteParams(record, item, why)", before)
         self.assertIn("Mark1DropRefuse(i,", before)
         self.assertIn("d.core.NoteRewriteRefused(p);", self.body("refuse"))
@@ -681,7 +686,8 @@ class Mark1DropsContract(unittest.TestCase):
         self.assertNotIn("variable_struct_set", check)
         rewrite = self.draw("static bool KillDrawBeforeCreate(int argc, RValue** A)")
         self.assertIn("g_M1Drop.core.TakeDrawRewrite(piece)", rewrite)
-        self.assertIn("M1dNs::RewriteFor(piece)", rewrite)
+        self.assertIn("M1dNs::RewriteFor(piece, u)", rewrite)
+        self.assertIn("++g_M1rDropRolls;", rewrite)
         self.assertIn("SignatureRewriteParams(record, item, why)", rewrite)
         self.assertIn("Mark1DropRefuse(static_cast<int>(piece), shown);", rewrite)
         built = self.draw("static bool KillDrawNoteBuiltPiece(M1sNs::Piece piece)")

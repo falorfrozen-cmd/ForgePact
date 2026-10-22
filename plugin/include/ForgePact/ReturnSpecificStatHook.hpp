@@ -4,9 +4,13 @@
 // The plugin's one detour on ReturnSpecificStat (the game's stat dispatcher:
 // `ReturnSpecificStat(1, <stat id>, 0)` answers one stat for its `self`),
 // shared by skill sliders' Projectile Speed (SkillSlidersMod.hpp adds to stat
-// 75 inside the player's own LoadAllModifiers) and the Mark 1 set's half walk
+// 75 inside the player's own LoadAllModifiers), the Mark 1 set's half walk
 // (ModuleMain.cpp's Mark 1 adapter answers the local player's stat 64 calls
-// through Mark1Movement.hpp while the set's bonus is active).
+// through Mark1Movement.hpp while the set's bonus is active) and the Mark 1
+// set bonus (the same adapter answers the local player's Defense, All
+// Resistances, Replenish Life, All Skills, Life and Physical Damage Taken
+// Reduced calls through Mark1Rolls.hpp, and the automation's mana cost, ids
+// 37 and 42, through Mark1Cost.hpp).
 //
 // One detour, because HookOneScript puts the inline detour in only while the
 // script-table entry is still the game's code: a second install of the same
@@ -19,8 +23,9 @@
 // twice.
 //
 // The game's answer comes first; then each consumer that registered runs, in
-// a fixed order: skill sliders, then Mark 1. They answer different stat ids,
-// so neither sees the other's change. A consumer is registered by its mod on
+// a fixed order: skill sliders, then Mark 1's half walk, then Mark 1's set
+// bonus. They answer different stat ids, so none sees another's change. A
+// consumer is registered by its mod on
 // its own arming path, so while neither mod is armed nothing is installed, and
 // once installed, a consumer whose mod is off returns at once.
 //
@@ -35,11 +40,13 @@ inline PFUNC_YYGMLScript original = nullptr;
 inline bool installTried = false, installed = false, native = false;
 inline Consumer skillSliders = nullptr;   // SkillSlidersMod's Projectile Speed (stat 75)
 inline Consumer mark1 = nullptr;          // the Mark 1 set's half walk (stat 64)
+inline Consumer mark1Bonus = nullptr;     // the Mark 1 set bonus (stats 2, 36, 38, 92, 97, 161) and its mana cost (37, 42)
 
 inline RValue& Hook(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) {
     RValue& r = original ? original(S, O, R, argc, A) : R;
     if (skillSliders) skillSliders(S, argc, A, r);
     if (mark1) mark1(S, argc, A, r);
+    if (mark1Bonus) mark1Bonus(S, argc, A, r);
     return r;
 }
 

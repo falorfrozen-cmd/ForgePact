@@ -349,7 +349,10 @@ inline bool AttributeHit(const PushPlan& plan, double t, double sub, double b, d
 }
 
 // What the piece's hit is rewritten to through SignatureRewriteParams: its own
-// definition, a = its seed, b = its base, c 0 and j 0.
+// definition, a = the seed of the roll `u` draws (Mark1Rolls.hpp's
+// SeedFromUniform: u in [0, 1), every roll of the piece's band equally likely,
+// as the flight charms' drops draw theirs), b = its base, c 0 and j 0. The
+// adapter draws `u` from TyRng().
 struct RewriteTarget {
     int       itemType = 0;
     long long a = 0;
@@ -358,10 +361,11 @@ struct RewriteTarget {
     int       j = 0;
 };
 
-inline RewriteTarget RewriteFor(Piece p)
+inline RewriteTarget RewriteFor(Piece p, double u)
 {
     const PieceRow& r = Mark1Set::RowOf(p);
-    return RewriteTarget{ r.itemType, r.seed, r.baseB, 0, 0 };
+    return RewriteTarget{ r.itemType, Mark1Rolls::SeedFromUniform(static_cast<Mark1Rolls::Piece>(static_cast<int>(p)), u),
+                          r.baseB, 0, 0 };
 }
 
 // ---- the kill route: the ordinary unique roll ---------------------------------------

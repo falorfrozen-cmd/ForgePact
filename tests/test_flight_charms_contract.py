@@ -1649,12 +1649,20 @@ class FlightCharmsTooltipContract(unittest.TestCase):
     def test_the_stats_hook_decides_through_the_headers_rule(self):
         stat = function_body(self.release, "static RValue& Hook_DrawInventoryStatsNew(")
         read = stat.index("ForgePact::ForgedTooltipRows::NeedsStatRead(g_TipRowsPending, fmt, g_TipItemNoStats)")
-        present = stat.index("&& TipStatPresent(A, argc);")
+        present = stat.index("&& TipStatPresent(A, argc);", read)
         anchor = stat.index(
-            "if (ForgePact::ForgedTooltipRows::AnchorsHere(g_TipRowsPending, fmt, present, g_TipItemNoStats)) {")
+            "anchors = ForgePact::ForgedTooltipRows::AnchorsHere(g_TipRowsPending, fmt, present, g_TipItemNoStats);")
         self.assertLess(read, present, "the stat is read only when the rule asks")
         self.assertLess(present, anchor)
-        self.assertLess(anchor, stat.index("g_TipRowsPending = false;"), "an anchor ends the pending rows")
+        self.assertLess(anchor, stat.index("if (anchors) {"))
+        self.assertLess(stat.index("if (anchors) {"), stat.index("g_TipRowsPending = false;"), "an anchor ends the pending rows")
+        # A Mark 1 piece alone asks its own core (Mark1Set.hpp's BlockAnchor,
+        # after the piece's own stat lines, the 2026-10-22 playtest); every
+        # other forged item takes the header's rule in the `else`.
+        piece = stat.index("if (g_TipM1AnchorOn) {")
+        self.assertLess(piece, stat.index("} else {"))
+        self.assertLess(stat.index("} else {"), read)
+        self.assertIn("anchors = g_TipM1Anchor.AnchorsHere(statId, has, fmt);", stat[piece:read])
         self.assertNotIn("fmt == 2.0 || fmt == 3.0) && TipStatPresent", stat, "no second copy of the rule")
         self.assertEqual(2, stat.count("TipNoteStat("))
         self.assertEqual(2, stat.count("g_Tip.statId = outerStat;"))
@@ -1685,8 +1693,11 @@ class FlightCharmsTooltipContract(unittest.TestCase):
         self.assertIn("TipRow{ text, kTipGold, false }", gold)
         self.assertIn("static constexpr double kTipGold = 6472946.0;", self.release)
         draw = function_body(self.release, "static double TipDrawRow(double x, double y, const TipRow& row)")
-        self.assertIn("if (!row.wrapped && row.colour == kTipGold) {", draw)
+        # A gold row is never wrapped nor in the small font (Mark 1's
+        # description alone is), so it draws through HhDrawTooltipLine.
+        self.assertIn("if (!row.wrapped && !row.smallFont && row.colour == kTipGold) {", draw)
         self.assertIn("HhDrawTooltipLine(x, y, row.text);", draw)
+        self.assertLess(draw.index("HhDrawTooltipLine(x, y, row.text);"), draw.index("const TipSmallFont font(row.smallFont);"))
         line = function_body(self.release, "static void HhDrawTooltipLine(double x, double y, const std::string& text)")
         self.assertIn('"make_colour_rgb", { RValue(242.0), RValue(196.0), RValue(98.0) }', line)
         # At most three rows of a forged item's own text, as before.

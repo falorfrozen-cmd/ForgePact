@@ -183,18 +183,26 @@ class Mark1DropsBehaviorTests(unittest.TestCase):
     def test_coin_rewrite_target_per_piece_is_mark1set_kpieces(self):
         self.assertScenarios("coin/rewrite_target_is_the_pieces_own_definition")
         # The pieces' table as Mark1Set.hpp writes it, against what the core
-        # rewrites a hit to: a = the seed, b = the base, c 0, j 0.
+        # rewrites a hit to: a = a seed of the piece's roll band (Mark1Rolls.hpp:
+        # helmet from 1,000,000,000, each next piece a million on; u 0 the
+        # band's first seed, the top roll its last), b = the base, c 0, j 0.
+        # Was: a = the piece's one fixed seed (now its legacy seed, never a
+        # new drop's).
         table = (ROOT / "plugin/include/ForgePact/Mark1Set.hpp").read_text(encoding="utf-8")
         rows = re.findall(r'\{\s*Piece::\w+,\s*"(\w+)",\s*"[^"]+",\s*(\d+),\s*(\d+),\s*(\d+)\s*\}', table)
         self.assertEqual(len(rows), 4, rows)
+        rolls = {"helmet": 107604, "body": 763964, "boots": 117249, "gloves": 1196}
         rewrites = {}
         for line in self.output.split("\n"):
             if line.startswith("REWRITE "):
                 parts = line.split()
                 rewrites[parts[1]] = {k: int(v) for k, v in (p.split("=") for p in parts[2:])}
-        for key, item_type, seed, base in rows:
+        for index, (key, item_type, legacy, base) in enumerate(rows):
+            band = 1_000_000_000 + index * 1_000_000
             with self.subTest(piece=key):
-                self.assertEqual(rewrites[key], {"type": int(item_type), "a": int(seed), "b": int(base), "c": 0, "j": 0})
+                self.assertEqual(rewrites[key], {"type": int(item_type), "a": band, "b": int(base), "c": 0, "j": 0,
+                                                 "top": band + rolls[key] - 1})
+                self.assertNotEqual(rewrites[key]["a"], int(legacy))
 
     # ---- gate and install --------------------------------------------------------
 

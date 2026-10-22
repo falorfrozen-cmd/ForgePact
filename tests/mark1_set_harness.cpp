@@ -79,7 +79,7 @@ static WornSlot item(double type, double a, double b = 0, double c = 0, double j
 static WornSlot pieceIn(Piece p)
 {
     const PieceRow& r = RowOf(p);
-    return item(r.itemType, static_cast<double>(r.seed), r.baseB, 0, 0);
+    return item(r.itemType, static_cast<double>(r.legacySeed), r.baseB, 0, 0);
 }
 
 static WornSlot emptySlot()
@@ -157,7 +157,7 @@ int main()
 {
     // ---- the table, printed for the Python side to pin against the SDK -------
     for (const PieceRow& r : kPieces)
-        std::cout << "TABLE " << r.key << " type=" << r.itemType << " seed=" << r.seed
+        std::cout << "TABLE " << r.key << " type=" << r.itemType << " seed=" << r.legacySeed
                   << " b=" << r.baseB << std::endl;
 
     // ---- seed_codec --------------------------------------------------------------
@@ -169,13 +169,13 @@ int main()
             && kPieces[3].piece == Piece::Gloves && kPieces[3].itemType == 4;
         check("seed_codec/classes_in_piece_order_and_ten_gear_slots", ok);
 
-        ok = kPieces[0].seed == 777500 && kPieces[1].seed == 777501 && kPieces[2].seed == 777502 && kPieces[3].seed == 777503;
+        ok = kPieces[0].legacySeed == 777500 && kPieces[1].legacySeed == 777501 && kPieces[2].legacySeed == 777502 && kPieces[3].legacySeed == 777503;
         check("seed_codec/one_seed_per_piece", ok);
 
         ok = true;
         for (int i = 0; i < kPieceCount; ++i) {
-            if (kPieces[i].seed < kBuiltInSeedLo || kPieces[i].seed > kBuiltInSeedHi) ok = false;
-            for (int k = i + 1; k < kPieceCount; ++k) if (kPieces[i].seed == kPieces[k].seed) ok = false;
+            if (kPieces[i].legacySeed < kBuiltInSeedLo || kPieces[i].legacySeed > kBuiltInSeedHi) ok = false;
+            for (int k = i + 1; k < kPieceCount; ++k) if (kPieces[i].legacySeed == kPieces[k].legacySeed) ok = false;
         }
         check("seed_codec/seeds_distinct_inside_the_built_in_band", ok && kBuiltInSeedLo == 777000 && kBuiltInSeedHi == 999 + 777000);
 
@@ -188,7 +188,7 @@ int main()
         ok = true;
         for (const PieceRow& r : kPieces)
             for (const Band& b : inUse)
-                if (r.seed >= b.lo && r.seed <= b.hi) ok = false;
+                if (r.legacySeed >= b.lo && r.legacySeed <= b.hi) ok = false;
         check("seed_codec/seeds_collide_with_no_band_in_use", ok);
 
         ok = kPieces[0].baseB == 7 && kPieces[1].baseB == 0 && kPieces[2].baseB == 0 && kPieces[3].baseB == 0;
@@ -197,7 +197,7 @@ int main()
         ok = true;
         for (const PieceRow& r : kPieces) {
             Piece p = Piece::Gloves;
-            if (!IsPiece(r.itemType, static_cast<double>(r.seed), r.baseB, 0, 0, p) || p != r.piece) ok = false;
+            if (!IsPiece(r.itemType, static_cast<double>(r.legacySeed), r.baseB, 0, 0, p) || p != r.piece) ok = false;
         }
         check("seed_codec/each_piece_recognised", ok);
 
@@ -273,7 +273,7 @@ int main()
         for (const PieceRow& r : kPieces)
             for (double t : tiers) {
                 double before = t;
-                (void)Dress(r.itemType, static_cast<double>(r.seed), r.baseB, 0, 0, 1, before);
+                (void)Dress(r.itemType, static_cast<double>(r.legacySeed), r.baseB, 0, 0, 1, before);
                 if (before != t) ok = false;
             }
         check("tier_baseline/a_pieces_info_before_dressing_holds_the_bases_value", ok);
@@ -286,7 +286,7 @@ int main()
             for (double t : tiers)
                 for (double b : { static_cast<double>(r.baseB), 0.0, 12.0 })
                     for (double c : { 0.0, 1.0 }) {
-                        const Dressed d = Dress(r.itemType, static_cast<double>(r.seed), b, c, 0, 9, t);
+                        const Dressed d = Dress(r.itemType, static_cast<double>(r.legacySeed), b, c, 0, 9, t);
                         if (d.tier != 5 || d.tier != kTier) { ok = false; bad += std::string(r.key) + " "; }
                     }
         check("tier_target/every_piece_comes_out_at_tier_5", ok, bad);
@@ -316,7 +316,7 @@ int main()
         bad.clear();
         for (const PieceRow& r : kPieces)
             for (double rr : rarities) {
-                const Dressed d = Dress(r.itemType, static_cast<double>(r.seed), r.baseB, 0, 0, rr, -1);
+                const Dressed d = Dress(r.itemType, static_cast<double>(r.legacySeed), r.baseB, 0, 0, rr, -1);
                 if (d.rarity != 6 || d.rarity != kRarity || d.rarity == 9) { ok = false; bad += std::string(r.key) + " "; }
             }
         check("rarity_target/every_piece_comes_out_at_rarity_6", ok, bad);
@@ -1060,7 +1060,7 @@ int main()
     {
         const auto rowsText = [](const std::vector<TipRow>& rows) {
             std::string s;
-            for (const TipRow& r : rows) s += (s.empty() ? "" : "|") + r.text;
+            for (size_t i = 0; i < rows.size(); ++i) s += (i ? "|" : "") + rows[i].text;
             return s;
         };
         const auto colours = [](const std::vector<TipRow>& rows) {
@@ -1068,58 +1068,106 @@ int main()
             for (const TipRow& r : rows) s += (s.empty() ? "" : "/") + std::to_string(r.colour);
             return s;
         };
+        // The block since the 2026-10-22 playtest: one empty row, the set
+        // bonus's eight lines in table order with Automation's description
+        // under `+1 to Automation`, one empty row, the set's name and the four
+        // pieces.
+        const std::string description =
+            "Your Q, E, R and Y skills cast themselves whenever they are ready, in that order. "
+            "Your jump goes three times as far, over scenery.";
         const std::string text =
-            "+1 to Automation|Your Q, E, R and Y skills cast themselves whenever they are ready. "
-            "Your jump goes three times as far, over scenery. You walk at half speed.||Mark 1"
-            "|Mark 1 Helmet|Mark 1 Body Armor|Mark 1 Boots|Mark 1 Gloves";
+            "|+500 Defense|+35% to All Resistances|Replenish Life 25%|+1 to Automation|" + description
+            + "|+5 to All Skills|+750 to Life|Physical Damage Taken Reduced by 20%|-50% Movement Speed||Mark 1"
+              "|Mark 1 Helmet|Mark 1 Body Armor|Mark 1 Boots|Mark 1 Gloves";
         const std::string grey = "4210752", green = "65280", gold = "7844807", desc = "8421504";
+        // The expected colours: the bonus lines lit at `lit` pieces (0: none
+        // lit), and each piece green by `worn`.
+        const auto expected = [&](int lit, const bool (&worn)[4]) {
+            const int thresholds[8] = { 2, 3, 3, 4, 4, 4, 4, 4 };
+            std::string s = grey;
+            for (int i = 0; i < 8; ++i) {
+                s += "/" + (lit >= thresholds[i] ? gold : grey);
+                if (i == 3) s += "/" + desc;
+            }
+            s += "/" + grey + "/" + gold;
+            for (bool w : worn) s += "/" + (w ? green : grey);
+            return s;
+        };
+        const bool noneWorn[4] = { false, false, false, false };
+        const bool allWorn[4] = { true, true, true, true };
 
         WornSlots none;
         for (auto& s : none) s = emptySlot();
         const std::vector<TipRow> noneRows = SetBlockRows(Evaluate(none), true, true, true);
-        bool ok = rowsText(noneRows) == text && noneRows.size() == 8
-            && colours(noneRows) == grey + "/" + desc + "/" + grey + "/" + gold + "/" + grey + "/" + grey + "/" + grey + "/" + grey;
-        // Only the description is wrapped.
+        bool ok = rowsText(noneRows) == text && noneRows.size() == 16 && colours(noneRows) == expected(0, noneWorn);
+        // Only the description is wrapped and drawn in the small font.
         for (size_t i = 0; i < noneRows.size(); ++i)
-            if (noneRows[i].wrapped != (i == 1)) ok = false;
+            if (noneRows[i].wrapped != (i == 5) || noneRows[i].smallFont != (i == 5)) ok = false;
         check("tooltip_target/none_worn_four_grey_names_and_a_grey_bonus", ok, colours(noneRows));
 
         WornSlots two = none;
         two[0] = pieceIn(Piece::Helmet);
         two[7] = pieceIn(Piece::Gloves);
         const std::vector<TipRow> twoRows = SetBlockRows(Evaluate(two), true, true, true);
-        ok = rowsText(twoRows) == text
-            && colours(twoRows) == grey + "/" + desc + "/" + grey + "/" + gold + "/" + green + "/" + grey + "/" + grey + "/" + green;
+        const bool helmetGloves[4] = { true, false, false, true };
+        ok = rowsText(twoRows) == text && colours(twoRows) == expected(2, helmetGloves);
         check("tooltip_target/two_worn_those_two_green", ok, colours(twoRows));
 
         const std::vector<TipRow> fullOff = SetBlockRows(Evaluate(fullSet()), true, false, true);
-        ok = rowsText(fullOff) == text
-            && colours(fullOff) == grey + "/" + desc + "/" + grey + "/" + gold + "/" + green + "/" + green + "/" + green + "/" + green;
+        ok = rowsText(fullOff) == text && colours(fullOff) == expected(0, allWorn);
         check("tooltip_target/four_worn_switch_off_all_green_and_a_grey_bonus", ok, colours(fullOff));
 
         const std::vector<TipRow> fullOn = SetBlockRows(Evaluate(fullSet()), true, true, true);
-        ok = rowsText(fullOn) == text
-            && colours(fullOn) == gold + "/" + desc + "/" + grey + "/" + gold + "/" + green + "/" + green + "/" + green + "/" + green
+        ok = rowsText(fullOn) == text && colours(fullOn) == expected(4, allWorn)
             && BlockBonusActive(Evaluate(fullSet()), true, true, true) && !BlockUnread(Evaluate(fullSet()), true);
         check("tooltip_target/four_worn_switch_on_a_gold_bonus", ok, colours(fullOn));
 
-        // A read that failed as a whole: nothing green, the bonus grey, even
+        // A read that failed as a whole: nothing green, every line grey, even
         // with a SetRead that claims the full set; counted unread.
         const std::vector<TipRow> failed = SetBlockRows(Evaluate(fullSet()), false, true, true);
-        ok = rowsText(failed) == text
-            && colours(failed) == grey + "/" + desc + "/" + grey + "/" + gold + "/" + grey + "/" + grey + "/" + grey + "/" + grey
+        ok = rowsText(failed) == text && colours(failed) == expected(0, noneWorn)
             && BlockUnread(Evaluate(fullSet()), false) && !BlockBonusActive(Evaluate(fullSet()), false, true, true);
         check("tooltip_target/a_failed_read_gives_nothing_green", ok, colours(failed));
 
         // An unreadable slot can leave a piece unfound, never found: the
-        // pieces read elsewhere stay green, and the block counts unread.
+        // pieces read elsewhere stay green, three are worn, and the block
+        // counts unread.
         WornSlots partly = fullSet();
         partly[3] = WornSlot{};   // the gloves' slot, unreadable
         const SetRead pr = Evaluate(partly);
         const std::vector<TipRow> partlyRows = SetBlockRows(pr, true, true, true);
-        ok = colours(partlyRows) == grey + "/" + desc + "/" + grey + "/" + gold + "/" + green + "/" + green + "/" + green + "/" + grey
-            && BlockUnread(pr, true);
+        const bool noGloves[4] = { true, true, true, false };
+        ok = colours(partlyRows) == expected(3, noGloves) && BlockUnread(pr, true);
         check("tooltip_target/an_unreadable_slot_leaves_that_piece_grey_and_counts_unread", ok, colours(partlyRows));
+
+        // The bonus lines by pieces worn (the 2026-10-22 playtest): each line
+        // lit while at least its threshold of distinct pieces is worn, the
+        // switch on and the bonus installed. 0, 2, 3 and 4 worn; the switch
+        // off; not installed; a piece worn twice counts once.
+        WornSlots three = none;
+        three[0] = pieceIn(Piece::Helmet);
+        three[1] = pieceIn(Piece::Body);
+        three[5] = pieceIn(Piece::Boots);
+        const bool threeWorn[4] = { true, true, true, false };
+        WornSlots twice = two;
+        twice[2] = pieceIn(Piece::Helmet);   // the helmet a second time
+        ok = colours(SetBlockRows(Evaluate(none), true, true, true)) == expected(0, noneWorn)
+            && colours(SetBlockRows(Evaluate(two), true, true, true)) == expected(2, helmetGloves)
+            && colours(SetBlockRows(Evaluate(three), true, true, true)) == expected(3, threeWorn)
+            && colours(SetBlockRows(Evaluate(fullSet()), true, true, true)) == expected(4, allWorn)
+            && colours(SetBlockRows(Evaluate(three), true, false, true)) == expected(0, threeWorn)
+            && colours(SetBlockRows(Evaluate(three), true, true, false)) == expected(0, threeWorn)
+            && colours(SetBlockRows(Evaluate(twice), true, true, true)) == expected(2, helmetGloves);
+        check("tooltip_target/bonus_lines_lit_by_the_pieces_worn", ok, colours(SetBlockRows(Evaluate(three), true, true, true)));
+
+        // `-50% Movement Speed` is a row of its own, the last bonus line, lit
+        // with the 4-piece lines; the description no longer says it.
+        ok = fullOn.size() == 16 && fullOn[9].text == "-50% Movement Speed" && fullOn[9].colour == kColourBonusActive
+            && !fullOn[9].wrapped && !fullOn[9].smallFont
+            && SetBlockRows(Evaluate(three), true, true, true)[9].colour == kColourBonusInactive
+            && fullOn[5].text.find("half speed") == std::string::npos
+            && std::string(kAutomationDescription) == description;
+        check("tooltip_target/movement_line_is_its_own_row", ok, fullOn[9].text);
 
         // The piece's type line reads like the game's own set pieces.
         ok = TypeLineFor(true, Piece::Gloves, "Satanic Gloves") == "Satanic Set Gloves"
@@ -1218,8 +1266,9 @@ int main()
 
         // The bonus line asks the install too (round 1's NON-BLOCKING finding):
         // lit only with all four worn, the switch on and the bonus installed.
+        // The Automation line (row 4) stands for the 4-piece lines.
         const auto bonusColour = [&](bool switchOn, bool installed) {
-            return std::to_string(SetBlockRows(Evaluate(fullSet()), true, switchOn, installed)[0].colour);
+            return std::to_string(SetBlockRows(Evaluate(fullSet()), true, switchOn, installed)[4].colour);
         };
         ok = bonusColour(true, false) == grey && bonusColour(true, true) == gold && bonusColour(false, true) == grey
             && bonusColour(false, false) == grey
@@ -1228,6 +1277,117 @@ int main()
             && !BlockBonusActive(Evaluate(fullSet()), true, false, true);
         check("tooltip_target/the_bonus_line_needs_the_switch_and_the_install", ok,
               bonusColour(true, false) + "/" + bonusColour(true, true) + "/" + bonusColour(false, true));
+    }
+
+    // ---- tooltip_target: where a piece's block anchors ---------------------------------
+    {
+        // A pass as the game makes it (RDM § 16.6): one DrawInventoryStatsNew
+        // call per stat line it knows, in a fixed order, present or not. Of
+        // Mark 1's keys the order is 29, 201, 48, 51, 52, 170, 59, 173, with
+        // other ids between and after (Item Truth's captures). Each call is
+        // (stat id, format); `has` the keys the item carries.
+        struct Call { int id; double format; };
+        const std::vector<Call> pass = {
+            { 5, 0 }, { 29, 2 }, { 30, 2 }, { 201, 3 }, { 48, 3 }, { 49, 3 }, { 51, 3 }, { 52, 3 }, { 53, 2 },
+            { 170, 2 }, { 171, 2 }, { 59, 3 }, { 60, 3 }, { 173, 2 }, { 174, 2 }, { 175, 3 }, { 300, 2 },
+        };
+        // The index of the call the block anchors at, -1 for none.
+        const auto anchorAt = [&](Piece p, const std::vector<int>& has) {
+            BlockAnchor a = BlockAnchor::For(p);
+            for (size_t i = 0; i < pass.size(); ++i) {
+                bool present = false;
+                for (int k : has) if (k == pass[i].id) present = true;
+                if (a.AnchorsHere(pass[i].id, a.Waits(pass[i].id) && present, pass[i].format)) return (int)i;
+            }
+            return -1;
+        };
+        // The pieces' own stat-line keys: everything StatsFor writes but the
+        // header's 154 and the sockets row's 20.
+        const BlockAnchor helmet = BlockAnchor::For(Piece::Helmet);
+        bool ok = helmet.KeyCount() == 4 && helmet.Key(0) == 29 && helmet.Key(1) == 173 && helmet.Key(2) == 201 && helmet.Key(3) == 48
+            && BlockAnchor::For(Piece::Body).KeyCount() == 4 && BlockAnchor::For(Piece::Boots).KeyCount() == 3
+            && BlockAnchor::For(Piece::Gloves).KeyCount() == 3;
+        // Helmet (29, 173, 201, 48): its last line is 173, at index 13, so the
+        // block anchors at the next row call, index 14 - not at 29, its first.
+        const int helmetAt = anchorAt(Piece::Helmet, { 154, 29, 173, 201, 48, 20 });
+        // Gloves (29, 201, 51): the last is 51 (index 6), so index 7.
+        const int glovesAt = anchorAt(Piece::Gloves, { 154, 29, 201, 51 });
+        // Body (29, 52, 201, 170): the last is 170 (index 9), so index 10.
+        const int bodyAt = anchorAt(Piece::Body, { 154, 29, 52, 201, 170, 20 });
+        // Boots (29, 59, 173): the last is 173, so index 14.
+        const int bootsAt = anchorAt(Piece::Boots, { 154, 29, 59, 173 });
+        // A key the item does not carry draws no line: the block still waits
+        // for its call and anchors there, after every line the piece drew.
+        const int missingAt = anchorAt(Piece::Gloves, { 154, 29, 201 });
+        // The old rule (ForgedTooltipRows.hpp's first present stat) would
+        // have anchored at 29, index 1, between the header and the stats.
+        ok = ok && helmetAt == 14 && glovesAt == 7 && bodyAt == 10 && bootsAt == 14 && missingAt == 6;
+        check("tooltip_target/block_anchors_after_the_pieces_own_lines", ok,
+              std::to_string(helmetAt) + "/" + std::to_string(glovesAt) + "/" + std::to_string(bodyAt) + "/"
+                  + std::to_string(bootsAt) + "/" + std::to_string(missingAt));
+        // A format that draws no stat row (0, 5, 6) is never the anchor.
+        BlockAnchor g = BlockAnchor::For(Piece::Gloves);
+        ok = !g.AnchorsHere(29, true, 2) && !g.AnchorsHere(201, true, 3) && !g.AnchorsHere(51, true, 3)
+            && !g.AnchorsHere(700, false, 6) && !g.AnchorsHere(701, false, 0) && g.AnchorsHere(702, false, 2);
+        check("tooltip_target/block_anchors_only_at_a_row_call", ok);
+    }
+
+    // ---- seed_codec: the pieces' roll bands (Mark1Rolls.hpp) ----------------------------
+    {
+        bool ok = true;
+        for (const PieceRow& r : kPieces) {
+            const auto rp = static_cast<ForgePact::Mark1Rolls::Piece>(static_cast<int>(r.piece));
+            for (long long seed : { ForgePact::Mark1Rolls::LowSeed(rp), ForgePact::Mark1Rolls::TopSeed(rp), r.legacySeed }) {
+                Piece p = Piece::Gloves;
+                ForgePact::Mark1Rolls::Rolled rolled;
+                if (!DecodePiece(r.itemType, static_cast<double>(seed), r.baseB, 0, 0, p, rolled) || p != r.piece
+                    || rolled.legacy != (seed == r.legacySeed)) ok = false;
+            }
+        }
+        check("seed_codec/band_and_legacy_seeds_are_pieces", ok);
+        Piece p = Piece::Helmet;
+        ok = !IsPiece(0, static_cast<double>(ForgePact::Mark1Rolls::LowSeed(ForgePact::Mark1Rolls::Piece::Boots)), 0, 0, 0, p)
+            && !IsPiece(2, static_cast<double>(ForgePact::Mark1Rolls::TopSeed(ForgePact::Mark1Rolls::Piece::Boots) + 1), 0, 0, 0, p)
+            && !IsPiece(0, 999981452.0, 0, 0, 0, p)
+            && !IsPiece(2, static_cast<double>(ForgePact::Mark1Rolls::LowSeed(ForgePact::Mark1Rolls::Piece::Boots)), 0, 0, 1, p)
+            && SeedsDistinctInBand();
+        check("seed_codec/another_bands_seed_or_a_natural_seed_is_no_piece", ok);
+    }
+
+    // ---- stat: the second line -------------------------------------------------------------
+    {
+        const std::string fresh = BonusStatLine(BonusStatFields{});
+        const std::string expected =
+            "mark1set bonus: pieces=0 lit=0/0/0 answered=0/0/0/0/0/0 not-number=0 gear-reads=0 gear-unread=0"
+            " | auto talents=-/-/-/- free=-/-/-/- masked=0 held-seen=0 hold=4 yield=56 rest=24 mask=0,1,2,7,8,9,10,11"
+            " route=press procs=0 proc-fail=0 locked=0 cost=drain drain=1.00 drained=0 cast-base=1.00 fcr=- haste=- stat-fail=0"
+            " | tip desc-font=not-drawn grey=0 grey-box=0 | rolls dressed=0 legacy=0 drop-rolls=0";
+        check("stat/second_line_fresh_exact", fresh == expected, fresh);
+        BonusStatFields f;
+        f.pieces = 3;
+        f.lit[0] = f.lit[1] = true;
+        f.answered[0] = 7;
+        f.answered[5] = 2;
+        f.talents[0] = 23;
+        f.talents[2] = 71;
+        f.free[0] = 1;
+        f.free[2] = 0;
+        f.route = "proc";
+        f.drain = 1.25;
+        f.castBase = 0.5;
+        f.haveFcr = true;
+        f.fcr = 40;
+        f.haveHaste = true;
+        f.haste = 12.5;
+        f.descFont = DescFont::Small;
+        f.grey = 2;
+        f.legacy = 4;
+        const std::string line = BonusStatLine(f);
+        const bool ok = has(line, "pieces=3 lit=1/1/0 answered=7/0/0/0/0/2 ") && has(line, " talents=23/-/71/- free=1/-/0/- ")
+            && has(line, " route=proc ") && has(line, " drain=1.25 ") && has(line, " cast-base=0.50 ") && has(line, " fcr=40 haste=12.5 ")
+            && has(line, " desc-font=small grey=2 ") && has(line, " legacy=4 ") && !has(line, "  ")
+            && std::string(DescFontName(DescFont::Unresolved)) == "unresolved" && AnsweredIndex(163) == 1 && AnsweredIndex(64) == -1;
+        check("stat/second_line_filled", ok, line);
     }
 
     std::cout << (failures ? "RESULT FAIL " + std::to_string(failures) : std::string("RESULT OK")) << std::endl;

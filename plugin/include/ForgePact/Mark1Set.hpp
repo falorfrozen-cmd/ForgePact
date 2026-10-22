@@ -9,19 +9,27 @@
 #include <string_view>
 #include <vector>
 
+#include <ForgePact/Mark1Cost.hpp>
+#include <ForgePact/Mark1Priority.hpp>
+#include <ForgePact/Mark1Rolls.hpp>
+
 namespace ForgePact::Mark1Set {
 
 // ---- Mark 1: the set's decision core (ForgePact #166, phase 2) ----------------
 //
-// Four built-in Satanic pieces at SS tier: helmet, body armor, boots and gloves. While all
-// four are worn, wherever among the gear slots, and the "Mark 1 set" switch is on, the
-// set bonus is active: Mark1Automation.hpp casts the bar's Q, E, R and Y,
-// Mark1Jump.hpp scales the jump and Mark1Movement.hpp halves the walk.
+// Four built-in Satanic pieces at SS tier: helmet, body armor, boots and gloves, each with
+// its own rolled stats (Mark1Rolls.hpp). Worn together, wherever among the gear slots,
+// with the "Mark 1 set" switch on, they give the set bonus's lines at 2, 3 and 4 pieces
+// (Mark1Rolls.hpp's table, answered through the stat dispatcher by the adapter); while
+// all four are worn the bonus is active: Mark1Automation.hpp casts the bar's Q, E, R
+// and Y, Mark1Jump.hpp scales the jump and Mark1Movement.hpp halves the walk.
 //
 // This header decides; it never touches the game. It holds:
 //   - the piece table and recognition. A piece is saved as its base item of
-//     its own class with a fixed seed `a` in ForgePact's built-in band; the
-//     seed layout is a save format after release.
+//     its own class with a seed `a` from its own roll band (Mark1Rolls.hpp:
+//     the seed carries the piece's rolled stats, as a flight charm's does),
+//     or its legacy seed in ForgePact's built-in band (a piece made before
+//     the rolls); the seed layout is a save format after release.
 //   - the dressing's constants (name, rarity, tier, mechanic) and its rarity
 //     and tier decision (Dress). The adapter writes them through a
 //     recognition-only CustomForgeEntry, as the flight charms' are.
@@ -56,11 +64,11 @@ inline constexpr int kPieceCount = 4;
 
 struct PieceRow {
     Piece            piece;
-    std::string_view key;       // `mark1probe spawn`'s word
-    std::string_view name;      // the display name dressing writes
-    int              itemType;  // the class, HeroSiege::Items::ItemType
-    long long        seed;      // the definition's `a`; one per piece, no rolls
-    int              baseB;     // the base item's `b` a new piece is built on
+    std::string_view key;         // `mark1probe spawn`'s word
+    std::string_view name;        // the display name dressing writes
+    int              itemType;    // the class, HeroSiege::Items::ItemType
+    long long        legacySeed;  // the definition's `a` every piece made before the rolls carries
+    int              baseB;       // the base item's `b` a new piece is built on
 };
 
 // Classes: Helmet 0, Body 1, Boots 2, Gloves 4 (hs-game-sdk's item_type.hpp;
@@ -77,23 +85,35 @@ inline constexpr PieceRow kPieces[kPieceCount] = {
     { Piece::Gloves, "gloves", "Mark 1 Gloves",     4, 777503, 0 },
 };
 
-// ForgePact's built-in seed band. 777500..777503 sits clear of the ranges in
-// use when the table was written (777001-777003, 777100-777109,
-// 777200-777343, 777400-777490, and 779000 up).
+// ForgePact's built-in seed band. The legacy seeds 777500..777503 sit clear of
+// the ranges in use when the table was written (777001-777003, 777100-777109,
+// 777200-777343, 777400-777490, and 779000 up). A piece made since the rolls
+// carries a seed of its own roll band instead (Mark1Rolls.hpp: helmet
+// 1,000,000,000, body 1,001,000,000, boots 1,002,000,000, gloves
+// 1,003,000,000, each holding exactly its rolls).
 inline constexpr long long kBuiltInSeedLo = 777000;
 inline constexpr long long kBuiltInSeedHi = 777999;
 
+// The legacy seeds are distinct, inside the built-in band, in piece order and
+// the rolls core's own; the rolls core's bands are exact (Mark1Rolls.hpp's
+// BandsExact) and sit far above the built-in band; and both tables list the
+// pieces in the same order.
 inline constexpr bool SeedsDistinctInBand()
 {
+    if (!Mark1Rolls::BandsExact() || Mark1Rolls::kPieceCount != kPieceCount) return false;
     for (int i = 0; i < kPieceCount; ++i) {
-        if (kPieces[i].seed < kBuiltInSeedLo || kPieces[i].seed > kBuiltInSeedHi) return false;
+        const long long legacy = kPieces[i].legacySeed;
+        if (legacy < kBuiltInSeedLo || legacy > kBuiltInSeedHi) return false;
         if (static_cast<int>(kPieces[i].piece) != i) return false;
+        if (static_cast<int>(Mark1Rolls::kPieceRolls[i].piece) != i) return false;
+        if (Mark1Rolls::kPieceRolls[i].legacySeed != legacy) return false;
+        if (Mark1Rolls::kPieceRolls[i].bandLo <= kBuiltInSeedHi) return false;
         for (int k = i + 1; k < kPieceCount; ++k)
-            if (kPieces[i].seed == kPieces[k].seed) return false;
+            if (legacy == kPieces[k].legacySeed) return false;
     }
     return true;
 }
-static_assert(SeedsDistinctInBand(), "the four seeds are distinct and inside 777000..777999, the table in piece order");
+static_assert(SeedsDistinctInBand(), "the four legacy seeds are distinct, inside 777000..777999 and the rolls core's, the table in piece order, and the roll bands exact");
 
 // ---- the dressing --------------------------------------------------------------
 
@@ -104,8 +124,9 @@ static_assert(SeedsDistinctInBand(), "the four seeds are distinct and inside 777
 inline constexpr int kRarity = 6;                       // Satanic (itemInfoStruct "27")
 inline constexpr int kTier = 5;                         // SS (itemInfoStruct "32")
 inline constexpr std::string_view kMechanic = "mark1";  // fp_mechanic
-// No affix rows, stats or lore are written: the tooltip's set block (below)
-// says what the set does.
+// The piece's own rolled stats are written (Mark1Rolls.hpp's StatsFor, from
+// its seed); no affix rows and no lore: the tooltip's set block (below) says
+// what the set does.
 
 inline const PieceRow& RowOf(Piece p)
 {
@@ -130,19 +151,31 @@ inline bool AsWhole(double v, long long& out)
     return true;
 }
 
-// Recognition: the item's `itemType` is a piece's class, its definition's `a`
-// is that piece's seed and its `j` is 0 (not a unique). `b` and `c` are read
-// by the adapter and deliberately ignored here.
-inline bool IsPiece(double itemType, double a, double /*b*/, double /*c*/, double j, Piece& out)
+// Recognition, with the piece's rolls: the item's `itemType` is a piece's
+// class, its definition's `a` is a seed of that piece's roll band or its
+// legacy seed (Mark1Rolls.hpp's DecodeSeed, which also gives the rolls), and
+// its `j` is 0 (not a unique). `b` and `c` are read by the adapter and
+// deliberately ignored here. A seed of another piece's band on this class is
+// no piece.
+inline bool DecodePiece(double itemType, double a, double /*b*/, double /*c*/, double j, Piece& out,
+                        Mark1Rolls::Rolled& rolled)
 {
     long long tt = 0, aa = 0, jj = 0;
     if (!AsWhole(itemType, tt) || !AsWhole(a, aa) || !AsWhole(j, jj) || jj != 0) return false;
-    for (const PieceRow& r : kPieces) {
-        if (r.itemType != tt || r.seed != aa) continue;
-        out = r.piece;
-        return true;
-    }
-    return false;
+    Mark1Rolls::Rolled r;
+    if (!Mark1Rolls::DecodeSeed(aa, r)) return false;
+    const PieceRow& row = kPieces[static_cast<int>(r.piece)];
+    if (row.itemType != tt) return false;
+    out = row.piece;
+    rolled = r;
+    return true;
+}
+
+// Recognition alone (DecodePiece without the rolls).
+inline bool IsPiece(double itemType, double a, double b, double c, double j, Piece& out)
+{
+    Mark1Rolls::Rolled rolled;
+    return DecodePiece(itemType, a, b, c, j, out, rolled);
 }
 
 // The dressing's decision on one item's rarity ("27") and tier ("32"): a piece,
@@ -437,6 +470,135 @@ inline std::string StatLine(const StatFields& f)
     return s;
 }
 
+// ---- the second `mark1set stat` line: the set bonus, the automation, the tip, the rolls ----
+
+// The set bonus's six dispatcher lines, in the order `answered=` prints them:
+// Defense, All Resistances, Replenish Life, All Skills, Life, Physical Damage
+// Taken Reduced.
+inline constexpr int kAnsweredCount = 6;
+inline constexpr int kAnsweredIds[kAnsweredCount] = {
+    Mark1Rolls::kIdDefense, Mark1Rolls::kIdAllResistances, Mark1Rolls::kIdLifeReplenish,
+    Mark1Rolls::kIdAllSkills, Mark1Rolls::kIdMaxLife, Mark1Rolls::kIdPhysicalDamageReduction,
+};
+
+// Which `answered=` field a dispatcher id counts in (an element resistance
+// in All Resistances'), -1 for none.
+inline int AnsweredIndex(double statId)
+{
+    for (int i = 0; i < kAnsweredCount; ++i)
+        if (statId == static_cast<double>(kAnsweredIds[i])) return i;
+    for (int id : Mark1Rolls::kIdElementResistances)
+        if (statId == static_cast<double>(id)) return 1;
+    return -1;
+}
+
+// `desc-font=`: not-drawn until a description is drawn, then the font the last
+// one was drawn in.
+enum class DescFont : int { NotDrawn, Small, Unresolved };
+
+inline const char* DescFontName(DescFont f)
+{
+    switch (f) {
+    case DescFont::Small: return "small";
+    case DescFont::Unresolved: return "unresolved";
+    case DescFont::NotDrawn: break;
+    }
+    return "not-drawn";
+}
+
+// Every field of the second line. A default BonusStatFields prints the fresh
+// session's line, with the values in force at their shipped constants.
+struct BonusStatFields {
+    // the set bonus
+    int      pieces = 0;                       // distinct pieces worn at the last read
+    bool     lit[3] = { false, false, false }; // the 2-, 3- and 4-piece lines at that read
+    uint64_t answered[kAnsweredCount] = {};    // local dispatcher calls answered, per line
+    uint64_t notNumber = 0;                    // wanted calls whose answer was not a number: left alone
+    uint64_t gearReads = 0;                    // the consumer's re-resolves of the worn pieces
+    uint64_t gearUnread = 0;                   // its failed reads (nothing answered)
+    // the automation
+    double   talents[kColumnCount] = {};       // each column's talent id at the last active gate call; 0: `-`
+    int      free[kColumnCount] = { -1, -1, -1, -1 };  // 1 free, 0 cooldown, -1 not eligible (`-`)
+    uint64_t masked = 0;
+    uint64_t heldSeen = 0;
+    double   hold = ForgePact::kMark1FreePressValue;
+    long long yield = ForgePact::kMark1YieldFrames;
+    long long rest = ForgePact::kMark1ProbeRestFrames;
+    std::string mask = ForgePact::Mark1FormatMaskSetting(ForgePact::Mark1MaskSetting{});
+    std::string route = ForgePact::kMark1AutoRoute == ForgePact::Mark1Route::Proc ? "proc" : "press";
+    uint64_t procs = 0;
+    uint64_t procFail = 0;
+    uint64_t locked = 0;
+    std::string cost = ForgePact::Mark1ManaCostName(ForgePact::kMark1ManaCost);
+    double   drain = ForgePact::kMark1DrainPctPerSecond;
+    uint64_t drained = 0;
+    double   castBase = ForgePact::kMark1BaseCastSeconds;
+    bool     haveFcr = false;
+    double   fcr = 0;
+    bool     haveHaste = false;
+    double   haste = 0;
+    uint64_t statFail = 0;
+    // the tooltip
+    DescFont descFont = DescFont::NotDrawn;
+    uint64_t grey = 0;                         // columns drawn grey by the redraw in the last HUD draw
+    uint64_t greyBox = 0;                      // columns that fell back to the dark box in it
+    // the rolls
+    uint64_t dressed = 0;                      // pieces dressed with a band seed
+    uint64_t legacy = 0;                       // pieces dressed with a legacy seed
+    uint64_t dropRolls = 0;                    // drop rewrites that drew a roll
+};
+
+// A value to two decimals (`drain=`, `cast-base=`).
+inline std::string TwoDecimals(double v)
+{
+    if (!std::isfinite(v)) return "?";
+    const long long hundredths = std::llround(v * 100.0);
+    const long long magnitude = hundredths < 0 ? -hundredths : hundredths;
+    const std::string cents = std::to_string(magnitude % 100);
+    return std::string(hundredths < 0 ? "-" : "") + std::to_string(magnitude / 100) + "." + (cents.size() < 2 ? "0" : "") + cents;
+}
+
+// The second line of `mark1set stat`, printed after the first. Groups are
+// separated by ` | `; a field added to a group goes after that group's last
+// field, as the first line's rule says.
+inline std::string BonusStatLine(const BonusStatFields& f)
+{
+    std::string s = "mark1set bonus: pieces=" + std::to_string(f.pieces);
+    s += " lit=" + std::string(f.lit[0] ? "1" : "0") + "/" + (f.lit[1] ? "1" : "0") + "/" + (f.lit[2] ? "1" : "0");
+    s += " answered=" + JoinCounts({ f.answered[0], f.answered[1], f.answered[2], f.answered[3], f.answered[4], f.answered[5] });
+    s += " not-number=" + std::to_string(f.notNumber);
+    s += " gear-reads=" + std::to_string(f.gearReads);
+    s += " gear-unread=" + std::to_string(f.gearUnread);
+    s += " | auto talents=";
+    for (int i = 0; i < kColumnCount; ++i) s += (i ? "/" : "") + (f.talents[i] > 0 ? NumberText(f.talents[i]) : std::string("-"));
+    s += " free=";
+    for (int i = 0; i < kColumnCount; ++i) s += (i ? "/" : "") + (f.free[i] < 0 ? std::string("-") : std::to_string(f.free[i]));
+    s += " masked=" + std::to_string(f.masked);
+    s += " held-seen=" + std::to_string(f.heldSeen);
+    s += " hold=" + NumberText(f.hold);
+    s += " yield=" + std::to_string(f.yield);
+    s += " rest=" + std::to_string(f.rest);
+    s += " mask=" + f.mask;
+    s += " route=" + f.route;
+    s += " procs=" + std::to_string(f.procs);
+    s += " proc-fail=" + std::to_string(f.procFail);
+    s += " locked=" + std::to_string(f.locked);
+    s += " cost=" + f.cost;
+    s += " drain=" + TwoDecimals(f.drain);
+    s += " drained=" + std::to_string(f.drained);
+    s += " cast-base=" + TwoDecimals(f.castBase);
+    s += " fcr=" + (f.haveFcr ? NumberText(f.fcr) : std::string("-"));
+    s += " haste=" + (f.haveHaste ? NumberText(f.haste) : std::string("-"));
+    s += " stat-fail=" + std::to_string(f.statFail);
+    s += " | tip desc-font=" + std::string(DescFontName(f.descFont));
+    s += " grey=" + std::to_string(f.grey);
+    s += " grey-box=" + std::to_string(f.greyBox);
+    s += " | rolls dressed=" + std::to_string(f.dressed);
+    s += " legacy=" + std::to_string(f.legacy);
+    s += " drop-rolls=" + std::to_string(f.dropRolls);
+    return s;
+}
+
 // ---- the pieces' own art: the rule the adapter applies --------------------------
 //
 // The bag icon and the ground consumer go together, and both follow the pieces:
@@ -524,14 +686,19 @@ inline bool ArtWantsInstall(bool armed, int iconsEmbedded, bool groundTried, boo
 //
 // The game draws its own set pieces' tooltips with a set section after the
 // item's stats (hs-game-sdk/curated/item_info.json, `tooltip.set_section`,
-// measured): the set's bonus lines, lit while active and grey otherwise, then
-// the set's name and each piece's name, green when worn. A Mark 1 piece is no
-// game set piece (the game names a set's pieces by a unique triple, and a piece
-// is a base item), so the adapter draws the same section itself, at the forged
-// rows' anchor, from these rows. Its bonus line reads like a skill grant's
-// (`tooltip.skill_grant`): `+1 to Automation`, its description under it in the
-// grant description's grey. The colours are the game's own, 0xBBGGRR; the
-// behavior test pins each against the curated file.
+// measured): the set's bonus lines, each lit while its threshold is worn and
+// grey otherwise, then the set's name and each piece's name, green when worn.
+// A Mark 1 piece is no game set piece (the game names a set's pieces by a
+// unique triple, and a piece is a base item), so the adapter draws the same
+// section itself, after the piece's own stat lines (BlockAnchor below), from
+// these rows: one empty row, the set bonus's lines in Mark1Rolls.hpp's table
+// order, Automation's description under `+1 to Automation`, one empty row,
+// the set's name and the four pieces. The description reads like a skill
+// grant's (`tooltip.skill_grant`): the grant description's grey, drawn in
+// the game's smaller item font (`font_item_stats_small`, the adapter's
+// draw; static reading of DrawSkillDescription, the hub's RDM § 16.13). The
+// colours are the game's own, 0xBBGGRR; the behavior test pins each against
+// the curated file.
 inline constexpr int kColourBonusActive = 7844807;    // set_section.colours.bonus_active (RGB 199,180,119)
 inline constexpr int kColourBonusInactive = 4210752;  // set_section.colours.bonus_inactive (RGB 64,64,64)
 inline constexpr int kColourSetName = 7844807;        // set_section.colours.set_name
@@ -541,28 +708,39 @@ inline constexpr int kColourDescription = 8421504;    // skill_grant.colours.des
 
 inline constexpr std::string_view kSetName = "Mark 1";
 inline constexpr std::string_view kBonusLine = "+1 to Automation";
-// Automation's description: player wording (the owner, 2026-10-21).
+static_assert(Mark1Rolls::kBonusLines[3].words == kBonusLine, "the Automation line is the bonus table's fourth");
+// Automation's description: player wording (the owner, 2026-10-21; reworded
+// 2026-10-22, when `-50% Movement Speed` became a line of its own).
 inline constexpr std::string_view kAutomationDescription =
-    "Your Q, E, R and Y skills cast themselves whenever they are ready. "
-    "Your jump goes three times as far, over scenery. You walk at half speed.";
+    "Your Q, E, R and Y skills cast themselves whenever they are ready, in that order. "
+    "Your jump goes three times as far, over scenery.";
 
 // One row of the block. `wrapped` marks the description, which the adapter
 // wraps with the game's own builtins at the narrowest width the game's own
-// description rows were measured at, and measures; an empty text is one
-// empty row.
+// description rows were measured at, and measures; `smallFont` marks the row
+// the adapter draws in the game's smaller item font (the description); an
+// empty text is one empty row.
 struct TipRow {
     std::string text;
     int         colour = kColourPieceNotWorn;
     bool        wrapped = false;
+    bool        smallFont = false;
 };
 
-// The bonus line is lit while the bonus is active: all four pieces worn (a
-// read that succeeded), the "Mark 1 set" switch on and the bonus installed.
-// A switch on over an install refused or still waiting is no active bonus,
-// so the line stays grey.
+// The 4-piece lines (Automation among them) are lit while the bonus is
+// active: all four pieces worn (a read that succeeded), the "Mark 1 set"
+// switch on and the bonus installed. A switch on over an install refused or
+// still waiting is no active bonus, so the line stays grey.
 inline bool BlockBonusActive(const SetRead& r, bool readOk, bool switchOn, bool installed)
 {
     return readOk && r.full && switchOn && installed;
+}
+
+// The distinct pieces a read found worn: none for a read that failed as a
+// whole.
+inline int PiecesWorn(const SetRead& r, bool readOk)
+{
+    return readOk ? r.matched : 0;
 }
 
 // The block was drawn on a worn read that failed as a whole or had an
@@ -572,25 +750,109 @@ inline bool BlockUnread(const SetRead& r, bool readOk)
     return !readOk || r.unreadable > 0;
 }
 
-// The block, in the game's order (a piece has no stats, so the section opens
-// the tooltip's rows): the bonus line, the description, one empty row, the
-// set's name, then the four pieces in table order, green when worn. A read
-// that failed as a whole shows no piece worn; an unreadable slot can leave a
-// piece unfound, never found (Evaluate's rule).
+// The block, in the game's order, after the piece's own stat lines: one empty
+// row; the set bonus's eight lines in Mark1Rolls.hpp's table order, each lit
+// while at least its threshold of distinct pieces is worn, the switch is on
+// and the bonus installed (LitLines), grey otherwise, with Automation's
+// description (grey, wrapped, the small font) under `+1 to Automation`; one
+// empty row; the set's name; then the four pieces in table order, green when
+// worn. A read that failed as a whole shows no piece worn and every line
+// grey; an unreadable slot can leave a piece unfound, never found (Evaluate's
+// rule).
 inline std::vector<TipRow> SetBlockRows(const SetRead& r, bool readOk, bool switchOn, bool installed)
 {
     std::vector<TipRow> rows;
-    rows.push_back({ std::string(kBonusLine),
-                     BlockBonusActive(r, readOk, switchOn, installed) ? kColourBonusActive : kColourBonusInactive, false });
-    rows.push_back({ std::string(kAutomationDescription), kColourDescription, true });
-    rows.push_back({ std::string(), kColourPieceNotWorn, false });
-    rows.push_back({ std::string(kSetName), kColourSetName, false });
+    rows.push_back({ std::string(), kColourPieceNotWorn, false, false });
+    const std::array<bool, Mark1Rolls::kBonusLineCount> lit = Mark1Rolls::LitLines(PiecesWorn(r, readOk), switchOn, installed);
+    for (int i = 0; i < Mark1Rolls::kBonusLineCount; ++i) {
+        const Mark1Rolls::BonusLine& line = Mark1Rolls::kBonusLines[i];
+        rows.push_back({ std::string(line.words), lit[static_cast<size_t>(i)] ? kColourBonusActive : kColourBonusInactive, false, false });
+        if (line.applied == Mark1Rolls::Applied::Automation)
+            rows.push_back({ std::string(kAutomationDescription), kColourDescription, true, true });
+    }
+    rows.push_back({ std::string(), kColourPieceNotWorn, false, false });
+    rows.push_back({ std::string(kSetName), kColourSetName, false, false });
     for (int i = 0; i < kPieceCount; ++i) {
         const bool worn = readOk && r.foundSlot[static_cast<size_t>(i)] != kNotFound;
-        rows.push_back({ std::string(kPieces[i].name), worn ? kColourPieceWorn : kColourPieceNotWorn, false });
+        rows.push_back({ std::string(kPieces[i].name), worn ? kColourPieceWorn : kColourPieceNotWorn, false, false });
     }
     return rows;
 }
+
+// ---- where a piece's block anchors -------------------------------------------------
+//
+// The tooltip pass calls DrawInventoryStatsNew once per stat line it knows, in
+// a fixed order, whether or not the item has that stat (RDM § 16.6,
+// measured), and ForgedTooltipRows.hpp's rule anchors a forged item's rows at
+// the first call whose stat the item has. A piece now has stats of its own,
+// so that rule would put the block between the `Defense: N` header and the
+// first of them. A piece's block anchors instead at the first format-2/3 call
+// of the pass after the call of the last of its own drawn stat lines: the
+// keys the piece writes that draw a stat line (every key StatsFor writes but
+// the header's 154 and the sockets row's 20, which draw no stat call). Item
+// Truth's captures put Mark 1's keys in the order 29, 201, 48, 51, 52, 170,
+// 59, 173, with at least 50 other drawn ids after 173, so a row call always
+// follows. The adapter feeds each call's stat id, whether the item has it and
+// its format; every other forged item keeps ForgedTooltipRows.hpp's rule.
+inline constexpr int kMaxAnchorKeys = Mark1Rolls::kMaxRolls + Mark1Rolls::kMaxFixed;
+
+// A key the tooltip draws as a stat line of its own.
+inline constexpr bool DrawsStatLine(int key)
+{
+    return key != Mark1Rolls::kKeyDefense && key != Mark1Rolls::kKeySockets;
+}
+
+class BlockAnchor {
+public:
+    // The piece's own stat-line keys, from its rolls table (the keys do not
+    // depend on the roll).
+    static BlockAnchor For(Piece p)
+    {
+        BlockAnchor a;
+        const Mark1Rolls::PieceRolls& r = Mark1Rolls::kPieceRolls[static_cast<int>(p)];
+        for (int k = 0; k < r.rolledStats; ++k)
+            if (DrawsStatLine(r.rolls[k].key)) a.keys_[a.count_++] = r.rolls[k].key;
+        for (int k = 0; k < r.fixedCount; ++k)
+            if (DrawsStatLine(r.fixed[k].key)) a.keys_[a.count_++] = r.fixed[k].key;
+        return a;
+    }
+
+    // Whether the call's own stat id matters: one of the keys still waited
+    // for. The adapter reads whether the item has the stat only then.
+    bool Waits(double statId) const
+    {
+        for (int k = 0; k < count_; ++k)
+            if (!seen_[k] && statId == static_cast<double>(keys_[k])) return true;
+        return false;
+    }
+
+    // One call of the pass. A call of a key still waited for ends that wait;
+    // when the item has the stat it is one of the piece's own drawn lines,
+    // never the anchor. The block anchors at the first format-2/3 call once
+    // no key is waited for. The caller stops asking once it anchors, so a pass
+    // anchors at most once.
+    bool AnchorsHere(double statId, bool itemHas, double format)
+    {
+        bool ownLine = false;
+        for (int k = 0; k < count_; ++k) {
+            if (seen_[k] || statId != static_cast<double>(keys_[k])) continue;
+            seen_[k] = true;
+            ownLine = itemHas;
+        }
+        if (ownLine) return false;
+        for (int k = 0; k < count_; ++k)
+            if (!seen_[k]) return false;
+        return format == 2.0 || format == 3.0;
+    }
+
+    int KeyCount() const { return count_; }
+    int Key(int k) const { return k >= 0 && k < count_ ? keys_[k] : 0; }
+
+private:
+    int  keys_[kMaxAnchorKeys] = {};
+    bool seen_[kMaxAnchorKeys] = {};
+    int  count_ = 0;
+};
 
 // ---- the piece's type line ------------------------------------------------------------
 //

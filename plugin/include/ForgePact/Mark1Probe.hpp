@@ -14,7 +14,10 @@
 #include <utility>
 #include <vector>
 
+#include <ForgePact/Mark1Cost.hpp>
 #include <ForgePact/Mark1Drops.hpp>
+#include <ForgePact/Mark1Priority.hpp>
+#include <ForgePact/Mark1Rolls.hpp>
 #include <ForgePact/Mark1Set.hpp>
 
 namespace ForgePact::Mark1Probe {
@@ -54,7 +57,13 @@ namespace ForgePact::Mark1Probe {
 //
 // The set itself (phase 2's set adapter) adds `spawn`: the Mark 1 pieces, built
 // from Mark1Set.hpp's table through the game's loader and placed at the
-// player, so the live session has pieces to wear.
+// player, so the live session has pieces to wear; since the pieces' rolls
+// (the 2026-10-22 playtest) its roll word picks each piece's seed in its band
+// (Mark1Rolls.hpp: every stat at the top, at the bottom, or a drawn roll).
+// The same playtest adds `bonusread` (the set bonus's recorder) and the
+// automation's session overrides `autohold`, `automask`, `autoyield`,
+// `autorest`, `autoroute`, `autoproc`, `autolock`, `autogrey`, `autocost`,
+// `autodrain` and `autocast` (ApplyAuto below; `autogrey` is the adapter's).
 //
 // The drops (phase 3, Mark1Drops.hpp) add three forms for their live session:
 // `heroic <n>` calls the Heroic roll by name and tallies what it placed, the
@@ -420,7 +429,53 @@ enum class Form : int {
     Status, Hook, Off, Show, ShowReset, Args, Watch, Set, Scale, Move, Stat, Count, Pos, WalkHere, WalkAt, WalkScan,
     Statlog, Statpin, Hold, Base, Spawn, Heroic, Pool, Copies, Unique, PoolKill, Killgate, KillgateSet,
     Draws, DrawsSet, DrawsPush, PoolDraw,
+    // The 2026-10-22 playtest's research forms: the set bonus's recorder and
+    // the automation's overrides for this session.
+    BonusRead, AutoHold, AutoMask, AutoYield, AutoRest, AutoRoute, AutoProc,
+    AutoLock, AutoGrey, AutoCost, AutoDrain, AutoCast,
 };
+
+// `spawn`'s roll word: every stat at the top of its range, every stat at the
+// bottom, or a roll drawn by the adapter (TyRng()). No word is `top`.
+enum class SpawnRoll : int { Top, Low, Random };
+
+inline const char* SpawnRollText(SpawnRoll r)
+{
+    switch (r) {
+    case SpawnRoll::Low: return "low";
+    case SpawnRoll::Random: return "random";
+    case SpawnRoll::Top: break;
+    }
+    return "top";
+}
+
+// The seed a spawned piece is built with: Mark1Rolls.hpp's TopSeed, LowSeed,
+// or SeedFromUniform of the adapter's `u` for `random`.
+inline long long SpawnSeed(Mark1Set::Piece piece, SpawnRoll roll, double u)
+{
+    const Mark1Rolls::Piece p = static_cast<Mark1Rolls::Piece>(static_cast<int>(piece));
+    switch (roll) {
+    case SpawnRoll::Low: return Mark1Rolls::LowSeed(p);
+    case SpawnRoll::Random: return Mark1Rolls::SeedFromUniform(p, u);
+    case SpawnRoll::Top: break;
+    }
+    return Mark1Rolls::TopSeed(p);
+}
+
+// `autogrey`'s looks (the adapter's Mark1GreyDraw): the redraw (the default),
+// the dark box, the buttons' own `enabled` written false, or nothing.
+enum class GreyLook : int { Redraw, Box, Enabled, Off };
+
+inline const char* GreyLookText(GreyLook g)
+{
+    switch (g) {
+    case GreyLook::Box: return "box";
+    case GreyLook::Enabled: return "enabled";
+    case GreyLook::Off: return "off";
+    case GreyLook::Redraw: break;
+    }
+    return "redraw";
+}
 
 // `draws push <c> [ss|below]`'s side: which of `pool draw`'s two bests each piece's stand-in
 // is. No side word is `SsFirst`, the rule as first built (kDrawLeverPrefersSs below: SS, the
@@ -457,6 +512,15 @@ struct Command {
     long long   base = 0;
     std::string piece;                     // Spawn: helmet, body, boots, gloves or set
     DrawSide    side = DrawSide::SsFirst;  // DrawsPush: the stand-ins' side, SsFirst with no side word
+    SpawnRoll   roll = SpawnRoll::Top;     // Spawn: the roll word, Top with none
+    // The automation's overrides:
+    double      autoValue = 0;             // AutoHold: 3 or 4; AutoDrain: percent; AutoCast: base seconds
+    long long   autoFrames = 0;            // AutoYield, AutoRest: frames 0..600
+    bool        autoOn = false;            // AutoLock: on; AutoRoute: proc
+    ForgePact::Mark1MaskSetting autoMask;  // AutoMask
+    ForgePact::Mark1ProcShape   autoShape; // AutoProc: the parsed template (`clear`: unset)
+    ForgePact::Mark1ManaCost    autoCost = ForgePact::kMark1ManaCost;   // AutoCost
+    GreyLook    grey = GreyLook::Redraw;   // AutoGrey
 };
 
 inline const std::string& RowList()
@@ -557,7 +621,7 @@ inline bool ParseRowArg(std::string_view s, Row& out, std::string& why)
 } // namespace detail
 
 inline constexpr const char* kWalkUsage = "usage: walkable here <dx> <dy> | walkable at <x> <y> | walkable scan <deg> <step> <count>";
-inline constexpr const char* kSpawnUsage = "usage: spawn <helmet|body|boots|gloves|set>";
+inline constexpr const char* kSpawnUsage = "usage: spawn <helmet|body|boots|gloves|set> [top|low|random]";
 
 // `tok` is everything after the command word. False with `why` naming the
 // first thing refused; `c` is then unspecified.
@@ -689,12 +753,114 @@ inline bool Parse(const std::vector<std::string>& tok, Command& c, std::string& 
         return true;
     }
     if (head == "spawn") {
-        if (n != 2) { why = kSpawnUsage; return false; }
+        if (n != 2 && n != 3) { why = kSpawnUsage; return false; }
         const std::string word = LowerText(tok[1]);
         Mark1Set::Piece piece = Mark1Set::Piece::Helmet;
         if (word != "set" && !Mark1Set::PieceFromKey(word, piece)) { why = std::string(kSpawnUsage) + ", not " + tok[1]; return false; }
+        if (n == 3) {
+            const std::string roll = LowerText(tok[2]);
+            if (roll == "top") c.roll = SpawnRoll::Top;
+            else if (roll == "low") c.roll = SpawnRoll::Low;
+            else if (roll == "random") c.roll = SpawnRoll::Random;
+            else { why = std::string(kSpawnUsage) + ", the roll top, low or random, not " + tok[2]; return false; }
+        }
         c.piece = word;
         c.form = Form::Spawn;
+        return true;
+    }
+    if (head == "bonusread") {
+        if (n != 1) { why = "usage: mark1probe bonusread"; return false; }
+        c.form = Form::BonusRead;
+        return true;
+    }
+    if (head == "autohold") {
+        const char* usage = "usage: autohold 3|4";
+        if (n != 2) { why = usage; return false; }
+        long long v = 0;
+        if (!ParseWhole(tok[1], 3, 4, v)) { why = std::string(usage) + ", not " + tok[1]; return false; }
+        c.autoValue = static_cast<double>(v);
+        c.form = Form::AutoHold;
+        return true;
+    }
+    if (head == "automask") {
+        const char* usage = "usage: automask off|default|<entry>[,<entry>...]";
+        if (n != 2) { why = usage; return false; }
+        std::string bad;
+        if (!ForgePact::Mark1ParseMaskSetting(LowerText(tok[1]), c.autoMask, bad)) { why = std::string(usage) + ": " + bad; return false; }
+        c.form = Form::AutoMask;
+        return true;
+    }
+    if (head == "autoyield" || head == "autorest") {
+        const std::string usage = "usage: " + head + " <frames 0-" + std::to_string(ForgePact::kMark1MaxOverrideFrames) + ">";
+        if (n != 2) { why = usage; return false; }
+        if (!ParseWhole(tok[1], 0, ForgePact::kMark1MaxOverrideFrames, c.autoFrames)) { why = usage + ", not " + tok[1]; return false; }
+        c.form = head == "autoyield" ? Form::AutoYield : Form::AutoRest;
+        return true;
+    }
+    if (head == "autoroute") {
+        const char* usage = "usage: autoroute press|proc";
+        if (n != 2) { why = usage; return false; }
+        const std::string word = LowerText(tok[1]);
+        if (word != "press" && word != "proc") { why = std::string(usage) + ", not " + tok[1]; return false; }
+        c.autoOn = word == "proc";
+        c.form = Form::AutoRoute;
+        return true;
+    }
+    if (head == "autoproc") {
+        const char* usage = "usage: autoproc <template>|clear, a template of id, x, y, true, false, undefined and numbers, comma-separated";
+        if (n < 2) { why = usage; return false; }
+        std::string text;
+        for (size_t i = 1; i < n; ++i) text += (i > 1 ? " " : "") + tok[i];
+        if (n == 2 && SameWord(tok[1], "clear")) {
+            c.autoShape = ForgePact::Mark1ProcShape{};
+            c.autoShape.ok = true;
+        } else {
+            c.autoShape = ForgePact::Mark1ParseProcShape(LowerText(text));
+            if (!c.autoShape.ok) { why = "autoproc: unknown token " + c.autoShape.bad + " (" + usage + ")"; return false; }
+            if (c.autoShape.args.empty()) { why = usage; return false; }
+        }
+        c.form = Form::AutoProc;
+        return true;
+    }
+    if (head == "autolock") {
+        const char* usage = "usage: autolock on|off";
+        if (n != 2) { why = usage; return false; }
+        const std::string word = LowerText(tok[1]);
+        if (word != "on" && word != "off") { why = std::string(usage) + ", not " + tok[1]; return false; }
+        c.autoOn = word == "on";
+        c.form = Form::AutoLock;
+        return true;
+    }
+    if (head == "autogrey") {
+        const char* usage = "usage: autogrey redraw|box|enabled|off";
+        if (n != 2) { why = usage; return false; }
+        const std::string word = LowerText(tok[1]);
+        if (word == "redraw") c.grey = GreyLook::Redraw;
+        else if (word == "box") c.grey = GreyLook::Box;
+        else if (word == "enabled") c.grey = GreyLook::Enabled;
+        else if (word == "off") c.grey = GreyLook::Off;
+        else { why = std::string(usage) + ", not " + tok[1]; return false; }
+        c.form = Form::AutoGrey;
+        return true;
+    }
+    if (head == "autocost") {
+        const char* usage = "usage: autocost drain|maxmana|off";
+        if (n != 2) { why = usage; return false; }
+        const std::string word = LowerText(tok[1]);
+        if (!ForgePact::Mark1ParseManaCost(word.c_str(), c.autoCost)) { why = std::string(usage) + ", not " + tok[1]; return false; }
+        c.form = Form::AutoCost;
+        return true;
+    }
+    if (head == "autodrain" || head == "autocast") {
+        const bool drain = head == "autodrain";
+        const double lo = drain ? ForgePact::kMark1DrainPctMin : ForgePact::kMark1MinBaseCastSeconds;
+        const double hi = drain ? ForgePact::kMark1DrainPctMax : ForgePact::kMark1MaxBaseCastSeconds;
+        const std::string usage = drain ? "usage: autodrain <percent 0-10>" : "usage: autocast <base seconds 0.1-5>";
+        if (n != 2) { why = usage; return false; }
+        double v = 0;
+        if (!ParseNumber(tok[1], v) || v < lo || v > hi) { why = usage + ", not " + tok[1]; return false; }
+        c.autoValue = v;
+        c.form = drain ? Form::AutoDrain : Form::AutoCast;
         return true;
     }
     if (head == "heroic") {
@@ -806,7 +972,8 @@ inline bool Parse(const std::vector<std::string>& tok, Command& c, std::string& 
     }
     why = "unknown form " + tok[0]
         + " (hook, off, show, args, watch, set, scale, hold, move, stat, statpin, statlog, count, pos, base, spawn, heroic,"
-          " unique, pool, copies, killgate, draws or walkable)";
+          " unique, pool, copies, killgate, draws, walkable, bonusread, autohold, automask, autoyield, autorest, autoroute,"
+          " autoproc, autolock, autogrey, autocost, autodrain or autocast)";
     return false;
 }
 
@@ -828,7 +995,17 @@ inline std::vector<std::string> Usage()
         "  mark1probe count <object name> <frames>              instance_number per frame, one line per change",
         "  mark1probe pos <frames>                              the cursor, each moving call's dx dy, moves outside the rows, mode, ms",
         "  mark1probe base <class> <b>                          build a scratch item of that class and base (never placed)",
-        "  mark1probe spawn <helmet|body|boots|gloves|set>      build Mark 1 pieces through the loader and place them at the player",
+        "  mark1probe spawn <helmet|body|boots|gloves|set> [top|low|random]  build Mark 1 pieces (every stat at the top, the bottom, or rolled) and place them",
+        "  mark1probe bonusread                                 the set bonus's watch list: each id's last local original and answer",
+        "  mark1probe autohold 3|4                              the value a no-cooldown column is pressed with, this session",
+        "  mark1probe automask off|default|<e>[,<e>...]         the entries rested while the automation presses, this session",
+        "  mark1probe autoyield <0-600> | autorest <0-600>      the frames left alone after a landing / a cooldown column rests",
+        "  mark1probe autoroute press|proc                      the automation's route this session (proc needs autoproc)",
+        "  mark1probe autoproc <template>|clear                 TalentUseClass's arguments: id, x, y, true, false, undefined, numbers",
+        "  mark1probe autolock on|off                           the lockout of automated columns from manual casts",
+        "  mark1probe autogrey redraw|box|enabled|off           the automated icons' grey look",
+        "  mark1probe autocost drain|maxmana|off                the proc route's mana cost",
+        "  mark1probe autodrain <0-10> | autocast <0.1-5>       the drain's percent of max mana a second / the base cast seconds",
         "  mark1probe heroic <n>                                call DropItemHeroic n times (1..20) at the player; rarities and pieces",
         "  mark1probe unique <n>                                call DropUniqueItems n times (1..20) at the player; rarities and pieces",
         "  mark1probe pool [<k>]                                lootListUnique[k] (5 by default) as the Heroic roll keeps it, each piece's stand-in",
@@ -943,6 +1120,7 @@ struct SpawnResult {
     std::string                piece;
     bool                       built = false;
     std::optional<double>      t, b, a;
+    SpawnRoll                  roll = SpawnRoll::Top;   // the roll word the piece's seed was built from
     bool                       dressed = false;
     std::optional<double>      tier;
     std::optional<std::string> ground;
@@ -954,10 +1132,84 @@ inline std::string SpawnLine(const SpawnResult& r)
     auto num = [](const std::optional<double>& v) { return v ? NumberText(*v) : std::string("?"); };
     std::string out = "mark1probe spawn: piece=" + r.piece;
     if (!r.built) return out + " built=no why=" + (r.why.empty() ? std::string("?") : r.why);
-    out += " t=" + num(r.t) + " b=" + num(r.b) + " a=" + num(r.a) + " dressed=" + (r.dressed ? "yes" : "no")
-        + " tier=" + num(r.tier);
+    out += " t=" + num(r.t) + " b=" + num(r.b) + " a=" + num(r.a) + " roll=" + SpawnRollText(r.roll)
+        + " dressed=" + (r.dressed ? "yes" : "no") + " tier=" + num(r.tier);
     if (r.ground) return out + " ground=" + *r.ground;
     return out + " ground=none why=" + (r.why.empty() ? std::string("?") : r.why);
+}
+
+// ---- `bonusread` -------------------------------------------------------------------
+// The set bonus's research recorder (the adapter's consumer on the shared
+// ReturnSpecificStat detour, research build only): for each id of its fixed
+// watch list, the last local original it saw and the answer it gave, `-` for
+// an id with no local call yet and `?` for a value that was not a number;
+// then the frame of the last call (`-` before any).
+struct BonusReadEntry {
+    int    id = 0;
+    bool   seen = false;
+    bool   number = false;
+    double original = 0;
+    double answer = 0;
+};
+
+inline std::string BonusReadLine(const std::vector<BonusReadEntry>& entries, bool anyCall, uint64_t frame)
+{
+    std::string out = "mark1probe bonusread:";
+    for (const BonusReadEntry& e : entries) {
+        out += " " + std::to_string(e.id) + "=";
+        if (!e.seen) { out += "-"; continue; }
+        out += (e.number ? NumberText(e.original) : std::string("?")) + "->" + (e.number ? NumberText(e.answer) : std::string("?"));
+    }
+    out += " frame=" + (anyCall ? std::to_string(frame) : std::string("-"));
+    return out;
+}
+
+// ---- the automation's overrides (`autohold` ... `autocast`) -----------------------
+// Each changes a value in force for this session in the cast priority's core
+// (Mark1Priority.hpp) or the mana cost's (Mark1Cost.hpp) and answers one line
+// naming the value now in force; `mark1set stat`'s second line shows them all.
+// `autogrey` is the adapter's (its look lives with the grey draw). `autoroute
+// proc` with no shape set is refused and the press stays in force.
+inline std::string ApplyAuto(const Command& c, ForgePact::Mark1PriorityCore& core, ForgePact::Mark1Cost& cost)
+{
+    const ForgePact::Mark1PrioritySettings& s = core.Settings();
+    switch (c.form) {
+    case Form::AutoHold:
+        core.SetHoldValue(c.autoValue);
+        return "mark1probe autohold: hold=" + NumberText(s.holdValue);
+    case Form::AutoMask:
+        core.SetMask(c.autoMask);
+        return "mark1probe automask: mask=" + ForgePact::Mark1FormatMaskSetting(s.mask);
+    case Form::AutoYield:
+        core.SetYieldFrames(c.autoFrames);
+        return "mark1probe autoyield: yield=" + std::to_string(s.yieldFrames);
+    case Form::AutoRest:
+        core.SetRestFrames(c.autoFrames);
+        return "mark1probe autorest: rest=" + std::to_string(s.restFrames);
+    case Form::AutoRoute:
+        if (core.SetRoute(c.autoOn ? ForgePact::Mark1Route::Proc : ForgePact::Mark1Route::Press) == ForgePact::Mark1RouteReply::ShapeUnset)
+            return "mark1probe autoroute: refused - shape unset";
+        return std::string("mark1probe autoroute: route=") + (core.RouteInForce() == ForgePact::Mark1Route::Proc ? "proc" : "press");
+    case Form::AutoProc:
+        core.SetShape(c.autoShape);
+        return "mark1probe autoproc: shape=" + ForgePact::Mark1FormatProcShape(s.shape)
+            + " route=" + (core.RouteInForce() == ForgePact::Mark1Route::Proc ? "proc" : "press");
+    case Form::AutoLock:
+        core.SetLockout(c.autoOn);
+        return std::string("mark1probe autolock: lockout=") + (s.lockout ? "on" : "off");
+    case Form::AutoCost:
+        cost.SetCost(c.autoCost);
+        return std::string("mark1probe autocost: cost=") + ForgePact::Mark1ManaCostName(cost.Cost());
+    case Form::AutoDrain:
+        cost.SetDrainPct(c.autoValue);
+        return "mark1probe autodrain: drain=" + NumberText(cost.DrainPct());
+    case Form::AutoCast:
+        core.SetBaseCastSeconds(c.autoValue);
+        return "mark1probe autocast: cast-base=" + NumberText(s.baseCastSeconds);
+    default:
+        break;
+    }
+    return "mark1probe: refused - not an automation override";
 }
 
 // ---- `heroic` ----------------------------------------------------------------------

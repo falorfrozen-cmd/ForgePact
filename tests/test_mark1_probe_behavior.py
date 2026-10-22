@@ -228,6 +228,25 @@ class Mark1ProbeBehaviorTests(unittest.TestCase):
         self.assertScenarios("spawn/pieces_by_word", "spawn/definition_is_the_rows_seed_and_base", "spawn/parse",
                              "spawn/line_placed_refused_and_not_built")
 
+    # ---- the 2026-10-22 playtest's research forms ---------------------------------
+
+    def test_spawn_roll_word_picks_the_seed_in_the_band(self):
+        # Since the pieces' rolls a piece's seed is one of its roll band's
+        # (Mark1Rolls.hpp): `top` (the default), `low` or `random`, and the
+        # spawn line names the word after `a=`.
+        self.assertScenarios("spawn/definition_is_the_rows_seed_and_base", "spawn/parse",
+                             "spawn/line_placed_refused_and_not_built")
+        self.assertIn(" a=777500 roll=top dressed=yes ", self.line("spawn/line_placed_refused_and_not_built"))
+
+    def test_bonusread_lists_the_watch_list(self):
+        self.assertScenarios("bonusread/parse", "bonusread/line")
+
+    def test_automation_overrides_parse_apply_and_refuse(self):
+        # `autohold` ... `autocast`: each takes its own range, answers the
+        # value now in force, and `autoroute proc` with no shape set answers
+        # `refused - shape unset` and keeps the press.
+        self.assertScenarios("auto/parse_and_refuse", "auto/apply_answers_the_value_in_force")
+
     # ---- the drops' forms (Mark1Drops.hpp's live session) -------------------------
 
     def test_heroic_call_lines_summary_and_parse(self):

@@ -451,6 +451,51 @@ class Mark1SetBehaviorTests(unittest.TestCase):
                       self.line("stat/fresh_line_exact"))
         self.assertIn(" typeline-miss=0 tip-cached=0 typeline-hook=not-tried | speed=", self.line("stat/fresh_line_exact"))
 
+    # ---- the 2026-10-22 playtest: the pieces' stats, the set bonus, the second line ----
+
+    def test_tooltip_target_bonus_lines_by_pieces_worn(self):
+        # Each bonus line lit while at least its threshold of distinct pieces
+        # is worn (2: Defense; 3: All Resistances, Replenish Life; 4: the rest),
+        # the switch on and the bonus installed: 0, 2, 3 and 4 worn, the switch
+        # off, not installed, and a piece worn twice counting once.
+        self.assertScenarios("tooltip_target/bonus_lines_lit_by_the_pieces_worn",
+                             "tooltip_target/none_worn_four_grey_names_and_a_grey_bonus",
+                             "tooltip_target/two_worn_those_two_green",
+                             "tooltip_target/four_worn_switch_on_a_gold_bonus",
+                             "tooltip_target/four_worn_switch_off_all_green_and_a_grey_bonus",
+                             "tooltip_target/the_bonus_line_needs_the_switch_and_the_install")
+
+    def test_tooltip_target_movement_line_is_its_own_row(self):
+        # The owner's finding 2: `-50% Movement Speed` is a stat line of its
+        # own, not part of Automation's description.
+        self.assertScenario("tooltip_target/movement_line_is_its_own_row")
+        header = (ROOT / "plugin/include/ForgePact/Mark1Set.hpp").read_text(encoding="utf-8")
+        description = re.search(r"kAutomationDescription =\s*((?:\"[^\"]*\"\s*)+);", header)
+        self.assertIsNotNone(description)
+        self.assertNotIn("half speed", description.group(1))
+
+    def test_tooltip_target_block_anchors_after_the_pieces_own_lines(self):
+        # A piece now has stats of its own, so its block anchors after the last
+        # of its own lines, never at its first present stat (between the
+        # `Defense: N` header and the stats).
+        self.assertScenarios("tooltip_target/block_anchors_after_the_pieces_own_lines",
+                             "tooltip_target/block_anchors_only_at_a_row_call")
+
+    def test_seed_codec_band_seeds_are_pieces(self):
+        self.assertScenarios("seed_codec/band_and_legacy_seeds_are_pieces",
+                             "seed_codec/another_bands_seed_or_a_natural_seed_is_no_piece")
+
+    def test_stat_line_target_second_line_fresh(self):
+        expected = ("mark1set bonus: pieces=0 lit=0/0/0 answered=0/0/0/0/0/0 not-number=0 gear-reads=0 gear-unread=0"
+                    " | auto talents=-/-/-/- free=-/-/-/- masked=0 held-seen=0 hold=4 yield=56 rest=24"
+                    " mask=0,1,2,7,8,9,10,11 route=press procs=0 proc-fail=0 locked=0 cost=drain drain=1.00 drained=0"
+                    " cast-base=1.00 fcr=- haste=- stat-fail=0 | tip desc-font=not-drawn grey=0 grey-box=0"
+                    " | rolls dressed=0 legacy=0 drop-rolls=0")
+        # The criterion's prefix, as one string:
+        # mark1set bonus: pieces=0 lit=0/0/0 answered=0/0/0/0/0/0 not-number=0 gear-reads=0 gear-unread=0 | auto talents=-/-/-/- free=-/-/-/- masked=0 held-seen=0
+        self.assertScenarios("stat/second_line_fresh_exact", "stat/second_line_filled")
+        self.assertEqual(self.line("stat/second_line_fresh_exact")[len("PASS stat/second_line_fresh_exact "):], expected)
+
     def test_tooltip_target_bonus_line_needs_the_install(self):
         # Round 1's NON-BLOCKING finding: the bonus line is lit only while the
         # bonus is installed too. On and not installed grey, on and installed

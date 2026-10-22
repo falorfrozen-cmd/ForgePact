@@ -333,7 +333,13 @@ class Mark1ProbeContract(unittest.TestCase):
         spawn = self.body("static void M1pSpawn(const M1pNs::Command& c)")
         # The loader, by its SDK constant, with the global instance as self,
         # from the piece's own row of Mark1Set.hpp.
-        self.assertIn('g_Yytk->CallBuiltinEx(parsed, "json_parse", g, g, { RValue(M1pNs::PieceJson(row.seed, row.baseB)) });', spawn)
+        # Since the pieces' rolls (the 2026-10-22 playtest) the seed is the roll
+        # word's in the piece's band (M1pNs::SpawnSeed), a `random` roll drawn
+        # from TyRng() as the drops draw theirs; was the row's one fixed seed.
+        self.assertIn('g_Yytk->CallBuiltinEx(parsed, "json_parse", g, g, { RValue(M1pNs::PieceJson(seed, row.baseB)) });', spawn)
+        self.assertIn("const long long seed = M1pNs::SpawnSeed(pieces[i], c.roll, u);", spawn)
+        self.assertIn("const double u = std::uniform_real_distribution<double>(0.0, 1.0)(TyRng());", spawn)
+        self.assertIn("r.roll = c.roll;", spawn)
         self.assertIn("g_Yytk->CallGameScriptEx(item, HeroSiege::Scripts::gml_Script_InitItemFromJson, g, g,", spawn)
         self.assertIn("M1pNs::BaseKey(stamp, row.itemType)", spawn)
         self.assertIn("M1pNs::SpawnPieces(c.piece)", spawn)

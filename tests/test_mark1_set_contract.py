@@ -128,7 +128,7 @@ PROBE_END = "#endif // FORGEPACT_RELEASE (mark1probe)"
 SIGNATURES = {
     "decode": "static bool Mark1PieceDecode(const RValue& item, const RValue& definition, M1sNs::Piece& piece)",
     "of": "static bool Mark1PieceOf(const RValue& item, M1sNs::Piece& piece)",
-    "entry": "static bool Mark1ForgeEntry(const RValue& item, const RValue& definition, CustomForgeEntry& entry, M1sNs::Piece& piece)",
+    "entry": "static bool Mark1ForgeEntry(const RValue& item, const RValue& definition, CustomForgeEntry& entry, M1sNs::Piece& piece,\n                            bool finalPass)",
     "final": "static void Mark1DressFinal(RValue& item, M1sNs::Piece piece)",
     "icon_index": "static size_t Mark1IconIndex(M1sNs::Piece piece, bool ground)",
     "icon_path": "static bool Mark1IconPath(size_t k, std::string& gmlPath, std::string& absolutePath)",
@@ -205,6 +205,21 @@ SIGNATURES = {
     # the drops (Mark1Drops.hpp), in their own adapter block
     "drops_install": "static std::string Mark1DropInstall()",
     "drops_switch": "static void Mark1DropsSwitch(bool on)",
+    # the 2026-10-22 playtest: the stats, the set bonus, the cost, the proc
+    # route, the grey icon and the description's font, in the adapter
+    "bonus_consumer": "static void Mark1SetBonusOnStat(CInstance* S, int argc, RValue** A, RValue& r)",
+    "bonus_pieces": "static bool Mark1BonusPieces(M1sNs::SetRead& read)",
+    "gear_prints": "static bool Mark1GearPrints(std::array<std::string, M1sNs::kGearSlotCount>& out)",
+    "bonus_fields": "static M1sNs::BonusStatFields Mark1BonusStatFields()",
+    "fire_proc": "static void Mark1FireProc(const ForgePact::Mark1FramePlan& plan)",
+    "grey": "static void Mark1GreyDraw()",
+    "grey_member": "static bool Mark1GreyMember(const RValue& e, const char* name, double& out)",
+    "read_stat": "static bool Mark1ReadStatByName(int id, double& out)",
+    "refresh_stats": "static void Mark1RefreshStats(long long nowMs)",
+    "cooldown_of": "static Mark1TalentCooldown Mark1CooldownOf(int talentId)",
+    "tip_draw_row": "static double TipDrawRow(double x, double y, const TipRow& row)",
+    "small_font": "struct TipSmallFont {",
+    "stats_new": "static RValue& Hook_DrawInventoryStatsNew(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)",
 }
 
 SHIPPED = ("decode", "of", "entry", "final", "icon_index", "icon_path", "icons_load", "ground", "ground_install",
@@ -212,9 +227,11 @@ SHIPPED = ("decode", "of", "entry", "final", "icon_index", "icon_path", "icons_l
            "refresh", "hud_row", "hud_column", "read_toggle", "input_state", "input_get", "input_set", "border",
            "jump_position", "jump_cursor", "jump_family", "jump_gate", "jump_kind", "jump_grid", "jump_max", "jump_learn",
            "jump_entry", "jump_exit", "jump_builtin", "jump_install", "jump_tick", "leap", "leap_install", "resolve_objects",
-           "walk", "walk_install")
+           "walk", "walk_install", "bonus_consumer", "bonus_pieces", "gear_prints", "bonus_fields", "fire_proc", "grey",
+           "grey_member", "read_stat", "refresh_stats", "cooldown_of")
 JUMP_HEADER = ROOT / "plugin" / "include" / "ForgePact" / "Mark1Jump.hpp"
 AUTOMATION_HEADER = ROOT / "plugin" / "include" / "ForgePact" / "Mark1Automation.hpp"
+PRIORITY_HEADER = ROOT / "plugin" / "include" / "ForgePact" / "Mark1Priority.hpp"
 MOVEMENT_HEADER = ROOT / "plugin" / "include" / "ForgePact" / "Mark1Movement.hpp"
 SHARED_STAT_HEADER = ROOT / "plugin" / "include" / "ForgePact" / "ReturnSpecificStatHook.hpp"
 
@@ -322,9 +339,14 @@ class Mark1SetContract(unittest.TestCase):
                 self.assertIn(field, entry)
         # No affix rows: the tooltip's set block says what the set does.
         self.assertNotIn("kAffixRows", self.plugin)
-        # No affix, stats or lore written (the tier is the next test's).
-        for absent in ("entry.affix", "entry.lore", "entry.stats", "entry.sprite"):
+        # No affix or lore written (the tier is the next test's). The stats
+        # were absent too until the 2026-10-22 playtest gave the pieces their
+        # rolled stats (test_forge_entry_writes_the_rolled_stats); they are
+        # the rolls core's StatsFor, nothing else.
+        for absent in ("entry.affix", "entry.lore", "entry.sprite"):
             self.assertNotIn(absent, entry)
+        self.assertEqual(entry.count("entry.stats"), 1)
+        self.assertIn("M1rNs::StatsFor(rolled)) entry.stats[key] = (double)value;", entry)
         # The selector is the item's own, as the flight charms'.
         for key in ('{"t", t}', '{"a", a}', '{"b", b}', '{"c", c}', '{"j", j}'):
             self.assertIn(key, entry)
@@ -346,15 +368,15 @@ class Mark1SetContract(unittest.TestCase):
         self.assertIn("if (entry.tier >= 0)", forge)
         self.assertIn('{ info, RValue("32"), RValue((double)entry.tier) }', forge)
         self.assertIn('{ info, RValue("27"), RValue((double)entry.rarity) }', forge)
-        # Still no lore, stats or sprite of its own.
-        for absent in ("entry.lore", "entry.stats", "entry.sprite"):
+        # Still no lore or sprite of its own; its stats are its rolls'.
+        for absent in ("entry.lore", "entry.sprite"):
             self.assertNotIn(absent, entry)
 
     def test_the_pieces_are_tried_after_every_loaded_entry_and_the_flight_charms(self):
         forge = self.body("forge")
         self.assertEqual(forge.count("Mark1ForgeEntry("), 1)
         self.assertIn("const bool mark1Matched = i == entryCount + 1;", forge)
-        self.assertIn("if (mark1Matched && !Mark1ForgeEntry(*candidate, definition, mark1Entry, mark1Piece)) break;", forge)
+        self.assertIn("if (mark1Matched && !Mark1ForgeEntry(*candidate, definition, mark1Entry, mark1Piece, finalPass)) break;", forge)
         self.assertLess(forge.index("FlightCharmForgeEntry("), forge.index("Mark1ForgeEntry("))
         self.assertIn("if (!flightMatched && !mark1Matched && !CustomForgeMatches(entry, *candidate, definition)) continue;", forge)
         # Its own final pass (the bag icon), before the hash refresh.
@@ -461,7 +483,9 @@ class Mark1SetContract(unittest.TestCase):
         lines = self.lines("detour")
         # Switch off, the adapter's own calls, no self: the original alone,
         # nothing read or counted. Any other self: the original alone, counted.
-        self.assertEqual(lines[0], "if (!g_Mark1.Enabled() || g_M1sBusy || !S) "
+        # A gate call a proc makes itself (g_M1aProcRunning, the proc route)
+        # passes by the same way.
+        self.assertEqual(lines[0], "if (!g_Mark1.Enabled() || g_M1sBusy || g_M1aProcRunning || !S) "
                                    "return g_M1sOrigCheckTalentUse(S, O, R, argc, A);")
         self.assertEqual(lines[1], "if (S != g_M1sPlayer) { ++g_M1sGateOther; "
                                    "return g_M1sOrigCheckTalentUse(S, O, R, argc, A); }")
@@ -511,10 +535,16 @@ class Mark1SetContract(unittest.TestCase):
         # The one array_set and the one write path in the adapter.
         self.assertEqual(self.code.count('"array_set"'), 1)
         self.assertNotIn("variable_global_set", self.code)
-        # The adapter's two variable_instance_set calls: the ground consumer's
-        # sprite, and the jump's scaled position, written only after a
-        # skillsLeap call's original returned (jump-adapter).
-        self.assertEqual(self.code.count('"variable_instance_set"'), 2)
+        # The adapter's two variable_instance_set calls in the player build:
+        # the ground consumer's sprite, and the jump's scaled position, written
+        # only after a skillsLeap call's original returned (jump-adapter). The
+        # research build adds two, the grey icon's `autogrey enabled` write
+        # and its put-back (the 2026-10-22 playtest).
+        player = strip_comments(strip_research_blocks(self.reads + self.adapter))
+        self.assertEqual(player.count('"variable_instance_set"'), 2)
+        self.assertEqual(self.code.count('"variable_instance_set"'), 4)
+        self.assertEqual(self.code.count('RValue("enabled")'), 3)
+        self.assertNotIn('RValue("enabled")', player)
         self.assertIn('"variable_instance_set"', self.body("ground"))
         self.assertIn('"variable_instance_set"', self.body("jump_exit"))
         self.assertEqual(len(re.findall(r"\bMark1InputSet\(", self.code)), 2)   # definition and the detour's write
@@ -523,7 +553,9 @@ class Mark1SetContract(unittest.TestCase):
         # is never pressed; the restore runs after a return and after a throw.
         around = function_body(self.automation_header(), "decltype(auto) PressAround(")
         self.assertIn("if (!readOk) { ++m_Counters[i].originalUnreadable; continue; }", around)
-        self.assertLess(around.index("read(entry, originals[i])"), around.index("write(entry, Value(kMark1PressValue))"))
+        # The press writes the plan's value (kMark1PressValue for a cooldown
+        # column, the hold value in force for a free one, Mark1Priority.hpp).
+        self.assertLess(around.index("read(entry, originals[i])"), around.index("write(entry, Value(plan.value[i]))"))
         # The put-back is a guard's destructor, declared before the call, so it
         # runs after a void call, after a value and after a throw alike; a
         # throw is counted there and reaches the adapter untouched (the
@@ -545,9 +577,11 @@ class Mark1SetContract(unittest.TestCase):
         # An instance is any handle kind, never a VALUE_OBJECT check alone.
         self.assertIn("HeroSiege::Player::IsInstanceHandle(manager)", state)
         self.assertIn("HeroSiege::Player::IsInstanceHandle(entry)", state)
-        # Resolved only when a column is to be pressed, and only for the local player.
+        # Resolved only when a column is to be pressed or an automated column
+        # locked out of manual casts (the plan's NeedsInput), and only for the
+        # local player.
         detour = self.body("detour")
-        self.assertIn("haveInput = plan.PressCount() > 0 && Mark1InputState(argc, A, input);", detour)
+        self.assertIn("haveInput = plan.NeedsInput() && Mark1InputState(argc, A, input);", detour)
         self.assertLess(detour.index("if (S != g_M1sPlayer)"), detour.index("Mark1InputState("))
         self.assertEqual(len(re.findall(r"\bMark1InputState\(", self.code)), 2)
 
@@ -601,7 +635,7 @@ class Mark1SetContract(unittest.TestCase):
         self.assertEqual(self.code.count("++g_M1sGateCalls;"), 1)
         self.assertLess(detour.index("if (!active) return"), detour.index("++g_M1sGateCalls;"))
         self.assertEqual(self.code.count("++g_M1sGateOther;"), 1)
-        self.assertLess(detour.index("if (!g_Mark1.Enabled() || g_M1sBusy || !S)"), detour.index("++g_M1sGateOther;"))
+        self.assertLess(detour.index("if (!g_Mark1.Enabled() || g_M1sBusy || g_M1aProcRunning || !S)"), detour.index("++g_M1sGateOther;"))
         self.assertLess(detour.index("++g_M1sGateOther;"), detour.index("g_Mark1.Active("))
         # The counters' only writers are those two increments.
         self.assertEqual(re.findall(r"\bg_M1sGate(?:Calls|Other)\s*(?:\+=|=(?!=))", self.code),
@@ -725,7 +759,11 @@ class Mark1SetContract(unittest.TestCase):
         for gate in ("Mark1PieceOf(item, piece)", "if (!g_M1sIconOk[bag] || !g_M1sIconOk[k]) return;",
                      "if (shown.ToDouble() != g_M1sIconSprite[bag].ToDouble()) return;"):
             self.assertLess(ground.index(gate), write)
-        self.assertEqual(self.code.count('"sprite_index"'), 1)
+        # The ground consumer's is the one write of sprite_index; the grey
+        # icon reads the bar button's own (Mark1GreyMember) and writes nothing.
+        self.assertEqual(self.code.count('RValue("sprite_index")'), 1)
+        self.assertEqual(self.code.count('"sprite_index"'), 2)
+        self.assertIn('Mark1GreyMember(e, "sprite_index", sprite)', self.body("grey"))
 
     def test_art_fallback_png_written_only_when_no_file_of_that_name_is_there(self):
         path = self.body("icon_path")
@@ -1016,15 +1054,23 @@ class Mark1SetContract(unittest.TestCase):
         self.assertIn("M1sNs::SetBlockRows(read, readOk, g_Mark1.Enabled(), g_Mark1.Installed())", rows)
         header = self.header()
         self.assertIn("return readOk && r.full && switchOn && installed;", function_body(header, "inline bool BlockBonusActive("))
-        self.assertIn("BlockBonusActive(r, readOk, switchOn, installed)",
-                      function_body(header, "inline std::vector<TipRow> SetBlockRows("))
+        # Since the 2026-10-22 playtest each line asks its own threshold, the
+        # switch and the install (Mark1Rolls.hpp's LitLines); the 4-piece
+        # lines, Automation's among them, are lit exactly when
+        # BlockBonusActive holds (the harness pins both).
+        block = function_body(header, "inline std::vector<TipRow> SetBlockRows(")
+        self.assertIn("Mark1Rolls::LitLines(PiecesWorn(r, readOk), switchOn, installed)", block)
+        rolls = (ROOT / "plugin" / "include" / "ForgePact" / "Mark1Rolls.hpp").read_text(encoding="utf-8")
+        self.assertIn("lit[i] = switchOn && installed && piecesWorn >= kBonusLines[i].threshold;",
+                      function_body(rolls, "inline std::array<bool, kBonusLineCount> LitLines("))
 
     def test_tooltip_the_block_draws_at_the_anchor_in_its_colours_and_other_rows_stay_gold(self):
         stat = function_body(self.shipped, "static RValue& Hook_DrawInventoryStatsNew(")
         self.assertIn("for (const TipRow& row : g_TipRows) extra += TipDrawRow(x, y + extra, row);", stat)
         draw = function_body(self.shipped, "static double TipDrawRow(double x, double y, const TipRow& row)")
-        # A forged item's gold row is HhDrawTooltipLine's, unchanged.
-        self.assertIn("if (!row.wrapped && row.colour == kTipGold) {", draw)
+        # A forged item's gold row is HhDrawTooltipLine's, unchanged (a gold
+        # row is never wrapped nor in the small font).
+        self.assertIn("if (!row.wrapped && !row.smallFont && row.colour == kTipGold) {", draw)
         self.assertIn("HhDrawTooltipLine(x, y, row.text);", draw)
         self.assertIn("static constexpr double kTipGold = 6472946.0;", self.shipped)
         gold = function_body(self.shipped, "static std::vector<TipRow> TipGoldRows(")
@@ -1670,7 +1716,7 @@ class Mark1SetContract(unittest.TestCase):
         # around the original: TalentUseSetSpeed's calls before the gate or
         # after it (the restore) are not this call's landing.
         self.assertIn("const bool pressing = haveInput && plan.PressCount() > 0;", detour)
-        self.assertLess(detour.index("haveInput = plan.PressCount() > 0 && Mark1InputState("),
+        self.assertLess(detour.index("haveInput = plan.NeedsInput() && Mark1InputState("),
                         detour.index("const bool pressing ="))
         window = self.body("cast_window")
         self.assertIn("g_M1sCastWindow = open;", window)
@@ -1713,6 +1759,178 @@ class Mark1SetContract(unittest.TestCase):
         # cast-calls: the landing detour's own count.
         self.assertIn("f.castCalls = g_M1sCastCalls;", fields)
         self.assertIn("uint64_t     castCalls = 0;", function_body(self.header(), "struct StatFields {"))
+
+    # ---- the 2026-10-22 playtest ------------------------------------------------------
+
+    def test_forge_entry_writes_the_rolled_stats(self):
+        # The pieces carry the owner's "Bulwark SS" stats as real item stats,
+        # decoded from the seed the save keeps (Mark1Rolls.hpp), written in
+        # place of the base item's own (keepNative false); the forge's final
+        # pass counts each dressing as a band seed or a legacy one.
+        entry = self.body("entry")
+        self.assertIn("M1sNs::DecodePiece(t, a, b, c, j, decoded, rolled)", entry)
+        self.assertIn("for (const auto& [key, value] : M1rNs::StatsFor(rolled)) entry.stats[key] = (double)value;", entry)
+        self.assertIn("entry.keepNative = false;", entry)
+        self.assertIn("if (finalPass) ++(rolled.legacy ? g_M1rLegacy : g_M1rDressed);", entry)
+        self.assertNotIn("entry.affix", entry)
+        self.assertNotIn("entry.lore", entry)
+        forge = function_body(self.plugin, SIGNATURES["forge"])
+        self.assertIn("Mark1ForgeEntry(*candidate, definition, mark1Entry, mark1Piece, finalPass)", forge)
+        # The pieces' stats are the item's: dressed whatever the switches say.
+        self.assertNotIn("g_Mark1", entry)
+        # Recognition asks the rolls core (a band seed or the legacy seed).
+        decode = strip_comments(function_body(self.header(), "inline bool DecodePiece("))
+        self.assertIn("Mark1Rolls::DecodeSeed(aa, r)", decode)
+        fields = self.body("bonus_fields")
+        self.assertIn("f.dressed = g_M1rDressed;", fields)
+        self.assertIn("f.legacy = g_M1rLegacy;", fields)
+        self.assertIn("f.dropRolls = g_M1rDropRolls;", fields)
+
+    def test_description_draws_in_the_small_item_font(self):
+        # The owner's finding 1 and the game's own grant descriptions (static
+        # reading of DrawSkillDescription): the description in
+        # font_item_stats_small, read by name at draw time, checked with
+        # font_exists, the previous font saved and put back.
+        font = strip_comments(function_body(self.plugin, SIGNATURES["small_font"]))
+        self.assertIn('"variable_global_get", { RValue("font_item_stats_small") }', font)
+        self.assertIn('"font_exists", { font }', font)
+        self.assertLess(font.index('previous = g_Yytk->CallBuiltin("draw_get_font", {});'),
+                        font.index('g_Yytk->CallBuiltin("draw_set_font", { font });'))
+        self.assertIn('g_Yytk->CallBuiltin("draw_set_font", { previous });', font)
+        self.assertIn("g_TipDescFont = applied ? M1sNs::DescFont::Small : M1sNs::DescFont::Unresolved;", font)
+        draw = self.body("tip_draw_row")
+        # The font is in place before the row is drawn and measured, and the
+        # gold rows keep the inherited font.
+        self.assertLess(draw.index("const TipSmallFont font(row.smallFont);"), draw.index('"draw_text_ext"'))
+        self.assertLess(draw.index("const TipSmallFont font(row.smallFont);"), draw.index('"string_height_ext"'))
+        self.assertIn("if (!row.wrapped && !row.smallFont && row.colour == kTipGold)", draw)
+        rows = self.body("tooltip_rows")
+        self.assertIn("TipRow{ r.text, static_cast<double>(r.colour), r.wrapped, r.smallFont }", rows)
+        # The core marks the description, and only it, for the small font.
+        block = strip_comments(function_body(self.header(), "inline std::vector<TipRow> SetBlockRows("))
+        self.assertEqual(block.count(", true, true }"), 1, block)
+        self.assertIn("kAutomationDescription), kColourDescription, true, true", block)
+        # The piece's block anchors after its own lines through the core.
+        stats = self.body("stats_new")
+        self.assertIn("if (g_TipM1AnchorOn) {", stats)
+        self.assertIn("anchors = g_TipM1Anchor.AnchorsHere(statId, has, fmt);", stats)
+        self.assertIn("ForgePact::ForgedTooltipRows::AnchorsHere(g_TipRowsPending, fmt, present, g_TipItemNoStats)", stats)
+        self.assertIn("g_TipM1Anchor = M1sNs::BlockAnchor::For(piece);", rows)
+
+    def test_bonus_consumer_runs_after_the_half_walk(self):
+        shared = strip_comments(SHARED_STAT_HEADER.read_text(encoding="utf-8"))
+        hook = function_body(shared, "inline RValue& Hook(")
+        self.assertLess(hook.index("if (skillSliders) skillSliders(S, argc, A, r);"), hook.index("if (mark1) mark1(S, argc, A, r);"))
+        self.assertLess(hook.index("if (mark1) mark1(S, argc, A, r);"), hook.index("if (mark1Bonus) mark1Bonus(S, argc, A, r);"))
+        install = self.body("install")
+        self.assertEqual(install.count("ForgePact::ReturnSpecificStatHook::mark1Bonus = Mark1SetBonusOnStat;"), 1)
+        self.assertLess(install.index("if (!walk.empty()) return walk;"),
+                        install.index("ForgePact::ReturnSpecificStatHook::mark1Bonus = Mark1SetBonusOnStat;"))
+        # The half walk's part is untouched: it still registers only itself.
+        walk = self.body("walk_install")
+        self.assertIn("Rss::mark1 = Mark1MovementOnStat;", walk)
+        self.assertNotIn("mark1Bonus", walk)
+        self.assertNotIn("mark1Bonus", self.body("walk"))
+        # No second HookOneScript of the dispatcher.
+        self.assertEqual(self.shipped.count("gml_Script_ReturnSpecificStat), \"fp_ss_stat\""), 0)
+        consumer = self.body("bonus_consumer")
+        # The local player's own calls only, before any game read; the answer
+        # from the call's own original through the core; a non-number left alone.
+        self.assertIn("if (g_M1sBusy || !S || S != g_M1sPlayer) return;", consumer)
+        self.assertIn("M1rNs::BonusAnswer(id, read.matched, g_Mark1.Enabled(), g_Mark1.Installed(), answer)", consumer)
+        self.assertIn("++g_M1bNotNumber; return;", consumer)
+        # The count at the point of use, by the fingerprint rule.
+        self.assertIn("if (!Mark1BonusPieces(read)) return;", consumer)
+        pieces = self.body("bonus_pieces")
+        self.assertIn("Mark1GearPrints(prints)", pieces)
+        self.assertIn("!(g_M1bResolved && prints == g_M1bPrints)", pieces)
+        self.assertLess(pieces.index("Mark1GearPrints(prints)"), pieces.index("Mark1ReadWorn(slots)"))
+        self.assertIn("++g_M1bGearUnread;", pieces)
+        self.assertNotIn("CallGameScriptEx", self.body("gear_prints"))
+
+    def test_gate_masks_only_while_it_presses(self):
+        detour = self.body("detour")
+        # The entries are read to press or to lock out, never otherwise, and
+        # every write is PressAround's.
+        self.assertIn("haveInput = plan.NeedsInput() && Mark1InputState(argc, A, input);", detour)
+        self.assertEqual(detour.count("automation.PressAround<RValue>("), 1)
+        self.assertNotIn("array_set", detour)
+        core = strip_comments(PRIORITY_HEADER.read_text(encoding="utf-8"))
+        plan = function_body(core, "inline Mark1InputPlan Mark1PlanInputs(")
+        self.assertIn("if (p.pressCount > 0) {", plan)
+        self.assertLess(plan.index("if (lockout)"), plan.index("if (p.pressCount > 0) {"))
+        around = strip_comments(function_body(self.automation_header(), "decltype(auto) PressAround("))
+        # The lockout, then the press, then the mask only once a press was written.
+        self.assertLess(around.index("inputs.lockCount"), around.index("plan.Press(column)"))
+        self.assertLess(around.index("plan.Press(column)"), around.index("if (anyPressed) {"))
+        self.assertLess(around.index("if (anyPressed) {"), around.index("inputs.maskCount"))
+
+    def test_proc_route_calls_talentuseclass_by_name(self):
+        fire = self.body("fire_proc")
+        player = strip_comments(function_body(strip_research_blocks(self.plugin), SIGNATURES["fire_proc"]))
+        self.assertEqual(fire, player)   # outside every research block
+        self.assertIn("HeroSiege::Scripts::gml_Script_TalentUseClass", fire)
+        self.assertIn("GetNamedRoutinePointer(HeroSiege::Scripts::gml_Script_TalentUseClass.data(), &routine)", fire)
+        self.assertIn('"script_execute", g_M1sPlayer, g_M1sPlayer, args', fire)
+        self.assertLess(fire.index("GetNamedRoutinePointer("), fire.index('"script_execute"'))
+        self.assertIn("automation.ProcArgs(plan, x, y, values, why)", fire)
+        self.assertIn("automation.ProcDone(plan, outcome);", fire)
+        for banned in ("Rva", "GetModuleHandle", "0x", "reinterpret_cast"):
+            with self.subTest(banned=banned):
+                self.assertNotIn(banned, fire)
+        detour = self.body("detour")
+        self.assertLess(detour.index("feedLanding();"), detour.index("Mark1FireProc(plan)"))
+        # A gate call the proc makes itself passes the detour by.
+        self.assertIn("|| g_M1aProcRunning ||", detour)
+
+    def test_grey_icon_drawn_after_the_hud_original(self):
+        hud = self.body("hud")
+        self.assertIn("Mark1BorderDraw();\n    Mark1GreyDraw();", function_body(self.plugin, SIGNATURES["hud"]))
+        self.assertLess(hud.index("FP_GAME_ORIGINAL(g_Orig_DrawHudBuffs("), hud.index("Mark1GreyDraw();"))
+        self.assertEqual(len(re.findall(r"\bMark1GreyDraw\(\)", strip_comments(self.plugin))), 3)
+        grey = strip_comments(function_body(strip_research_blocks(self.plugin), SIGNATURES["grey"]))
+        self.assertIn("if (!g_Mark1.ActiveCached() || look == Mark1GreyLook::Off) return;", grey)
+        self.assertIn(".GreyMask(true,", grey)
+        self.assertIn('"draw_sprite_ext"', grey)
+        self.assertIn("RValue(kMark1GreyBlend), RValue(1.0)", grey)
+        self.assertIn('"draw_rectangle"', grey)
+        self.assertIn('g_Yytk->CallBuiltin("draw_set_alpha", { prevAlpha })', grey)
+        self.assertIn('g_Yytk->CallBuiltin("draw_set_colour", { prevColour })', grey)
+        # The player build writes no `enabled` (nor anything else of the game's).
+        for banned in ('"enabled"', "variable_instance_set", "variable_struct_set"):
+            with self.subTest(banned=banned):
+                self.assertNotIn(banned, grey)
+        self.assertNotIn('RValue("enabled")', strip_comments(strip_research_blocks(self.adapter)))
+
+    def test_cost_answers_through_the_dispatcher_consumer(self):
+        consumer = self.body("bonus_consumer")
+        self.assertIn("ForgePact::Mark1Cost::Wants(true, haveId, id)", consumer)
+        self.assertIn("g_M1aCost.Answer(id, number, answer, columns, g_M1aStats.Value(ForgePact::Mark1Stat::MaxMana))", consumer)
+        self.assertIn("Priority().ProcColumnCount()", consumer)
+        # Nothing writes mana: no PlayerManaUpdate call, no protected-store
+        # SetVariable, no write of a mana variable, anywhere in the player build.
+        self.assertNotIn("PlayerManaUpdate", self.shipped)
+        self.assertNotIn("SetVariable", strip_comments(self.reads + self.adapter))
+        for banned in ('RValue("mana")', 'RValue("currentMana")', 'RValue("manaArray")'):
+            with self.subTest(banned=banned):
+                self.assertNotIn(banned, self.shipped)
+
+    def test_stats_read_by_name_through_the_dispatcher(self):
+        read = self.body("read_stat")
+        self.assertIn("HeroSiege::Scripts::gml_Script_ReturnSpecificStat.data()", read)
+        self.assertIn("g_M1sPlayer, g_M1sPlayer, { RValue(1.0), RValue((double)id), RValue(0.0), RValue(), RValue() }", read)
+        self.assertIn('"array_get", { result, RValue(0.0) }', read)
+        refresh = self.body("refresh_stats")
+        self.assertIn("if (!g_M1aStats.Due(nowMs)) return;", refresh)
+        self.assertIn("Mark1ReadStatByName(ForgePact::kMark1StatIds[k], v)", refresh)
+        self.assertIn("g_M1sBusy = true;", refresh)
+        core = strip_comments(PRIORITY_HEADER.read_text(encoding="utf-8"))
+        self.assertIn("inline constexpr long long kMark1StatRefreshMs = 1000;", core)
+        self.assertIn("inline constexpr int kMark1StatIds[kMark1StatCount] = { 37, 103, 106 };", core)
+        # Only while the bonus is active: from the gate detour, after Active.
+        detour = self.body("detour")
+        self.assertLess(detour.index("if (!active) return"), detour.index("Mark1RefreshStats(nowMs)"))
+        self.assertEqual(len(re.findall(r"\bMark1RefreshStats\(", strip_comments(self.plugin))), 2)
 
 
 if __name__ == "__main__":

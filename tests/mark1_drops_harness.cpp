@@ -483,15 +483,28 @@ int main()
             && !AttributeHit(plan, 0, 3, 17.5, 0.0, p);
         check("coin/a_hit_on_the_whole_triple_is_the_piece_on_the_coin", ok);
 
-        // The rewrite target per piece, from Mark1Set.hpp's kPieces.
+        // The rewrite target per piece, from Mark1Set.hpp's kPieces: its class
+        // and base, c 0 and j 0, and since the pieces' rolls (the 2026-10-22
+        // playtest) `a` the seed of the roll a uniform `u` draws in the
+        // piece's band (Mark1Rolls.hpp's SeedFromUniform): u 0 the band's first
+        // seed, u just under 1 its last, every one a piece of that class.
         ok = true;
         for (const PieceRow& row : M1s::kPieces) {
-            const RewriteTarget t = RewriteFor(row.piece);
+            const RewriteTarget t = RewriteFor(row.piece, 0.0);
+            const RewriteTarget top = RewriteFor(row.piece, 0.9999999999);
             std::cout << "REWRITE " << row.key << " type=" << t.itemType << " a=" << t.a << " b=" << t.b
-                      << " c=" << t.c << " j=" << t.j << std::endl;
-            Piece back = Piece::Helmet;
-            if (t.itemType != row.itemType || t.a != row.seed || t.b != row.baseB || t.c != 0 || t.j != 0) ok = false;
-            if (!M1s::IsPiece(t.itemType, static_cast<double>(t.a), t.b, t.c, t.j, back) || back != row.piece) ok = false;
+                      << " c=" << t.c << " j=" << t.j << " top=" << top.a << std::endl;
+            const auto rp = static_cast<ForgePact::Mark1Rolls::Piece>(static_cast<int>(row.piece));
+            for (double u : { 0.0, 0.25, 0.5, 0.75, 0.9999999999 }) {
+                const RewriteTarget r = RewriteFor(row.piece, u);
+                Piece back = Piece::Helmet;
+                if (r.itemType != row.itemType || r.b != row.baseB || r.c != 0 || r.j != 0) ok = false;
+                if (r.a < ForgePact::Mark1Rolls::LowSeed(rp) || r.a > ForgePact::Mark1Rolls::TopSeed(rp)) ok = false;
+                if (!M1s::IsPiece(r.itemType, static_cast<double>(r.a), r.b, r.c, r.j, back) || back != row.piece) ok = false;
+            }
+            if (t.a != ForgePact::Mark1Rolls::LowSeed(rp) || top.a != ForgePact::Mark1Rolls::TopSeed(rp)) ok = false;
+            // The legacy seed is never a rewrite's: a new drop carries a roll.
+            if (t.a == row.legacySeed || top.a == row.legacySeed) ok = false;
         }
         check("coin/rewrite_target_is_the_pieces_own_definition", ok);
     }

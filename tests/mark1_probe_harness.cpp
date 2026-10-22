@@ -1196,15 +1196,34 @@ int main()
             && all[3] == ForgePact::Mark1Set::Piece::Gloves
             && one.size() == 1 && one[0] == ForgePact::Mark1Set::Piece::Boots && SpawnPieces("ring").empty();
         check("spawn/pieces_by_word", pieces);
+        // The definition: the row's base and, since the pieces' rolls, a seed
+        // of the piece's roll band by the roll word (Mark1Rolls.hpp): `top`
+        // every stat at the top (the band's last seed), `low` at the bottom
+        // (its first), `random` the roll a uniform `u` draws. Was: the row's
+        // one fixed seed, 777500 for the helmet (now its legacy seed).
         const ForgePact::Mark1Set::PieceRow& helmet = ForgePact::Mark1Set::RowOf(ForgePact::Mark1Set::Piece::Helmet);
+        const long long helmetTop = SpawnSeed(ForgePact::Mark1Set::Piece::Helmet, SpawnRoll::Top, 0.5);
         check("spawn/definition_is_the_rows_seed_and_base",
-              PieceJson(helmet.seed, helmet.baseB) == "{\"w\":1,\"a\":777500,\"j\":0,\"b\":7,\"c\":0,\"o\":1}"
+              PieceJson(helmetTop, helmet.baseB) == "{\"w\":1,\"a\":1000107603,\"j\":0,\"b\":7,\"c\":0,\"o\":1}"
+                  && SpawnSeed(ForgePact::Mark1Set::Piece::Helmet, SpawnRoll::Low, 0.5) == 1000000000LL
+                  && SpawnSeed(ForgePact::Mark1Set::Piece::Gloves, SpawnRoll::Top, 0.0) == 1003001195LL
+                  && SpawnSeed(ForgePact::Mark1Set::Piece::Body, SpawnRoll::Random, 0.0) == 1001000000LL
+                  && SpawnSeed(ForgePact::Mark1Set::Piece::Body, SpawnRoll::Random, 0.9999999999) == 1001763963LL
+                  && helmet.legacySeed == 777500
                   && BaseKey(1700000000000LL, ForgePact::Mark1Set::RowOf(ForgePact::Mark1Set::Piece::Gloves).itemType)
                          == "0-0-1700000000000-4",
-              PieceJson(helmet.seed, helmet.baseB));
+              PieceJson(helmetTop, helmet.baseB));
         const Command s1 = parsed("spawn SET");
         const Command s2 = parsed("spawn gloves");
-        check("spawn/parse", s1.form == Form::Spawn && s1.piece == "set" && s2.form == Form::Spawn && s2.piece == "gloves");
+        const Command s3 = parsed("spawn boots LOW");
+        const Command s4 = parsed("spawn set random");
+        const Command s5 = parsed("spawn helmet top");
+        check("spawn/parse", s1.form == Form::Spawn && s1.piece == "set" && s1.roll == SpawnRoll::Top
+                                 && s2.form == Form::Spawn && s2.piece == "gloves" && s2.roll == SpawnRoll::Top
+                                 && s3.piece == "boots" && s3.roll == SpawnRoll::Low && s4.roll == SpawnRoll::Random
+                                 && s5.roll == SpawnRoll::Top
+                                 && why("spawn boots high").find("top, low or random") != std::string::npos
+                                 && why("spawn boots low extra") != "ACCEPTED");
         SpawnResult placed;
         placed.piece = "helmet";
         placed.built = true;
@@ -1224,8 +1243,8 @@ int main()
         unbuilt.piece = "gloves";
         unbuilt.why = "InitItemFromJson-st=3-gave-undefined";
         check("spawn/line_placed_refused_and_not_built",
-              SpawnLine(placed) == "mark1probe spawn: piece=helmet t=0 b=7 a=777500 dressed=yes tier=5 ground=ref:100234"
-                  && SpawnLine(refused) == "mark1probe spawn: piece=body t=0 b=7 a=777500 dressed=no tier=? ground=none why=LootGroundCreateFromItem-st=3"
+              SpawnLine(placed) == "mark1probe spawn: piece=helmet t=0 b=7 a=777500 roll=top dressed=yes tier=5 ground=ref:100234"
+                  && SpawnLine(refused) == "mark1probe spawn: piece=body t=0 b=7 a=777500 roll=top dressed=no tier=? ground=none why=LootGroundCreateFromItem-st=3"
                   && SpawnLine(unbuilt) == "mark1probe spawn: piece=gloves built=no why=InitItemFromJson-st=3-gave-undefined",
               SpawnLine(placed) + " | " + SpawnLine(refused) + " | " + SpawnLine(unbuilt));
         // The tier sits right after `dressed=`, the dressing's SS 5 or whatever
@@ -2506,7 +2525,7 @@ int main()
     }
     {
         const std::vector<std::pair<std::string, std::string>> refused = {
-            { "bogus", "unknown form bogus (hook, off, show, args, watch, set, scale, hold, move, stat, statpin, statlog, count, pos, base, spawn, heroic, unique, pool, copies, killgate, draws or walkable)" },
+            { "bogus", "unknown form bogus (hook, off, show, args, watch, set, scale, hold, move, stat, statpin, statlog, count, pos, base, spawn, heroic, unique, pool, copies, killgate, draws, walkable, bonusread, autohold, automask, autoyield, autorest, autoroute, autoproc, autolock, autogrey, autocost, autodrain or autocast)" },
             { "heroic", "usage: heroic <n>, n a whole number 1..20" },
             { "heroic 0", "usage: heroic <n>, n a whole number 1..20, not 0" },
             { "heroic 21", "usage: heroic <n>, n a whole number 1..20, not 21" },
@@ -2541,9 +2560,10 @@ int main()
             { "base 20 0", "class must be a whole number 0..19, not 20" },
             { "base 0 10000", "b must be a whole number 0..9999, not 10000" },
             { "base 0 -1", "b must be a whole number 0..9999, not -1" },
-            { "spawn", "usage: spawn <helmet|body|boots|gloves|set>" },
-            { "spawn helmet boots", "usage: spawn <helmet|body|boots|gloves|set>" },
-            { "spawn ring", "usage: spawn <helmet|body|boots|gloves|set>, not ring" },
+            { "spawn", "usage: spawn <helmet|body|boots|gloves|set> [top|low|random]" },
+            { "spawn helmet boots", "usage: spawn <helmet|body|boots|gloves|set> [top|low|random], the roll top, low or random, not boots" },
+            { "spawn helmet top low", "usage: spawn <helmet|body|boots|gloves|set> [top|low|random]" },
+            { "spawn ring", "usage: spawn <helmet|body|boots|gloves|set> [top|low|random], not ring" },
             { "hook now", "usage: mark1probe hook" },
             { "off 1", "usage: mark1probe off" },
             { "show all", "usage: mark1probe show [reset]" },
@@ -2619,6 +2639,71 @@ int main()
         const bool numbers = NumberText(3) == "3" && NumberText(-0.5) == "-0.5" && NumberText(std::nan("")) == "?"
             && ValueText(Value{ true, 1 }) == "true" && ValueText(Value{ true, 0 }) == "false" && ValueText(Num(2.25)) == "2.25";
         check("parse/number_and_value_text", numbers);
+    }
+
+    // ---- the 2026-10-22 playtest's research forms -------------------------------------
+    {
+        // bonusread: the recorder's watch list, `-` for an id with no local
+        // call yet, `?` for a value that was not a number, the frame last.
+        check("bonusread/parse", parsed("bonusread").form == Form::BonusRead && why("bonusread now") != "ACCEPTED");
+        const std::vector<BonusReadEntry> entries = {
+            { 2, true, true, 3, 8 }, { 36, true, true, 1200, 1950 }, { 37, false, false, 0, 0 }, { 92, true, false, 0, 0 },
+        };
+        const std::string line = BonusReadLine(entries, true, 4711);
+        const std::string none = BonusReadLine({ { 2, false, false, 0, 0 } }, false, 0);
+        check("bonusread/line", line == "mark1probe bonusread: 2=3->8 36=1200->1950 37=- 92=?->? frame=4711"
+                                    && none == "mark1probe bonusread: 2=- frame=-", line + " | " + none);
+
+        // The automation's overrides: each parses its own range and refuses
+        // the rest by name.
+        bool ok = parsed("autohold 3").form == Form::AutoHold && parsed("autohold 4").autoValue == 4
+            && why("autohold 5") != "ACCEPTED" && why("autohold") != "ACCEPTED"
+            && parsed("automask off").form == Form::AutoMask && !parsed("automask off").autoMask.on
+            && parsed("automask 0,1,9").autoMask.count == 3 && parsed("automask default").autoMask.count == 8
+            && why("automask 3").find("automated column") != std::string::npos
+            && why("automask 64") != "ACCEPTED"
+            && parsed("autoyield 0").form == Form::AutoYield && parsed("autoyield 600").autoFrames == 600
+            && why("autoyield 601") != "ACCEPTED" && parsed("autorest 24").form == Form::AutoRest
+            && parsed("autoroute proc").autoOn && !parsed("autoroute press").autoOn && why("autoroute fast") != "ACCEPTED"
+            && parsed("autoproc id,x,y,false").autoShape.args.size() == 4
+            && parsed("autoproc clear").autoShape.ok && parsed("autoproc clear").autoShape.args.empty()
+            && why("autoproc id,who").find("unknown token who") != std::string::npos
+            && parsed("autolock off").form == Form::AutoLock && !parsed("autolock off").autoOn && parsed("autolock on").autoOn
+            && parsed("autogrey box").grey == GreyLook::Box && parsed("autogrey enabled").grey == GreyLook::Enabled
+            && parsed("autogrey off").grey == GreyLook::Off && parsed("autogrey redraw").grey == GreyLook::Redraw
+            && why("autogrey pink") != "ACCEPTED"
+            && parsed("autocost maxmana").autoCost == ForgePact::Mark1ManaCost::MaxMana
+            && parsed("autocost off").autoCost == ForgePact::Mark1ManaCost::Off && why("autocost free") != "ACCEPTED"
+            && parsed("autodrain 0").form == Form::AutoDrain && parsed("autodrain 2.5").autoValue == 2.5
+            && why("autodrain 11") != "ACCEPTED" && why("autodrain -1") != "ACCEPTED"
+            && parsed("autocast 0.1").form == Form::AutoCast && parsed("autocast 5").autoValue == 5
+            && why("autocast 0.05") != "ACCEPTED" && why("autocast 6") != "ACCEPTED";
+        check("auto/parse_and_refuse", ok);
+
+        // ApplyAuto: each override changes the value in force and answers it;
+        // `autoroute proc` with no shape is refused and the press stays.
+        ForgePact::Mark1PriorityCore core;
+        ForgePact::Mark1Cost cost;
+        const std::string refused = ApplyAuto(parsed("autoroute proc"), core, cost);
+        const bool pressStays = core.RouteInForce() == ForgePact::Mark1Route::Press;
+        const std::string shape = ApplyAuto(parsed("autoproc id,x,y,false"), core, cost);
+        const std::string proc = ApplyAuto(parsed("autoroute proc"), core, cost);
+        const std::string cleared = ApplyAuto(parsed("autoproc clear"), core, cost);
+        ok = refused == "mark1probe autoroute: refused - shape unset" && pressStays
+            && shape == "mark1probe autoproc: shape=id,x,y,false route=press"
+            && proc == "mark1probe autoroute: route=proc"
+            && cleared == "mark1probe autoproc: shape=unset route=press"
+            && ApplyAuto(parsed("autohold 3"), core, cost) == "mark1probe autohold: hold=3" && core.Settings().holdValue == 3
+            && ApplyAuto(parsed("automask 0,9"), core, cost) == "mark1probe automask: mask=0,9"
+            && ApplyAuto(parsed("autoyield 40"), core, cost) == "mark1probe autoyield: yield=40" && core.Settings().yieldFrames == 40
+            && ApplyAuto(parsed("autorest 10"), core, cost) == "mark1probe autorest: rest=10"
+            && ApplyAuto(parsed("autolock off"), core, cost) == "mark1probe autolock: lockout=off" && !core.Settings().lockout
+            && ApplyAuto(parsed("autocost maxmana"), core, cost) == "mark1probe autocost: cost=maxmana"
+            && cost.Cost() == ForgePact::Mark1ManaCost::MaxMana
+            && ApplyAuto(parsed("autodrain 2.5"), core, cost) == "mark1probe autodrain: drain=2.5" && cost.DrainPct() == 2.5
+            && ApplyAuto(parsed("autocast 0.5"), core, cost) == "mark1probe autocast: cast-base=0.5"
+            && core.Settings().baseCastSeconds == 0.5;
+        check("auto/apply_answers_the_value_in_force", ok, refused + " | " + shape + " | " + proc + " | " + cleared);
     }
 
     std::cout << (failures ? "RESULT FAIL " + std::to_string(failures) : std::string("RESULT OK")) << std::endl;

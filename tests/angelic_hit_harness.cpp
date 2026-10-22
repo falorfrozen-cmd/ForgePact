@@ -647,6 +647,9 @@ static bool g_M1sGroundTried = false;
 static bool g_Setup = true;
 static bool playerResolves = true;
 static int mark1GroundInstalls = 0;
+// `drop-rolls=` of `mark1set stat`'s second line: the set adapter's count of
+// drop rewrites that drew a piece's roll (both rewrite sites raise it).
+static uint64_t g_M1rDropRolls = 0;
 static bool Mark1PlayerResolves() { return playerResolves; }
 static void Mark1GroundIconInstall() {
     if (!M1sNs::ArtGroundInstallPending(g_Mark1.ArtArmed(), (int)ForgePact::Mark1Icons::kIconCount, g_M1sGroundTried)) return;
@@ -1526,6 +1529,13 @@ static void dropHeroic(CInstance& self, HeroicArg third = HeroicArg::Absent, dou
     heroicEntry(&self, &self, result, third == HeroicArg::Absent ? 2 : 3, args);
 }
 // The built items that are a piece (by their own fields), and of which piece (-1: any).
+// Whether a build's seed is one of a piece's roll band (Mark1Rolls.hpp): since
+// the pieces' rolls (the 2026-10-22 playtest) a drop's rewrite writes the seed
+// of a drawn roll, never the piece's one fixed (now legacy) seed.
+static bool inPieceBand(double a, M1sNs::Piece piece) {
+    const auto p = static_cast<ForgePact::Mark1Rolls::Piece>(static_cast<int>(piece));
+    return a >= (double)ForgePact::Mark1Rolls::LowSeed(p) && a <= (double)ForgePact::Mark1Rolls::TopSeed(p);
+}
 static int countPieceBuilds(int piece) {
     int n = 0;
     for (const auto& b : builds) {
@@ -3048,6 +3058,7 @@ int main(int argc, char** argv) {
                     "the drops' switch-on did not arm the art and try the pieces' ground install");
             const std::string resolved = dropsStatLine();
             const std::vector<Triple> carried = plus(vanilla, { kHelmetHeroic, kBodyHeroic, kBootsHeroic });
+            const uint64_t rollsBefore = g_M1rDropRolls;
             pickPolicy = Pick::Among; pickTriples = { kBootsHeroic };
             int calls = 0, lost = 0;
             while (calls < 200 && (dropsFields().pieces[2].ours == 0 || lost == 0)) {
@@ -3055,7 +3066,7 @@ int main(int argc, char** argv) {
                 dropHeroic(monster);
                 ++calls;
                 require(builds.size() == before + 1, "a call did not build one item");
-                if (builds.back().a != 777502.0) ++lost;   // every pick is a boots stand-in: ours or lost on the coin
+                if (!inPieceBand(builds.back().a, M1sNs::Piece::Boots)) ++lost;   // every pick is a boots stand-in: ours or lost on the coin
             }
             require(heroicCalls == calls, "the game's Heroic roll did not run once per call");
             for (const auto& seen : heroicLayoutDuringCall) {
@@ -3067,8 +3078,11 @@ int main(int argc, char** argv) {
             require(f.pieces[2].ours >= 1 && lost >= 1, "200 calls gave no piece, or no lost coin");
             require((int)f.pieces[2].ours == countPieceBuilds(2) && f.pieces[2].built == f.pieces[2].ours && countPieceBuilds(-1) == countPieceBuilds(2),
                     "the boots taken were not each built once, and counted built");
+            // Each rewrite drew the piece's roll (the 2026-10-22 playtest's `drop-rolls=`).
+            require(g_M1rDropRolls - rollsBefore == f.pieces[2].ours,
+                    "the rewrites did not each draw one roll: " + std::to_string(g_M1rDropRolls - rollsBefore));
             for (const auto& b : builds) {
-                if (b.a == 777502.0) require(b.t == 2 && b.b == 0 && b.c == 0 && b.j == 0, "a piece was not built from Mark 1 Boots' own definition");
+                if (inPieceBand(b.a, M1sNs::Piece::Boots)) require(b.t == 2 && b.b == 0 && b.c == 0 && b.j == 0, "a piece was not built from Mark 1 Boots' own definition");
                 else require(b.t == 2 && b.j == 5 && b.b == 30 && b.c == 1.0 && b.a == kLootGroundSeed, "a lost coin did not build the game's own stand-in");
             }
             require(anyLineHas("mark1set drops hit:", "heroic roll -> Mark 1 Boots (stand-in 2/5/30, 1 in 2) built by the game"),
@@ -3099,7 +3113,7 @@ int main(int argc, char** argv) {
             require(builds.size() == 3000 && countPieceBuilds(0) == ours && (long long)dropsFields().pieces[0].built == ours,
                     "the game did not build a helmet for every pick that was ours");
             for (const auto& b : builds)
-                if (b.a != 777500.0) require(b.t == 0 && b.j == 3 && b.b == 10 && b.c == 1.0, "a pick not ours was not the game's own stand-in");
+                if (!inPieceBand(b.a, M1sNs::Piece::Helmet)) require(b.t == 0 && b.j == 3 && b.b == 10 && b.c == 1.0, "a pick not ours was not the game's own stand-in");
                 else require(b.t == 0 && b.b == 7 && b.c == 0 && b.j == 0, "a helmet was not built at its base 7");
             require(anyLineHas("mark1set drops hit:", "Mark 1 Helmet (stand-in 0/3/10, 1 in 3) built by the game"), "the hit line's odds");
             g_Mark1DropCopies = 2;
