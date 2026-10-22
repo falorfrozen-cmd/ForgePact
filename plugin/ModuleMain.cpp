@@ -65089,8 +65089,10 @@ static std::string Mark1MovementInstall()
 // detour (ReturnSpecificStatHook.hpp's mark1Bonus), run after skill sliders'
 // and the half walk's, registered by the set's install once the half walk's
 // part put the detour in (Mark1SetInstall). For the local player's own calls
-// of the ids the bonus or the cost answers, each from the call's own original
-// (nothing compounds): the original plus every line whose threshold the worn
+// of the ids the bonus or the cost answers, and the same calls from the talent
+// screen's objects (the sheet, T: Mark1Set.hpp's AskerOf, counted `sheet=`;
+// any other self, the mercenary and monsters included, is left), each from
+// the call's own original (nothing compounds): the original plus every line whose threshold the worn
 // pieces meet, while the switch is on and the bonus installed; and, on the
 // proc route, id 42 (Drain) or id 37 (MaxMana) for the proc columns, with
 // the maximum mana the stat read keeps. A non-number is left alone and
@@ -65112,6 +65114,13 @@ static uint64_t g_M1bNotNumber = 0;
 static uint64_t g_M1bGearReads = 0;
 static uint64_t g_M1bGearUnread = 0;
 static uint64_t g_M1rDropRolls = 0;    // `drop-rolls=`: drop rewrites that drew a roll (both rewrite sites)
+// The answered askers (Mark1Set.hpp's AskerOf): besides the local player's own
+// calls, those whose self is an instance of one of the talent screen's four
+// objects (the sheet, T), whose indices Mark1ResolveTalentScreen resolves by
+// name once per install; an unresolved name stays unknown and matches nothing.
+// `sheet=` counts the bonus and cost answers given to such a self.
+static M1sNs::ObjectIndex g_M1bScreen[M1sNs::kTalentScreenObjectCount];
+static uint64_t g_M1bSheet = 0;
 #ifndef FORGEPACT_RELEASE
 // The research recorder (`mark1probe bonusread`): for a fixed watch list, the
 // last local original and the answer the consumer gave, whatever the switch
@@ -65136,7 +65145,67 @@ static int M1bWatchIndex(double id)
         if (id == (double)kM1bWatch[k]) return k;
     return -1;
 }
+
+// `mark1probe bonusothers [reset]`: for the same watch list, the calls whose
+// self is not the local player, whatever the switch says once installed, per
+// (id, self's object index; -1 when unread): the count, the last original and
+// the answer as the call returned, and the last argument 0's form. Names are
+// looked up only when the line is printed (M1pBonusOthers).
+enum class M1bArg0 : int { None, Player, Instance, Number };
+struct M1bOther {
+    uint64_t count = 0;
+    bool     originalNumber = false;
+    double   original = 0;
+    bool     answerNumber = false;
+    double   answer = 0;
+    M1bArg0  a0 = M1bArg0::None;
+    int      a0Object = -1;    // M1bArg0::Instance: its object index (-1 unread)
+    double   a0Number = 0;     // M1bArg0::Number
+};
+static std::map<std::pair<int, int>, M1bOther> g_M1bOthers;
+
+// Argument 0's form for the recorder: the local player's instance (matched by
+// instance id), another instance (its object index), a number, or none.
+static void M1bOtherArg0(int argc, RValue** A, M1bOther& rec)
+{
+    rec.a0 = M1bArg0::None;
+    rec.a0Object = -1;
+    rec.a0Number = 0;
+    if (argc < 1 || !A || !A[0]) return;
+    const RValue& a0 = *A[0];
+    try {
+        if (HeroSiege::Player::IsInstanceHandle(a0)) {
+            const double id = InstanceIdOf(a0);
+            if (g_M1sPlayer && id >= 0 && id == InstanceIdOf(RValue(g_M1sPlayer))) { rec.a0 = M1bArg0::Player; return; }
+            rec.a0 = M1bArg0::Instance;
+            RValue oi = g_Yytk->CallBuiltin("variable_instance_get", { a0, RValue("object_index") });
+            int index = -1;
+            if (N1ObjectIndex(oi, index)) rec.a0Object = index;
+            return;
+        }
+        if (N1Numeric(a0)) { rec.a0Number = a0.ToDouble(); rec.a0 = M1bArg0::Number; }
+    } catch (...) {}
+}
 #endif
+
+// The four talent-screen objects' indices, by their hs-game-sdk names through
+// asset_get_index (the toggle guard's route for Universal_Double_Cast_obj),
+// once per install. A name that does not resolve stays unknown, says so, and
+// is never answered.
+static void Mark1ResolveTalentScreen()
+{
+    for (int i = 0; i < M1sNs::kTalentScreenObjectCount; ++i) {
+        const std::string name(HeroSiege::Objects::GetObjectName(M1sNs::kTalentScreenObjects[i]));
+        g_M1bScreen[i] = M1sNs::ObjectIndex{};
+        try {
+            RValue v = g_Yytk->CallBuiltin("asset_get_index", { RValue(name) });
+            int index = -1;
+            if (N1ObjectIndex(v, index)) g_M1bScreen[i] = M1sNs::ObjectIndex{ true, index };
+        } catch (...) {}
+        if (!g_M1bScreen[i].known)
+            Out("mark1set: " + name + " did not resolve by name; the talent screen's calls from it keep the game's own answers");
+    }
+}
 
 // The ten worn fingerprints, as strings (an empty or non-string slot reads
 // ""). False when the read failed as a whole. Builtin reads only.
@@ -65189,7 +65258,10 @@ static bool Mark1BonusPieces(M1sNs::SetRead& read)
 
 static void Mark1SetBonusOnStat(CInstance* S, int argc, RValue** A, RValue& r)
 {
-    if (g_M1sBusy || !S || S != g_M1sPlayer) return;
+    if (g_M1sBusy || !S) return;
+    // The local player's own calls first, as before; any other self only past
+    // the id test below (the dispatcher is the game's hottest stat path).
+    const bool local = S == g_M1sPlayer;
     double id = 0.0;
     const bool haveId = argc >= 2 && A && A[1] && N1Numeric(*A[1]);
     if (haveId) { try { id = A[1]->ToDouble(); } catch (...) { return; } }
@@ -65201,6 +65273,47 @@ static void Mark1SetBonusOnStat(CInstance* S, int argc, RValue** A, RValue& r)
     const bool number0 = N1Numeric(r);
     double original = 0.0;
     if (watch >= 0 && number0) { try { original = r.ToDouble(); } catch (...) {} }
+    // `bonusothers`: another self's watched call, recorded as it returns.
+    struct OthersRecord {
+        M1bOther* rec; RValue& r;
+        ~OthersRecord()
+        {
+            if (!rec) return;
+            rec->answerNumber = N1Numeric(r);
+            rec->answer = 0;
+            if (rec->answerNumber) { try { rec->answer = r.ToDouble(); } catch (...) { rec->answerNumber = false; } }
+        }
+    } others{ nullptr, r };
+#endif
+    // Another self: the id test before the object read, then the core decides
+    // (Mark1Set.hpp's AskerOf: one of the talent screen's four objects, or left).
+    bool sheet = false;
+    if (!local) {
+        bool wanted = bonusWants || costWants;
+#ifndef FORGEPACT_RELEASE
+        wanted = wanted || watch >= 0;
+#endif
+        if (!wanted) return;
+        M1sNs::ObjectIndex self;
+        try {
+            RValue oi = g_Yytk->CallBuiltin("variable_instance_get", { RValue(S), RValue("object_index") });
+            int index = -1;
+            if (N1ObjectIndex(oi, index)) self = M1sNs::ObjectIndex{ true, index };
+        } catch (...) {}
+#ifndef FORGEPACT_RELEASE
+        if (watch >= 0) {
+            M1bOther& rec = g_M1bOthers[{ kM1bWatch[watch], self.known ? self.index : -1 }];
+            ++rec.count;
+            rec.originalNumber = number0;
+            rec.original = original;
+            M1bOtherArg0(argc, A, rec);
+            others.rec = &rec;
+        }
+#endif
+        if (M1sNs::AskerOf(false, self, g_M1bScreen) != M1sNs::Asker::TalentScreen) return;
+        sheet = true;
+    }
+#ifndef FORGEPACT_RELEASE
     struct Record {
         int watch; bool number; double original; RValue& r;
         ~Record()
@@ -65214,9 +65327,9 @@ static void Mark1SetBonusOnStat(CInstance* S, int argc, RValue** A, RValue& r)
             g_M1bRecordFrame = (uint64_t)g_RuntimeFrame;
             g_M1bRecorded = true;
         }
-    } record{ watch, number0, original, r };
-    // `manaregen`: the replenish forced, before the switch check and the cost.
-    if (g_M1bRegenOn && id == ForgePact::kMark1ReplenishStatId) {
+    } record{ local ? watch : -1, number0, original, r };   // bonusread: the local player's calls only
+    // `manaregen`: the local player's replenish forced, before the switch check and the cost.
+    if (local && g_M1bRegenOn && id == ForgePact::kMark1ReplenishStatId) {
         r = RValue(g_M1bRegenValue);
         ++g_M1bRegenForced;
         return;
@@ -65234,7 +65347,8 @@ static void Mark1SetBonusOnStat(CInstance* S, int argc, RValue** A, RValue& r)
         if (changed != answer) {
             r = RValue(changed);
             const int k = M1sNs::AnsweredIndex(id);
-            if (k >= 0) ++g_M1bAnswered[k];
+            if (sheet) ++g_M1bSheet;
+            else if (k >= 0) ++g_M1bAnswered[k];
         }
         return;
     }
@@ -65243,7 +65357,10 @@ static void Mark1SetBonusOnStat(CInstance* S, int argc, RValue** A, RValue& r)
     if (!g_Mark1.ActiveCached()) return;
     const int columns = ForgePact::Mark1Automation::Instance().Priority().ProcColumnCount();
     if (columns <= 0) return;
-    if (g_M1aCost.Answer(id, number, answer, columns, g_M1aStats.Value(ForgePact::Mark1Stat::MaxMana))) r = RValue(answer);
+    if (g_M1aCost.Answer(id, number, answer, columns, g_M1aStats.Value(ForgePact::Mark1Stat::MaxMana))) {
+        r = RValue(answer);
+        if (sheet) ++g_M1bSheet;
+    }
 }
 
 #ifndef FORGEPACT_RELEASE
@@ -65388,6 +65505,9 @@ static std::string Mark1SetInstall()
     if (!walk.empty()) return walk;
     // The set bonus and the mana cost: the half walk's install put the shared
     // ReturnSpecificStat detour in, natively, so the bonus's part rides it.
+    // The talent screen's objects first, so the sheet's calls are answered
+    // from the first one (Mark1Set.hpp's AskerOf).
+    Mark1ResolveTalentScreen();
     ForgePact::ReturnSpecificStatHook::mark1Bonus = Mark1SetBonusOnStat;
     Mark1GroundIconInstall();
     return "";
@@ -65578,6 +65698,7 @@ static M1sNs::BonusStatFields Mark1BonusStatFields()
     f.haveHaste = g_M1aStats.Have(ForgePact::Mark1Stat::Haste);
     f.haste = g_M1aStats.Value(ForgePact::Mark1Stat::Haste);
     f.statFail = (uint64_t)g_M1aStats.Fails();
+    f.sheet = g_M1bSheet;
     f.descFont = g_TipDescFont;
     f.grey = g_M1gGrey;
     f.greyBox = g_M1gGreyBox;
@@ -69148,6 +69269,47 @@ static void M1pBonusRead()
         + (ForgePact::ReturnSpecificStatHook::mark1Bonus ? std::string() : std::string(" (the set bonus is not installed: `mark1set bonus 1` with a character)")));
 }
 
+// `bonusothers [reset]`: the recorder's other selves (Mark1SetBonusOnStat), one
+// line, each object named from its index now (object_get_name), `?` unread.
+static std::string M1pObjectName(int index)
+{
+    if (index < 0) return "?";
+    try {
+        const RValue n = g_Yytk->CallBuiltin("object_get_name", { RValue((double)index) });
+        if (n.m_Kind == VALUE_STRING) { const std::string s = n.ToString(); if (!s.empty()) return s; }
+    } catch (...) {}
+    return "?";
+}
+
+static void M1pBonusOthers(const M1pNs::Command& c)
+{
+    if (c.form == M1pNs::Form::BonusOthersReset) {
+        g_M1bOthers.clear();
+        Out(M1pNs::kBonusOthersResetLine);
+        return;
+    }
+    std::vector<M1pNs::BonusOthersEntry> entries;
+    for (const auto& [key, rec] : g_M1bOthers) {
+        M1pNs::BonusOthersEntry e;
+        e.id = key.first;
+        e.object = M1pObjectName(key.second);
+        e.count = rec.count;
+        e.originalNumber = rec.originalNumber;
+        e.original = rec.original;
+        e.answerNumber = rec.answerNumber;
+        e.answer = rec.answer;
+        switch (rec.a0) {
+        case M1bArg0::Player: e.a0 = M1pNs::OthersArg0::Player; break;
+        case M1bArg0::Instance: e.a0 = M1pNs::OthersArg0::Instance; e.a0Object = M1pObjectName(rec.a0Object); break;
+        case M1bArg0::Number: e.a0 = M1pNs::OthersArg0::Number; e.a0Number = rec.a0Number; break;
+        case M1bArg0::None: break;
+        }
+        entries.push_back(std::move(e));
+    }
+    Out(M1pNs::BonusOthersLine(std::move(entries))
+        + (ForgePact::ReturnSpecificStatHook::mark1Bonus ? std::string() : std::string(" (the set bonus is not installed: `mark1set bonus 1` with a character)")));
+}
+
 // ---- the replan's forms: statask, manaregen and procgaps -----------------------------
 
 // `statask`: each id asked of the game's stat dispatcher by its hs-game-sdk
@@ -69297,6 +69459,8 @@ static void M1pCommand(const std::string& rest)
     case M1pNs::Form::WalkAt:
     case M1pNs::Form::WalkScan: M1pWalkable(c); return;
     case M1pNs::Form::BonusRead: M1pBonusRead(); return;
+    case M1pNs::Form::BonusOthers:
+    case M1pNs::Form::BonusOthersReset: M1pBonusOthers(c); return;
     case M1pNs::Form::StatAsk: M1pStatAsk(c); return;
     case M1pNs::Form::ManaRegen: M1pManaRegen(c); return;
     case M1pNs::Form::ProcGaps:

@@ -223,6 +223,10 @@ SIGNATURES = {
     "tip_draw_row": "static double TipDrawRow(double x, double y, const TipRow& row)",
     "small_font": "struct TipSmallFont {",
     "stats_new": "static RValue& Hook_DrawInventoryStatsNew(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)",
+    # replan 4: the answered askers, and the bonusothers recorder (research build)
+    "resolve_screen": "static void Mark1ResolveTalentScreen()",
+    "others_arg0": "static void M1bOtherArg0(int argc, RValue** A, M1bOther& rec)",
+    "bonus_others": "static void M1pBonusOthers(const M1pNs::Command& c)",
 }
 
 SHIPPED = ("decode", "of", "entry", "final", "icon_index", "icon_path", "icons_load", "ground", "ground_install",
@@ -231,7 +235,8 @@ SHIPPED = ("decode", "of", "entry", "final", "icon_index", "icon_path", "icons_l
            "jump_position", "jump_cursor", "jump_family", "jump_gate", "jump_kind", "jump_grid", "jump_max", "jump_learn",
            "jump_entry", "jump_exit", "jump_builtin", "jump_install", "jump_tick", "leap", "leap_install", "resolve_objects",
            "walk", "walk_install", "bonus_consumer", "bonus_pieces", "gear_prints", "bonus_fields", "fire_proc", "grey",
-           "grey_member", "read_stat", "refresh_stats", "cooldown_of", "player_ref", "instance_id_ref", "character_name")
+           "grey_member", "read_stat", "refresh_stats", "cooldown_of", "player_ref", "instance_id_ref", "character_name",
+           "resolve_screen")
 JUMP_HEADER = ROOT / "plugin" / "include" / "ForgePact" / "Mark1Jump.hpp"
 AUTOMATION_HEADER = ROOT / "plugin" / "include" / "ForgePact" / "Mark1Automation.hpp"
 PRIORITY_HEADER = ROOT / "plugin" / "include" / "ForgePact" / "Mark1Priority.hpp"
@@ -1837,9 +1842,11 @@ class Mark1SetContract(unittest.TestCase):
         # No second HookOneScript of the dispatcher.
         self.assertEqual(self.shipped.count("gml_Script_ReturnSpecificStat), \"fp_ss_stat\""), 0)
         consumer = self.body("bonus_consumer")
-        # The local player's own calls only, before any game read; the answer
-        # from the call's own original through the core; a non-number left alone.
-        self.assertIn("if (g_M1sBusy || !S || S != g_M1sPlayer) return;", consumer)
+        # The local player's own calls first (replan 4: another self only past
+        # the id test, test_object_read_after_the_id_test); the answer from the
+        # call's own original through the core; a non-number left alone.
+        self.assertIn("if (g_M1sBusy || !S) return;", consumer)
+        self.assertIn("const bool local = S == g_M1sPlayer;", consumer)
         self.assertIn("M1rNs::BonusAnswer(id, read.matched, g_Mark1.Enabled(), g_Mark1.Installed(), answer)", consumer)
         self.assertIn("++g_M1bNotNumber; return;", consumer)
         # The count at the point of use, by the fingerprint rule.
@@ -2094,6 +2101,100 @@ class Mark1SetContract(unittest.TestCase):
         detour = self.body("detour")
         self.assertLess(detour.index("if (!active) return"), detour.index("Mark1RefreshStats(nowMs)"))
         self.assertEqual(len(re.findall(r"\bMark1RefreshStats\(", strip_comments(self.plugin))), 2)
+
+
+    # ---- replan 4: the answered askers and the bonusothers recorder ----------------------
+
+    def test_talent_screen_objects_resolved_by_name(self):
+        # Each of the four talent-screen objects is the SDK enum's in the core
+        # and is resolved at install through asset_get_index by its
+        # hs-game-sdk name; no typed index anywhere in the Mark 1 block.
+        header = HEADER.read_text(encoding="utf-8")
+        core = strip_comments(header)
+        names = ("UI_Button_Talent_Player_obj", "UI_Talent_Screen_Attribute_obj",
+                 "UI_Talent_Screen_Allocate_obj", "Player_Talent_Tooltip_obj")
+        listed = re.search(r"kTalentScreenObjects\[kTalentScreenObjectCount\] = \{(.*?)\};", core, re.S)
+        self.assertIsNotNone(listed)
+        self.assertEqual(re.findall(r"HeroSiege::Objects::GameObject::(\w+)", listed.group(1)), list(names))
+        self.assertNotIn("Mercenary_obj", listed.group(1))
+        resolve = self.body("resolve_screen")
+        self.assertIn("HeroSiege::Objects::GetObjectName(M1sNs::kTalentScreenObjects[i])", resolve)
+        self.assertIn('g_Yytk->CallBuiltin("asset_get_index", { RValue(name) })', resolve)
+        self.assertIn("if (N1ObjectIndex(v, index)) g_M1bScreen[i] = M1sNs::ObjectIndex{ true, index };", resolve)
+        self.assertLess(resolve.index("g_M1bScreen[i] = M1sNs::ObjectIndex{};"), resolve.index("asset_get_index"))
+        # Once per install, before the consumer is registered.
+        install = self.body("install")
+        self.assertEqual(install.count("Mark1ResolveTalentScreen();"), 1)
+        self.assertLess(install.index("Mark1ResolveTalentScreen();"),
+                        install.index("ForgePact::ReturnSpecificStatHook::mark1Bonus = Mark1SetBonusOnStat;"))
+        self.assertEqual(len(re.findall(r"\bMark1ResolveTalentScreen\(\);", strip_comments(self.plugin))), 1)
+        # No typed index: not in the core, the adapter or the probe block.
+        for block in (header, self.adapter, self.probe):
+            for typed in ("5016", "5276", "5275", "3559"):
+                with self.subTest(typed=typed):
+                    self.assertNotRegex(block, r"\b" + typed + r"\b")
+
+    def test_object_read_after_the_id_test(self):
+        # The dispatcher is the game's hottest stat path: another self's
+        # object is read only after the local-player test and the id test,
+        # with variable_instance_get on self (VALUE_REF accepted through
+        # N1ObjectIndex), and the core decides; anything but the talent
+        # screen returns before the switch test and every answer.
+        consumer = self.body("bonus_consumer")
+        local = consumer.index("const bool local = S == g_M1sPlayer;")
+        other = consumer.index("if (!local) {")
+        wanted = consumer.index("bool wanted = bonusWants || costWants;")
+        bail = consumer.index("if (!wanted) return;")
+        read = consumer.index('g_Yytk->CallBuiltin("variable_instance_get", { RValue(S), RValue("object_index") })')
+        decide = consumer.index("if (M1sNs::AskerOf(false, self, g_M1bScreen) != M1sNs::Asker::TalentScreen) return;")
+        self.assertLess(local, other)
+        self.assertLess(other, wanted)
+        self.assertLess(wanted, bail)
+        self.assertLess(bail, read)
+        self.assertLess(read, decide)
+        self.assertLess(consumer.index("const bool bonusWants = M1rNs::BonusWants(id);"), wanted)
+        self.assertLess(consumer.index("const bool costWants = ForgePact::Mark1Cost::Wants(true, haveId, id);"), wanted)
+        self.assertIn("if (N1ObjectIndex(oi, index)) self = M1sNs::ObjectIndex{ true, index };", consumer)
+        self.assertLess(decide, consumer.index("if (!g_Mark1.Enabled() || (!bonusWants && !costWants)) return;"))
+        self.assertEqual(consumer.count('RValue("object_index")'), 1)
+        # A talent-screen self gets the same answers, counted `sheet=` in
+        # place of the local `answered=`; the cost's too.
+        self.assertIn("if (sheet) ++g_M1bSheet;\n            else if (k >= 0) ++g_M1bAnswered[k];", consumer)
+        self.assertEqual(consumer.count("if (sheet) ++g_M1bSheet;"), 2)
+        self.assertIn("f.sheet = g_M1bSheet;", self.body("bonus_fields"))
+        # In the player build the object is read only for an id the bonus or
+        # the cost answers: the recorder's watched ids are research-only.
+        shipped = strip_comments(strip_research_blocks(function_body(self.plugin, SIGNATURES["bonus_consumer"])))
+        self.assertRegex(shipped, r"bool wanted = bonusWants \|\| costWants;\s*if \(!wanted\) return;")
+        self.assertNotIn("watch", shipped)
+        # bonusread and manaregen stay the local player's.
+        self.assertIn("} record{ local ? watch : -1, number0, original, r };", consumer)
+        self.assertIn("if (local && g_M1bRegenOn && id == ForgePact::kMark1ReplenishStatId) {", consumer)
+
+    def test_others_recorder_is_research_only(self):
+        # The recorder's storage, its argument-0 reader, its record in the
+        # consumer (before the switch test, so it records with the set off)
+        # and its command are all inside research blocks.
+        consumer = self.body("bonus_consumer")
+        record = consumer.index("M1bOther& rec = g_M1bOthers[{ kM1bWatch[watch], self.known ? self.index : -1 }];")
+        self.assertLess(record, consumer.index("if (M1sNs::AskerOf(false, self, g_M1bScreen) != M1sNs::Asker::TalentScreen) return;"))
+        self.assertLess(record, consumer.index("if (!g_Mark1.Enabled() || (!bonusWants && !costWants)) return;"))
+        self.assertIn("wanted = wanted || watch >= 0;", consumer)
+        for name in ("g_M1bOthers", "M1bOther", "M1bOtherArg0", "M1bArg0", "M1pBonusOthers", "BonusOthers"):
+            with self.subTest(name=name):
+                self.assertIn(name, strip_comments(self.plugin))
+                self.assertNotIn(name, self.shipped)
+        self.assertIn(SIGNATURES["bonus_others"], self.probe)
+        others = self.body("bonus_others")
+        self.assertIn("M1pObjectName(key.second)", others)
+        self.assertIn("g_M1bOthers.clear();", others)
+        self.assertIn("Out(M1pNs::kBonusOthersResetLine);", others)
+        self.assertIn("M1pNs::BonusOthersLine(", others)
+        # Names at print time only: no object_get_name in the consumer or the
+        # argument-0 reader, which keep the index.
+        self.assertNotIn("object_get_name", consumer)
+        self.assertNotIn("object_get_name", self.body("others_arg0"))
+        self.assertIn("HeroSiege::Player::IsInstanceHandle(a0)", self.body("others_arg0"))
 
 
 if __name__ == "__main__":

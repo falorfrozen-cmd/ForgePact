@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <charconv>
 #include <cmath>
@@ -67,7 +68,9 @@ namespace ForgePact::Mark1Probe {
 // Its replan (after Live 1) adds `statask` (the dispatcher asked directly, so
 // the set's consumer answers as for a game call), `manaregen` (the mana
 // replenish, id 42, answered with a set value whatever the switch says) and
-// `procgaps` (each automated column's procs, gaps and interval).
+// `procgaps` (each automated column's procs, gaps and interval). Replan 4
+// adds `bonusothers` (the dispatcher calls of the watch list whose self is not
+// the local player, per asking object).
 //
 // The drops (phase 3, Mark1Drops.hpp) add three forms for their live session:
 // `heroic <n>` calls the Heroic roll by name and tallies what it placed, the
@@ -441,6 +444,8 @@ enum class Form : int {
     // The replan's research forms (Live procedure 2): the dispatcher asked
     // directly, the mana replenish's forced answer, and the proc gaps.
     StatAsk, ManaRegen, ProcGaps, ProcGapsReset,
+    // Replan 4: the watch list's calls from selves other than the local player.
+    BonusOthers, BonusOthersReset,
 };
 
 // `spawn`'s roll word: every stat at the top of its range, every stat at the
@@ -784,6 +789,12 @@ inline bool Parse(const std::vector<std::string>& tok, Command& c, std::string& 
         c.form = Form::BonusRead;
         return true;
     }
+    if (head == "bonusothers") {
+        if (n == 1) { c.form = Form::BonusOthers; return true; }
+        if (n == 2 && SameWord(tok[1], "reset")) { c.form = Form::BonusOthersReset; return true; }
+        why = "usage: mark1probe bonusothers [reset]";
+        return false;
+    }
     if (head == "statask") {
         const std::string usage = "usage: statask <id>[,<id>...], at most " + std::to_string(kMaxStatAskIds)
             + " ids, each a whole number 0.." + std::to_string(kMaxStatId);
@@ -1017,7 +1028,7 @@ inline bool Parse(const std::vector<std::string>& tok, Command& c, std::string& 
     }
     why = "unknown form " + tok[0]
         + " (hook, off, show, args, watch, set, scale, hold, move, stat, statpin, statlog, count, pos, base, spawn, heroic,"
-          " unique, pool, copies, killgate, draws, walkable, bonusread, statask, manaregen, procgaps, autohold, automask,"
+          " unique, pool, copies, killgate, draws, walkable, bonusread, bonusothers, statask, manaregen, procgaps, autohold, automask,"
           " autoyield, autorest, autoroute, autoproc, autolock, autogrey, autocost, autodrain or autocast)";
     return false;
 }
@@ -1042,6 +1053,7 @@ inline std::vector<std::string> Usage()
         "  mark1probe base <class> <b>                          build a scratch item of that class and base (never placed)",
         "  mark1probe spawn <helmet|body|boots|gloves|set> [top|low|random]  build Mark 1 pieces (every stat at the top, the bottom, or rolled) and place them",
         "  mark1probe bonusread                                 the set bonus's watch list: each id's last local original and answer",
+        "  mark1probe bonusothers [reset]                       the watch list's calls whose self is not the local player, per object",
         "  mark1probe statask <id>[,<id>...]                    ask the stat dispatcher for each id (at most 8) now, as a game call would",
         "  mark1probe manaregen <value>|off                     answer the local player's mana replenish (id 42) with the value, switch on or off",
         "  mark1probe procgaps [reset]                          per automated column: procs, the smallest and mean gap in ms, the interval",
@@ -1211,6 +1223,71 @@ inline std::string BonusReadLine(const std::vector<BonusReadEntry>& entries, boo
     out += " frame=" + (anyCall ? std::to_string(frame) : std::string("-"));
     return out;
 }
+
+// ---- `bonusothers` (replan 4) ---------------------------------------------------------
+// The dispatcher calls of bonusread's watch list whose self is not the local
+// player, kept by the adapter per (id, self's object index): the count, the
+// last call's original and the answer as it returned (`?` for a value that
+// was not a number), and the last call's argument 0. Object names come from
+// the index at print time, never per call. One line, by id, then most calls
+// first, at most kBonusOthersPerId objects per id; `none` when empty. It tells
+// "not asked" from "asked by another instance", which bonusread (local self
+// only) cannot.
+inline constexpr int kBonusOthersPerId = 3;
+
+// Argument 0's form: the local player's instance, another instance (named by
+// its object), a number, or anything else (`-`).
+enum class OthersArg0 : int { None, Player, Instance, Number };
+
+struct BonusOthersEntry {
+    int         id = 0;
+    std::string object;            // self's object name ("?" when unread)
+    uint64_t    count = 0;
+    bool        originalNumber = false;
+    double      original = 0;
+    bool        answerNumber = false;
+    double      answer = 0;
+    OthersArg0  a0 = OthersArg0::None;
+    std::string a0Object;          // OthersArg0::Instance: its object's name
+    double      a0Number = 0;      // OthersArg0::Number
+};
+
+inline std::string OthersArg0Text(const BonusOthersEntry& e)
+{
+    switch (e.a0) {
+    case OthersArg0::Player: return "player";
+    case OthersArg0::Instance: return "inst:" + (e.a0Object.empty() ? std::string("?") : e.a0Object);
+    case OthersArg0::Number: return NumberText(e.a0Number);
+    case OthersArg0::None: break;
+    }
+    return "-";
+}
+
+inline std::string BonusOthersLine(std::vector<BonusOthersEntry> entries)
+{
+    std::stable_sort(entries.begin(), entries.end(), [](const BonusOthersEntry& a, const BonusOthersEntry& b) {
+        if (a.id != b.id) return a.id < b.id;
+        if (a.count != b.count) return a.count > b.count;
+        return a.object < b.object;
+    });
+    std::string out = "mark1probe bonusothers:";
+    int lastId = 0;
+    int shown = 0;
+    bool any = false;
+    for (const BonusOthersEntry& e : entries) {
+        if (e.count == 0) continue;
+        if (!any || e.id != lastId) { lastId = e.id; shown = 0; }
+        any = true;
+        if (shown == kBonusOthersPerId) continue;
+        ++shown;
+        out += " " + std::to_string(e.id) + ":" + (e.object.empty() ? std::string("?") : e.object) + "*" + std::to_string(e.count) + "="
+            + (e.originalNumber ? NumberText(e.original) : std::string("?")) + "->" + (e.answerNumber ? NumberText(e.answer) : std::string("?"))
+            + "@a0=" + OthersArg0Text(e);
+    }
+    return any ? out : out + " none";
+}
+
+inline constexpr const char* kBonusOthersResetLine = "mark1probe bonusothers: reset";
 
 // ---- `statask`, `manaregen` and `procgaps` (the replan's research forms) ------------
 // `statask`: the adapter asks ReturnSpecificStat for each id itself, for the

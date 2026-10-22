@@ -883,7 +883,8 @@ class Mark1ProbeContract(unittest.TestCase):
                 self.assertNotIn(name, self.shipped)
         command = self.body("static void M1pCommand(const std::string& rest)")
         for case in ("case M1pNs::Form::StatAsk: M1pStatAsk(c); return;", "case M1pNs::Form::ManaRegen: M1pManaRegen(c); return;",
-                     "case M1pNs::Form::ProcGapsReset: M1pProcGaps(c); return;"):
+                     "case M1pNs::Form::ProcGapsReset: M1pProcGaps(c); return;",
+                     "case M1pNs::Form::BonusOthersReset: M1pBonusOthers(c); return;"):
             self.assertIn(case, command)
         # statask names the dispatcher by its SDK constant, self and other the
         # local player, in Mark1ReadStatByName's argument shape, and NOT under
@@ -904,7 +905,8 @@ class Mark1ProbeContract(unittest.TestCase):
         consumer = function_body(self.plugin, "static void Mark1SetBonusOnStat(CInstance* S, int argc, RValue** A, RValue& r)")
         shipped_consumer = function_body(strip_research_blocks(self.plugin),
                                          "static void Mark1SetBonusOnStat(CInstance* S, int argc, RValue** A, RValue& r)")
-        override = "if (g_M1bRegenOn && id == ForgePact::kMark1ReplenishStatId) {"
+        # The local player's calls only (replan 4: the talent screen is answered too, not forced).
+        override = "if (local && g_M1bRegenOn && id == ForgePact::kMark1ReplenishStatId) {"
         self.assertIn(override, consumer)
         self.assertIn("r = RValue(g_M1bRegenValue);", consumer)
         self.assertIn("++g_M1bRegenForced;", consumer)

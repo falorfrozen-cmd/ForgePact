@@ -61,6 +61,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 HUB = ROOT.parent
+# The talent-screen objects' list (Mark1Set.hpp's kTalentScreenObjects) names
+# hs-game-sdk's GameObject enum, so the harness builds with the SDK too.
+SDK_INCLUDE = HUB / "hs-game-sdk" / "cpp" / "include"
 
 
 class Mark1SetBehaviorTests(unittest.TestCase):
@@ -89,14 +92,14 @@ class Mark1SetBehaviorTests(unittest.TestCase):
             batch = out / "compile.cmd"
             batch.write_text(
                 f'@echo off\ncall "{vcvars}" >nul\nif errorlevel 1 exit /b 1\n'
-                f'cl /nologo /std:c++20 /EHsc /O2 /W4 /WX /I "{ROOT / "plugin/include"}" "{cpp}" /Fe:"{cls.binary}" /Fo:"{out / "mark1set.obj"}"\n'
+                f'cl /nologo /std:c++20 /EHsc /O2 /W4 /WX /I "{ROOT / "plugin/include"}" /I "{SDK_INCLUDE}" "{cpp}" /Fe:"{cls.binary}" /Fo:"{out / "mark1set.obj"}"\n'
                 f'exit /b %errorlevel%\n', encoding="utf-8")
             command = ["cmd", "/d", "/c", str(batch)]
         else:
             compiler = shutil.which("c++")
             if not compiler:
                 raise unittest.SkipTest("A C++20 compiler is required for native behavior tests")
-            command = [compiler, "-std=c++20", "-O2", "-Wall", "-I", str(ROOT / "plugin/include"), str(cpp), "-o", str(cls.binary)]
+            command = [compiler, "-std=c++20", "-O2", "-Wall", "-I", str(ROOT / "plugin/include"), "-I", str(SDK_INCLUDE), str(cpp), "-o", str(cls.binary)]
         # The compiler speaks the machine's locale; decode leniently so a
         # localized diagnostic cannot itself crash the test.
         result = subprocess.run(command, cwd=out, capture_output=True, text=True, encoding="utf-8", errors="replace")
@@ -489,7 +492,7 @@ class Mark1SetBehaviorTests(unittest.TestCase):
         expected = ("mark1set bonus: pieces=0 lit=0/0/0 answered=0/0/0/0/0/0 not-number=0 gear-reads=0 gear-unread=0"
                     " | auto talents=-/-/-/- free=-/-/-/- masked=0 held-seen=0 hold=4 yield=61 rest=24"
                     " mask=0,1,2,7,8,9,10,11,27,40 route=proc procs=0 proc-fail=0 locked=0 cost=drain drain=1.00 drained=0"
-                    " cast-base=0.86 fcr=- haste=- stat-fail=0 | tip desc-font=not-drawn grey=0 grey-box=0"
+                    " cast-base=0.86 fcr=- haste=- stat-fail=0 sheet=0 | tip desc-font=not-drawn grey=0 grey-box=0"
                     " | rolls dressed=0 legacy=0 drop-rolls=0")
         # The criterion's prefix, as one string:
         # mark1set bonus: pieces=0 lit=0/0/0 answered=0/0/0/0/0/0 not-number=0 gear-reads=0 gear-unread=0 | auto talents=-/-/-/- free=-/-/-/- masked=0 held-seen=0
@@ -503,6 +506,30 @@ class Mark1SetBehaviorTests(unittest.TestCase):
         self.assertScenarios("tooltip_target/the_bonus_line_needs_the_switch_and_the_install",
                              "tooltip_target/four_worn_switch_on_a_gold_bonus",
                              "tooltip_target/four_worn_switch_off_all_green_and_a_grey_bonus")
+
+    # ---- replan 4: whose dispatcher calls the bonus and the cost answer (AskerOf) ----
+
+    def test_asker_baseline_local_player_answered_other_left(self):
+        # What shipped before: the local player's own calls answered; with
+        # every talent-screen name unresolved, every other self is left, the
+        # four objects' instances and Mercenary_obj included.
+        self.assertScenarios("asker_baseline/local_player_answered",
+                             "asker_baseline/names_unresolved_every_other_self_left")
+
+    def test_asker_target_talent_screen_answered(self):
+        # The sheet (T) asks with instances of its own objects: each of the
+        # four, resolved by its hs-game-sdk name, is answered as the talent
+        # screen, and the list holds those four and nothing else.
+        self.assertScenarios("asker_target/the_list_is_the_four_talent_screen_objects",
+                             "asker_target/each_talent_screen_object_answered")
+
+    def test_asker_target_unread_or_unresolved_never_matches(self):
+        # Negative control: the mercenary, an object outside the list and an
+        # unread object are left, and "unknown" never equals "unknown".
+        self.assertScenarios("asker_negative/mercenary_left",
+                             "asker_negative/object_outside_the_list_left",
+                             "asker_negative/unread_object_left",
+                             "asker_negative/unread_against_unresolved_never_matches")
 
 
 if __name__ == "__main__":

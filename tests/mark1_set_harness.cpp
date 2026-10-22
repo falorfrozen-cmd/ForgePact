@@ -1354,13 +1354,77 @@ int main()
         check("seed_codec/another_bands_seed_or_a_natural_seed_is_no_piece", ok);
     }
 
+    // ---- asker: whose dispatcher calls the bonus and the cost answer (AskerOf) ----------------
+    // The game's indices for the objects, as asset_get_index would resolve
+    // them: the SDK's own enum (the plugin resolves by name at install).
+    {
+        using HeroSiege::Objects::GameObject;
+        const auto known = [](GameObject o) { return ObjectIndex{ true, static_cast<int>(o) }; };
+        const ObjectIndex unread{};
+        const ObjectIndex unresolved[kTalentScreenObjectCount] = {};
+        ObjectIndex resolved[kTalentScreenObjectCount];
+        for (int i = 0; i < kTalentScreenObjectCount; ++i) resolved[i] = known(kTalentScreenObjects[i]);
+        const GameObject outside[] = { GameObject::Mercenary_obj, GameObject::Player_obj, GameObject::UI_Button_Open_Mercenary_obj };
+
+        // The list is the four talent-screen objects, in order, and nothing else.
+        bool ok = kTalentScreenObjects[0] == GameObject::UI_Button_Talent_Player_obj
+            && kTalentScreenObjects[1] == GameObject::UI_Talent_Screen_Attribute_obj
+            && kTalentScreenObjects[2] == GameObject::UI_Talent_Screen_Allocate_obj
+            && kTalentScreenObjects[3] == GameObject::Player_Talent_Tooltip_obj;
+        for (GameObject o : kTalentScreenObjects) ok = ok && o != GameObject::Mercenary_obj;
+        check("asker_target/the_list_is_the_four_talent_screen_objects", ok);
+
+        // Baseline, what shipped before: the local player answered, whatever
+        // its object read and whatever resolved.
+        ok = AskerOf(true, unread, unresolved) == Asker::LocalPlayer && AskerOf(true, known(GameObject::Player_obj), unresolved) == Asker::LocalPlayer
+            && AskerOf(true, unread, resolved) == Asker::LocalPlayer;
+        check("asker_baseline/local_player_answered", ok);
+        // With every talent-screen name unresolved, every other self is left,
+        // the four objects' own instances and Mercenary_obj included.
+        ok = true;
+        for (GameObject o : kTalentScreenObjects) ok = ok && AskerOf(false, known(o), unresolved) == Asker::Left;
+        for (GameObject o : outside) ok = ok && AskerOf(false, known(o), unresolved) == Asker::Left;
+        check("asker_baseline/names_unresolved_every_other_self_left", ok);
+
+        // Target: an instance of each of the four, resolved, answered as the
+        // talent screen; one resolved alone answers only its own.
+        ok = true;
+        for (GameObject o : kTalentScreenObjects) ok = ok && AskerOf(false, known(o), resolved) == Asker::TalentScreen;
+        ObjectIndex one[kTalentScreenObjectCount] = {};
+        one[2] = known(kTalentScreenObjects[2]);
+        ok = ok && AskerOf(false, known(kTalentScreenObjects[2]), one) == Asker::TalentScreen
+            && AskerOf(false, known(kTalentScreenObjects[0]), one) == Asker::Left;
+        check("asker_target/each_talent_screen_object_answered", ok);
+
+        // Negative control: the mercenary, an object outside the list, an
+        // unread object, and an unread object against unresolved names, all
+        // left; a stale `index` behind `known == false` never matches.
+        ok = AskerOf(false, known(GameObject::Mercenary_obj), resolved) == Asker::Left;
+        check("asker_negative/mercenary_left", ok);
+        ok = AskerOf(false, known(GameObject::Player_obj), resolved) == Asker::Left
+            && AskerOf(false, known(GameObject::UI_Button_Open_Mercenary_obj), resolved) == Asker::Left;
+        check("asker_negative/object_outside_the_list_left", ok);
+        ok = AskerOf(false, unread, resolved) == Asker::Left
+            && AskerOf(false, ObjectIndex{ false, static_cast<int>(kTalentScreenObjects[0]) }, resolved) == Asker::Left
+            && AskerOf(false, ObjectIndex{ true, -1 }, resolved) == Asker::Left;
+        check("asker_negative/unread_object_left", ok);
+        ObjectIndex stale[kTalentScreenObjectCount];
+        for (int i = 0; i < kTalentScreenObjectCount; ++i) stale[i] = ObjectIndex{ false, -1 };
+        ObjectIndex staleEqual[kTalentScreenObjectCount];
+        for (int i = 0; i < kTalentScreenObjectCount; ++i) staleEqual[i] = ObjectIndex{ false, static_cast<int>(kTalentScreenObjects[i]) };
+        ok = AskerOf(false, unread, unresolved) == Asker::Left && AskerOf(false, ObjectIndex{ false, -1 }, stale) == Asker::Left
+            && AskerOf(false, known(kTalentScreenObjects[1]), staleEqual) == Asker::Left
+            && AskerOf(false, ObjectIndex{ false, static_cast<int>(kTalentScreenObjects[1]) }, staleEqual) == Asker::Left;
+        check("asker_negative/unread_against_unresolved_never_matches", ok);
+    }
+
     // ---- stat: the second line -------------------------------------------------------------
     {
         const std::string fresh = BonusStatLine(BonusStatFields{});
         const std::string expected =
             "mark1set bonus: pieces=0 lit=0/0/0 answered=0/0/0/0/0/0 not-number=0 gear-reads=0 gear-unread=0"
             " | auto talents=-/-/-/- free=-/-/-/- masked=0 held-seen=0 hold=4 yield=61 rest=24 mask=0,1,2,7,8,9,10,11,27,40"
-            " route=proc procs=0 proc-fail=0 locked=0 cost=drain drain=1.00 drained=0 cast-base=0.86 fcr=- haste=- stat-fail=0"
+            " route=proc procs=0 proc-fail=0 locked=0 cost=drain drain=1.00 drained=0 cast-base=0.86 fcr=- haste=- stat-fail=0 sheet=0"
             " | tip desc-font=not-drawn grey=0 grey-box=0 | rolls dressed=0 legacy=0 drop-rolls=0";
         check("stat/second_line_fresh_exact", fresh == expected, fresh);
         BonusStatFields f;
@@ -1382,9 +1446,11 @@ int main()
         f.descFont = DescFont::Small;
         f.grey = 2;
         f.legacy = 4;
+        f.sheet = 9;
         const std::string line = BonusStatLine(f);
         const bool ok = has(line, "pieces=3 lit=1/1/0 answered=7/0/0/0/0/2 ") && has(line, " talents=23/-/71/- free=1/-/0/- ")
             && has(line, " route=press ") && has(line, " drain=1.25 ") && has(line, " cast-base=0.50 ") && has(line, " fcr=40 haste=12.5 ")
+            && has(line, " stat-fail=0 sheet=9 | tip ")
             && has(line, " desc-font=small grey=2 ") && has(line, " legacy=4 ") && !has(line, "  ")
             && std::string(DescFontName(DescFont::Unresolved)) == "unresolved" && AnsweredIndex(163) == 1 && AnsweredIndex(64) == -1;
         check("stat/second_line_filled", ok, line);

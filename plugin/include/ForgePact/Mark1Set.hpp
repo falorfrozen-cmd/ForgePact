@@ -13,6 +13,13 @@
 #include <ForgePact/Mark1Priority.hpp>
 #include <ForgePact/Mark1Rolls.hpp>
 
+// The talent-screen objects' names (AskerOf below). Optional so the harnesses
+// that include this header without hs-game-sdk still compile; the plugin and
+// tests/mark1_set_harness.cpp build with it.
+#if __has_include(<hs_game_sdk/objects.hpp>)
+#include <hs_game_sdk/objects.hpp>
+#endif
+
 namespace ForgePact::Mark1Set {
 
 // ---- Mark 1: the set's decision core (ForgePact #166, phase 2) ----------------
@@ -538,6 +545,7 @@ struct BonusStatFields {
     bool     haveHaste = false;
     double   haste = 0;
     uint64_t statFail = 0;
+    uint64_t sheet = 0;                        // bonus and cost answers given to a talent-screen self (AskerOf)
     // the tooltip
     DescFont descFont = DescFont::NotDrawn;
     uint64_t grey = 0;                         // columns greyed in the last HUD draw: their `enabled` written (the redraw under the research look)
@@ -590,6 +598,7 @@ inline std::string BonusStatLine(const BonusStatFields& f)
     s += " fcr=" + (f.haveFcr ? NumberText(f.fcr) : std::string("-"));
     s += " haste=" + (f.haveHaste ? NumberText(f.haste) : std::string("-"));
     s += " stat-fail=" + std::to_string(f.statFail);
+    s += " sheet=" + std::to_string(f.sheet);
     s += " | tip desc-font=" + std::string(DescFontName(f.descFont));
     s += " grey=" + std::to_string(f.grey);
     s += " grey-box=" + std::to_string(f.greyBox);
@@ -597,6 +606,61 @@ inline std::string BonusStatLine(const BonusStatFields& f)
     s += " legacy=" + std::to_string(f.legacy);
     s += " drop-rolls=" + std::to_string(f.dropRolls);
     return s;
+}
+
+// ---- the answered askers: whose dispatcher calls the bonus and the cost answer ----
+//
+// The game asks its stat dispatcher for the player's stats with selves other
+// than the player: the talent screen (T) builds its rows from instances of its
+// own objects, so the sheet showed the player's stats without the set bonus
+// (Live 2: Life 4901 on the sheet, 5651 on the HUD). The rule (the owner,
+// 2026-10-22, option 1): a call is answered when its self is the local player,
+// or an instance of one of the four talent-screen objects that call the
+// dispatcher directly (a static reading); every other self is left as the
+// game answered it, the mercenary (Mercenary_obj), monsters, summons and the
+// player's skill objects included. Identified by what self is, never by the
+// call's first argument and never by a deny list (which would answer whatever
+// is not on it).
+//
+// The adapter reads self's object index (variable_instance_get, VALUE_REF
+// accepted) only for a call whose id the bonus or the cost answers and whose
+// self is not the local player, and resolves the four objects' indices once
+// per install by their hs-game-sdk names (asset_get_index). An index that was
+// not read and a name that did not resolve never match anything, not even each
+// other: "unknown" is never a value (AGENTS.md, "Check a Permission Where It
+// Is Used").
+enum class Asker : int { Left, LocalPlayer, TalentScreen };
+
+// An object index as read or resolved: `known` false for a read that failed
+// or a name that did not resolve, whatever `index` holds.
+struct ObjectIndex {
+    bool known = false;
+    int  index = -1;
+};
+
+inline constexpr int kTalentScreenObjectCount = 4;
+
+#if __has_include(<hs_game_sdk/objects.hpp>)
+// The four talent-screen objects, by their hs-game-sdk names (resolved at
+// install through asset_get_index; never a typed index). Harnesses built
+// without hs-game-sdk on the include path compile the rest of this header.
+inline constexpr HeroSiege::Objects::GameObject kTalentScreenObjects[kTalentScreenObjectCount] = {
+    HeroSiege::Objects::GameObject::UI_Button_Talent_Player_obj,
+    HeroSiege::Objects::GameObject::UI_Talent_Screen_Attribute_obj,
+    HeroSiege::Objects::GameObject::UI_Talent_Screen_Allocate_obj,
+    HeroSiege::Objects::GameObject::Player_Talent_Tooltip_obj,
+};
+#endif
+
+// Who a dispatcher call answers as: the local player first, then a known
+// object index equal to a resolved talent-screen object's, otherwise left.
+inline Asker AskerOf(bool selfIsLocalPlayer, const ObjectIndex& self, const ObjectIndex (&screen)[kTalentScreenObjectCount])
+{
+    if (selfIsLocalPlayer) return Asker::LocalPlayer;
+    if (!self.known || self.index < 0) return Asker::Left;
+    for (const ObjectIndex& s : screen)
+        if (s.known && s.index >= 0 && s.index == self.index) return Asker::TalentScreen;
+    return Asker::Left;
 }
 
 // ---- the pieces' own art: the rule the adapter applies --------------------------

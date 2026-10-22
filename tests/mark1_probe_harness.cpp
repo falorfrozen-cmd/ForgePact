@@ -2525,7 +2525,7 @@ int main()
     }
     {
         const std::vector<std::pair<std::string, std::string>> refused = {
-            { "bogus", "unknown form bogus (hook, off, show, args, watch, set, scale, hold, move, stat, statpin, statlog, count, pos, base, spawn, heroic, unique, pool, copies, killgate, draws, walkable, bonusread, statask, manaregen, procgaps, autohold, automask, autoyield, autorest, autoroute, autoproc, autolock, autogrey, autocost, autodrain or autocast)" },
+            { "bogus", "unknown form bogus (hook, off, show, args, watch, set, scale, hold, move, stat, statpin, statlog, count, pos, base, spawn, heroic, unique, pool, copies, killgate, draws, walkable, bonusread, bonusothers, statask, manaregen, procgaps, autohold, automask, autoyield, autorest, autoroute, autoproc, autolock, autogrey, autocost, autodrain or autocast)" },
             { "heroic", "usage: heroic <n>, n a whole number 1..20" },
             { "heroic 0", "usage: heroic <n>, n a whole number 1..20, not 0" },
             { "heroic 21", "usage: heroic <n>, n a whole number 1..20, not 21" },
@@ -2654,6 +2654,52 @@ int main()
         const std::string none = BonusReadLine({ { 2, false, false, 0, 0 } }, false, 0);
         check("bonusread/line", line == "mark1probe bonusread: 2=3->8 36=1200->1950 37=- 92=?->? frame=4711"
                                     && none == "mark1probe bonusread: 2=- frame=-", line + " | " + none);
+
+        // bonusothers (replan 4): the watch list's calls from other selves,
+        // per (id, object). `none` when empty (an entry with no call is not
+        // one); by id, then most calls first, at most three objects per id;
+        // each argument-0 form; `reset` parses and answers its own line.
+        check("bonusothers/parse", parsed("bonusothers").form == Form::BonusOthers
+            && parsed("bonusothers reset").form == Form::BonusOthersReset && parsed("BonusOthers Reset").form == Form::BonusOthersReset
+            && why("bonusothers now") == "usage: mark1probe bonusothers [reset]" && why("bonusothers reset 1") != "ACCEPTED"
+            && std::string(kBonusOthersResetLine) == "mark1probe bonusothers: reset");
+        auto other = [](int id, const char* object, uint64_t count, OthersArg0 a0, const char* a0Object = "", double a0Number = 0) {
+            BonusOthersEntry e;
+            e.id = id;
+            e.object = object;
+            e.count = count;
+            e.originalNumber = true;
+            e.original = 120;
+            e.answerNumber = true;
+            e.answer = 620;
+            e.a0 = a0;
+            e.a0Object = a0Object;
+            e.a0Number = a0Number;
+            return e;
+        };
+        const std::string empty = BonusOthersLine({});
+        const std::string zero = BonusOthersLine({ other(92, "Mercenary_obj", 0, OthersArg0::None) });
+        BonusOthersEntry merc = other(92, "Mercenary_obj", 344, OthersArg0::Number, "", 1);
+        merc.answer = 120;
+        const std::string single = BonusOthersLine({ merc });
+        BonusOthersEntry notNumber = other(97, "?", 2, OthersArg0::None);
+        notNumber.originalNumber = false;
+        notNumber.answerNumber = false;
+        const std::string ordered = BonusOthersLine({
+            notNumber,
+            other(92, "UI_Talent_Screen_Attribute_obj", 3, OthersArg0::Player),
+            other(36, "Player_Talent_Tooltip_obj", 1, OthersArg0::Instance, "Player_obj"),
+            other(92, "Mercenary_obj", 344, OthersArg0::Number, "", 1),
+            other(92, "UI_Button_Talent_Player_obj", 12, OthersArg0::Instance, ""),
+            other(92, "Some_Monster_obj", 2, OthersArg0::Number, "", 0.5),
+        });
+        check("bonusothers/line_none_one_order_cap_and_a0",
+              empty == "mark1probe bonusothers: none" && zero == "mark1probe bonusothers: none"
+                  && single == "mark1probe bonusothers: 92:Mercenary_obj*344=120->120@a0=1"
+                  && ordered == "mark1probe bonusothers: 36:Player_Talent_Tooltip_obj*1=120->620@a0=inst:Player_obj"
+                                " 92:Mercenary_obj*344=120->620@a0=1 92:UI_Button_Talent_Player_obj*12=120->620@a0=inst:?"
+                                " 92:UI_Talent_Screen_Attribute_obj*3=120->620@a0=player 97:?*2=?->?@a0=-",
+              empty + " | " + single + " | " + ordered);
 
         // The automation's overrides: each parses its own range and refuses
         // the rest by name.

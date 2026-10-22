@@ -241,6 +241,15 @@ class Mark1ProbeBehaviorTests(unittest.TestCase):
     def test_bonusread_lists_the_watch_list(self):
         self.assertScenarios("bonusread/parse", "bonusread/line")
 
+    def test_probe_bonusothers_line(self):
+        # Replan 4: the watch list's calls whose self is not the local player,
+        # per (id, object): `none` when empty, one entry, by id then most calls
+        # first, at most three objects per id, and each argument-0 form
+        # (`player`, `inst:<object>`, a number, `-`); `reset` parses.
+        self.assertScenarios("bonusothers/parse", "bonusothers/line_none_one_order_cap_and_a0")
+        self.assertIn("mark1probe bonusothers: 92:Mercenary_obj*344=120->120@a0=1",
+                      self.line("bonusothers/line_none_one_order_cap_and_a0"))
+
     def test_automation_overrides_parse_apply_and_refuse(self):
         # `autohold` ... `autocast`: each takes its own range, answers the
         # value now in force, and `autoroute proc` with no shape set answers
