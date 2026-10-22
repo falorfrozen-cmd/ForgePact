@@ -64,6 +64,10 @@ namespace ForgePact::Mark1Probe {
 // automation's session overrides `autohold`, `automask`, `autoyield`,
 // `autorest`, `autoroute`, `autoproc`, `autolock`, `autogrey`, `autocost`,
 // `autodrain` and `autocast` (ApplyAuto below; `autogrey` is the adapter's).
+// Its replan (after Live 1) adds `statask` (the dispatcher asked directly, so
+// the set's consumer answers as for a game call), `manaregen` (the mana
+// replenish, id 42, answered with a set value whatever the switch says) and
+// `procgaps` (each automated column's procs, gaps and interval).
 //
 // The drops (phase 3, Mark1Drops.hpp) add three forms for their live session:
 // `heroic <n>` calls the Heroic roll by name and tallies what it placed, the
@@ -313,6 +317,7 @@ inline constexpr long long kMaxItemClass = 19;    // hs_game_sdk/item_type.hpp's
 inline constexpr long long kMaxBase = 9999;
 inline constexpr long long kMaxHeroicCalls = 20;  // `heroic <n>`: calls of the Heroic roll per command
 inline constexpr long long kMaxUniqueCalls = 20;  // `unique <n>`: calls of the ordinary unique roll per command
+inline constexpr size_t kMaxStatAskIds = 8;       // `statask <id>[,<id>...]`: ids asked per command
 
 // set: write `value` into `target` before each local-player call of `row`,
 //      and restore what was there after the original returns (or throws).
@@ -433,6 +438,9 @@ enum class Form : int {
     // the automation's overrides for this session.
     BonusRead, AutoHold, AutoMask, AutoYield, AutoRest, AutoRoute, AutoProc,
     AutoLock, AutoGrey, AutoCost, AutoDrain, AutoCast,
+    // The replan's research forms (Live procedure 2): the dispatcher asked
+    // directly, the mana replenish's forced answer, and the proc gaps.
+    StatAsk, ManaRegen, ProcGaps, ProcGapsReset,
 };
 
 // `spawn`'s roll word: every stat at the top of its range, every stat at the
@@ -521,6 +529,9 @@ struct Command {
     ForgePact::Mark1ProcShape   autoShape; // AutoProc: the parsed template (`clear`: unset)
     ForgePact::Mark1ManaCost    autoCost = ForgePact::kMark1ManaCost;   // AutoCost
     GreyLook    grey = GreyLook::Redraw;   // AutoGrey
+    std::vector<long long> statIds;        // StatAsk: 1..kMaxStatAskIds ids, in the order given
+    bool        regenOn = false;           // ManaRegen: a value is set (false: `off`)
+    double      regenValue = 0;            // ManaRegen: the value id 42 is answered with
 };
 
 inline const std::string& RowList()
@@ -773,6 +784,40 @@ inline bool Parse(const std::vector<std::string>& tok, Command& c, std::string& 
         c.form = Form::BonusRead;
         return true;
     }
+    if (head == "statask") {
+        const std::string usage = "usage: statask <id>[,<id>...], at most " + std::to_string(kMaxStatAskIds)
+            + " ids, each a whole number 0.." + std::to_string(kMaxStatId);
+        if (n != 2) { why = usage; return false; }
+        const std::string& list = tok[1];
+        size_t from = 0;
+        while (true) {
+            const size_t comma = list.find(',', from);
+            const std::string one = list.substr(from, comma == std::string::npos ? std::string::npos : comma - from);
+            long long id = 0;
+            if (!ParseWhole(one, 0, kMaxStatId, id)) { why = usage + ", not " + tok[1]; return false; }
+            if (c.statIds.size() == kMaxStatAskIds) { why = usage + ", not " + tok[1]; return false; }
+            c.statIds.push_back(id);
+            if (comma == std::string::npos) break;
+            from = comma + 1;
+        }
+        c.form = Form::StatAsk;
+        return true;
+    }
+    if (head == "manaregen") {
+        const char* usage = "usage: manaregen <value>|off";
+        if (n != 2) { why = usage; return false; }
+        if (SameWord(tok[1], "off")) { c.regenOn = false; c.form = Form::ManaRegen; return true; }
+        if (!ParseNumber(tok[1], c.regenValue)) { why = std::string(usage) + ", not " + tok[1]; return false; }
+        c.regenOn = true;
+        c.form = Form::ManaRegen;
+        return true;
+    }
+    if (head == "procgaps") {
+        if (n == 1) { c.form = Form::ProcGaps; return true; }
+        if (n == 2 && SameWord(tok[1], "reset")) { c.form = Form::ProcGapsReset; return true; }
+        why = "usage: procgaps [reset]";
+        return false;
+    }
     if (head == "autohold") {
         const char* usage = "usage: autohold 3|4";
         if (n != 2) { why = usage; return false; }
@@ -972,8 +1017,8 @@ inline bool Parse(const std::vector<std::string>& tok, Command& c, std::string& 
     }
     why = "unknown form " + tok[0]
         + " (hook, off, show, args, watch, set, scale, hold, move, stat, statpin, statlog, count, pos, base, spawn, heroic,"
-          " unique, pool, copies, killgate, draws, walkable, bonusread, autohold, automask, autoyield, autorest, autoroute,"
-          " autoproc, autolock, autogrey, autocost, autodrain or autocast)";
+          " unique, pool, copies, killgate, draws, walkable, bonusread, statask, manaregen, procgaps, autohold, automask,"
+          " autoyield, autorest, autoroute, autoproc, autolock, autogrey, autocost, autodrain or autocast)";
     return false;
 }
 
@@ -997,6 +1042,9 @@ inline std::vector<std::string> Usage()
         "  mark1probe base <class> <b>                          build a scratch item of that class and base (never placed)",
         "  mark1probe spawn <helmet|body|boots|gloves|set> [top|low|random]  build Mark 1 pieces (every stat at the top, the bottom, or rolled) and place them",
         "  mark1probe bonusread                                 the set bonus's watch list: each id's last local original and answer",
+        "  mark1probe statask <id>[,<id>...]                    ask the stat dispatcher for each id (at most 8) now, as a game call would",
+        "  mark1probe manaregen <value>|off                     answer the local player's mana replenish (id 42) with the value, switch on or off",
+        "  mark1probe procgaps [reset]                          per automated column: procs, the smallest and mean gap in ms, the interval",
         "  mark1probe autohold 3|4                              the value a no-cooldown column is pressed with, this session",
         "  mark1probe automask off|default|<e>[,<e>...]         the entries rested while the automation presses, this session",
         "  mark1probe autoyield <0-600> | autorest <0-600>      the frames left alone after a landing / a cooldown column rests",
@@ -1163,6 +1211,97 @@ inline std::string BonusReadLine(const std::vector<BonusReadEntry>& entries, boo
     out += " frame=" + (anyCall ? std::to_string(frame) : std::string("-"));
     return out;
 }
+
+// ---- `statask`, `manaregen` and `procgaps` (the replan's research forms) ------------
+// `statask`: the adapter asks ReturnSpecificStat for each id itself, for the
+// local player, outside the adapter's busy flag, so the set's consumer answers
+// and records the call as it would a game call (bonusread shows only each id's
+// last game call, which may predate the change being measured). Each answer is
+// element 0 of an array answer, `?` for a value that is not a number and `-`
+// for a call that failed.
+enum class StatAskResult : int { Number, NotNumber, Failed };
+
+struct StatAskEntry {
+    long long     id = 0;
+    StatAskResult result = StatAskResult::Failed;
+    double        value = 0;
+};
+
+inline std::string StatAskLine(const std::vector<StatAskEntry>& entries)
+{
+    std::string out = "mark1probe statask:";
+    for (const StatAskEntry& e : entries) {
+        out += " " + std::to_string(e.id) + "=";
+        switch (e.result) {
+        case StatAskResult::Number: out += NumberText(e.value); break;
+        case StatAskResult::NotNumber: out += "?"; break;
+        case StatAskResult::Failed: out += "-"; break;
+        }
+    }
+    return out;
+}
+
+// `manaregen`: while a value is set, the set's consumer answers the local
+// player's id-42 (mana replenish) dispatcher calls with it, before the switch
+// check and the cost; `forced=` counts those answers since load.
+inline std::string ManaRegenLine(bool on, double value, uint64_t forced)
+{
+    return "mark1probe manaregen: value=" + (on ? NumberText(value) : std::string("off")) + " forced=" + std::to_string(forced);
+}
+
+// `procgaps`: for each automated column (Q, E, R, Y), from where the adapter
+// records a proc that returned: the count, the smallest and the mean gap
+// between two procs in whole milliseconds, and the interval the last proc
+// started its clock on. `-` for a column with no proc, and for the gaps of a
+// column with one; `?` for an interval that was not a finite number.
+class ProcGaps {
+public:
+    void Note(int column, long long nowMs, double intervalMs)
+    {
+        if (column < kMark1FirstColumn || column > kMark1LastColumn) return;
+        Column& c = columns_[static_cast<size_t>(column - kMark1FirstColumn)];
+        if (c.count > 0) {
+            const long long gap = nowMs - c.lastMs;
+            if (c.count == 1 || gap < c.minGap) c.minGap = gap;
+            c.gapSum += gap;
+        }
+        ++c.count;
+        c.lastMs = nowMs;
+        c.intervalMs = intervalMs;
+    }
+    void Reset() { columns_ = {}; }
+    long long Count(int column) const
+    {
+        if (column < kMark1FirstColumn || column > kMark1LastColumn) return 0;
+        return columns_[static_cast<size_t>(column - kMark1FirstColumn)].count;
+    }
+    std::string Line() const
+    {
+        static constexpr const char* kNames[kMark1ColumnCount] = { "Q", "E", "R", "Y" };
+        auto whole = [](double v) { return std::isfinite(v) ? std::to_string(std::llround(v)) : std::string("?"); };
+        std::string out = "mark1probe procgaps:";
+        for (int i = 0; i < kMark1ColumnCount; ++i) {
+            const Column& c = columns_[static_cast<size_t>(i)];
+            out += std::string(" ") + kNames[i] + "=";
+            if (c.count == 0) { out += "-"; continue; }
+            out += std::to_string(c.count) + "/";
+            if (c.count == 1) out += "-/-/";
+            else out += std::to_string(c.minGap) + "/" + whole(static_cast<double>(c.gapSum) / static_cast<double>(c.count - 1)) + "/";
+            out += whole(c.intervalMs);
+        }
+        return out;
+    }
+
+private:
+    struct Column {
+        long long count = 0;
+        long long lastMs = 0;
+        long long minGap = 0;
+        long long gapSum = 0;
+        double    intervalMs = 0;
+    };
+    std::array<Column, kMark1ColumnCount> columns_{};
+};
 
 // ---- the automation's overrides (`autohold` ... `autocast`) -----------------------
 // Each changes a value in force for this session in the cast priority's core

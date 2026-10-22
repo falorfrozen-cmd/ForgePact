@@ -64422,6 +64422,11 @@ static RValue& Mark1HookTalentUseSetSpeed(CInstance* S, CInstance* O, RValue& R,
 // a gate call it makes itself passes the detour by (g_M1aProcRunning).
 static bool g_M1aProcRunning = false;
 static bool Mark1JumpPosition(double& x, double& y);   // the local player's position; defined with the jump
+#ifndef FORGEPACT_RELEASE
+// `mark1probe procgaps`' recorder: a proc that returned, its column, its clock
+// and the interval it started; defined with that probe, below.
+static void M1pNoteProc(int column, long long nowMs, double intervalMs);
+#endif
 
 static void Mark1FireProc(const ForgePact::Mark1FramePlan& plan)
 {
@@ -64564,7 +64569,20 @@ static RValue& Mark1HookCheckTalentUse(CInstance* S, CInstance* O, RValue& R, in
         feedLanding();
         // The proc route: the core's proc column, fired once the original
         // returned, outside the gate.
-        if (plan.procColumn) { try { Mark1FireProc(plan); } catch (...) {} }
+        if (plan.procColumn) {
+#ifndef FORGEPACT_RELEASE
+            // `mark1probe procgaps`: a proc the core recorded as fired (ProcDone
+            // counts landed= for a proc column only when it returned).
+            const long landedBefore = automation.Counters(plan.procColumn).landed;
+#endif
+            try { Mark1FireProc(plan); } catch (...) {}
+#ifndef FORGEPACT_RELEASE
+            if (automation.Counters(plan.procColumn).landed > landedBefore) {
+                const int i = plan.procColumn - ForgePact::kMark1FirstColumn;
+                M1pNoteProc(plan.procColumn, plan.clock.nowMs, automation.Priority().IntervalMs(plan.columns[i], plan.clock));
+            }
+#endif
+        }
         return result;
     } catch (...) {
         feedLanding();
@@ -64877,6 +64895,13 @@ struct M1bRecord { bool seen = false; bool number = false; double original = 0; 
 static M1bRecord g_M1bRecords[kM1bWatchCount];
 static uint64_t g_M1bRecordFrame = 0;
 static bool g_M1bRecorded = false;
+// `mark1probe manaregen <value>|off`: while on, the consumer answers the local
+// player's id-42 (mana replenish) calls with the value, before the switch
+// check and the cost, whatever the switch says once installed; off on load.
+// `forced=` counts those answers since load.
+static bool g_M1bRegenOn = false;
+static double g_M1bRegenValue = 0.0;
+static uint64_t g_M1bRegenForced = 0;
 
 static int M1bWatchIndex(double id)
 {
@@ -64963,6 +64988,12 @@ static void Mark1SetBonusOnStat(CInstance* S, int argc, RValue** A, RValue& r)
             g_M1bRecorded = true;
         }
     } record{ watch, number0, original, r };
+    // `manaregen`: the replenish forced, before the switch check and the cost.
+    if (g_M1bRegenOn && id == ForgePact::kMark1ReplenishStatId) {
+        r = RValue(g_M1bRegenValue);
+        ++g_M1bRegenForced;
+        return;
+    }
 #endif
     if (!g_Mark1.Enabled() || (!bonusWants && !costWants)) return;
     const bool number = N1Numeric(r);
@@ -68886,6 +68917,73 @@ static void M1pBonusRead()
         + (ForgePact::ReturnSpecificStatHook::mark1Bonus ? std::string() : std::string(" (the set bonus is not installed: `mark1set bonus 1` with a character)")));
 }
 
+// ---- the replan's forms: statask, manaregen and procgaps -----------------------------
+
+// `statask`: each id asked of the game's stat dispatcher by its hs-game-sdk
+// constant, for the local player (self and other), in the five-argument shape
+// Mark1ReadStatByName uses, but NOT under the adapter's busy flag: the set's
+// consumer answers and records it as it would a game call. Element 0 of an
+// array answer; `?` for a value that is not a number, `-` for a call that
+// failed or threw.
+static M1pNs::StatAskEntry M1pStatAskOne(CInstance* player, long long id)
+{
+    M1pNs::StatAskEntry e;
+    e.id = id;
+    try {
+        RValue result;
+        if (!AurieSuccess(g_Yytk->CallGameScriptEx(result, HeroSiege::Scripts::gml_Script_ReturnSpecificStat.data(),
+                player, player, { RValue(1.0), RValue((double)id), RValue(0.0), RValue(), RValue() })))
+            return e;
+        RValue value = result;
+        if (result.m_Kind == VALUE_ARRAY) {
+            if (!(g_Yytk->CallBuiltin("array_length", { result }).ToDouble() > 0)) { e.result = M1pNs::StatAskResult::NotNumber; return e; }
+            value = g_Yytk->CallBuiltin("array_get", { result, RValue(0.0) });
+        }
+        if (!N1Numeric(value)) { e.result = M1pNs::StatAskResult::NotNumber; return e; }
+        e.value = value.ToDouble();
+        e.result = std::isfinite(e.value) ? M1pNs::StatAskResult::Number : M1pNs::StatAskResult::NotNumber;
+    } catch (...) { e.result = M1pNs::StatAskResult::Failed; }
+    return e;
+}
+
+static void M1pStatAsk(const M1pNs::Command& c)
+{
+    M1pRefreshPlayer();
+    CInstance* player = g_M1pPlayer;
+    if (!player) { Out("mark1probe statask: refused - no local player (load a character first)"); return; }
+    std::vector<M1pNs::StatAskEntry> entries;
+    for (long long id : c.statIds) entries.push_back(M1pStatAskOne(player, id));
+    Out(M1pNs::StatAskLine(entries)
+        + (ForgePact::ReturnSpecificStatHook::mark1Bonus ? std::string() : std::string(" (the set bonus is not installed: `mark1set bonus 1` with a character)")));
+}
+
+// `manaregen <value>|off`: the consumer's id-42 override (Mark1SetBonusOnStat).
+static void M1pManaRegen(const M1pNs::Command& c)
+{
+    g_M1bRegenOn = c.regenOn;
+    if (c.regenOn) g_M1bRegenValue = c.regenValue;
+    Out(M1pNs::ManaRegenLine(g_M1bRegenOn, g_M1bRegenValue, g_M1bRegenForced)
+        + (ForgePact::ReturnSpecificStatHook::mark1Bonus ? std::string() : std::string(" (the set bonus is not installed: `mark1set bonus 1` with a character)")));
+}
+
+// `procgaps [reset]`: fed from Mark1FireProc, a proc that returned.
+static M1pNs::ProcGaps g_M1pProcGaps;
+
+static void M1pNoteProc(int column, long long nowMs, double intervalMs)
+{
+    g_M1pProcGaps.Note(column, nowMs, intervalMs);
+}
+
+static void M1pProcGaps(const M1pNs::Command& c)
+{
+    if (c.form == M1pNs::Form::ProcGapsReset) {
+        g_M1pProcGaps.Reset();
+        Out("mark1probe procgaps reset: every column's procs and gaps are zero");
+        return;
+    }
+    Out(g_M1pProcGaps.Line());
+}
+
 // `autohold` ... `autocast`: the session's overrides, through the core's
 // ApplyAuto; `autogrey` sets the grey draw's look here, putting back any
 // `enabled` the previous look wrote.
@@ -68968,6 +69066,10 @@ static void M1pCommand(const std::string& rest)
     case M1pNs::Form::WalkAt:
     case M1pNs::Form::WalkScan: M1pWalkable(c); return;
     case M1pNs::Form::BonusRead: M1pBonusRead(); return;
+    case M1pNs::Form::StatAsk: M1pStatAsk(c); return;
+    case M1pNs::Form::ManaRegen: M1pManaRegen(c); return;
+    case M1pNs::Form::ProcGaps:
+    case M1pNs::Form::ProcGapsReset: M1pProcGaps(c); return;
     case M1pNs::Form::AutoHold:
     case M1pNs::Form::AutoMask:
     case M1pNs::Form::AutoYield:

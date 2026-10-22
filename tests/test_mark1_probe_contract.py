@@ -67,6 +67,13 @@ adapter's add and delete. `test_satanic_tier_one_detour`: LoadSatanicDropTier ha
 HookOneScript in the source, raredrop's HookSatanicTier, installed by one function that
 reads the route back and that raredrop satanic, the watch and the kill draw's install
 (#166) all call.
+
+The Mark 1 set's replan after Live 1 adds `statask`, `manaregen` and `procgaps`
+(`test_statask_manaregen_procgaps_are_research_only`): research build only;
+`statask` asks ReturnSpecificStat by its SDK constant outside the adapter's busy
+flag; `manaregen`'s id-42 answer sits in the set's consumer ahead of its switch
+check and its cost; `procgaps` is fed from the gate detour for a proc the core
+counted as returned.
 """
 import re
 import sys
@@ -308,13 +315,15 @@ class Mark1ProbeContract(unittest.TestCase):
     def test_research_only_base_builds_through_the_loader_by_its_sdk_constant_and_places_nothing(self):
         base = self.body("static void M1pBase(const M1pNs::Command& c)")
         spawn = self.body("static void M1pSpawn(const M1pNs::Command& c)")
-        # base's one game-script call; spawn's two and the drops' forms' one (heroic and unique share
-        # it) are the only others.
+        # base's one game-script call; spawn's two, the drops' forms' one (heroic and unique share
+        # it) and statask's dispatcher call are the only others.
         heroic = self.body("static void M1pDropCalls(const char* form, std::string_view script, const char* scriptName, int count)")
+        statask = self.body("static M1pNs::StatAskEntry M1pStatAskOne(CInstance* player, long long id)")
         self.assertEqual(base.count("CallGameScriptEx("), 1)
         self.assertEqual(spawn.count("CallGameScriptEx("), 2)
         self.assertEqual(heroic.count("CallGameScriptEx("), 1)
-        self.assertEqual(self.code.count("CallGameScriptEx("), 4)
+        self.assertEqual(statask.count("CallGameScriptEx("), 1)
+        self.assertEqual(self.code.count("CallGameScriptEx("), 5)
         self.assertIn("g_Yytk->CallGameScriptEx(item, HeroSiege::Scripts::gml_Script_InitItemFromJson, g, g,", base)
         self.assertIn('g_Yytk->CallBuiltinEx(parsed, "json_parse", g, g, { RValue(M1pNs::BaseJson(c.base)) });', base)
         self.assertIn("M1pNs::BaseKey(ms, c.itemClass)", base)
@@ -863,6 +872,59 @@ class Mark1ProbeContract(unittest.TestCase):
                      "return g_OrigSatTier ? g_OrigSatTier(S, O, R, argc, A) : R;"):
             self.assertIn(step, lift)
         self.assertIn("r.sattier = g_SatTierRoute;", self.body("static M1pNs::DrawRoutes M1pDrawsRoutes()"))
+
+    def test_statask_manaregen_procgaps_are_research_only(self):
+        # The replan's three forms (Live procedure 2). Each is the probe's: its
+        # handler sits in the research block, and nothing of it ships.
+        for name in ("static void M1pStatAsk(", "static M1pNs::StatAskEntry M1pStatAskOne(", "static void M1pManaRegen(",
+                     "static void M1pProcGaps(", "static void M1pNoteProc(", "static M1pNs::ProcGaps g_M1pProcGaps;"):
+            with self.subTest(name=name):
+                self.assertIn(name, self.code)
+                self.assertNotIn(name, self.shipped)
+        command = self.body("static void M1pCommand(const std::string& rest)")
+        for case in ("case M1pNs::Form::StatAsk: M1pStatAsk(c); return;", "case M1pNs::Form::ManaRegen: M1pManaRegen(c); return;",
+                     "case M1pNs::Form::ProcGapsReset: M1pProcGaps(c); return;"):
+            self.assertIn(case, command)
+        # statask names the dispatcher by its SDK constant, self and other the
+        # local player, in Mark1ReadStatByName's argument shape, and NOT under
+        # the adapter's busy flag (the set's consumer answers it as a game call).
+        ask = self.body("static M1pNs::StatAskEntry M1pStatAskOne(CInstance* player, long long id)")
+        self.assertIn("CallGameScriptEx(result, HeroSiege::Scripts::gml_Script_ReturnSpecificStat.data(),", ask)
+        self.assertIn("player, player, { RValue(1.0), RValue((double)id), RValue(0.0), RValue(), RValue() }", ask)
+        self.assertIn('"array_get", { result, RValue(0.0) }', ask)
+        self.assertNotIn('"ReturnSpecificStat"', ask)
+        statask = self.body("static void M1pStatAsk(const M1pNs::Command& c)")
+        for body in (ask, statask):
+            self.assertNotIn("g_M1sBusy", body)
+            self.assertNotIn("M1pBusyScope", body)
+        self.assertLess(statask.index("if (!player)"), statask.index("M1pStatAskOne("))
+        self.assertIn("refused - no local player", statask)
+        # The id-42 override: research build only, inside the set's consumer,
+        # before the switch check and before the cost.
+        consumer = function_body(self.plugin, "static void Mark1SetBonusOnStat(CInstance* S, int argc, RValue** A, RValue& r)")
+        shipped_consumer = function_body(strip_research_blocks(self.plugin),
+                                         "static void Mark1SetBonusOnStat(CInstance* S, int argc, RValue** A, RValue& r)")
+        override = "if (g_M1bRegenOn && id == ForgePact::kMark1ReplenishStatId) {"
+        self.assertIn(override, consumer)
+        self.assertIn("r = RValue(g_M1bRegenValue);", consumer)
+        self.assertIn("++g_M1bRegenForced;", consumer)
+        self.assertNotIn("g_M1bRegen", shipped_consumer)
+        self.assertNotIn("g_M1bRegen", strip_research_blocks(self.plugin))
+        self.assertIn("if (!g_Mark1.Enabled() || (!bonusWants && !costWants)) return;", shipped_consumer)   # control
+        self.assertLess(consumer.index(override), consumer.index("if (!g_Mark1.Enabled()"))
+        self.assertLess(consumer.index(override), consumer.index("g_M1aCost.Answer("))
+        # Off on load.
+        self.assertIn("static bool g_M1bRegenOn = false;", self.plugin)
+        # procgaps: fed from the gate detour around Mark1FireProc, only for a
+        # proc the core counted as returned; the recording is research only.
+        detour = function_body(self.plugin, "static RValue& Mark1HookCheckTalentUse(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)")
+        self.assertIn("M1pNoteProc(plan.procColumn, plan.clock.nowMs,", detour)
+        self.assertLess(detour.index("Mark1FireProc(plan)"), detour.index("M1pNoteProc("))
+        self.assertNotIn("M1pNoteProc", function_body(strip_research_blocks(self.plugin),
+                         "static RValue& Mark1HookCheckTalentUse(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)"))
+        # The line is the core's pure function (tests/mark1_probe_harness.cpp runs it).
+        self.assertIn("Out(g_M1pProcGaps.Line());", self.body("static void M1pProcGaps(const M1pNs::Command& c)"))
+        self.assertIn("class ProcGaps {", self.header)
 
     def test_research_only_the_profile_scope_says_which_it_read(self):
         resolve = self.body("static bool M1pResolveScope(CInstance* player, M1pNs::Scope scope, M1pScopeRef& out, std::string& why)")

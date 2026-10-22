@@ -247,6 +247,20 @@ class Mark1ProbeBehaviorTests(unittest.TestCase):
         # `refused - shape unset` and keeps the press.
         self.assertScenarios("auto/parse_and_refuse", "auto/apply_answers_the_value_in_force")
 
+    # ---- the replan's research forms (Live procedure 2) ----------------------------
+
+    def test_probe_procgaps_line(self):
+        # Each automated column's procs, smallest and mean gap and the interval
+        # in force: `-` with none, `n/-/-/<interval>` with one, the gaps from two;
+        # a column outside Q..Y is ignored and `reset` empties every column.
+        self.assertScenarios("procgaps/parse", "procgaps/line_for_zero_one_and_several")
+
+    def test_probe_statask_and_manaregen_parse_and_line(self):
+        # statask: one to eight ids, `?` for a value that is not a number and
+        # `-` for a call that failed; manaregen: a number (negative allowed)
+        # or off, with the forced count.
+        self.assertScenarios("statask/parse", "statask/line", "manaregen/parse", "manaregen/line")
+
     # ---- the drops' forms (Mark1Drops.hpp's live session) -------------------------
 
     def test_heroic_call_lines_summary_and_parse(self):

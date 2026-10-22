@@ -2525,7 +2525,7 @@ int main()
     }
     {
         const std::vector<std::pair<std::string, std::string>> refused = {
-            { "bogus", "unknown form bogus (hook, off, show, args, watch, set, scale, hold, move, stat, statpin, statlog, count, pos, base, spawn, heroic, unique, pool, copies, killgate, draws, walkable, bonusread, autohold, automask, autoyield, autorest, autoroute, autoproc, autolock, autogrey, autocost, autodrain or autocast)" },
+            { "bogus", "unknown form bogus (hook, off, show, args, watch, set, scale, hold, move, stat, statpin, statlog, count, pos, base, spawn, heroic, unique, pool, copies, killgate, draws, walkable, bonusread, statask, manaregen, procgaps, autohold, automask, autoyield, autorest, autoroute, autoproc, autolock, autogrey, autocost, autodrain or autocast)" },
             { "heroic", "usage: heroic <n>, n a whole number 1..20" },
             { "heroic 0", "usage: heroic <n>, n a whole number 1..20, not 0" },
             { "heroic 21", "usage: heroic <n>, n a whole number 1..20, not 21" },
@@ -2630,7 +2630,8 @@ int main()
         const std::vector<std::string> usage = Usage();
         bool every = true;
         for (const char* f : { "hook", "off", "show", "args", "watch", "set", "scale", "hold", "move", "stat", "statpin", "statlog",
-                               "count", "pos", "base", "spawn", "heroic", "unique", "pool", "pool kill", "copies", "killgate", "draws", "draws push", "pool draw", "walkable" }) {
+                               "count", "pos", "base", "spawn", "heroic", "unique", "pool", "pool kill", "copies", "killgate", "draws", "draws push", "pool draw", "walkable",
+                               "statask", "manaregen", "procgaps" }) {
             bool found = false;
             for (const std::string& l : usage) found = found || l.find(std::string("mark1probe ") + f) != std::string::npos;
             every = every && found;
@@ -2704,6 +2705,62 @@ int main()
             && ApplyAuto(parsed("autocast 0.5"), core, cost) == "mark1probe autocast: cast-base=0.5"
             && core.Settings().baseCastSeconds == 0.5;
         check("auto/apply_answers_the_value_in_force", ok, refused + " | " + shape + " | " + proc + " | " + cleared);
+    }
+
+    // ---- the replan's research forms: statask, manaregen, procgaps ---------------------
+    {
+        // statask: one to eight ids, comma-separated, each 0..999; anything
+        // else is refused with the usage.
+        const std::string usage = "usage: statask <id>[,<id>...], at most 8 ids, each a whole number 0..999";
+        const bool parse = parsed("statask 42").form == Form::StatAsk && parsed("statask 42").statIds == std::vector<long long>{ 42 }
+            && parsed("statask 38,161,162").statIds == std::vector<long long>{ 38, 161, 162 }
+            && parsed("statask 1,2,3,4,5,6,7,8").statIds.size() == 8
+            && why("statask") == usage && why("statask 38 161") == usage
+            && why("statask 1,2,3,4,5,6,7,8,9") == usage + ", not 1,2,3,4,5,6,7,8,9"
+            && why("statask 1000") == usage + ", not 1000" && why("statask 38,") == usage + ", not 38,"
+            && why("statask 38,,161") == usage + ", not 38,,161" && why("statask -1") == usage + ", not -1"
+            && why("statask life") == usage + ", not life";
+        check("statask/parse", parse);
+        const std::string line = StatAskLine({ { 38, StatAskResult::Number, 184 }, { 92, StatAskResult::NotNumber, 0 },
+                                               { 162, StatAskResult::Failed, 0 }, { 106, StatAskResult::Number, 54.5 } });
+        check("statask/line", line == "mark1probe statask: 38=184 92=? 162=- 106=54.5", line);
+
+        // manaregen: a number (negative allowed, Live 2's drain-below) or off.
+        const bool regen = parsed("manaregen 0").form == Form::ManaRegen && parsed("manaregen 0").regenOn
+            && parsed("manaregen 0").regenValue == 0 && parsed("manaregen -12.5").regenValue == -12.5
+            && parsed("manaregen 30").regenOn && !parsed("manaregen off").regenOn && parsed("manaregen OFF").form == Form::ManaRegen
+            && why("manaregen") == "usage: manaregen <value>|off" && why("manaregen 1 2") == "usage: manaregen <value>|off"
+            && why("manaregen low") == "usage: manaregen <value>|off, not low" && why("manaregen 1e3") == "usage: manaregen <value>|off, not 1e3";
+        check("manaregen/parse", regen);
+        const std::string on = ManaRegenLine(true, 0, 17), neg = ManaRegenLine(true, -12.5, 3), off = ManaRegenLine(false, 0, 20);
+        check("manaregen/line", on == "mark1probe manaregen: value=0 forced=17" && neg == "mark1probe manaregen: value=-12.5 forced=3"
+                                    && off == "mark1probe manaregen: value=off forced=20", on + " | " + neg + " | " + off);
+
+        // procgaps: the line for zero, one and several procs, and reset.
+        const bool gapsParse = parsed("procgaps").form == Form::ProcGaps && parsed("procgaps reset").form == Form::ProcGapsReset
+            && why("procgaps now") == "usage: procgaps [reset]" && why("procgaps reset 1") == "usage: procgaps [reset]";
+        check("procgaps/parse", gapsParse);
+        ProcGaps g;
+        const std::string zero = g.Line();
+        g.Note(4, 1000, 10940.4);
+        const std::string one = g.Line();
+        g.Note(3, 2000, 6000);
+        g.Note(3, 8000, 6000);
+        g.Note(3, 14500, 5500.6);
+        g.Note(4, 12000, 10940.4);
+        g.Note(2, 3000, 1);              // not an automated column: ignored
+        g.Note(7, 3000, 1);
+        g.Note(6, 5000, std::nan(""));   // an interval that is not a number
+        const std::string several = g.Line();
+        const long long q = g.Count(3);
+        g.Reset();
+        const std::string reset = g.Line();
+        check("procgaps/line_for_zero_one_and_several",
+              zero == "mark1probe procgaps: Q=- E=- R=- Y=-"
+                  && one == "mark1probe procgaps: Q=- E=1/-/-/10940 R=- Y=-"
+                  && several == "mark1probe procgaps: Q=3/6000/6250/5501 E=2/11000/11000/10940 R=- Y=1/-/-/?"
+                  && q == 3 && reset == zero,
+              zero + " | " + one + " | " + several + " | " + reset);
     }
 
     std::cout << (failures ? "RESULT FAIL " + std::to_string(failures) : std::string("RESULT OK")) << std::endl;
