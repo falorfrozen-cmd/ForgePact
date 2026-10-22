@@ -88,22 +88,30 @@ async function setSwitch(t, value) {
 
 // A page with the play counter (and optionally the silent context), and every
 // claim it makes with the server's answer.
+//
+// A claim is counted when its POST goes out, and its `play` (null until then)
+// is filled in once the answer's body has been read. Reading that body is a
+// separate round trip to the browser, which can finish after the page has
+// already played: counting the claim only after the read let a check see the
+// play and an empty claims list (`claims: []`, under a loaded machine).
+// Anything that reads `play` awaits settled() first.
 async function alertPage(t, { silent = false, tab = null, sandbox } = {}) {
   const page = await t.openPanel(sandbox ? { sandbox } : {});
   const claims = [];
+  const answers = [];
   const trackerGets = [];
   page.on('request', (req) => {
     const path = new URL(req.url()).pathname;
     if (req.method() === 'GET' && path.startsWith('/api/tracker')) trackerGets.push(path);
+    if (req.method() !== 'POST' || path !== '/api/tracker/announce') return;
+    const claim = { id: JSON.parse(req.postData() || '{}').id, play: null };
+    claims.push(claim);
+    answers.push(req.response()
+      .then((res) => (res ? res.json() : {}))
+      .then((body) => { claim.play = body?.play === true; }, () => { claim.play = false; }));
   });
-  page.on('response', async (res) => {
-    const req = res.request();
-    if (req.method() !== 'POST' || new URL(req.url()).pathname !== '/api/tracker/announce') return;
-    let body = {};
-    try { body = await res.json(); } catch (e) {}
-    claims.push({ id: JSON.parse(req.postData() || '{}').id, play: body.play === true });
-  });
-  return { page, claims, trackerGets, silent, tab };
+  const settled = () => Promise.all(answers);
+  return { page, claims, settled, trackerGets, silent, tab };
 }
 
 // openPanel boots the page before an init script could be added to it, so
@@ -232,6 +240,7 @@ export default async function (t) {
     const played = await plays(p);
     assert(played.length === 1, `${played.length} plays`);
     assert(played[0].bytes === bundledBytes('heroic'), `it played a ${played[0].bytes}-byte file, not the bundled Heroic`);
+    await p.settled();
     assert(p.claims.length === 1 && p.claims[0].id === filed.id && p.claims[0].play, `claims: ${JSON.stringify(p.claims)}`);
     const after = (await t.api('/api/tracker/extra')).drops.find((d) => d.id === filed.id);
     assert(after?.announced === true, 'the API does not read the entry as announced');
@@ -276,6 +285,7 @@ export default async function (t) {
     await wait(2000);
     const total = (await plays(a)).length + (await plays(b)).length;
     assert(total === 1, `${total} plays across the two pages`);
+    await Promise.all([a.settled(), b.settled()]);
     const all = [...a.claims, ...b.claims];
     assert(all.every((c) => c.id === filed.id), `claims: ${JSON.stringify(all)}`);
     assert(all.filter((c) => c.play).length === 1, `the server let ${all.filter((c) => c.play).length} claims play`);
