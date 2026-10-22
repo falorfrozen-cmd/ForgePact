@@ -104,12 +104,13 @@ pieces" below.
   and loading the character; and each piece's tooltip showed the set the way
   the game shows its own, on the ground, in the bag and worn, the names of
   the pieces you wear in green and `+1 to Automation` lit only with the set's
-  switch on, every line inside the tooltip. A later session checked the
-  skills firing with no cast time, through a held button, the lock on casting
-  them by hand, the grey icons and the 20% lower maximum mana with three
-  automated skills. A toggle skill on the bar, a piece dropping from a vault,
-  the set bonus's lines and the roll ranges have not been checked in play
-  yet.
+  switch on, every line inside the tooltip. A later session checked that a
+  skill fired the way an item's proc fires one is cast at the skill's own
+  level, the grey icons in the game's own dark look, and the 20% lower
+  maximum mana with three automated skills. The skills firing with no cast
+  time, firing while you hold a button, the lock on casting them by hand, a
+  toggle skill on the bar, a piece dropping from a vault, the set bonus's
+  lines and the roll ranges have not been checked in play yet.
 
 ## Fixed
 
