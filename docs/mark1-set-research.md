@@ -4875,7 +4875,10 @@ files and not tracked. Every `mark1set stat` pair of lines read is recorded.
   `skillstate` records the bar. The operator unbinds Soul Spurn from R and
   Mana Orb from Q through the bar editor and binds Shadow Bolt to Y if it is
   not on 0,6; `skillstate` then shows 0,3 and 0,5 empty, 0,4 `healingZone`
-  and 0,6 `shadowBolt`. Every click is the operator's.
+  and 0,6 `shadowBolt`. Every click is the operator's. Then `mark1probe
+  vitals` once to install its hook: it prints `mark1probe vitals: hook
+  installed now; ask again`, which is expected and not a reading; wait at
+  least one frame before S1's first `vitals`.
 - S0b: `mark1set bonus 1`, then `mark1set bonus 0`: `install=installed`, no
   `refused` line.
 - S1, switch off (`vitals-control`): `mark1probe vitals`: both maxima within
@@ -5240,7 +5243,7 @@ from Q the same way, after which the proc columns were E and Y.
 | `icon-grey` | pass | Slot boxes' mean luminance with the switch on Q 23.0, E 15.7, R 17.0, Y 14.1, against 79.4, 43.0, 45.7 and 36.5 18 s after it went off; `grey=4` with four automated columns; `procs=` 908 to 942 while the look was on. |
 | `icon-clear` | pass | 18 s after `mark1set bonus 0`: `grey=0`, every slot brighter, and Shadow Bolt's tooltip on hover. |
 | `maxmana-applies` | pass | n = 3 proc columns (Q, E, Y): the HUD read `941 / 940.80` and `statask 37` 940.8, 2352 × (1 − 0.2 × 3). |
-| `allres-route` | pass | Research, recorded. 162 read 83 with the switch off and 83 with it on: the element resistances do not take the all-resistance answer through the dispatcher. |
+| `allres-route` | pass | Research, recorded. 162 read 83 with the switch off and 83 with it on (161 266 to 301), and 164 also read 83. Unchanged, but a cap is not excluded: 83 on two elements against 161 = 266 fits a cap clamping the value, and no read separated the two (no read below a cap, no negative 161 answer), so whether `StatFireResist` adds 161 is not established. |
 | `piece-sheet` | pass | Research. The helmet off: 2 28 to 25, 161 266 to 236, 36 4901 to 4581. |
 | `bonus-equip` | not-observed | Research. The gloves off dropped 36 by 933 with the switch on and 183 with it off, 933 = 183 + 750; the HUD maximum was still the old one at 0.4 s (on) and 0.9 s (off) and the new one by about 5 s and 7 s, and no screenshot came at 1.5 s or 3 s. |
 | `ms-cast` | pass | Research, recorded. With no hold the switch-on mode was 1.278 px, 0.536 of the switch-off hold's 2.385, while `playerEffect[199]` read 0.65 with the switch on (0.5 × 0.65 = 0.325); 42 moving samples, and the effect watch hit its line cap at 135 frames with no `[199]` line. |
@@ -5295,7 +5298,7 @@ replenish-unit: 1.00
 Kept: `regen-units` read 0.883 mana a second per unit from HUD crops over one 2.98 s window, so the shipped 1% may take about 0.88% a second; Stats live 3 measures it in process with `mark1probe vitals` before the unit changes.
 
 allres-route: elements
-162 read 83 with the switch on and off: the element resistances do not take the all-resistance answer through the dispatcher. Giving them an answer of their own is a later change, not this one.
+162 read 83 with the switch on and off, and 164 also read 83: 162 did not move with the all-resistance answer. Whether it adds 161 is not established, since 83 on two elements against 161 = 266 fits a resistance cap clamping the value. So nothing here gives the elements an answer of their own: a later change that did, before a read below the cap (or with a negative 161 answer) separates the two, could count the bonus twice once a character's resistances drop below that cap.
 
 proc-stack: several
 Mana Orb's `effect=7` at S8's end: a proc fires a skill the game would refuse by key, and its instances stack.

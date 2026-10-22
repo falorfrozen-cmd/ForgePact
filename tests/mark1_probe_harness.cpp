@@ -2852,7 +2852,7 @@ int main()
         const bool early = window.Due(1299, rec.Last());
         const bool due = window.Due(1300, rec.Last());
         const std::string end = window.Finish(ReadVitals(rec.Last(), 1300, VitalsMax{ true, 5651 }, VitalsMax{ true, 941 }));
-        const std::string unread = VitalsLine(VitalsUnread("no DrawHud text in the last 120 frames"));
+        const std::string unread = VitalsLine(VitalsUnread("the last DrawHud call is older than 120 frames"));
         const std::string sameTime = VitalsEndLine(start, start);
         const std::string endUnread = VitalsEndLine(start, VitalsUnread("the dispatcher gave no number for 37"));
         // An unread start starts no window; a window with no new draw is due
@@ -2872,11 +2872,11 @@ int main()
                   && started && !early && due && !window.Running()
                   && end == "mark1probe vitals end: life=5600/5651 mana=891.3/940.8 frame=1300 t=55000 dt=5000 life-gain=-51"
                             " mana-gain=-49.7 mana-per-s=-9.94"
-                  && unread == "mark1probe vitals: unread (no DrawHud text in the last 120 frames)"
+                  && unread == "mark1probe vitals: unread (the last DrawHud call is older than 120 frames)"
                   && sameTime.find(" dt=0 ") != std::string::npos && sameTime.substr(sameTime.size() - 13) == " mana-per-s=?"
                   && endUnread == "mark1probe vitals end: unread (the dispatcher gave no number for 37)"
                   && noStart && staleDue
-                  && staleEnd == "mark1probe vitals end: unread (no DrawHud text in the last 120 frames)",
+                  && staleEnd == "mark1probe vitals end: unread (the last DrawHud call is older than 120 frames)",
               line + " | " + end + " | " + sameTime + " | " + staleEnd);
 
         // Life and mana are told apart by their maxima, never by order: the
@@ -2901,6 +2901,10 @@ int main()
         const VitalsReading noAnswer = ReadVitals(draw({ "4000 / 4901", "800 / 1200" }), 510, life, VitalsMax{});
         const VitalsReading old = ReadVitals(draw({ "4000 / 4901", "800 / 1200" }), 631, life, mana);
         const VitalsReading never = ReadVitals(VitalsDraw{}, 510, life, mana);
+        // A DrawHud call that drew no text is not a hook that never ran, and
+        // neither is an old call: each names its own cause.
+        const VitalsReading noText = ReadVitals(draw({}), 510, life, mana);
+        const VitalsReading oldNoText = ReadVitals(draw({}), 631, life, mana);
         // Outside a DrawHud call nothing is kept; a nested call is part of the outer one.
         VitalsRecorder scoped;
         scoped.Offer("1 / 4901");
@@ -2923,8 +2927,10 @@ int main()
                                             " (mana max 1200); 0 pairs drawn)"
                   && VitalsLine(close) == "mark1probe vitals: unread (no pair matched 36 (life max 1000); 2 pairs drawn, 1 matching both)"
                   && VitalsLine(noAnswer) == "mark1probe vitals: unread (the dispatcher gave no number for 37)"
-                  && VitalsLine(old) == "mark1probe vitals: unread (no DrawHud text in the last 120 frames)"
-                  && !never.ok && outsideIgnored && nestedOpen && nested.ok && nested.ms == 1,
+                  && VitalsLine(old) == "mark1probe vitals: unread (the last DrawHud call is older than 120 frames)"
+                  && VitalsLine(never) == "mark1probe vitals: unread (DrawHud not seen since the hook was installed)"
+                  && VitalsLine(noText) == "mark1probe vitals: unread (DrawHud ran but drew no text through the text builtins)"
+                  && VitalsLine(oldNoText) == VitalsLine(noText) && outsideIgnored && nestedOpen && nested.ok && nested.ms == 1,
               VitalsLine(forward) + " | " + VitalsLine(noise) + " | " + VitalsLine(close) + " | " + VitalsLine(nested));
     }
 

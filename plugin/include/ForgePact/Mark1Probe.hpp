@@ -1509,11 +1509,16 @@ inline VitalsReading VitalsUnread(std::string reason)
 // The last DrawHud call's pairs against the dispatcher's two maxima. A pair
 // whose maximum matches neither is ignored; one that matches both cannot be
 // told apart and is counted, never taken; the last pair matching one part
-// wins (the HUD may draw a text twice, an outline under it).
+// wins (the HUD may draw a text twice, an outline under it). The three
+// ways of having no text are told apart: DrawHud never completed (a blind
+// hook), it ran and drew nothing through the text builtins (the HUD draws
+// another way), or its last call is old (the HUD stopped drawing).
 inline VitalsReading ReadVitals(const VitalsDraw& draw, int64_t nowFrame, VitalsMax life, VitalsMax mana)
 {
-    if (!draw.seen || draw.texts == 0 || nowFrame - draw.frame > kVitalsStaleFrames)
-        return VitalsUnread("no DrawHud text in the last " + std::to_string(kVitalsStaleFrames) + " frames");
+    if (!draw.seen) return VitalsUnread("DrawHud not seen since the hook was installed");
+    if (draw.texts == 0) return VitalsUnread("DrawHud ran but drew no text through the text builtins");
+    if (nowFrame - draw.frame > kVitalsStaleFrames)
+        return VitalsUnread("the last DrawHud call is older than " + std::to_string(kVitalsStaleFrames) + " frames");
     if (!life.known || !mana.known) {
         std::string which = !life.known && !mana.known ? "36 or 37" : !life.known ? "36" : "37";
         return VitalsUnread("the dispatcher gave no number for " + which);

@@ -69487,12 +69487,18 @@ static M1pNs::VitalsReading M1pVitalsRead()
 }
 
 // `vitals [<frames>]`: the reading now; with frames, a window whose end line
-// M1pFrameTick prints once it has run. The first call installs the hook, so
-// it reads nothing yet (`no DrawHud text`): ask again a frame later.
+// M1pFrameTick prints once it has run. The first call installs the hook and
+// says so instead of reading (nothing is drawn through it yet): ask again a
+// frame later.
 static void M1pVitals(const M1pNs::Command& c)
 {
     std::string why;
+    const bool installing = !g_M1pVitalsTried;
     if (!M1pVitalsInstall(why)) { Out(M1pNs::VitalsLine(M1pNs::VitalsUnread(why))); return; }
+    if (installing) {
+        Out("mark1probe vitals: hook installed now; ask again" + (why.empty() ? std::string() : " (" + why + ")"));
+        return;
+    }
     M1pRefreshPlayer();
     const M1pNs::VitalsReading r = M1pVitalsRead();
     Out(M1pNs::VitalsLine(r));

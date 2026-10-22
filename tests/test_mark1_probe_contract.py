@@ -981,7 +981,14 @@ class Mark1ProbeContract(unittest.TestCase):
         self.assertIn("case M1pNs::Form::Vitals: M1pVitals(c); return;", self.body("static void M1pCommand(const std::string& rest)"))
         tick = self.body("static void M1pFrameTick()")
         self.assertIn("if (g_M1pVitalsWindow.Due(frame, g_M1pVitals.Last())) Out(g_M1pVitalsWindow.Finish(M1pVitalsRead()));", tick)
-        self.assertIn("g_M1pTicking = true;", self.body("static void M1pVitals(const M1pNs::Command& c)"))
+        vitals = self.body("static void M1pVitals(const M1pNs::Command& c)")
+        self.assertIn("g_M1pTicking = true;", vitals)
+        # The call that installs the hook says so and reads nothing, so its
+        # line is never mistaken for an instrument that cannot see DrawHud.
+        self.assertIn("const bool installing = !g_M1pVitalsTried;", vitals)
+        self.assertLess(vitals.index("const bool installing"), vitals.index("M1pVitalsInstall(why)"))
+        self.assertIn('"mark1probe vitals: hook installed now; ask again"', vitals)
+        self.assertLess(vitals.index("hook installed now"), vitals.index("M1pVitalsRead()"))
 
     def test_research_only_the_profile_scope_says_which_it_read(self):
         resolve = self.body("static bool M1pResolveScope(CInstance* player, M1pNs::Scope scope, M1pScopeRef& out, std::string& why)")
