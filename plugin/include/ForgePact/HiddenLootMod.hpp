@@ -66,6 +66,14 @@ namespace ForgePact {
 // installed, a pass over the awake ground items every 18 frames (the game's
 // own 0.3 s filter refresh) takes its place.
 //
+// Sell supersedes hide: autosell (AutoSellMod) runs earlier in the same frame
+// callback and destroys the hidden drops it can sell. ModuleMain hands this
+// class the instance ids it sold this frame (NoteSold), before OnFrame. A
+// note of this frame that names one of them is counted `sold` and asked
+// nothing: the instance is gone, and asking would only count it
+// `unidentified`. What autosell could not sell is judged and slept as
+// before. The sold ids last one frame, matched or not.
+//
 // Everything below is header-only and reaches the game only through
 // g_Yytk->CallBuiltin; the key state and the foreground test are handed in,
 // so tests/hidden_loot_harness.cpp can compile the real class against a
@@ -88,6 +96,7 @@ public:
         uint64_t inits = 0, slept = 0, visible = 0, noFilterVar = 0, unidentified = 0, gone = 0;
         uint64_t passes = 0, skippedPersistent = 0, errors = 0;
         uint64_t visibleUnwritten = 0;   // the built-in `visible` did not take a write (the verdict did)
+        uint64_t sold = 0;               // drops autosell sold in their own frame: counted once each, asked nothing
         // Which of the call's values identified the item at the frame's end.
         uint64_t byArg0 = 0, byArg1 = 0, bySelf = 0;
         // Instance pointers made an `id` inside the call, and those that were
@@ -205,6 +214,7 @@ public:
         }
         Forget();
         m_Pending.clear();
+        m_Sold.clear();
         m_Enabled = false;
         m_Held = false;
         return result;
@@ -233,6 +243,15 @@ public:
         } catch (...) { ++m_Stats.errors; }
     }
 
+    // From the adapter, after autosell's tick and before OnFrame: an instance
+    // id autosell sold (destroyed) this frame. No runner call; ignored while
+    // off. Kept until this frame's OnFrame, which uses and clears them.
+    void NoteSold(int64_t id) {
+        if (!m_Enabled || id < 0) return;
+        if (m_Sold.size() >= kPendingCap) { ++m_Stats.errors; return; }
+        m_Sold.insert(id);
+    }
+
     // Per-frame work from the frame callback. `roomKey` changes on every room
     // change; `roomInfo()` (name, persistence, readable) is asked once a room,
     // the first time something could be put to sleep there.
@@ -240,6 +259,10 @@ public:
     void OnFrame(uint64_t frame, int64_t roomKey, RoomProbe roomInfo) {
         m_Calls = 0;
         if (!m_Enabled) return;
+        // This frame's sold ids, taken whatever happens below: they never
+        // reach the next frame.
+        std::unordered_set<int64_t> sold;
+        sold.swap(m_Sold);
         try {
             if (roomKey != m_RoomKey) EnterRoom(roomKey);
             // The key counts only while one is assigned and the game's own
@@ -248,7 +271,7 @@ public:
             if (m_Key != 0 && m_InFront && m_KeyDown && m_InFront()) held = m_KeyDown(m_Key);
             if (held && !m_Held) { m_Held = true; ShowAll(); }
             else if (!held && m_Held) { m_Held = false; HideAll(); }
-            if (!m_Pending.empty()) ProcessPending(roomInfo);
+            if (!m_Pending.empty()) ProcessPending(roomInfo, sold);
             if (m_Route != Route::Both && frame >= m_LastPass + kPassFrames) {
                 m_LastPass = frame;
                 ++m_Stats.passes;
@@ -444,13 +467,33 @@ private:
         m_Items.emplace(id, std::move(item));
     }
 
+    // A note autosell sold this frame: one of its numeric handles (a number,
+    // a reference, or an instance pointer already reduced to its `id`) is a
+    // sold id. Read from the note alone, with no runner call.
+    static bool SoldNote(const PendingCall& call, const std::unordered_set<int64_t>& sold, int64_t& id) {
+        for (const RValue& candidate : call.candidates) {
+            double n = -1;
+            if (!Number(candidate, n) || n < 0) continue;
+            if (sold.count(static_cast<int64_t>(n))) { id = static_cast<int64_t>(n); return true; }
+        }
+        return false;
+    }
+
     template <class RoomProbe>
-    void ProcessPending(RoomProbe& roomInfo) {
+    void ProcessPending(RoomProbe& roomInfo, const std::unordered_set<int64_t>& sold) {
         std::vector<PendingCall> calls;
         calls.swap(m_Pending);
-        if (!LootIndex()) { m_Stats.unidentified += calls.size(); return; }
+        std::unordered_set<int64_t> counted;   // a sold item handed over twice is counted once
+        bool indexAsked = false, indexKnown = false;
         auto allows = [this, &roomInfo] { return RoomAllows(roomInfo); };
         for (const PendingCall& call : calls) {
+            int64_t soldId = -1;
+            if (!sold.empty() && SoldNote(call, sold, soldId)) {
+                if (counted.insert(soldId).second) ++m_Stats.sold;
+                continue;
+            }
+            if (!indexAsked) { indexAsked = true; indexKnown = LootIndex(); }
+            if (!indexKnown) { ++m_Stats.unidentified; continue; }
             RValue handle;
             int64_t id = -1;
             bool found = false;
@@ -548,6 +591,7 @@ private:
     bool m_RoomAllows = false;
     uint64_t m_LastPass = 0;
     std::vector<PendingCall> m_Pending;
+    std::unordered_set<int64_t> m_Sold;          // ids autosell sold this frame (NoteSold), cleared by OnFrame
     Outcome m_Outcome = Outcome::Kept;
     std::unordered_map<int64_t, Item> m_Items;   // what it slept or shows, by instance id
     std::unordered_set<int64_t> m_Judged;        // seen and left alone (visible, no verdict, persistent room)
