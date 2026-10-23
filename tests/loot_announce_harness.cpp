@@ -22,6 +22,14 @@
 // live2_replay replays Live procedure 2's steps 2-6 (aborted), the session
 // whose bag drop the old LootGroundDrop window announced.
 //
+// The Chaos Tower's loot burst (ForgePact #227): a floor takes its fresh drops
+// back into a list and puts the same structs down at its end, unbuilt.
+// Baseline: an item built long before it lands is held, and off, a listed
+// entry is not kept. Target: a recently built entry is kept and its landing
+// announces once; a stale entry is not kept; the memory is forgotten on a
+// shrink and on off, capped, and leaves rarity and identity deciding; the stat
+// line names the four burst counters.
+//
 // The install (Known Limitations item 8: a hook installed at character select
 // stalls the runner): the switch arms at launch, and the hooks go in only once
 // setup is done and the local player resolves, once per session. Baseline:
@@ -53,7 +61,10 @@ static std::string counts(const LootAnnounceMod& m)
         + " held-rarity=" + std::to_string(c.heldRarity) + " held-no-rarity=" + std::to_string(c.heldNoRarity)
         + " held-duplicate=" + std::to_string(c.heldDuplicate) + " held-bag-drop=" + std::to_string(c.heldBagDrop)
         + " sink-refused=" + std::to_string(c.sinkRefused) + " remembered=" + std::to_string(m.Remembered())
-        + " created=" + std::to_string(c.created) + " create-overflow=" + std::to_string(c.createOverflow);
+        + " created=" + std::to_string(c.created) + " create-overflow=" + std::to_string(c.createOverflow)
+        + " burst-listed=" + std::to_string(c.burstListed) + " burst-fresh=" + std::to_string(c.burstFresh)
+        + " burst-landed=" + std::to_string(c.burstLanded) + " burst-overflow=" + std::to_string(c.burstOverflow)
+        + " burst-kept=" + std::to_string(m.BurstKept());
 }
 
 // One ground item as the adapter sees it at the end of the drop's frame: its
@@ -74,10 +85,18 @@ static LootAnnounceMod::ItemKey keyOf(const Drop& d)
     return { LootAnnounceMod::kKeyStruct, d.key ? d.key : (uint64_t)d.id };
 }
 
-// The end-of-frame decision for an item that is already on the ground.
+// The end-of-frame decision for an item that is already on the ground: the
+// guard asks the creation window and the burst memory for its key.
 static Verdict see(LootAnnounceMod& m, const Drop& d)
 {
-    return m.Decide(d.rarity, m.RecentlyCreated(keyOf(d)), d.id, d.type, d.stamp);
+    return m.Decide(d.rarity, m.RecentlyCreated(keyOf(d)), d.id, d.type, d.stamp, m.InBurstMemory(keyOf(d)));
+}
+
+// The adapter's burst read: a new entry of the Controller's loot burst list,
+// noted after the tick's decisions and before the window ages.
+static void listed(LootAnnounceMod& m, const Drop& d)
+{
+    m.NoteListed(keyOf(d));
 }
 
 // The game builds the item through CreateItemNew and puts it on the ground in
@@ -452,6 +471,229 @@ int main()
               counts(m));
     }
 
+    // ---- the Chaos Tower's loot burst (ForgePact #227) ------------------------
+    // A tower floor collects its fresh drops as they land (into the
+    // Controller's loot burst list, taking them off the floor) and puts the
+    // same item structs on the ground again when the floor ends, without
+    // building them anew. The adapter reads the list once per tick, after the
+    // batch's decisions and before the window ages, and notes each new entry.
+    {
+        // Baseline: today's rule. Built at frame T (the first landing, which
+        // the floor takes back), on the ground again ten seconds later with
+        // nothing remembering the list: the guard holds it as a bag drop.
+        LootAnnounceMod m;
+        m.SetEnabled(true);
+        const Drop d{ Heroic, 6001, "1759700006001", "4", 0xD001 };
+        m.NoteCreated(keyOf(d));
+        tick(m, 600);
+        const Verdict v = see(m, d);
+        check("baseline/collected_item_landing_later_is_held",
+              v == Verdict::HeldBagDrop && m.Stats().heldBagDrop == 1 && m.Stats().announced == 0,
+              LootAnnounceMod::VerdictName(v) + std::string(" ") + counts(m));
+    }
+    {
+        // Baseline: off, a listed entry is neither counted nor kept, even one
+        // the hook would have seen built; on again, its landing is held.
+        LootAnnounceMod m;
+        const Drop d{ Heroic, 6101, "1759700006101", "4", 0xD101 };
+        m.NoteCreated(keyOf(d));
+        listed(m, d);
+        m.SetEnabled(true);
+        const bool kept = m.InBurstMemory(keyOf(d));
+        tick(m, 600);
+        const Verdict v = see(m, d);
+        check("baseline/off_remembers_no_burst_entry",
+              !kept && v == Verdict::HeldBagDrop && m.Stats().burstListed == 0 && m.Stats().burstFresh == 0
+                  && m.Stats().burstLanded == 0 && m.Stats().announced == 0,
+              LootAnnounceMod::VerdictName(v) + std::string(" ") + counts(m));
+    }
+    {
+        // Target: built and listed at T (the frame it first landed and the
+        // floor took it back), on the ground at the floor's end, T+600.
+        LootAnnounceMod m;
+        m.SetEnabled(true);
+        const Drop d{ Heroic, 6201, "1759700006201", "4", 0xD201 };
+        m.NoteCreated(keyOf(d));
+        listed(m, d);
+        tick(m, 600);
+        const Verdict v = see(m, d);
+        check("target/fresh_burst_entry_lands_as_new",
+              v == Verdict::Announce && m.Stats().announced == 1 && m.Stats().burstListed == 1
+                  && m.Stats().burstFresh == 1 && m.Stats().burstLanded == 1 && m.Stats().heldBagDrop == 0,
+              LootAnnounceMod::VerdictName(v) + std::string(" ") + counts(m));
+    }
+    {
+        // Target: an entry whose struct was not built this frame or the last -
+        // a bag drop on a tower floor, which the floor collects all the same,
+        // or a struct built long before - is listed but not kept.
+        LootAnnounceMod m;
+        m.SetEnabled(true);
+        const Drop bag{ Heroic, 6301, "1759700006301", "4", 0xD301 };
+        const Drop old{ Angelic, 6302, "1759700006302", "4", 0xD302 };
+        m.NoteCreated(keyOf(old));
+        tick(m, 2);
+        listed(m, bag);
+        listed(m, old);
+        const bool kept = m.InBurstMemory(keyOf(bag)) || m.InBurstMemory(keyOf(old));
+        tick(m, 600);
+        const Verdict vb = see(m, bag);
+        const Verdict vo = see(m, old);
+        check("target/stale_burst_entry_stays_held",
+              !kept && vb == Verdict::HeldBagDrop && vo == Verdict::HeldBagDrop && m.Stats().burstListed == 2
+                  && m.Stats().burstFresh == 0 && m.Stats().burstLanded == 0 && m.Stats().announced == 0,
+              counts(m));
+    }
+    {
+        // Target: the burst may put one ground item through LootGroundInit
+        // twice in its frame; a sighting does not consume the key, and the
+        // identity memory keeps it to one line.
+        LootAnnounceMod m;
+        m.SetEnabled(true);
+        const Drop d{ Unholy, 6401, "1759700006401", "4", 0xD401 };
+        m.NoteCreated(keyOf(d));
+        listed(m, d);
+        tick(m, 600);
+        const Verdict first = see(m, d);
+        const Verdict second = see(m, d);
+        const bool stillKept = m.InBurstMemory(keyOf(d));
+        check("target/burst_landing_twice_in_one_frame_one_line",
+              first == Verdict::Announce && second == Verdict::HeldDuplicate && stillKept && m.Stats().announced == 1
+                  && m.Stats().heldDuplicate == 1 && m.Stats().heldBagDrop == 0,
+              counts(m));
+    }
+    {
+        // Target: the adapter tells the core the list shrank or changed (the
+        // floor's end emptied it, another floor's list): every kept key goes,
+        // and the same struct on the ground again is held.
+        LootAnnounceMod m;
+        m.SetEnabled(true);
+        const Drop d{ Heroic, 6501, "1759700006501", "4", 0xD501 };
+        m.NoteCreated(keyOf(d));
+        listed(m, d);
+        tick(m, 600);
+        const Verdict first = see(m, d);
+        m.ForgetBurst();
+        const bool kept = m.InBurstMemory(keyOf(d));
+        tick(m, 600);
+        const Verdict again = see(m, { Heroic, 6502, "1759700006501", "4", 0xD501 });
+        // A kept entry that never landed goes too.
+        const Drop other{ Angelic, 6503, "1759700006503", "4", 0xD503 };
+        m.NoteCreated(keyOf(other));
+        listed(m, other);
+        m.ForgetBurst();
+        tick(m, 600);
+        const Verdict never = see(m, other);
+        check("target/burst_memory_forgotten_when_list_shrinks",
+              first == Verdict::Announce && !kept && again == Verdict::HeldBagDrop && never == Verdict::HeldBagDrop
+                  && m.Stats().announced == 1 && m.Stats().heldBagDrop == 2,
+              counts(m));
+    }
+    {
+        // Target: the burst passes the creation guard only; the rarity and the
+        // identity still decide.
+        LootAnnounceMod m;
+        m.SetEnabled(true);
+        const Drop satanic{ Satanic, 6601, "1759700006601", "4", 0xD601 };
+        const Drop heroic{ Heroic, 6602, "1759700006602", "4", 0xD602 };
+        m.NoteCreated(keyOf(satanic));
+        listed(m, satanic);
+        const Verdict announced = fresh(m, { Heroic, 6603, "1759700006602", "4", 0xD603 });
+        m.NoteCreated(keyOf(heroic));
+        listed(m, heroic);
+        tick(m, 600);
+        const Verdict vs = see(m, satanic);
+        const Verdict vh = see(m, heroic);
+        check("target/burst_rarity_and_identity_rules_still_apply",
+              announced == Verdict::Announce && vs == Verdict::HeldRarity && vh == Verdict::HeldDuplicate
+                  && m.Stats().announced == 1 && m.Stats().heldRarity == 1 && m.Stats().heldDuplicate == 1
+                  && m.Stats().burstLanded == 2,
+              counts(m));
+    }
+    {
+        // Target: the memory keeps kBurstCap keys; a note past it is counted
+        // and not kept. The creation window holds one frame's notes, so the
+        // keys are built over two frames.
+        LootAnnounceMod m;
+        m.SetEnabled(true);
+        const uint64_t cap = (uint64_t)LootAnnounceMod::kBurstCap;
+        for (uint64_t i = 0; i < cap; ++i) {
+            const LootAnnounceMod::ItemKey k{ LootAnnounceMod::kKeyStruct, 0x100000 + i };
+            m.NoteCreated(k);
+            m.NoteListed(k);
+        }
+        tick(m);
+        const LootAnnounceMod::ItemKey past{ LootAnnounceMod::kKeyStruct, 0x100000 + cap };
+        m.NoteCreated(past);
+        m.NoteListed(past);
+        const bool firstKept = m.InBurstMemory({ LootAnnounceMod::kKeyStruct, 0x100000 });
+        const bool lastKept = m.InBurstMemory({ LootAnnounceMod::kKeyStruct, 0x100000 + cap - 1 });
+        const bool pastKept = m.InBurstMemory(past);
+        check("target/burst_memory_capped",
+              LootAnnounceMod::kBurstCap == 4096 && firstKept && lastKept && !pastKept
+                  && m.Stats().burstListed == (long long)cap + 1 && m.Stats().burstFresh == (long long)cap
+                  && m.Stats().burstOverflow == 1,
+              counts(m));
+        // Forgotten, the memory has room again.
+        m.ForgetBurst();
+        m.NoteListed(past);
+        check("target/burst_memory_cap_frees_on_forget", m.InBurstMemory(past) && m.Stats().burstOverflow == 1,
+              counts(m));
+    }
+    {
+        // Target: switching off forgets the burst memory, as it clears the
+        // creation window; the counters stay.
+        LootAnnounceMod m;
+        m.SetEnabled(true);
+        const Drop d{ Heroic, 6801, "1759700006801", "4", 0xD801 };
+        m.NoteCreated(keyOf(d));
+        listed(m, d);
+        const bool before = m.InBurstMemory(keyOf(d));
+        m.SetEnabled(false);
+        m.SetEnabled(true);
+        const bool after = m.InBurstMemory(keyOf(d));
+        tick(m, 600);
+        const Verdict v = see(m, d);
+        check("target/off_forgets_burst_memory",
+              before && !after && v == Verdict::HeldBagDrop && m.Stats().burstListed == 1 && m.Stats().burstFresh == 1
+                  && m.Stats().burstLanded == 0,
+              LootAnnounceMod::VerdictName(v) + std::string(" ") + counts(m));
+    }
+    {
+        // Target: built, listed and on the ground in one frame (an entry the
+        // floor collected in the frame it was built): the creation window
+        // passes it, so the burst memory is not what let it through.
+        LootAnnounceMod m;
+        m.SetEnabled(true);
+        const Drop d{ Angelic, 6901, "1759700006901", "4", 0xD901 };
+        m.NoteCreated(keyOf(d));
+        listed(m, d);
+        const Verdict v = see(m, d);
+        check("target/collected_and_burst_in_one_frame_counts_as_recent",
+              v == Verdict::Announce && m.Stats().burstFresh == 1 && m.Stats().burstLanded == 0,
+              LootAnnounceMod::VerdictName(v) + std::string(" ") + counts(m));
+    }
+    {
+        // Target: the stat line's four burst fields, after create-overflow.
+        LootAnnounceMod m;
+        const std::string offLine = m.StatLine();
+        m.SetEnabled(true);
+        const Drop a{ Heroic, 7001, "1759700007001", "4", 0xE001 };
+        const Drop b{ Heroic, 7002, "1759700007002", "4", 0xE002 };
+        m.NoteCreated(keyOf(a));
+        listed(m, a);
+        listed(m, b);
+        tick(m, 600);
+        see(m, a);
+        const std::string onLine = m.StatLine();
+        const auto endsWith = [](const std::string& s, const std::string& tail) {
+            return s.size() >= tail.size() && s.compare(s.size() - tail.size(), tail.size(), tail) == 0;
+        };
+        check("target/stat_line_burst_fields",
+              endsWith(offLine, " create-overflow=0 burst-listed=0 burst-fresh=0 burst-landed=0 burst-overflow=0")
+                  && endsWith(onLine, " create-overflow=0 burst-listed=2 burst-fresh=1 burst-landed=1 burst-overflow=0"),
+              onLine);
+    }
+
     // ---- the memory is capped ------------------------------------------------
     {
         LootAnnounceMod m;
@@ -475,7 +717,8 @@ int main()
         LootAnnounceMod m;
         check("stat/fresh_off",
               m.StatLine() == "lootann: off route=server seen=0 announced=0 held-rarity=0 held-no-rarity=0 "
-                              "held-duplicate=0 held-bag-drop=0 sink-refused=0 remembered=0 created=0 create-overflow=0",
+                              "held-duplicate=0 held-bag-drop=0 sink-refused=0 remembered=0 created=0 create-overflow=0 "
+                              "burst-listed=0 burst-fresh=0 burst-landed=0 burst-overflow=0",
               m.StatLine());
         m.SetEnabled(true);
         fresh(m, { Heroic, 1, "a" });
@@ -486,7 +729,8 @@ int main()
         m.NoteSinkRefused();
         check("stat/counts",
               m.StatLine() == "lootann: on route=server seen=5 announced=1 held-rarity=1 held-no-rarity=1 "
-                              "held-duplicate=1 held-bag-drop=1 sink-refused=1 remembered=1 created=3 create-overflow=0",
+                              "held-duplicate=1 held-bag-drop=1 sink-refused=1 remembered=1 created=3 create-overflow=0 "
+                              "burst-listed=0 burst-fresh=0 burst-landed=0 burst-overflow=0",
               m.StatLine());
         check("stat/verdict_names",
               std::string(LootAnnounceMod::VerdictName(Verdict::Off)) == "off"
