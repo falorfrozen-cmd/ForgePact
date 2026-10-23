@@ -5543,7 +5543,7 @@ drain-below: drains
 `drain-below` from 1428/2352 with the replenish forced to −140: mana fell 518, 22.0% of the maximum, in 4.2 s. A replenish answer below zero takes mana away, so a drain larger than a character's replenish empties the pool rather than stopping at zero.
 
 replenish-unit: 0.87
-`regen-units` read in process (`mark1probe vitals`), not from HUD crops: 122.417 mana a second at R = 140, 0.874 a unit (Stats live 2's HUD crops read 0.883; S9's below-zero window 124.131 / 140 = 0.887). So the shipped 1% takes about 0.87% of the maximum a second. `kMark1ReplenishUnit` stays 1.0 here; moving it is a code change for the driver to plan.
+`regen-units` read in process (`mark1probe vitals`), not from HUD crops: S7, 122.417 mana a second at R = 140, 0.874 a unit of the answer (Stats live 2's HUD crops read 0.883; S9's below-zero window 124.131 / 140 = 0.887). S8, with the drain on (answer R − D = 92.96, D = 47.04 drained units), read 87.37 mana a second, 0.940 a unit of the answer; S7 minus S8, 35.05 mana a second over 47.04 drained units, reads 0.745 a drained unit, the drain's own conversion (Live 2's halving gave about 0.877). So the shipped 1% takes about 0.87% of the maximum a second by S7's unit, which is inferred; read directly (S7 minus S8) it took about 0.745% a second per column. `kMark1ReplenishUnit` stays 1.0 here; moving it is a code change for the driver to plan (*The replenish unit adopted* below: 0.745).
 
 sheet-askers: UI_Talent_Screen_Attribute_obj
 The sheet asked 36, 92 and 97 with `UI_Talent_Screen_Attribute_obj` as self on the Player tab (`sheet-life`, `sheet-defense`), and id 2 also with `UI_Button_Talent_Player_obj`; the other two answered objects were not seen asking. The same `UI_Talent_Screen_Attribute_obj` asks for the mercenary's stats on the sheet's Mercenary tab and is answered there too (`merc-page` failed): the predicate tells the sheet from the mercenary, not the sheet's two pages apart.
@@ -5871,31 +5871,46 @@ applies` and `pdr-hit: applies`. Nothing here changes the plugin.
 
 ### The replenish unit adopted
 
-The owner's decision of 2026-10-23, after Stats live 4: "Scale to 1%/s",
-the option that set `kMark1ReplenishUnit` to the measured unit so each
-automated skill drains a true 1% of maximum mana a second, re-checked by
-the pure-core tests and not re-measured live.
+The owner's decisions of 2026-10-23: after Stats live 4, "Scale to 1%/s",
+setting `kMark1ReplenishUnit` to the measured unit so each automated skill
+drains about 1% of maximum mana a second, re-checked by the pure-core tests
+with no live re-check; then, after that change's review, the unit 0.745
+rather than 0.874 (the owner: "if you already accounted for that and 0.745
+is closer to 1% then go with one round").
 
-The measured unit: Stats live 3's `regen-units`, read in process with
-`mark1probe vitals`, found one unit of the mana replenish answer (id 42)
-worth 0.874 mana a second (122.417 mana a second at an answer of 140;
-decision key `replenish-unit: 0.87` in *Stats live 3 decision*). Stats
-live 2's HUD crops had read 0.883. With the constant at 1.0, the build
-Live 3 measured, the shipped 1% took about 0.87% of the maximum a second.
+The measured unit, from Stats live 3, read in process with `mark1probe
+vitals`:
 
-The new arithmetic: `kMark1ReplenishUnit` is 0.874, and the drain divides
-by it. Id 42 is answered R − n × 1% × M / 0.874 (R the game's own answer,
-n the proc columns, M maximum mana), never below −M. One mana a second
-takes 1 / 0.874 units of the answer, so in mana a second the drain is
-n × 1% × M whatever the unit. Multiplying by the unit, as the code did while
-it was 1.0, would have taken about 0.76% a second at 0.874, the opposite of
-the decision. A unit that is not a positive finite number leaves the answer
+- S7: the replenish at its own answer R = 140 gave 122.417 mana a second,
+  0.874 a unit of the answer (`regen-units`, decision key `replenish-unit:
+  0.87` in *Stats live 3 decision*).
+- S8: with the drain on (answer R − D = 92.96, D = 47.04 drained units) it
+  gave 87.37 mana a second, 0.940 a unit of the answer.
+- S7 minus S8: 35.05 mana a second over 47.04 drained units, 0.745 mana a
+  second per drained unit. This is the drain's own conversion, and the
+  value adopted.
+- Beside them, Live 2's halving gave about 0.877 and S9's below-zero window
+  0.887. The readings disagree, which is why the per-second rate below is
+  stated as not measured in a game session yet.
+
+The build Live 3 measured had the constant at 1.0. Read directly (S7 minus
+S8), it took about 0.745% of the maximum a second per column; the 0.87%
+recorded for it elsewhere is inferred from S7's 0.874 a unit.
+
+The arithmetic: `kMark1ReplenishUnit` is 0.745, and the drain divides by it.
+Id 42 is answered R − n × 1% × M / 0.745 (R the game's own answer, n the
+proc columns, M maximum mana), never below −M. One mana a second takes
+1 / 0.745 drained units, so in mana a second the drain is n × 1% × M
+whatever the unit. Multiplying by the unit, as the code did while it was
+1.0, would have taken about 0.56% a second at 0.745, the opposite of the
+decision. A unit that is not a positive finite number leaves the answer
 alone, as a missing maximum does. The hub model's `REPLENISH_UNIT` is the
-exact fraction 874/1000, and the hub's shared cases
-(`hs-game-sdk/curated/mark1_automation_cases.json`) carry cases at 0.874
-that the C++ core and the model must both reproduce.
+exact fraction 745/1000, the hub's shared cases
+(`hs-game-sdk/curated/mark1_automation_cases.json`) carry cases at 0.745
+that the C++ core and the model must both reproduce, and `mark1set stat`
+prints the unit in force as `unit=` after `drain=`.
 
-The per-second rate at 0.874 is the arithmetic's, checked by
-`tests/test_mark1_cost_behavior.py` and the hub's
-`tests/test_mark1_automation_model.py`, and is not re-measured live: no
-session has run a build with the scaled unit.
+So each automated skill takes about 1% of maximum mana a second by the
+arithmetic, checked by `tests/test_mark1_cost_behavior.py` and the hub's
+`tests/test_mark1_automation_model.py`; that rate is not measured in a game
+session yet: no session has run a build with the scaled unit.

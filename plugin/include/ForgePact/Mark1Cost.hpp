@@ -23,7 +23,7 @@ namespace ForgePact {
 //     minus columns x kMark1DrainPctPerSecond % of maximum mana divided by
 //     kMark1ReplenishUnit (the mana a second one unit of the answer is), never
 //     below minus the maximum, so mana falls through the game's own update by
-//     a true 1% of the maximum a second per column.
+//     about 1% of the maximum a second per column.
 //   - MaxMana (the documented alternative, still built): id 37, maximum mana,
 //     is answered with its original less kMark1MaxManaCutPct % per column,
 //     never below 0.
@@ -59,14 +59,18 @@ inline constexpr double kMark1DrainPctPerSecond = 1.0;
 // The alternative's cut per automated skill, in % of maximum mana: the owner's
 // own figure (2026-10-22, "20% per each automated skill"); 20% left at four.
 inline constexpr double kMark1MaxManaCutPct = 20.0;
-// The mana a second one unit of id 42's answer is: 0.874, measured in process
-// by Stats live 3's `regen-units` (122.417 mana a second at an answer of 140;
-// Stats live 2's HUD crops had read about 0.883). The drain divides by it, so
-// each column takes a true kMark1DrainPctPerSecond % of maximum mana a second
-// (the owner's choice, 2026-10-23, "Scale to 1%/s"). That per-second rate is
-// the arithmetic's, not re-measured live: Live 3 measured the build before it,
-// which took about 0.87% a second. The hub model's REPLENISH_UNIT is the same.
-inline constexpr double kMark1ReplenishUnit = 0.874;
+// The mana a second one drained unit of id 42's answer is: 0.745, from Stats
+// live 3 in process, S7 minus S8 (the regen at the answer's own 140 was 122.417
+// mana a second, with 47.04 units drained it was 87.37: 35.05 over 47.04).
+// S7 alone read 0.874 a unit of the answer, Live 2's halving about 0.877 and
+// S9's below-zero window 0.887; the readings disagree. The drain divides by
+// it, so each column takes about kMark1DrainPctPerSecond % of maximum mana a
+// second (the owner's choices of 2026-10-23, "Scale to 1%/s", then 0.745);
+// that rate is not measured in a game session yet. The 1.0 build Live 3
+// measured took about 0.745% a second per column, read directly (S7 minus
+// S8); the 0.87% recorded for it elsewhere is inferred from S7's 0.874. The
+// hub model's REPLENISH_UNIT is the same.
+inline constexpr double kMark1ReplenishUnit = 0.745;
 
 // The dispatcher ids the cost answers (rss_cases.json, static reading).
 inline constexpr double kMark1MaxManaStatId = 37.0;    // StatMaxMana

@@ -47,7 +47,7 @@ pieces" below.
     your Skill Haste) plus its cast time (shortened by your Faster Cast
     Rate), so a skill with no cooldown, such as Shadow Bolt, fires
     continuously; when two are due at once they go in Q, E, R, Y order.
-    These casts cost no mana, so instead **each automated skill drains
+    These casts cost no mana, so instead **each automated skill drains about
     1% of your maximum mana a second** while the bonus is on, taken off your
     mana regeneration: good regeneration keeps one or two automated skills
     going, and four drain your mana. A skill under automation cannot be
@@ -126,9 +126,9 @@ pieces" below.
   landing. A third session checked the mana drain, 1% of your maximum mana
   per automated skill taken off your mana replenish, which the game turned
   into a little less than 1% a second (about 1.5% of your maximum a second
-  with two automated skills in that session; this version corrects it to a
-  full 1% a second per skill, a rate not re-measured in a game session
-  yet), and that a drain larger than your regeneration empties your mana;
+  with two automated skills in that session; this version scales the drain
+  by the replenish rate that session measured, aiming at about 1% a second
+  per skill, and the new rate has not been measured in a game session yet), and that a drain larger than your regeneration empties your mana;
   and the character sheet
   showing the set's Life, Defense and Physical Damage Taken Reduced with
   all four worn, the same numbers the game's own stat calls return for

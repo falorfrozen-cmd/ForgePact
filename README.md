@@ -1806,7 +1806,7 @@ any item's, and the set gives more for every piece you wear.
   Skill Haste) plus its cast time (shortened by your Faster Cast Rate), so a
   skill with no cooldown, such as Shadow Bolt, fires continuously, and when
   two are due at once they go in Q, E, R, Y order. These casts cost no mana,
-  so instead **each automated skill drains 1% of your maximum mana a
+  so instead **each automated skill drains about 1% of your maximum mana a
   second** while the bonus is on, taken off your mana regeneration: with
   good mana regeneration one or two automated skills keep your mana up, and
   four drain it, so the skills you cast yourself have less to spend. When
@@ -1951,10 +1951,10 @@ regeneration fell by about 1.5% of your maximum mana a second (each
 skill's 1% came off the game's mana replenish stat, which the game turned
 into a little less than 1% a second), and a drain larger than your
 regeneration does empty your mana rather than stopping at zero. That
-session also measured how the game turns the replenish stat into mana, and
-this version uses it so each automated skill takes a full 1% of your
-maximum mana a second; that corrected rate is not re-measured in a game
-session yet. It checked
+session also measured how much mana the game takes for each point the drain
+removes, and this version scales the drain by it, aiming at about 1% of your
+maximum mana a second per automated skill; the new rate has not been
+measured in a game session yet. It checked
 the character sheet too: with all four worn it showed the set's Life,
 Defense and Physical Damage Taken Reduced, the same numbers the game's own
 stat calls return for you, while your mercenary and summons got none of

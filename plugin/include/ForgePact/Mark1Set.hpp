@@ -538,6 +538,7 @@ struct BonusStatFields {
     uint64_t locked = 0;
     std::string cost = ForgePact::Mark1ManaCostName(ForgePact::kMark1ManaCost);
     double   drain = ForgePact::kMark1DrainPctPerSecond;
+    double   unit = ForgePact::kMark1ReplenishUnit;   // mana a second per drained unit of id 42's answer, the drain's divisor
     uint64_t drained = 0;
     double   castBase = ForgePact::kMark1BaseCastSeconds;
     bool     haveFcr = false;
@@ -568,6 +569,17 @@ inline std::string TwoDecimals(double v)
     return std::string(hundredths < 0 ? "-" : "") + std::to_string(magnitude / 100) + "." + (cents.size() < 2 ? "0" : "") + cents;
 }
 
+// A value to three decimals (`unit=`), so the replenish unit 0.745 reads whole.
+inline std::string ThreeDecimals(double v)
+{
+    if (!std::isfinite(v)) return "?";
+    const long long thousandths = std::llround(v * 1000.0);
+    const long long magnitude = thousandths < 0 ? -thousandths : thousandths;
+    std::string frac = std::to_string(magnitude % 1000);
+    while (frac.size() < 3) frac = "0" + frac;
+    return std::string(thousandths < 0 ? "-" : "") + std::to_string(magnitude / 1000) + "." + frac;
+}
+
 // The second line of `mark1set stat`, printed after the first. Groups are
 // separated by ` | `; a field added to a group goes after that group's last
 // field, as the first line's rule says.
@@ -595,6 +607,7 @@ inline std::string BonusStatLine(const BonusStatFields& f)
     s += " locked=" + std::to_string(f.locked);
     s += " cost=" + f.cost;
     s += " drain=" + TwoDecimals(f.drain);
+    s += " unit=" + ThreeDecimals(f.unit);
     s += " drained=" + std::to_string(f.drained);
     s += " cast-base=" + TwoDecimals(f.castBase);
     s += " fcr=" + (f.haveFcr ? NumberText(f.fcr) : std::string("-"));

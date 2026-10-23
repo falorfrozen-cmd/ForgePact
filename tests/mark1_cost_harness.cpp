@@ -197,7 +197,7 @@ int main(int argc, char** argv) {
         // A unit that is not a positive finite number leaves the answer as the
         // game gave it, as a missing maximum does, and drains nothing.
         bool same = true;
-        for (double unit : { 0.0, -0.874, std::numeric_limits<double>::quiet_NaN(),
+        for (double unit : { 0.0, -0.745, std::numeric_limits<double>::quiet_NaN(),
                              std::numeric_limits<double>::infinity() }) {
             if (Mark1DrainAnswer(replenish, 4, maxMana, kMark1DrainPctPerSecond, unit) != replenish
                 || Mark1DrainPerSecond(4, kMark1DrainPctPerSecond, maxMana, unit) != 0) same = false;
@@ -207,13 +207,13 @@ int main(int argc, char** argv) {
 
     // ---- target: the drain ----------------------------------------------------
     {
-        // The shipped unit, 0.874 mana a second per unit of id 42's answer
-        // (Stats live 3's `regen-units`): a true 1% of 1500 a second per proc
-        // column takes 15 / 0.874 units off the 30 baseline.
+        // The shipped unit, 0.745 mana a second per drained unit of id 42's
+        // answer (Stats live 3's S7 minus S8): 1% of 1500 a second per proc
+        // column takes 15 / 0.745 units off the 30 baseline.
         bool ok = true;
         std::string seen;
-        const double expected[] = { 30, 12.837528604118994, -4.3249427917620125, -21.48741418764302,
-                                    -38.649885583524025 };
+        const double expected[] = { 30, 9.865771812080538, -10.268456375838923, -30.402684563758392,
+                                    -50.536912751677846 };
         uint64_t changedCount = 0;
         for (int n = 0; n <= 4; ++n) {
             DrainCost cost;
@@ -226,19 +226,19 @@ int main(int argc, char** argv) {
     }
     {
         // The drain is per column: four columns take four times one. At unit
-        // 1.0 that is 15 and 60; at the shipped unit 15 / 0.874 and 60 / 0.874.
+        // 1.0 that is 15 and 60; at the shipped unit 15 / 0.745 and 60 / 0.745.
         const double one = Mark1DrainPerSecond(1, kMark1DrainPctPerSecond, maxMana, 1.0);
         const double four = Mark1DrainPerSecond(4, kMark1DrainPctPerSecond, maxMana, 1.0);
         const double oneShipped = Mark1DrainPerSecond(1, kMark1DrainPctPerSecond, maxMana);
         const double fourShipped = Mark1DrainPerSecond(4, kMark1DrainPctPerSecond, maxMana);
         check("target/drain_linear_in_columns", one == 15 && four == 60 && Mark1DrainPerSecond(0, 1, maxMana) == 0
-              && Near(oneShipped, 17.162471395881006) && Near(fourShipped, 4 * oneShipped),
+              && Near(oneShipped, 20.13422818791946) && Near(fourShipped, 4 * oneShipped),
               "one=" + Num(one) + " four=" + Num(four) + " shipped=" + Num(oneShipped) + "," + Num(fourShipped));
     }
     {
         // The unit divides the drain: in mana a second (units times the unit)
         // the shipped drain is exactly 1% of the maximum per column. Negative
-        // control: multiplying by the unit would take about 0.76% instead.
+        // control: multiplying by the unit would take about 0.56% instead.
         const double units = Mark1DrainPerSecond(1, kMark1DrainPctPerSecond, maxMana);
         const double manaASecond = units * kMark1ReplenishUnit;
         const double multiplied = 1 * kMark1DrainPctPerSecond * maxMana * kMark1ReplenishUnit / 100.0;
@@ -255,7 +255,7 @@ int main(int argc, char** argv) {
         const double exact = Mark1DrainAnswer(0, 4, 1000, 25, 1);
         // At the shipped unit 25% a column is past the pool too.
         const double shipped = Mark1DrainAnswer(0, 4, 1000, 25);
-        check("target/drain_never_below_minus_max_mana", set && Near(s.answer, -457.66590389016017) && big == -100000
+        check("target/drain_never_below_minus_max_mana", set && Near(s.answer, -536.9127516778524) && big == -100000
               && exact == -1000 && shipped == -1000 && Mark1DrainAnswer(-5000, 1, 1000, 1, 1) == -1000
               && Mark1DrainAnswer(-5000, 1, 1000) == -1000,
               "s=" + Num(s.answer) + " big=" + Num(big) + " exact=" + Num(exact) + " shipped=" + Num(shipped));
@@ -275,7 +275,7 @@ int main(int argc, char** argv) {
         bool same = true;
         for (int i = 0; i < 5; ++i) {
             const Seen s = Run(cost, Call{ true, true, 42, true, replenish }, 4, maxMana);
-            if (!Near(s.answer, -38.649885583524025)) same = false;
+            if (!Near(s.answer, -50.536912751677846)) same = false;
         }
         check("target/repeated_calls_never_compound", same && cost.Stats().drained == 5,
               "drained=" + std::to_string(cost.Stats().drained));
@@ -284,7 +284,7 @@ int main(int argc, char** argv) {
         // A column count past the bar counts as four.
         DrainCost cost;
         const Seen s = Run(cost, Call{ true, true, 42, true, replenish }, 9, maxMana);
-        check("target/columns_capped_at_four", Near(s.answer, -38.649885583524025), "answer=" + Num(s.answer));
+        check("target/columns_capped_at_four", Near(s.answer, -50.536912751677846), "answer=" + Num(s.answer));
     }
     {
         // A non-number reaches the caller as the game gave it, counted apart.
@@ -329,8 +329,8 @@ int main(int argc, char** argv) {
         const bool switched = cost.Cost() == Mark1ManaCost::MaxMana;
         cost.ResetOverrides();
         const bool reset = cost.Cost() == kMark1ManaCost && cost.DrainPct() == kMark1DrainPctPerSecond;
-        // 0.75% of 1500 at four columns is 45 mana a second, 45 / 0.874 units.
-        check("override/percent_and_cost", shipped && okHalf && Near(s.answer, -21.48741418764302) && refused && zero
+        // 0.75% of 1500 at four columns is 45 mana a second, 45 / 0.745 units.
+        check("override/percent_and_cost", shipped && okHalf && Near(s.answer, -30.402684563758392) && refused && zero
               && z.answer == replenish && !z.changed && switched && reset,
               "half=" + Num(s.answer) + " zero=" + Num(z.answer));
     }
@@ -353,12 +353,12 @@ int main(int argc, char** argv) {
         // The shipped cost, the drain (the owner, 2026-10-22), on Stats live 2's
         // numbers: Sorak's 2352 mana and a replenish of 257 with Mana Orb
         // unbound, two proc columns (E, Y). Id 42 loses 2 x 1% x 2352 = 47.04
-        // mana a second, which at the shipped unit is 47.04 / 0.874 units;
+        // mana a second, which at the shipped unit is 47.04 / 0.745 units;
         // id 37 is left alone.
         Mark1Cost shipped;
         const Seen r = Run(shipped, Call{ true, true, 42, true, 257 }, 2, 2352);
         const Seen m = Run(shipped, Call{ true, true, 37, true, 2352 }, 2, 2352);
-        check("route/shipped_cost_drains_replenish", r.changed && Near(r.answer, 203.17848970251717) && !m.changed && m.answer == 2352
+        check("route/shipped_cost_drains_replenish", r.changed && Near(r.answer, 193.85906040268458) && !m.changed && m.answer == 2352
               && shipped.Stats().drained == 1,
               "42=" + Num(r.answer) + " 37=" + Num(m.answer));
     }
@@ -374,7 +374,7 @@ int main(int argc, char** argv) {
               "37=" + Num(m.answer) + " 42=" + Num(r.answer));
     }
     check("route/constants", kMark1ManaCost == Mark1ManaCost::Drain && kMark1DrainPctPerSecond == 1.0
-          && kMark1MaxManaCutPct == 20.0 && kMark1ReplenishUnit == 0.874 && kMark1MaxManaStatId == 37
+          && kMark1MaxManaCutPct == 20.0 && kMark1ReplenishUnit == 0.745 && kMark1MaxManaStatId == 37
           && kMark1ReplenishStatId == 42 && kMark1DrainPctMax == 10.0);
 
     std::cout << (failures ? "RESULT FAIL " + std::to_string(failures) : std::string("RESULT OK")) << std::endl;
