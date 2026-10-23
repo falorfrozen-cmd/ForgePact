@@ -1531,7 +1531,7 @@ class FlightCharmsProbeContract(unittest.TestCase):
                               ("unique", "FlpUnique(tail);"), ("pool", "FlpPool();"), ("stat", "FlpStat();")):
             with self.subTest(form=form):
                 self.assertIn('if (sub == "%s") { %s return; }' % (form, handler), command)
-        self.assertIn('static constexpr const char* kFlpMarker = "flp3";', self.code)
+        self.assertIn('static constexpr const char* kFlpMarker = "flp4";', self.code)
         usage = self.body("usage")
         self.assertIn('Out(std::string("flightprobe: marker=") + kFlpMarker);', usage)
         self.assertLess(usage.index("marker="), usage.index("spawn elf|wings|broom"))
@@ -1542,13 +1542,30 @@ class FlightCharmsProbeContract(unittest.TestCase):
 
     # ---- spawn and ground ----------------------------------------------------------------------
 
-    def test_the_marker_is_flp3_for_the_monster_rule(self):
-        # The monster scope moved the marker again, so Live 3's `marker` check proves the
-        # installed build carries the monster rule.
-        self.assertIn('static constexpr const char* kFlpMarker = "flp3";', self.code)
-        for old in ('"flp1"', '"flp2"'):
+    def test_the_marker_is_flp4_for_the_worn_charm_install(self):
+        # #216's follow-ups moved the marker again, so a live session's `marker` check proves
+        # the installed build carries the worn-charm install and its `perf` bucket.
+        self.assertIn('static constexpr const char* kFlpMarker = "flp4";', self.code)
+        for old in ('"flp1"', '"flp2"', '"flp3"'):
             with self.subTest(old=old):
                 self.assertNotIn(old, self.code)
+
+    def test_the_worn_charm_read_has_a_research_only_perf_bucket(self):
+        # `perf`'s "flight worn-charm read" times FlightEquipped's whole read (#216), so the
+        # cost of reading the worn charms is a number. The bucket and its scope are research
+        # only: the player build defines no PerfBucket, and PERF_SCOPE is empty there.
+        research = self.plugin[self.plugin.index("// ---- research profiler"):]
+        research = research[:research.index("#define PERF_SCOPE(bucket)\n#endif")]
+        self.assertIn('static PerfBucket g_PerfFlightWorn{ "flight worn-charm read" };', research)
+        listed = re.search(r"g_PerfAll\[\]\s*=\s*\{(?P<body>[^}]*)\}", research).group("body")
+        self.assertIn("&g_PerfFlightWorn", listed)
+        self.assertNotIn("g_PerfFlightWorn{", self.player)
+        self.assertNotIn("struct PerfBucket", self.player)
+        equipped = function_body(self.plugin, "static bool FlightEquipped(unsigned& mask)")
+        scope = equipped.index("PERF_SCOPE(g_PerfFlightWorn);")
+        # Before the read, so the scope covers FlightCharmArray and the whole walk.
+        self.assertLess(scope, equipped.index("FlightCharmArray(array)"))
+        self.assertIn("#define PERF_SCOPE(bucket)\n#endif", self.plugin)
 
     def test_spawn_uses_charmprobes_loader_route_with_the_charms_own_seed(self):
         spawn = self.body("spawn")

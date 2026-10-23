@@ -1245,7 +1245,11 @@ static PerfBucket g_PerfICD{ "instance_create hooks" }, g_PerfForge{ "item creat
                   g_PerfDeltas{ "rune/special snapshots" }, g_PerfRarity{ "EnemyRaritySettings hook" },
                   g_PerfKill{ "kill hook" }, g_PerfHud{ "DrawHudBuffs hook" }, g_PerfPoll{ "PollCommands" },
                   g_PerfFrame{ "FrameCallback body" };
-static PerfBucket* const g_PerfAll[] = { &g_PerfICD, &g_PerfForge, &g_PerfDeltas, &g_PerfRarity, &g_PerfKill, &g_PerfHud, &g_PerfPoll, &g_PerfFrame };
+// FlightEquipped's read of the worn charms (ForgePact #216): the install poll's look
+// while a charm waits in the bag, and the per-frame Refresh while one is worn. Its
+// numbers count only beside a non-zero calls= from each of those two paths.
+static PerfBucket g_PerfFlightWorn{ "flight worn-charm read" };
+static PerfBucket* const g_PerfAll[] = { &g_PerfICD, &g_PerfForge, &g_PerfDeltas, &g_PerfRarity, &g_PerfKill, &g_PerfHud, &g_PerfPoll, &g_PerfFrame, &g_PerfFlightWorn };
 static long long PerfFreq() { static long long f = 0; if (!f) { LARGE_INTEGER q; QueryPerformanceFrequency(&q); f = q.QuadPart; } return f; }
 struct PerfScope {
     PerfBucket& b; long long t0;
@@ -55498,6 +55502,7 @@ static bool FlightCharmArray(RValue& array)
 // item would not write).
 static bool FlightEquipped(unsigned& mask)
 {
+    PERF_SCOPE(g_PerfFlightWorn);   // research build only: `perf`'s "flight worn-charm read"
     mask = 0;
     RValue array;
     if (!FlightCharmArray(array)) return false;
@@ -56142,10 +56147,10 @@ static void FlightCharmTick()
 // Every game name is an hs-game-sdk constant or read back by name; nothing
 // here computes an address or installs a hook of its own.
 
-// Replan 2 moved it from flp1, and the monster scope (2026-10-13) from flp2,
-// so Live 3's `marker` check proves the installed build carries the monster
-// rule.
-static constexpr const char* kFlpMarker = "flp3";
+// Replan 2 moved it from flp1, the monster scope (2026-10-13) from flp2, and
+// #216's follow-ups from flp3, so a live session's `marker` check proves the
+// installed build carries the worn-charm install and its `perf` bucket.
+static constexpr const char* kFlpMarker = "flp4";
 // The game's fallback ground sprite when an icon has no Pickup_ companion
 // (RDM § 23.7, static reading), compared by the name sprite_get_name reads.
 static constexpr const char* kFlpErrorSprite = "Error_spr";
