@@ -56,6 +56,12 @@ namespace ForgePact {
 //     real stamp with no itemType, or no real stamp and no ground id) is not
 //     Identifiable: the adapter counts it (no-identity) and does not decide
 //     it, so one unread item never stands for another.
+//   - the line (ForgePact #228): an announced item's chat line is
+//     "<character> found" as the sender part, in the game's grey chat text,
+//     and the item's name as the text part, in the colour the game's online
+//     announcement gives its rarity (Line(), AnnouncementColour()). When that
+//     line cannot be shown, the adapter shows the red ServerText() line
+//     instead; the announcement still counts in sink-refused.
 //
 // It is game-independent by contract - rarity codes, instance ids, item keys
 // as integers, types and time stamps as text, never an instance or an RValue
@@ -96,20 +102,75 @@ public:
     };
 
     // How the adapter shows the line (docs/loot-announcement-research.md,
-    // "Route"). kShippedSink is the one the mod runs: `server`
-    // (ChatAddServerMessage, measured to show a line offline). Live procedure
-    // 1 (2026-10-04) showed no line from the other three, and none of them is
-    // settled: `method` was refused because the probe of that build could not
-    // name any anon@ method (it handed script_get_name an unconverted index),
-    // so whether the ground item holds the announcement closure is not
+    // "Route"). kShippedSink is the one the mod runs: `chatcolour` (ForgePact
+    // #228), ChatAddMessage with the line split in two - "<character> found"
+    // as the sender part, the item's name as the text part - so the item name
+    // alone takes its rarity's colour (Line() below). `server`
+    // (ChatAddServerMessage, measured to show a line offline) shipped before
+    // it and stays its fallback: it hardcodes red for the whole line (a static
+    // reading), so it cannot carry a colour. Live procedure 1 (2026-10-04)
+    // showed no line from `method`, `netsend` or `chatadd`, and none of them
+    // is settled: `method` was refused because the probe of that build could
+    // not name any anon@ method (it handed script_get_name an unconverted
+    // index), so whether the ground item holds the announcement closure is not
     // established; NetworkSendChatMessageIngame and GetItemDropMessage
     // refused with the one item argument supplied (the itemInstance struct).
     // Live procedure 3 (2026-10-04) retested `method` with the fixed probe:
     // the anon control still resolved no anon@ method (each read as index
-    // -1), so `method` stays unsettled and `server` ships by the owner's
-    // rule; no further session is planned.
-    enum class Sink : int { Method, NetSend, ChatAdd, Server };
-    static constexpr Sink kShippedSink = Sink::Server;
+    // -1), so `method` stays unsettled. The enum's order is `lootannprobe
+    // try`'s numbering for the first four; ChatColour is appended.
+    enum class Sink : int { Method, NetSend, ChatAdd, Server, ChatColour };
+    static constexpr Sink kShippedSink = Sink::ChatColour;
+
+    // ---- the line's colours (ForgePact #228) ----
+    // GameMaker colours, blue-green-red integers. The game's chat line draws
+    // its time stamp and separator in colours of its own, the sender part in
+    // one colour and the whole text part in another, with no colour markup
+    // inside the text (a static reading, RUNTIME_DATA_MODELS.md), so the item
+    // name's colour is the text part's. The text colours are the ones the
+    // game's online announcement passes per rarity (a static reading): Heroic
+    // is its rarity table's colour for 9, Angelic a fixed pale yellow (not
+    // the table's 7), Unholy the table's 10. The sender part, and any rarity
+    // that is not announced, take the game's grey chat text, which is also
+    // ChatAddMessage's default text colour. None of these is 0 (black) or
+    // 6776816 (#F06767), the sender colour for which the draw greys the text.
+    static constexpr int kNeutralColour = 11974842; // #BAB8B6, the game's grey chat text
+    static constexpr int kHeroicColour = 9764608;   // #00FF94
+    static constexpr int kAngelicColour = 10681599; // #FFFCA2
+    static constexpr int kUnholyColour = 7224024;   // #D83A6E
+
+    // The text colour for a rarity code: its announcement colour, else the
+    // neutral grey (kRarityUnread included).
+    static constexpr int AnnouncementColour(int rarityCode)
+    {
+        switch (rarityCode) {
+        case kHeroic: return kHeroicColour;
+        case kAngelic: return kAngelicColour;
+        case kUnholy: return kUnholyColour;
+        default: return kNeutralColour;
+        }
+    }
+
+    // The chat line `chatcolour` shows, in ChatAddMessage's terms: the sender
+    // part and its colour, the text part and its colour.
+    struct ChatLine {
+        std::string sender;
+        std::string text;
+        int senderColour;
+        int textColour;
+    };
+    // `character` is the adapter's read of the player's name ("You" when it
+    // could not read one), `itemName` the item's itemInfoStruct["28"].
+    static ChatLine Line(const std::string& character, const std::string& itemName, int rarityCode)
+    {
+        return { character + " found", itemName, kNeutralColour, AnnouncementColour(rarityCode) };
+    }
+    // The `server` body's one text (the red fallback line, and the route
+    // shipped before #228): `<character> found <item name>`.
+    static std::string ServerText(const std::string& character, const std::string& itemName)
+    {
+        return character + " found " + itemName;
+    }
 
     enum class Verdict : int { Off, Announce, HeldRarity, HeldNoRarity, HeldDuplicate, HeldBagDrop };
 
@@ -143,6 +204,7 @@ public:
         case Sink::NetSend: return "netsend";
         case Sink::ChatAdd: return "chatadd";
         case Sink::Server: return "server";
+        case Sink::ChatColour: return "chatcolour";
         }
         return "unknown";
     }

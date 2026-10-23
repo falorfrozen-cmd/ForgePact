@@ -14,9 +14,17 @@ the frame tick costs nothing while off, runs before hidden loot's and ages the
 creation window after its batch; the rarity is read by name from
 itemInfoStruct["27"]; the research instrument `lootannprobe`
 and its count-only hook table never reach the player build; the shipped sink
-is the one the research doc's `announce-route:` names (`server`, picked by
-Live procedure 1); and the modstate object and the line formats the live
-operator reads.
+is the one the research doc's `announce-route:` names (`chatcolour` since
+ForgePact #228; Live procedure 1 picked `server`); and the modstate object and
+the line formats the live operator reads.
+
+The line's colours (ForgePact #228): the core holds the four colours, the
+rarity-to-colour rule and both the line's parts and the red line's text; the
+`chatcolour` body calls ChatAddMessage by SDK name with the player as self and
+the fifteen arguments in shape 8's kinds, the colours the core's, and the
+adapter holds no colour value; a refused `chatcolour` call logs, then runs the
+`server` body, which takes its text from the core; and the `lootann line:`
+line and `lootannprobe place`'s tier write are research-build only.
 
 The Chaos Tower's loot burst (ForgePact #227): the tick reads
 Controller_obj.lootExplosionList by name (FindControllerInstance,
@@ -42,10 +50,16 @@ RESEARCH = ROOT / "docs" / "loot-announcement-research.md"
 ADAPTER_START = "// ---- Loot announcements (LootAnnounceMod.hpp): the adapter"
 ADAPTER_END = "// ---- end of the loot announcement adapter"
 
-# The route Live procedure 1 picked (`announce-route:` in the research doc's
-# "Route"): `server`, 2026-10-04. A later route changes this together with the
-# header's kShippedSink.
-EXPECTED_ROUTE = "server"
+# The shipped route (`announce-route:` in the research doc's "Route"): Live
+# procedure 1 picked `server` on 2026-10-04; ForgePact #228 ships
+# `chatcolour` (2026-10-23), with `server` as its red fallback. A later route
+# changes this together with the header's kShippedSink.
+EXPECTED_ROUTE = "chatcolour"
+SINK_NAMES = {"method", "netsend", "chatadd", "server", "chatcolour"}
+
+# The chat line's colours the core holds (ForgePact #228), GameMaker's
+# blue-green-red integers: the grey chat text, Heroic, Angelic, Unholy.
+LINE_COLOURS = ("11974842", "9764608", "10681599", "7224024")
 
 # The research instrument's names, none of which the player build may carry.
 RESEARCH_ONLY_NAMES = ("lootannprobe", "LootAnnProbeCommand", "g_LaProbeRows", "LaProbeDetour", "LaProbeNoteInit",
@@ -176,15 +190,34 @@ class LootAnnounceHeaderTests(unittest.TestCase):
         shipped = re.search(r"static constexpr Sink kShippedSink = Sink::(\w+);", self.code)
         self.assertIsNotNone(shipped)
         names = dict(re.findall(r"case Sink::(\w+): return \"(\w+)\";", self.code))
-        self.assertEqual(set(names.values()), {"method", "netsend", "chatadd", "server"})
+        self.assertEqual(set(names.values()), SINK_NAMES)
         self.assertEqual(names[shipped.group(1)], EXPECTED_ROUTE)
+        # `lootannprobe try 1..5` numbers the first four bodies by the enum's
+        # order; the fifth is appended, never inserted.
+        self.assertIn("enum class Sink : int { Method, NetSend, ChatAdd, Server, ChatColour };", self.code)
         # Once Live procedure 1 picked one, the research doc says which, and it
-        # must be this one.
+        # must be this one (the last `announce-route:` line is the current one).
         if RESEARCH.is_file():
             routes = re.findall(r"announce-route:\s*`?(\w[\w-]*)", RESEARCH.read_text(encoding="utf-8"))
-            picked = [r for r in routes if r in {"method", "netsend", "chatadd", "server", "not-observed"}]
+            picked = [r for r in routes if r in SINK_NAMES | {"not-observed"}]
             if picked:
                 self.assertEqual(picked[-1], EXPECTED_ROUTE, picked)
+
+    def test_the_line_s_colours_and_parts_are_the_core_s(self):
+        # ForgePact #228: the core holds every colour of the line and builds
+        # both its parts and the red line's text; the adapter only passes them.
+        for value in LINE_COLOURS:
+            self.assertRegex(self.code, rf"static constexpr int k\w+Colour = {value};", value)
+        colour = _body(self.code, "static constexpr int AnnouncementColour(int rarityCode)")
+        for case in ("case kHeroic: return kHeroicColour;", "case kAngelic: return kAngelicColour;",
+                     "case kUnholy: return kUnholyColour;", "default: return kNeutralColour;"):
+            self.assertIn(case, colour)
+        line = _body(self.code, "static ChatLine Line(const std::string& character, const std::string& itemName, int rarityCode)")
+        self.assertIn('return { character + " found", itemName, kNeutralColour, AnnouncementColour(rarityCode) };', line)
+        server = _body(self.code, "static std::string ServerText(const std::string& character, const std::string& itemName)")
+        self.assertIn('return character + " found " + itemName;', server)
+        # Never 0 or 6776816 (the sender colour that greys the text) in code.
+        self.assertNotIn("6776816", self.code)
 
     def test_the_line_formats(self):
         self.assertIn('"lootann: on"', self.code)
@@ -365,6 +398,87 @@ class LootAnnouncePluginWiringTests(unittest.TestCase):
         self.assertIn('"lootann: no line (sink "', sink)
         process = _code(_body(self.plugin, "static void LaProcess(const LaPending& p)"))
         self.assertIn("g_LootAnnounce.NoteSinkRefused();", process)
+
+    def _chatcolour_body(self) -> str:
+        run = _code(_body(self.plugin, "static LaSinkRun LaRunSink("))
+        start = run.index("if (sink == Sink::ChatColour) {")
+        return run[start:run.index("return run;", start)]
+
+    def test_chatcolour_calls_chat_add_message_with_the_core_s_line(self):
+        # ForgePact #228: ChatAddMessage by SDK name through LaCall, the player
+        # as self, the fifteen arguments in shape 8's kinds: sender, text, the
+        # core's two colours as reals, int64 0 twice, two reals, the clock
+        # stamp, then six undefined.
+        body = self._chatcolour_body()
+        self.assertIn("ForgePact::LootAnnounceMod::Line(character, name, LaRarity(item))", body)
+        args = re.search(r"std::vector<RValue> args = \{(.*?)\};", body, flags=re.S)
+        self.assertIsNotNone(args, "the chatcolour body builds no argument list")
+        supplied = [a.strip() for a in args.group(1).split(",")]
+        self.assertEqual(supplied, ["RValue(line.sender)", "RValue(line.text)", "RValue((double)line.senderColour)",
+                                    "RValue((double)line.textColour)", "RValue((int64_t)0)", "RValue((int64_t)0)",
+                                    "RValue(0.0)", "RValue(0.0)", "RValue(LaClockStamp())"])
+        self.assertIn("for (int i = 0; i < 6; ++i) args.push_back(RValue());", body)
+        self.assertIn('LaCall(run, SdkShortScriptName(HeroSiege::Scripts::gml_Script_ChatAddMessage), player, "Player_obj", '
+                      "args, before);", body)
+        # The item name that is not text refuses before any call, as before.
+        run = _code(_body(self.plugin, "static LaSinkRun LaRunSink("))
+        self.assertLess(run.index('run.failed = "text (itemInfoStruct[\\"28\\"] is not text)";'),
+                        run.index("if (sink == Sink::ChatColour) {"))
+
+    def test_the_adapter_holds_no_colour_value(self):
+        # The colours are the core's; the adapter passes line.senderColour and
+        # line.textColour. (netsend's own colour constant predates #228 and is
+        # that body's, unchanged.)
+        for value in LINE_COLOURS + ("6776816",):
+            self.assertNotIn(value, self.adapter, value)
+        body = self._chatcolour_body()
+        self.assertIsNone(re.search(r"\b\d{4,}\b|0x[0-9A-Fa-f]+", body), body)
+        # Negative control: the same scan finds a colour literal in a body.
+        self.assertIsNotNone(re.search(r"\b\d{4,}\b|0x[0-9A-Fa-f]+", "RValue(9764608.0)"))
+
+    def test_server_takes_its_text_from_the_core(self):
+        run = _code(_body(self.plugin, "static LaSinkRun LaRunSink("))
+        self.assertIn('LaCall(run, SdkShortScriptName(HeroSiege::Scripts::gml_Script_ChatAddServerMessage), player, "Player_obj",\n'
+                      "           { RValue(ForgePact::LootAnnounceMod::ServerText(character, name)) }, before);", run)
+        self.assertNotIn('" found "', run)
+
+    def test_a_refused_chatcolour_call_logs_then_shows_the_red_line(self):
+        sink = _code(_body(self.plugin, "static bool LootAnnounceSink(const RValue& item, CInstance* lootInst)"))
+        self.assertIn("const bool fallBack = Mod::kShippedSink == Mod::Sink::ChatColour && run.attempted;", sink)
+        logged = sink.index('"lootann: no line (sink "')
+        self.assertIn('"; showing the red line (sink server) instead"', sink)
+        red = sink.index("LaRunSink(ForgePact::LootAnnounceMod::Sink::Server, kLaNetSendA0IsPlayer, item, lootInst, nullptr)")
+        self.assertLess(logged, red)
+        self.assertLess(sink.index("if (fallBack) {"), red)
+        # The announcement still counts as refused, whether the red line showed.
+        self.assertTrue(sink.rstrip().endswith("return false;"), sink)
+        self.assertEqual(sink.count("return true;"), 1)
+        # `attempted` is set by LaCall alone, before it resolves the script, so
+        # a refusal before the call (no player, no item name) has no fallback.
+        call = _code(_body(self.plugin, "static void LaCall(LaSinkRun& run, const char* script, CInstance* self,"))
+        self.assertLess(call.index("run.attempted = true;"), call.index('"asset_get_index"'))
+        self.assertEqual(len(re.findall(r"\battempted = true\b", self.adapter)), 1)
+
+    def test_the_supplied_line_and_the_tier_write_are_research_only(self):
+        # The `lootann line:` line Live 1 reads, and `lootannprobe place`'s
+        # tier write, are in the research build and not the player build.
+        line = 'Out(std::string("lootann line: sink=")'
+        self.assertIn(line, self.plugin)
+        self.assertNotIn("lootann line:", self.player)
+        self.assertNotIn("g_LaLineLogs", self.player)
+        # After the call, inside the chatcolour body's own research block.
+        raw = self.plugin[self.plugin.index("if (sink == Sink::ChatColour) {"):]
+        raw = raw[:raw.index("return run;")]
+        block = raw[raw.index("#ifndef FORGEPACT_RELEASE"):raw.index("#endif")]
+        self.assertIn("if (++g_LaLineLogs <= 100)", block)
+        for field in ('" sender=\\""', '"\\" body=\\""', '"\\" sender-colour="', '" body-colour="', '" dispatched="'):
+            self.assertIn(field, block, field)
+        self.assertLess(raw.index("LaCall(run,"), raw.index("#ifndef FORGEPACT_RELEASE"))
+        tier = 'g_Yytk->CallBuiltin("variable_struct_set", { info, RValue("32"), RValue(5.0) })'
+        self.assertIn(tier, _code(self.plugin))
+        self.assertNotIn(tier, self.player)
+        # Negative control: the same check finds a line left outside a block.
+        self.assertIn("lootann line:", _player_build('Out("lootann line: x");\n#ifndef FORGEPACT_RELEASE\n#endif\n'))
 
     def test_the_closure_is_resolved_by_number_and_listed_with_its_index(self):
         # Live procedure 1 listed three method variables as `<undefined>`:

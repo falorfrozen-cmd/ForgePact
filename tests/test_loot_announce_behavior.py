@@ -32,6 +32,15 @@ identity still decide; an entry built, listed and landing in one frame passes
 as recent; and the stat line gains `burst-listed`, `burst-fresh`,
 `burst-landed` and `burst-overflow` after `create-overflow`.
 
+The line's colours (ForgePact #228): the shipped sink is now `chatcolour`,
+`ChatAddMessage` with "<character> found" as the sender part in the game's
+grey chat text (11974842) and the item's name alone as the text part, in the
+online announcement's colour for its rarity. Baseline: the red line's text,
+as shipped before, is `<character> found <item>` (`server` keeps it as the
+fallback). Target: Heroic 9764608, Angelic 10681599, Unholy 7224024, every
+other code the grey, and no colour the core returns is 0 or 6776816 (the
+sender colour that greys the text); `route=` names `chatcolour`.
+
 The install: the switch arms at launch and the hooks go in once setup is done
 and the local player resolves, once per session (`install=` on the stat
 line). Baseline: the rule before, setup alone. Target: no player, no install.
@@ -200,6 +209,18 @@ class LootAnnounceBehaviorTests(unittest.TestCase):
 
     def test_a_chaos_tower_burst_entry_announces_once_when_it_lands(self):
         self.assertScenarios(*self.BURST_TARGET_SCENARIOS)
+
+    # ---- the line's colours (ForgePact #228) ------------------------------
+
+    def test_baseline_the_red_line_s_text_is_character_found_item(self):
+        self.assertScenarios("baseline/server_text_is_character_found_item")
+
+    def test_the_item_name_takes_its_rarity_s_announcement_colour(self):
+        self.assertScenarios("colour/heroic", "colour/angelic", "colour/unholy", "colour/neutral_sender",
+                             "colour/held_rarity_is_neutral", "colour/not_the_grey_text_trigger")
+
+    def test_the_line_is_split_into_character_found_and_the_item_name(self):
+        self.assertScenarios("line/sender_is_character_found", "line/body_is_item_name")
 
     def test_the_memory_is_capped_oldest_first(self):
         self.assertScenarios("memory/capped", "memory/oldest_forgotten_first")

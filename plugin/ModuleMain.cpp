@@ -56551,9 +56551,12 @@ static void FlpCommand(const std::string& rest)
 // read that throws skips that frame's read and says so once.
 //
 // The sink: one function, LootAnnounceSink, runs the body
-// ForgePact::LootAnnounceMod::kShippedSink names. All four bodies are here so
-// the research build's `lootannprobe try <n>` runs exactly the code the mod
-// would ship; Live procedure 1 picked `server` (the research doc's "Route").
+// ForgePact::LootAnnounceMod::kShippedSink names. All five bodies are here,
+// beside each other, so the research build's `lootannprobe try <n>` runs
+// exactly the code the mod would ship for the first four; Live procedure 1
+// picked `server` (the research doc's "Route"),
+// and ForgePact #228 ships `chatcolour`, the same game call with the item
+// name in its rarity's colour, falling back to `server`'s red line.
 static bool g_LaInstallTried = false;
 static unsigned long long g_LaArmedFrames = 0;   // ticks while on and not installed: LooksForPlayer's count
 static const char* g_LaCreateRoute = "not-installed";   // CreateItemNew's route: both, table-only or none
@@ -56581,11 +56584,14 @@ static long long g_LaBurstNoKey = 0;
 // `lootannprobe burst on|off`: whether newly listed entries are kept (the
 // research build's way to reproduce the rule before the fix).
 static bool g_LaBurstKeep = true;
+// `lootann line:` lines written this session (what each chatcolour call
+// supplied; the first 100).
+static long g_LaLineLogs = 0;
 #endif
 
 // netsend's first argument (the closure passes a runtime-filled value whose
 // meaning is not established): undefined, or the local player's id. Only
-// `lootannprobe try 2|3` and a shipped `netsend` use it; with `server`
+// `lootannprobe try 2|3` and a shipped `netsend` use it; with `chatcolour`
 // shipped, the player build passes it along unused.
 static constexpr bool kLaNetSendA0IsPlayer = false;
 // netsend's second and fourth arguments, as the closure's call sites supply
@@ -56921,8 +56927,12 @@ static bool LaFindClosure(CInstance* lootInst, RValue& method, std::string& vari
 }
 
 // What one sink run supplied and got back. `failed` names the field that
-// refused, and is empty when the call dispatched.
+// refused, and is empty when the call dispatched. `attempted` is set once
+// LaCall starts resolving the script, so a refusal of the call itself (the
+// name refused, script_execute failed) tells apart from one before it (no
+// player, no item name): only the former has `chatcolour` fall back to red.
 struct LaSinkRun {
+    bool attempted = false;
     bool dispatched = false;
     std::string script = "none";
     std::string self = "none";
@@ -56938,6 +56948,7 @@ using LaBeforeCall = void (*)(const LaSinkRun&);
 static void LaCall(LaSinkRun& run, const char* script, CInstance* self, const std::string& selfName,
                    const std::vector<RValue>& args, LaBeforeCall before)
 {
+    run.attempted = true;
     run.script = script;
     run.self = selfName;
     run.args = LaArgList(args);
@@ -56956,16 +56967,21 @@ static void LaCall(LaSinkRun& run, const char* script, CInstance* self, const st
     run.dispatched = true;
 }
 
-// The four sink bodies, in fidelity order (docs/loot-announcement-research.md,
-// "Route").
-//   method  - the ground item's own announcement method, zero arguments,
-//             through InvokeMethodValue with the ground item as self and other.
-//   netsend - NetworkSendChatMessageIngame by name, the five arguments the
-//             closure passes (a0 undefined, or the player's id).
-//   chatadd - ChatAddMessage, the measured fifteen-argument shape, the
-//             character as sender, GetItemDropMessage(item)'s text.
-//   server  - ChatAddServerMessage, `<character> found <item name>`: the
-//             proven red `SERVER:` line.
+// The five sink bodies (docs/loot-announcement-research.md, "Route"; the
+// first four in fidelity order, as `lootannprobe try 1..5` numbers them).
+//   method     - the ground item's own announcement method, zero arguments,
+//                through InvokeMethodValue with the ground item as self and other.
+//   netsend    - NetworkSendChatMessageIngame by name, the five arguments the
+//                closure passes (a0 undefined, or the player's id).
+//   chatadd    - ChatAddMessage, the measured fifteen-argument shape, the
+//                character as sender, GetItemDropMessage(item)'s text.
+//   server     - ChatAddServerMessage, the core's ServerText,
+//                `<character> found <item name>`: the proven red `SERVER:`
+//                line, and chatcolour's fallback.
+//   chatcolour - ChatAddMessage, the measured fifteen-argument shape, with the
+//                core's Line(): "<character> found" as the sender part and the
+//                item name as the text part, each in the core's colour (the
+//                shipped sink, ForgePact #228). The adapter holds no colour.
 static LaSinkRun LaRunSink(ForgePact::LootAnnounceMod::Sink sink, bool netSendA0IsPlayer, const RValue& item,
                            CInstance* lootInst, LaBeforeCall before)
 {
@@ -57023,25 +57039,55 @@ static LaSinkRun LaRunSink(ForgePact::LootAnnounceMod::Sink sink, bool netSendA0
     }
     const std::string name = LaItemName(item);
     if (name.empty()) {
-        run.script = SdkShortScriptName(HeroSiege::Scripts::gml_Script_ChatAddServerMessage);
+        run.script = sink == Sink::ChatColour ? SdkShortScriptName(HeroSiege::Scripts::gml_Script_ChatAddMessage)
+                                              : SdkShortScriptName(HeroSiege::Scripts::gml_Script_ChatAddServerMessage);
         run.failed = "text (itemInfoStruct[\"28\"] is not text)";
         return run;
     }
+    if (sink == Sink::ChatColour) {
+        const ForgePact::LootAnnounceMod::ChatLine line = ForgePact::LootAnnounceMod::Line(character, name, LaRarity(item));
+        std::vector<RValue> args = { RValue(line.sender), RValue(line.text), RValue((double)line.senderColour),
+                                     RValue((double)line.textColour), RValue((int64_t)0), RValue((int64_t)0),
+                                     RValue(0.0), RValue(0.0), RValue(LaClockStamp()) };
+        for (int i = 0; i < 6; ++i) args.push_back(RValue());
+        LaCall(run, SdkShortScriptName(HeroSiege::Scripts::gml_Script_ChatAddMessage), player, "Player_obj", args, before);
+#ifndef FORGEPACT_RELEASE
+        // Research build: what each chatcolour call supplied (Live 1 reads the
+        // colours here beside its screenshots), the first 100 per session.
+        if (++g_LaLineLogs <= 100)
+            Out(std::string("lootann line: sink=") + ForgePact::LootAnnounceMod::SinkName(Sink::ChatColour)
+                + " sender=\"" + line.sender + "\" body=\"" + line.text + "\" sender-colour=" + std::to_string(line.senderColour)
+                + " body-colour=" + std::to_string(line.textColour) + " dispatched=" + (run.dispatched ? "1" : "0"));
+#endif
+        return run;
+    }
     LaCall(run, SdkShortScriptName(HeroSiege::Scripts::gml_Script_ChatAddServerMessage), player, "Player_obj",
-           { RValue(character + " found " + name) }, before);
+           { RValue(ForgePact::LootAnnounceMod::ServerText(character, name)) }, before);
     return run;
 }
 
 // The mod's one sink: the body kShippedSink names. A refusal is counted by
 // the caller and logged here, one line naming the field that failed (the
-// first 20; the count keeps going).
+// first 20; the count keeps going). When the shipped `chatcolour` call itself
+// refused (its name refused, or script_execute failed), the line says so and
+// the `server` body then shows the red line instead; the announcement still
+// counts as refused. A refusal before the call (no player, an item name that
+// is not text) has no fallback: the red line needs both too.
 static bool LootAnnounceSink(const RValue& item, CInstance* lootInst)
 {
+    using Mod = ForgePact::LootAnnounceMod;
     const LaSinkRun run = LaRunSink(ForgePact::LootAnnounceMod::kShippedSink, kLaNetSendA0IsPlayer, item, lootInst, nullptr);
     if (run.dispatched) return true;
+    const bool fallBack = Mod::kShippedSink == Mod::Sink::ChatColour && run.attempted;
     if (++g_LaRefusalLogs <= 20)
         Out(std::string("lootann: no line (sink ") + ForgePact::LootAnnounceMod::SinkName(ForgePact::LootAnnounceMod::kShippedSink)
-            + ") - " + run.failed + (g_LaRefusalLogs == 20 ? "; further refusals are counted in sink-refused= only" : ""));
+            + ") - " + run.failed + (fallBack ? "; showing the red line (sink server) instead" : "")
+            + (g_LaRefusalLogs == 20 ? "; further refusals are counted in sink-refused= only" : ""));
+    if (fallBack) {
+        const LaSinkRun red = LaRunSink(ForgePact::LootAnnounceMod::Sink::Server, kLaNetSendA0IsPlayer, item, lootInst, nullptr);
+        if (!red.dispatched && g_LaRefusalLogs <= 20)
+            Out(std::string("lootann: no line (sink ") + Mod::SinkName(Mod::Sink::Server) + ") - " + red.failed);
+    }
     return false;
 }
 
