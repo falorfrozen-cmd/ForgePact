@@ -29,7 +29,7 @@ test('an empty or missing config is not an error', () => {
 });
 
 test('every boolean mod is an entry when true, keyed by its own checkbox', () => {
-  assert.equal(BOOLEAN_MODS.length, 31);
+  assert.equal(BOOLEAN_MODS.length, 32);
   for (const key of BOOLEAN_MODS) {
     assert.deepEqual(enabledControls(cfg({ [key]: true })), [key], key);
     assert.deepEqual(enabledControls(cfg({ [key]: false })), [], key);
@@ -173,6 +173,13 @@ test('always show Chaos Pillar mods is an entry while on and off by default', ()
   assert.equal(DEFAULTS.mod_pillar_tips, false);
   assert.deepEqual(enabledControls(cfg({ mod_pillar_tips: true })), ['mod_pillar_tips']);
   assert.deepEqual(enabledControls(cfg({ mod_pillar_tips: false })), []);
+});
+
+test('sell loot your filter hides is an entry while on and off by default', () => {
+  assert.ok(BOOLEAN_MODS.includes('mod_auto_sell'));
+  assert.equal(DEFAULTS.mod_auto_sell, false);
+  assert.deepEqual(enabledControls(cfg({ mod_auto_sell: true })), ['mod_auto_sell']);
+  assert.deepEqual(enabledControls(cfg({ mod_auto_sell: false })), []);
 });
 
 test('the skill timer is an entry for any style but off', () => {

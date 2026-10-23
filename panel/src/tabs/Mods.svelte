@@ -104,6 +104,11 @@
         </select>
     </div>
     <div class="row" style="border:none">
+        <span class="lbl" style="width:auto;flex:1">Sell loot your filter hides<br><span class="feature-description">Items your loot filter hides are sold the moment they drop, for the gold a merchant would pay, and none of them goes on the merchant's buyback list. With Sleep loot your filter hides also on, selling comes first: only what can't be sold is put to sleep. Off by default.</span></span>
+        <label class="switch"><input type="checkbox" id="mod_auto_sell" aria-label="Sell loot your filter hides"><span class="sl"></span></label>
+        <span class="val" id="masval">off</span>
+    </div>
+    <div class="row" style="border:none">
         <span class="lbl" style="width:auto;flex:1">Jump through scenery<br><span class="feature-description">Your jump can carry you over rocks, fences, carts and other scenery that would stop it, but only when it would land on open ground inside the area; otherwise the jump works as it always has. Locked doors and zone gates still block it. Off by default.</span></span>
         <label class="switch"><input type="checkbox" id="mod_jump_scenery"><span class="sl"></span></label>
         <span class="val" id="mjsval">off</span>

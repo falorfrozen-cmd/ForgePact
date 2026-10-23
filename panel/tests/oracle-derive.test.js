@@ -190,9 +190,10 @@ test('the counts: 141 switch clicks, 82 Turn off buttons, one theme step per the
   // add three switch clicks and one Turn off button each. The three flight
   // charms' native booleans (#158) add one Turn off button each, the
   // Tracker tab's switch (#185) one more, the Mark 1 set's switch (#166)
-  // one more, and Mark 1 drops' switch (#166) one more.
+  // one more, Mark 1 drops' switch (#166) one more, and Sell loot your
+  // filter hides' native boolean (#196) one more.
   assert.equal(switches.length, 141);
-  assert.equal(quick.length, 83);
+  assert.equal(quick.length, 84);
   assert.equal(theme.length, THEMES.length);
   assert.deepEqual(theme.map((s) => s.value), THEMES.map((t) => t.value));
   for (const s of theme) {
@@ -282,7 +283,7 @@ test('a native boolean\'s contract is literal: on sends its verb with 1, off wit
   assert.deepEqual(NATIVE_BOOLEANS.map((n) => n.key),
     ['mod_far_sleep', 'mod_pet_loot_unstick', 'mod_stash_move_all', 'density_rolling', 'mod_pet_relic_pickup', 'mod_hidden_loot',
       'satanic_everywhere', 'mod_boss_soul_pieces', 'mod_tracker', 'mod_flight_elf', 'mod_flight_wings', 'mod_flight_broom', 'mod_mark1_set', 'mod_mark1_drops',
-      'mod_jump_scenery', 'mod_loot_announce', 'mod_pillar_tips']);
+      'mod_jump_scenery', 'mod_loot_announce', 'mod_pillar_tips', 'mod_auto_sell']);
   // Only Sleep loot your filter hides restates a child when it turns on: its
   // show key, at the default a fresh sandbox holds.
   assert.deepEqual(NATIVE_BOOLEANS.filter((n) => n.restate).map((n) => [n.key, n.restate]),
