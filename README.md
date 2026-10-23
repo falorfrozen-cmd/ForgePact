@@ -1807,9 +1807,10 @@ any item's, and the set gives more for every piece you wear.
   skill with no cooldown, such as Shadow Bolt, fires continuously, and when
   two are due at once they go in Q, E, R, Y order. These casts cost no mana,
   so instead **each automated skill drains about 1% of your maximum mana a
-  second** while the bonus is on, taken off your mana regeneration: with
-  good mana regeneration one or two automated skills keep your mana up, and
-  four drain it, so the skills you cast yourself have less to spend. When
+  second** while the bonus is on, taken off your mana regeneration: how
+  many automated skills your regeneration keeps going depends on how much
+  you have, and a drain larger than your regeneration empties your mana, so
+  the skills you cast yourself have less to spend. When
   your mana runs out the automated skills keep firing. A skill under automation cannot be cast by
   hand: pressing its key does nothing while the set casts it for you, and
   its icon on the skill bar is drawn grey, the way the game greys a skill

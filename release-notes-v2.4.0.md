@@ -49,8 +49,9 @@ pieces" below.
     continuously; when two are due at once they go in Q, E, R, Y order.
     These casts cost no mana, so instead **each automated skill drains about
     1% of your maximum mana a second** while the bonus is on, taken off your
-    mana regeneration: good regeneration keeps one or two automated skills
-    going, and four drain your mana. A skill under automation cannot be
+    mana regeneration: how many automated skills your regeneration keeps
+    going depends on how much you have, and a drain larger than your
+    regeneration empties your mana. A skill under automation cannot be
     cast by hand, and its icon on the skill bar is drawn grey, the way the
     game greys a skill you cannot use; each of those slots is also outlined.
     A toggle skill is still pressed for you and switched on and left on, so
@@ -94,7 +95,8 @@ pieces" below.
   The set was checked in play on a research build of the plugin: the
   pieces, their art, the outlines and the jump worked, and in that session,
   with every slot pressed at once, Shadow Bolt was cast 20 times and Heavenly
-  Fire beside it not once, which is why one skill is pressed at a time. A
+  Fire beside it not once, which is why the skills were then pressed one at
+  a time. A
   second session checked the earlier rule, the skills taking turns, on that
   same bar: in about 32
   seconds with no key pressed, Shadow Bolt was cast 31 times, Heavenly Fire 30

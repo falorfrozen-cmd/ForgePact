@@ -32337,10 +32337,9 @@ static bool HandleMenuProbeCommand(const std::string& lc, const std::string& res
 // A live instance as the game passes one: the runtime's own `id` of instance
 // <n> (instance_exists first, then variable_instance_get(<n>, "id"), the kind
 // a logged `ref instance N` argument has). The one way to build it, in both
-// builds: the research build's `id:<n>` argument (CpResolveArg, for `call`,
-// `callm` and `skillprobe call`) and the Mark 1 proc route's `player` token
-// (Mark1PlayerRef) both come here. False, with `why` set, when the instance is
-// gone or its id cannot be read.
+// builds: the research build's `id:<n>` argument and the Mark 1 proc route's
+// `player` token (Mark1PlayerRef) both come here. False, with `why` set, when
+// the instance is gone or its id cannot be read.
 static bool InstanceIdRef(double id, RValue& out, std::string& why)
 {
     const RValue handle(id);

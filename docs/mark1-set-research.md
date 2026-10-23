@@ -5913,7 +5913,8 @@ prints the unit in force as `unit=` after `drain=`.
 So each automated skill takes about 1% of maximum mana a second by the
 arithmetic, checked by `tests/test_mark1_cost_behavior.py` and the hub's
 `tests/test_mark1_automation_model.py`; that rate is not measured in a game
-session yet: no session has run a build with the scaled unit.
+session yet: no session has run a build with the scaled unit (Stats live 5,
+below, then measured it).
 
 ### Regen and the frame rate (static reading)
 
