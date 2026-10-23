@@ -13440,9 +13440,15 @@ static bool SpawnSignatureItem(int which, double x, double y, CInstance* ctx)
 // So: one die per kill, and on a hit an Angelic/Unholy unique from the table below, built
 // through the same path as the signature drops (definition json -> InitItemFromJson ->
 // LootGroundCreateFromItem) with c=1 (unique repo).  Each row is validated once against the
-// game's unique repo: the name key must match and the base's info flag 40 (hidden / dev item,
-// which the game's own picker skips) must NOT be set - live 2026-09-07: exactly the nine dev
-// and joke items carry it (Dev Charm, DEVELOPRE BOOT, Elemelon...), the 47 real ones do not.
+// game itself, by three tests and nothing else (BuildAngelicPool): the name key the unique repo
+// gives the triple must match the row's; the base's info flag 40 (hidden / dev item, which the
+// game's own picker skips) must NOT be set - live 2026-09-07: exactly the nine dev and joke
+// items carry it (Dev Charm, DEVELOPRE BOOT, Elemelon...), the 47 real ones do not; and the item
+// InitItemFromJson builds from the row must come out rarity 7 or 10 (Angelic / Unholy).  No row
+// is refused for its item type: the two potions (type 18, the Gold Inlaid Mysterious Potion and
+// the Elixir of Unworldly Cognition) take the same three tests as every other row (#229 - from
+// 1.3.14 a type rule refused both before the game was asked, so the potion never dropped here).
+// The `angelic` flag is the table's own label; nothing reads it.
 struct AngelicBase { int type, sub, b; const char* key; const char* name; bool angelic; };
 static const AngelicBase kAngelicBases[] = {
     { 0, 0, 85, "helmet_lucifers_crown", "Lucifer's Crown", true },
@@ -13535,8 +13541,7 @@ static void BuildAngelicPool(bool verbose)
     int rejected = 0;
     for (const AngelicBase& base : kAngelicBases) {
         std::string why;
-        if (base.type == 18) why = "potion";
-        else try {
+        try {
             RValue def = g_Yytk->CallGameScript("gml_Script_GetUniqueRepoStruct",
                                                 { RValue((double)base.type), RValue((double)base.sub), RValue((double)base.b) });
             if (def.m_Kind != VALUE_OBJECT) why = "no def";
@@ -26506,6 +26511,152 @@ static void ApRollList(const std::string& args)
     SigListScan(true, nullptr);   // Controller_obj, the scope the roll reads; its summary is the last line
 }
 
+// `angelicprobe pool find|drop <t> <s> <b>` (#229): one unique triple against the game's own
+// lists and against the slider's pool. `find` reads, for that triple, the definition fields the
+// rolls read (itemBaseInfoStruct "28" key, "27" rarity, "40" hidden), whether the Angelic roll's
+// two filters (FlpAngelicDroppable's rule: rarity 7 or 10, not hidden) and the ordinary unique
+// roll's (rarity below 7, not hidden; FcNs::PassesUniqueFilter) would keep it, and how many
+// entries of each of Controller_obj.lootListUnique[0..5] are that whole triple - the list read by
+// name, never an address. `drop` places that triple through the production SpawnAngelicItem, 48 px
+// to the local player's right, if it is a validated pool candidate; it never calls the game's
+// guaranteed Angelic maker (which loops forever on a zone list with no candidate) and never
+// touches angelicdrop's counters. Both refuse while a roll's stand-in entries are on the lists.
+static long DpCount(HeroSiege::Objects::GameObject obj);   // defined below (dungeonprobe), research build only
+static constexpr int kApPoolLists = 6;   // lootListUnique[0..4], the ordinary unique roll, and [5], the Angelic roll's
+
+static bool ApPoolTriple(const std::string& args, int t[3])
+{
+    std::istringstream in(args);
+    if (!(in >> t[0] >> t[1] >> t[2])) return false;
+    std::string extra;
+    return !(in >> extra);
+}
+
+static std::string ApPoolTripleText(const int t[3])
+{
+    return "[" + std::to_string(t[0]) + "," + std::to_string(t[1]) + "," + std::to_string(t[2]) + "]";
+}
+
+static bool ApPoolRollHoldsLists()
+{
+    return g_SigRollPushed > 0 || g_FlightDrop.rollPushed > 0;
+}
+
+static void ApPoolFind(const std::string& args)
+{
+    const std::string tag = "angelicprobe pool find: ";
+    int t[3] = { 0, 0, 0 };
+    if (!ApPoolTriple(args, t)) { Out(tag + "refused - usage: angelicprobe pool find <t> <s> <b>"); return; }
+    if (ApPoolRollHoldsLists()) { Out(tag + "refused - a roll's stand-in entries are on the lists; nothing read"); return; }
+
+    // The definition, as the rolls read it. Outside any roll, so #74's typing hook records nothing.
+    std::string key = "none", rarityText = "none", hiddenText = "none";
+    double rarity = -1.0;
+    bool rarityRead = false, hidden = false;
+    {
+        FlightDropOutsideRoll outside;
+        try {
+            const RValue def = g_Yytk->CallGameScript(HeroSiege::Scripts::gml_Script_GetUniqueRepoStruct,
+                                                      { RValue((double)t[0]), RValue((double)t[1]), RValue((double)t[2]) });
+            if (def.m_Kind == VALUE_OBJECT) {
+                const RValue info = g_Yytk->CallBuiltin("variable_struct_get", { def, RValue("itemBaseInfoStruct") });
+                if (info.m_Kind == VALUE_OBJECT) {
+                    const std::string k = StructKey(info, "28");
+                    if (!k.empty()) key = k;
+                    rarityRead = TryStructNumber(info, "27", rarity);
+                    if (rarityRead) rarityText = ApRollNum(rarity);
+                    const RValue f40 = g_Yytk->CallBuiltin("variable_struct_get", { info, RValue("40") });
+                    if (f40.m_Kind != VALUE_UNDEFINED && f40.m_Kind != VALUE_UNSET) {
+                        try { hidden = f40.ToBoolean(); hiddenText = hidden ? "1" : "0"; } catch (...) { hidden = false; }
+                    }
+                }
+            }
+        } catch (...) { Out(tag + "refused - GetUniqueRepoStruct threw for " + ApPoolTripleText(t)); return; }
+    }
+    const bool angelicKeeps = rarityRead && (rarity == 7.0 || rarity == 10.0) && !hidden;
+    const bool ordinaryKeeps = rarityRead && FcNs::PassesUniqueFilter((int)rarity, hidden);
+
+    // The six lists, by name: Controller_obj.lootListUnique, each element a ds_list of triples.
+    std::string why;
+    RValue instance;
+    if (!SignatureController(instance, why)) { Out(tag + "refused - " + why); return; }
+    int counts[kApPoolLists] = {}, sizes[kApPoolLists] = {};
+    try {
+        if (!g_Yytk->CallBuiltin("variable_instance_exists", { instance, RValue(kAngelicListVar) }).ToBoolean()) {
+            Out(tag + "refused - Controller_obj has no variable " + kAngelicListVar);
+            return;
+        }
+        const RValue outer = g_Yytk->CallBuiltin("variable_instance_get", { instance, RValue(kAngelicListVar) });
+        if (outer.m_Kind != VALUE_ARRAY) { Out(tag + "refused - Controller_obj." + kAngelicListVar + " is not an array"); return; }
+        const int len = (int)g_Yytk->CallBuiltin("array_length", { outer }).ToDouble();
+        if (len < kApPoolLists) {
+            Out(tag + "refused - Controller_obj." + kAngelicListVar + " has " + std::to_string(len) + " elements");
+            return;
+        }
+        for (int k = 0; k < kApPoolLists; ++k) {
+            const RValue sub = g_Yytk->CallBuiltin("array_get", { outer, RValue((double)k) });
+            double id = -1.0;
+            std::string step;
+            if (!SigListHandle(sub, id, step)) {
+                Out(tag + "refused - Controller_obj." + kAngelicListVar + "[" + std::to_string(k) + "] is not a ds_list (" + step + ")");
+                return;
+            }
+            sizes[k] = (int)g_Yytk->CallBuiltin("ds_list_size", { sub }).ToDouble();
+            for (int e = 0; e < sizes[k]; ++e) {
+                double entry[3] = { 0.0, 0.0, 0.0 };
+                if (SigEntry(sub, e, entry) && entry[0] == (double)t[0] && entry[1] == (double)t[1] && entry[2] == (double)t[2])
+                    ++counts[k];
+            }
+        }
+    } catch (...) { Out(tag + "refused - reading Controller_obj." + kAngelicListVar + " threw"); return; }
+
+    std::string sizesText;
+    for (int k = 0; k < kApPoolLists; ++k) sizesText += (k ? "," : "") + std::to_string(sizes[k]);
+    Out("angelicprobe pool find: [" + std::to_string(t[0]) + "," + std::to_string(t[1]) + "," + std::to_string(t[2]) + "]"
+        + " key=" + key + " rarity=" + rarityText + " hidden=" + hiddenText
+        + " angelic-keeps=" + (angelicKeeps ? "yes" : "no") + " ordinary-keeps=" + (ordinaryKeeps ? "yes" : "no")
+        + " | lootListUnique [0]=" + std::to_string(counts[0]) + " [1]=" + std::to_string(counts[1])
+        + " [2]=" + std::to_string(counts[2]) + " [3]=" + std::to_string(counts[3])
+        + " [4]=" + std::to_string(counts[4]) + " [5]=" + std::to_string(counts[5])
+        + " sizes=" + sizesText);
+}
+
+static void ApPoolDrop(const std::string& args)
+{
+    const std::string tag = "angelicprobe pool drop: ";
+    int t[3] = { 0, 0, 0 };
+    if (!ApPoolTriple(args, t)) { Out(tag + "refused - usage: angelicprobe pool drop <t> <s> <b>"); return; }
+    if (ApPoolRollHoldsLists()) { Out(tag + "refused - a roll's stand-in entries are on the lists; nothing placed"); return; }
+    BuildAngelicPool(false);
+    const AngelicCandidate* pick = nullptr;
+    for (const AngelicCandidate& c : g_AngelicPool)
+        if (c.type == t[0] && c.sub == t[1] && c.b == t[2]) { pick = &c; break; }
+    if (!pick) {
+        Out(tag + "refused - " + ApPoolTripleText(t) + " is not a validated pool candidate (pool " + std::to_string(g_AngelicPool.size()) + ")");
+        return;
+    }
+    // The local player by the instance-handle rule: a VALUE_REF is as good as a VALUE_OBJECT.
+    RValue player;
+    std::string how;
+    if (!HhResolveLocalPlayer(player, &how)) { Out(tag + "refused - no local player"); return; }
+    CInstance* ctx = HhResolveInstance(player);
+    if (!ctx) { Out(tag + "refused - the local player (" + how + ") is not a live instance"); return; }
+    const double x = HhReadNumber(player, "x", 0.0) + 48.0, y = HhReadNumber(player, "y", 0.0);
+    const long before = DpCount(HeroSiege::Objects::GameObject::Loot_Ground_obj);
+    const bool placed = SpawnAngelicItem(*pick, x, y, ctx);   // prints its own `angelicdrop: <name> -> ...` line
+    const long after = DpCount(HeroSiege::Objects::GameObject::Loot_Ground_obj);
+    Out(tag + pick->name + " " + ApPoolTripleText(t) + (placed ? " placed" : " not placed (SpawnAngelicItem refused; its line above says why)")
+        + " (ground items " + std::to_string(before) + " -> " + std::to_string(after) + ")");
+}
+
+static void ApPoolCommand(const std::string& rest)
+{
+    const std::string sub = TrimCopy(rest);
+    if (sub.rfind("find ", 0) == 0) ApPoolFind(sub.substr(5));
+    else if (sub.rfind("drop ", 0) == 0) ApPoolDrop(sub.substr(5));
+    else Out("angelicprobe pool: find <t> <s> <b> | drop <t> <s> <b>");
+}
+
 static void ApRollUsage()
 {
     Out("angelicprobe: research instrument for docs/angelic-roll-hook-research.md (research build only)");
@@ -26516,6 +26667,8 @@ static void ApRollUsage()
     Out("  angelicprobe list dump [<var>] - read-only: Controller_obj.<var> (lootListUnique by default) two levels down: each element's kind, ds_list size, triple count, first entries and stand-in counts");
     Out("  angelicprobe hit chance <n> | rate <n> | share (no-op) | off | status - the #74 levers that make a game Angelic hit observable");
     Out("  angelicprobe inject auto | name <var> | at <k> | copies <k> | mode inject|replace | status - the #74 list the stand-ins are injected into (variable and element index), how many copies each item pushes, and the path an our-hit takes");
+    Out("  angelicprobe pool find <t> <s> <b> - read-only: that unique's key=, rarity= and hidden= as the rolls read its definition, whether the Angelic roll's filters (angelic-keeps=) and the ordinary unique roll's (ordinary-keeps=) keep it, and how many entries of each of Controller_obj.lootListUnique[0..5] are that triple, with each list's size");
+    Out("  angelicprobe pool drop <t> <s> <b> - place that unique 48 px to the player's right through the Angelic / Unholy Drops slider's own spawn, if it is a validated pool candidate; ground items before -> after, angelicdrop's counters untouched");
 }
 
 static void ApRollCommand(const std::string& rest)
@@ -26527,6 +26680,7 @@ static void ApRollCommand(const std::string& rest)
     else if (sub == "list" || sub.rfind("list ", 0) == 0) ApRollList(TrimCopy(rest).substr(4));   // a variable name keeps its case
     else if (sub == "hit" || sub.rfind("hit ", 0) == 0) AngelicHitCommand(sub.substr(3));
     else if (sub == "inject" || sub.rfind("inject ", 0) == 0) SigInjectCommand(TrimCopy(rest).substr(6));   // a variable name keeps its case
+    else if (sub == "pool" || sub.rfind("pool ", 0) == 0) ApPoolCommand(sub.substr(4));
     else ApRollUsage();
 }
 #endif // FORGEPACT_RELEASE (angelicprobe)
