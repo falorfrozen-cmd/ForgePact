@@ -13361,6 +13361,10 @@ static void Mark1DropAfterHit();
 // The shared ground-icon hook (hidden loot's one LootGroundInit detour), installed once; defined
 // after HiddenLootInstall.
 static void FlightGroundIconInstall();
+// That detour's route as Mark 1's art rule names it (#216 c5), and the once-a-session line a
+// route that refuses the ground icon prints; both defined after FlightGroundIconInstall.
+static std::string FlightGroundRoute();
+static void FlightGroundRouteNote();
 #ifndef FORGEPACT_RELEASE
 // Which research row holds DropUniqueItems now (`angelicprobe on`'s drop-unique row, gambaprobe's
 // DropUniqueItems row), or empty; each is defined with its own table.
@@ -15147,6 +15151,7 @@ static void FlightDropSwitch(FcNs::Charm c, bool on)
             FlightDropResolveAngelic();
         }
         FlightGroundIconInstall();
+        FlightGroundRouteNote();
     }
     const std::string key(FcNs::RowOf(c).key);
     if (!on) { Out("flightcharm: " + key + " drop off"); return; }
@@ -15188,6 +15193,8 @@ static std::string FlightDropTraceLine()
             + (d.angelicOk[(int)c] ? "(n=" + std::to_string(d.angelicN[(int)c]) + ")" : std::string("(not validated)"));
     }
     s += " elf=" + (d.elfResolved ? FcNs::ElfStandInText(true, d.elfPick, d.elfCounts) : "not-resolved(" + d.elfWhy + ")");
+    // #216 c5: the shared LootGroundInit detour's route, which decides whether the bag icon goes in.
+    s += " ground-route=" + FlightGroundRoute();
     for (const FcNs::CharmRow& row : FcNs::kCharms)
         if (d.switches[(int)row.charm] && !FlightDropOn(row.charm))
             s += " | " + std::string(row.key) + ": " + FlightDropOffReason(row.charm);
@@ -23439,6 +23446,9 @@ static void FlightCharmDressFinal(RValue& item, const FcNs::Rolled& rolled)
             g_Yytk->CallBuiltin("variable_struct_set", { info, RValue("2"), RValue((double)row.w) });
             g_Yytk->CallBuiltin("variable_struct_set", { info, RValue("3"), RValue((double)row.h) });
         }
+        // #216 c5: our bag icon only while the ground route can follow it (Mark 1's rule); a
+        // table-only or refused route keeps the Small Charm's own icon on the bag and the ground.
+        if (!M1sNs::GroundRouteAllowsArt(FlightGroundRoute())) return;
         FlightIconsLoad();
         const size_t k = FlightIconIndex(rolled.charm, false);
         if (k >= ForgePact::FlightCharmIcons::kIconCount) return;
@@ -54628,6 +54638,29 @@ static void FlightGroundIconInstall()
 {
     if (!g_HiddenLootInstallTried) HiddenLootInstall();
 }
+// The detour's route as Mark 1's art rule names it (#216 c5): `not-installed`
+// before the one install attempt, then hidden loot's own RouteName(), set only
+// from HookOneScript's native flag (`both`, `table-only`, or `none` for a
+// refused install). M1sNs::GroundRouteAllowsArt decides from it whether our
+// bag icon may go under "11"; flight keeps no second copy of that rule.
+static std::string FlightGroundRoute()
+{
+    return M1sNs::GroundRouteName(g_HiddenLootInstallTried, ForgePact::HiddenLootMod::Instance().RouteName());
+}
+// Once a session, at whichever of flight's install points first learns a
+// route that refuses the icon: our sprite under "11" would draw Error_spr on
+// the ground wherever compiled GML's direct calls pass the consumer by, so the
+// charms keep the Small Charm's own icon, and the log says why.
+static bool g_FlightGroundRouteNoted = false;
+static void FlightGroundRouteNote()
+{
+    if (g_FlightGroundRouteNoted || !g_HiddenLootInstallTried) return;
+    const std::string route = FlightGroundRoute();
+    if (M1sNs::GroundRouteAllowsArt(route)) return;
+    g_FlightGroundRouteNoted = true;
+    Out("flightcharm: ground icon off - " + route + " LootGroundInit route, so the flight charms keep"
+        " the Small Charm's own icon in the bag and on the ground (our icon would draw Error_spr there)");
+}
 // The show key: the async key state, polled once a frame by the class, and
 // counted only while the foreground window belongs to this process - a key
 // held in another window shows nothing.
@@ -56039,6 +56072,7 @@ static void FlightInstallIfReady()
     const bool havePlayer = g_Flight.ShouldInstall(g_Setup, true, true) && FlightPlayerResolves();
     if (!g_Flight.ShouldInstall(g_Setup, havePlayer, true)) { g_Flight.NoteLook(havePlayer, false); return; }
     FlightGroundIconInstall();
+    FlightGroundRouteNote();
     unsigned worn = 0;
     const bool charmWorn = FlightEquipped(worn) && worn != 0;
     g_Flight.NoteLook(havePlayer, charmWorn);
@@ -56217,6 +56251,7 @@ static void FlpSpawn(const std::vector<std::string>& tail)
     // As a drop switch turned on does: the ground icon rides hidden loot's one
     // LootGroundInit detour, so it is in before this charm reaches the ground.
     FlightGroundIconInstall();
+    FlightGroundRouteNote();
 
     const std::string what = std::string(row.name) + " a=" + std::to_string(seed);
     const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();

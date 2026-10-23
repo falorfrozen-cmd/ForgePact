@@ -189,6 +189,34 @@ class FlightCharmsForgeContract(unittest.TestCase):
         self.assertLess(final.index("if (g_FlightIconOk[k])"), final.index('RValue("11")'))
         self.assertIn("static bool g_FlightDressFootprint = true;", self.code)
 
+    def test_the_bag_icon_goes_in_only_where_its_ground_route_can_follow(self):
+        # #216 c5: a table-only or refused LootGroundInit route would leave our
+        # sprite under "11" drawing Error_spr on the ground, so the dressing asks
+        # Mark 1's rule first (called, never copied); the footprint is unchanged.
+        final = self.body("final")
+        check = "if (!M1sNs::GroundRouteAllowsArt(FlightGroundRoute())) return;"
+        self.assertEqual(final.count(check), 1)
+        self.assertLess(final.index('RValue("3"), RValue((double)row.h)'), final.index(check))
+        self.assertLess(final.index(check), final.index("FlightIconsLoad();"))
+        self.assertLess(final.index(check), final.index('RValue("11")'))
+        self.assertLess(final.index(check), final.rindex("variable_struct_set"))
+        # The route is hidden loot's own, with its install state, through
+        # Mark 1's GroundRouteName: never a literal, never "installed" alone.
+        route = strip_comments(function_body(self.plugin, "static std::string FlightGroundRoute()"))
+        self.assertIn("M1sNs::GroundRouteName(g_HiddenLootInstallTried, ForgePact::HiddenLootMod::Instance().RouteName())",
+                      route)
+        # Negative control: no route text of its own, so `both` can only come
+        # from HookOneScript's native flag via HiddenLootMod.
+        for literal in ('"both"', '"table-only"', '"none"', '"not-installed"'):
+            with self.subTest(literal=literal):
+                self.assertNotIn(literal, route)
+                self.assertNotIn(literal, final)
+        # No second copy of the rule anywhere in the plugin: the one definition
+        # stays in Mark1Set.hpp.
+        self.assertNotIn("bool GroundRouteAllowsArt(", strip_comments(self.plugin))
+        rule = (ROOT / "plugin" / "include" / "ForgePact" / "Mark1Set.hpp").read_text(encoding="utf-8")
+        self.assertIn('return route == kGroundRouteNotInstalled || route == "both";', rule)
+
     # ---- the icons ----------------------------------------------------------------
 
     def test_the_icons_take_the_pack_markers_route(self):
@@ -1116,6 +1144,42 @@ class FlightCharmsDropContract(unittest.TestCase):
         self.assertIn("FlightDropSwitch(c.charm, c.on);", command)
         self.assertEqual(self.all_code.count("FlightDropSwitch("), 2, "the definition and the command")
         self.assertNotIn("not available in this build", command)
+
+    def test_the_ground_route_is_reported_on_the_trace_and_once_when_it_refuses(self):
+        # #216 c5: the `flightcharm drops:` line names the route, and a route
+        # that refuses the icon prints one line a session, from whichever of
+        # flight's install points first learns it.
+        trace = self.body("trace")
+        self.assertIn('s += " ground-route=" + FlightGroundRoute();', trace)
+        self.assertLess(trace.index('" elf="'), trace.index('" ground-route="'))
+        self.assertLess(trace.index('" ground-route="'), trace.index('" | "'))
+        note = strip_comments(function_body(self.plugin, "static void FlightGroundRouteNote()"))
+        lines = [l.strip() for l in note.split("\n") if l.strip()]
+        self.assertEqual(lines[0], "if (g_FlightGroundRouteNoted || !g_HiddenLootInstallTried) return;")
+        self.assertIn("const std::string route = FlightGroundRoute();", note)
+        self.assertIn("if (M1sNs::GroundRouteAllowsArt(route)) return;", note)
+        self.assertIn("g_FlightGroundRouteNoted = true;", note)
+        self.assertIn('Out("flightcharm: ground icon off - " + route', note)
+        self.assertLess(note.index("GroundRouteAllowsArt(route)"), note.index("g_FlightGroundRouteNoted = true;"))
+        self.assertLess(note.index("g_FlightGroundRouteNoted = true;"), note.index("Out("))
+        self.assertIn("static bool g_FlightGroundRouteNoted = false;", self.all_code)
+        # Negative control: the note decides from the route, never from a
+        # `both` it wrote itself.
+        self.assertNotIn('"both"', note)
+        # Each of flight's install points notes right after the install.
+        install_points = {
+            "switch": self.body("switch"),
+            "install_if_ready": strip_comments(function_body(self.plugin, "static void FlightInstallIfReady()")),
+            "spawn": strip_comments(function_body(self.plugin, "static void FlpSpawn(const std::vector<std::string>& tail)")),
+        }
+        for name, body in install_points.items():
+            with self.subTest(install_point=name):
+                self.assertIn("FlightGroundIconInstall();\nFlightGroundRouteNote();",
+                              "\n".join(l.strip() for l in body.split("\n") if l.strip()))
+        # Mark 1's install is not flight's: it prints no flight line.
+        mark1 = strip_comments(function_body(self.plugin, "static void Mark1GroundIconInstall()"))
+        self.assertNotIn("FlightGroundRouteNote(", mark1)
+        self.assertEqual(self.all_code.count("FlightGroundRouteNote();"), 4, "the declaration and three install points")
 
     def test_nothing_runs_at_startup_or_every_frame(self):
         frame = strip_comments(function_body(self.plugin, "void FrameCallback(FWFrame& FrameContext)"))
