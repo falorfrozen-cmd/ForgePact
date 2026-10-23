@@ -204,6 +204,19 @@ int main(int argc, char** argv) {
         }
         check("baseline/bad_unit_answers_original", same);
     }
+    {
+        // With no unit override (`mark1probe autounit`) in force, the drain
+        // divides by the shipped constant: id 42 is answered R - n x 1% x M /
+        // 0.745 for one column and for four.
+        DrainCost cost;
+        const Seen one = Run(cost, Call{ true, true, 42, true, replenish }, 1, maxMana);
+        const Seen four = Run(cost, Call{ true, true, 42, true, replenish }, 4, maxMana);
+        check("baseline/no_unit_override_divides_by_the_constant",
+              Near(one.answer, replenish - 1 * 0.01 * maxMana / 0.745) && Near(one.answer, 9.865771812080538)
+              && Near(four.answer, replenish - 4 * 0.01 * maxMana / 0.745) && Near(four.answer, -50.536912751677846)
+              && one.changed && four.changed,
+              "one=" + Num(one.answer) + " four=" + Num(four.answer));
+    }
 
     // ---- target: the drain ----------------------------------------------------
     {
@@ -333,6 +346,48 @@ int main(int argc, char** argv) {
         check("override/percent_and_cost", shipped && okHalf && Near(s.answer, -30.402684563758392) && refused && zero
               && z.answer == replenish && !z.changed && switched && reset,
               "half=" + Num(s.answer) + " zero=" + Num(z.answer));
+    }
+    {
+        // `mark1probe autounit`: the unit the drain divides by, set for the
+        // session. The next answer divides by it; `off` (ResetUnit) and the
+        // overrides' reset put the shipped constant back.
+        DrainCost cost;
+        const bool shipped = cost.Unit() == kMark1ReplenishUnit;
+        const bool set = cost.SetUnit(0.874);
+        const Seen one = Run(cost, Call{ true, true, 42, true, replenish }, 1, maxMana);
+        const Seen four = Run(cost, Call{ true, true, 42, true, replenish }, 4, maxMana);
+        const bool inForce = cost.Unit() == 0.874 && Near(one.answer, replenish - 15 / 0.874)
+            && Near(four.answer, replenish - 60 / 0.874) && Near(four.answer, -38.649885583524028);
+        // Unit 1.0 reads id 42's answer as mana a second, as the pure function does.
+        const bool whole = cost.SetUnit(1.0) && Run(cost, Call{ true, true, 42, true, replenish }, 1, maxMana).answer == 15;
+        cost.ResetUnit();
+        const Seen off = Run(cost, Call{ true, true, 42, true, replenish }, 1, maxMana);
+        const bool backOff = cost.Unit() == kMark1ReplenishUnit && Near(off.answer, 9.865771812080538);
+        cost.SetUnit(0.5);
+        cost.SetDrainPct(2);
+        cost.ResetOverrides();
+        const Seen reset = Run(cost, Call{ true, true, 42, true, replenish }, 1, maxMana);
+        const bool backReset = cost.Unit() == kMark1ReplenishUnit && cost.DrainPct() == kMark1DrainPctPerSecond
+            && Near(reset.answer, 9.865771812080538);
+        check("override/unit_in_force_until_off_or_reset", shipped && set && inForce && whole && backOff && backReset,
+              "one=" + Num(one.answer) + " four=" + Num(four.answer) + " off=" + Num(off.answer) + " reset=" + Num(reset.answer));
+    }
+    {
+        // Negative control: 0, a negative, NaN and infinity are refused (what
+        // Mark1ReplenishUnitUsable refuses) and change nothing, neither the
+        // unit in force nor the next answer.
+        DrainCost cost;
+        cost.SetUnit(0.874);
+        bool refused = true;
+        for (double unit : { 0.0, -0.745, -1.0, std::numeric_limits<double>::quiet_NaN(),
+                             std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::infinity() }) {
+            if (cost.SetUnit(unit) || cost.Unit() != 0.874) refused = false;
+        }
+        const Seen s = Run(cost, Call{ true, true, 42, true, replenish }, 4, maxMana);
+        DrainCost fresh;
+        const bool freshRefuses = !fresh.SetUnit(0) && fresh.Unit() == kMark1ReplenishUnit;
+        check("override/unit_refuses_what_cannot_scale", refused && freshRefuses && Near(s.answer, replenish - 60 / 0.874),
+              "answer=" + Num(s.answer) + " unit=" + Num(cost.Unit()));
     }
     {
         Mark1ManaCost c = Mark1ManaCost::Off;

@@ -538,7 +538,7 @@ struct BonusStatFields {
     uint64_t locked = 0;
     std::string cost = ForgePact::Mark1ManaCostName(ForgePact::kMark1ManaCost);
     double   drain = ForgePact::kMark1DrainPctPerSecond;
-    double   unit = ForgePact::kMark1ReplenishUnit;   // mana a second per drained unit of id 42's answer, the drain's divisor
+    double   unit = ForgePact::kMark1ReplenishUnit;   // the drain's divisor in force (Mark1Cost::Unit; `mark1probe autounit` sets it)
     uint64_t drained = 0;
     double   castBase = ForgePact::kMark1BaseCastSeconds;
     bool     haveFcr = false;

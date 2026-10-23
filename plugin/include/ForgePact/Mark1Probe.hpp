@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <exception>
 #include <functional>
+#include <limits>
 #include <map>
 #include <optional>
 #include <string>
@@ -64,7 +65,8 @@ namespace ForgePact::Mark1Probe {
 // The same playtest adds `bonusread` (the set bonus's recorder) and the
 // automation's session overrides `autohold`, `automask`, `autoyield`,
 // `autorest`, `autoroute`, `autoproc`, `autolock`, `autogrey`, `autocost`,
-// `autodrain` and `autocast` (ApplyAuto below; `autogrey` is the adapter's).
+// `autodrain` and `autocast` (ApplyAuto below; `autogrey` is the adapter's);
+// Amendment 11 adds `autounit`, the replenish unit the drain divides by.
 // Its replan (after Live 1) adds `statask` (the dispatcher asked directly, so
 // the set's consumer answers as for a game call), `manaregen` (the mana
 // replenish, id 42, answered with a set value whatever the switch says) and
@@ -441,7 +443,7 @@ enum class Form : int {
     // The 2026-10-22 playtest's research forms: the set bonus's recorder and
     // the automation's overrides for this session.
     BonusRead, AutoHold, AutoMask, AutoYield, AutoRest, AutoRoute, AutoProc,
-    AutoLock, AutoGrey, AutoCost, AutoDrain, AutoCast,
+    AutoLock, AutoGrey, AutoCost, AutoDrain, AutoUnit, AutoCast,
     // The replan's research forms (Live procedure 2): the dispatcher asked
     // directly, the mana replenish's forced answer, and the proc gaps.
     StatAsk, ManaRegen, ProcGaps, ProcGapsReset,
@@ -529,9 +531,10 @@ struct Command {
     DrawSide    side = DrawSide::SsFirst;  // DrawsPush: the stand-ins' side, SsFirst with no side word
     SpawnRoll   roll = SpawnRoll::Top;     // Spawn: the roll word, Top with none
     // The automation's overrides:
-    double      autoValue = 0;             // AutoHold: 3 or 4; AutoDrain: percent; AutoCast: base seconds
+    double      autoValue = 0;             // AutoHold: 3 or 4; AutoDrain: percent; AutoCast: base seconds; AutoUnit: the unit (NaN: not a number)
+    std::string autoText;                  // AutoUnit: the word as typed, for a refusal
     long long   autoFrames = 0;            // AutoYield, AutoRest: frames 0..600
-    bool        autoOn = false;            // AutoLock: on; AutoRoute: proc
+    bool        autoOn = false;            // AutoLock: on; AutoRoute: proc; AutoUnit: a value (false: `off`)
     ForgePact::Mark1MaskSetting autoMask;  // AutoMask
     ForgePact::Mark1ProcShape   autoShape; // AutoProc: the parsed template (`clear`: unset)
     ForgePact::Mark1ManaCost    autoCost = ForgePact::kMark1ManaCost;   // AutoCost
@@ -928,6 +931,18 @@ inline bool Parse(const std::vector<std::string>& tok, Command& c, std::string& 
         c.form = drain ? Form::AutoDrain : Form::AutoCast;
         return true;
     }
+    if (head == "autounit") {
+        // Any one word parses: the cost's own test (Mark1Cost::SetUnit) decides
+        // whether it can scale the drain, and ApplyAuto answers a refusal with
+        // the text as typed.
+        if (n != 2) { why = "usage: autounit <unit>|off"; return false; }
+        c.autoText = tok[1];
+        c.autoOn = LowerText(tok[1]) != "off";
+        double v = 0;
+        c.autoValue = !c.autoOn ? 0 : ParseNumber(tok[1], v) ? v : std::numeric_limits<double>::quiet_NaN();
+        c.form = Form::AutoUnit;
+        return true;
+    }
     if (head == "heroic") {
         const std::string usage = "usage: heroic <n>, n a whole number 1.." + std::to_string(kMaxHeroicCalls);
         if (n != 2) { why = usage; return false; }
@@ -1038,7 +1053,7 @@ inline bool Parse(const std::vector<std::string>& tok, Command& c, std::string& 
     why = "unknown form " + tok[0]
         + " (hook, off, show, args, watch, set, scale, hold, move, stat, statpin, statlog, count, pos, base, spawn, heroic,"
           " unique, pool, copies, killgate, draws, walkable, bonusread, bonusothers, statask, manaregen, procgaps, vitals, autohold, automask,"
-          " autoyield, autorest, autoroute, autoproc, autolock, autogrey, autocost, autodrain or autocast)";
+          " autoyield, autorest, autoroute, autoproc, autolock, autogrey, autocost, autodrain, autounit or autocast)";
     return false;
 }
 
@@ -1076,6 +1091,7 @@ inline std::vector<std::string> Usage()
         "  mark1probe autogrey redraw|box|enabled|off           the automated icons' grey look",
         "  mark1probe autocost drain|maxmana|off                the proc route's mana cost",
         "  mark1probe autodrain <0-10> | autocast <0.1-5>       the drain's percent of max mana a second / the base cast seconds",
+        "  mark1probe autounit <unit>|off                       the mana a second one drained unit of id 42 is (the drain's divisor); off: the shipped unit",
         "  mark1probe heroic <n>                                call DropItemHeroic n times (1..20) at the player; rarities and pieces",
         "  mark1probe unique <n>                                call DropUniqueItems n times (1..20) at the player; rarities and pieces",
         "  mark1probe pool [<k>]                                lootListUnique[k] (5 by default) as the Heroic roll keeps it, each piece's stand-in",
@@ -1651,6 +1667,11 @@ inline std::string ApplyAuto(const Command& c, ForgePact::Mark1PriorityCore& cor
     case Form::AutoDrain:
         cost.SetDrainPct(c.autoValue);
         return "mark1probe autodrain: drain=" + NumberText(cost.DrainPct());
+    case Form::AutoUnit:
+        if (!c.autoOn) cost.ResetUnit();
+        else if (!cost.SetUnit(c.autoValue))
+            return "mark1probe autounit: refused " + c.autoText + " (unit must be a positive finite number)";
+        return "mark1probe autounit: unit=" + NumberText(cost.Unit());
     case Form::AutoCast:
         core.SetBaseCastSeconds(c.autoValue);
         return "mark1probe autocast: cast-base=" + NumberText(s.baseCastSeconds);

@@ -119,15 +119,15 @@ inline double Mark1MaxManaAnswer(double original, int columns, double cutPct = k
 }
 
 // The answer the consumer gives for one dispatcher call, from (id, original,
-// proc columns, max mana, cost, percent): id 42 under Drain, id 37 under
+// proc columns, max mana, cost, percent, unit): id 42 under Drain, id 37 under
 // MaxMana, every other id, every other cost and a zero column count left as
 // the game gave it.
 inline double Mark1CostAnswer(double statId, double original, int columns, double maxMana,
-                              Mark1ManaCost cost, double percent)
+                              Mark1ManaCost cost, double percent, double unit = kMark1ReplenishUnit)
 {
     if (columns <= 0) return original;
     if (cost == Mark1ManaCost::Drain && statId == kMark1ReplenishStatId)
-        return Mark1DrainAnswer(original, columns, maxMana, percent, kMark1ReplenishUnit);
+        return Mark1DrainAnswer(original, columns, maxMana, percent, unit);
     if (cost == Mark1ManaCost::MaxMana && statId == kMark1MaxManaStatId)
         return Mark1MaxManaAnswer(original, columns, kMark1MaxManaCutPct);
     return original;
@@ -149,8 +149,8 @@ public:
             && (statId == kMark1MaxManaStatId || statId == kMark1ReplenishStatId);
     }
 
-    // One wanted call's answer, as the caller will read it, with the cost and
-    // percent in force. `procColumns` is the number of columns the proc route
+    // One wanted call's answer, as the caller will read it, with the cost,
+    // percent and unit in force. `procColumns` is the number of columns the proc route
     // fires (0 on the press route or with the bonus inactive), `maxMana` the
     // id-37 total last read by name. A finite answer the cost changes is
     // replaced and counted `drained`; with a cost in force and a proc column,
@@ -162,16 +162,16 @@ public:
         const int columns = procColumns > kMark1CostMaxColumns ? kMark1CostMaxColumns : procColumns;
         if (columns <= 0 || cost_ == Mark1ManaCost::Off) return false;
         if (!answerIsNumber || !std::isfinite(answer)) { ++counters_.notNumber; return false; }
-        const double changed = Mark1CostAnswer(statId, answer, columns, maxMana, cost_, percent_);
+        const double changed = Mark1CostAnswer(statId, answer, columns, maxMana, cost_, percent_, unit_);
         if (changed == answer) return false;
         answer = changed;
         ++counters_.drained;
         return true;
     }
 
-    // ---- research overrides (`mark1probe autocost`, `mark1probe autodrain`) ----
-    // They change the values in force for this session; ResetOverrides puts
-    // the shipped constants back.
+    // ---- research overrides (`mark1probe autocost`, `autodrain`, `autounit`) ----
+    // They change the values in force for this session, from the next answer
+    // on; ResetOverrides puts the shipped constants back.
     void SetCost(Mark1ManaCost cost) { cost_ = cost; }
     // False, and nothing changed, outside kMark1DrainPctMin..kMark1DrainPctMax.
     bool SetDrainPct(double percent)
@@ -180,15 +180,28 @@ public:
         percent_ = percent;
         return true;
     }
-    void ResetOverrides() { cost_ = kMark1ManaCost; percent_ = kMark1DrainPctPerSecond; }
+    // The unit the drain divides by (Amendment 11, so a live session can tune
+    // the drain without a rebuild). False, and nothing changed, for what
+    // Mark1ReplenishUnitUsable refuses: 0, a negative, NaN, infinity.
+    bool SetUnit(double unit)
+    {
+        if (!Mark1ReplenishUnitUsable(unit)) return false;
+        unit_ = unit;
+        return true;
+    }
+    // `mark1probe autounit off`: back to kMark1ReplenishUnit.
+    void ResetUnit() { unit_ = kMark1ReplenishUnit; }
+    void ResetOverrides() { cost_ = kMark1ManaCost; percent_ = kMark1DrainPctPerSecond; unit_ = kMark1ReplenishUnit; }
 
     Mark1ManaCost Cost() const { return cost_; }
     double DrainPct() const { return percent_; }
+    double Unit() const { return unit_; }
     const Mark1CostCounters& Stats() const { return counters_; }
 
 private:
     Mark1ManaCost cost_ = kMark1ManaCost;
     double percent_ = kMark1DrainPctPerSecond;
+    double unit_ = kMark1ReplenishUnit;
     Mark1CostCounters counters_;
 };
 

@@ -65757,6 +65757,7 @@ static M1sNs::BonusStatFields Mark1BonusStatFields()
     f.locked = (uint64_t)c.locked;
     f.cost = ForgePact::Mark1ManaCostName(g_M1aCost.Cost());
     f.drain = g_M1aCost.DrainPct();
+    f.unit = g_M1aCost.Unit();
     f.drained = g_M1aCost.Stats().drained;
     f.castBase = s.baseCastSeconds;
     f.haveFcr = g_M1aStats.Have(ForgePact::Mark1Stat::FasterCastRate);
@@ -69445,7 +69446,7 @@ static void M1pProcGaps(const M1pNs::Command& c)
     Out(g_M1pProcGaps.Line());
 }
 
-// `autohold` ... `autocast`: the session's overrides, through the core's
+// `autohold` ... `autocast` (and `autounit`): the session's overrides, through the core's
 // ApplyAuto; `autogrey` sets the grey draw's look here, putting back any
 // `enabled` the previous look wrote.
 static void M1pAuto(const M1pNs::Command& c)
@@ -69647,6 +69648,7 @@ static void M1pCommand(const std::string& rest)
     case M1pNs::Form::AutoGrey:
     case M1pNs::Form::AutoCost:
     case M1pNs::Form::AutoDrain:
+    case M1pNs::Form::AutoUnit:
     case M1pNs::Form::AutoCast: M1pAuto(c); return;
     }
 }

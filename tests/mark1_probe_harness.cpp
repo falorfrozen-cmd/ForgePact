@@ -2525,7 +2525,7 @@ int main()
     }
     {
         const std::vector<std::pair<std::string, std::string>> refused = {
-            { "bogus", "unknown form bogus (hook, off, show, args, watch, set, scale, hold, move, stat, statpin, statlog, count, pos, base, spawn, heroic, unique, pool, copies, killgate, draws, walkable, bonusread, bonusothers, statask, manaregen, procgaps, vitals, autohold, automask, autoyield, autorest, autoroute, autoproc, autolock, autogrey, autocost, autodrain or autocast)" },
+            { "bogus", "unknown form bogus (hook, off, show, args, watch, set, scale, hold, move, stat, statpin, statlog, count, pos, base, spawn, heroic, unique, pool, copies, killgate, draws, walkable, bonusread, bonusothers, statask, manaregen, procgaps, vitals, autohold, automask, autoyield, autorest, autoroute, autoproc, autolock, autogrey, autocost, autodrain, autounit or autocast)" },
             { "heroic", "usage: heroic <n>, n a whole number 1..20" },
             { "heroic 0", "usage: heroic <n>, n a whole number 1..20, not 0" },
             { "heroic 21", "usage: heroic <n>, n a whole number 1..20, not 21" },
@@ -2754,6 +2754,44 @@ int main()
             && ApplyAuto(parsed("autocast 0.5"), core, cost) == "mark1probe autocast: cast-base=0.5"
             && core.Settings().baseCastSeconds == 0.5;
         check("auto/apply_answers_the_value_in_force", ok, refused + " | " + shape + " | " + proc + " | " + cleared);
+    }
+    {
+        // `autounit <v>|off` (Amendment 11): the unit the drain divides by,
+        // for the session. A value, or `off`, parses; no argument or two answer
+        // the usage. Any one word parses, so the cost's own test decides: a
+        // value it refuses (0, a negative, a non-number, infinity, NaN) answers
+        // `refused` naming the text and changes nothing.
+        const std::string usage = "usage: autounit <unit>|off";
+        const bool parse = parsed("autounit 0.874").form == Form::AutoUnit && parsed("autounit 0.874").autoOn
+            && parsed("autounit 0.874").autoValue == 0.874 && parsed("autounit off").form == Form::AutoUnit
+            && !parsed("autounit off").autoOn && !parsed("autounit OFF").autoOn
+            && why("autounit") == usage && why("autounit 1 2") == usage
+            && parsed("autounit abc").form == Form::AutoUnit && parsed("autounit abc").autoText == "abc";
+        check("autounit/parse", parse);
+
+        ForgePact::Mark1PriorityCore core;
+        ForgePact::Mark1Cost cost;
+        const std::string set = ApplyAuto(parsed("autounit 0.874"), core, cost);
+        const bool inForce = cost.Unit() == 0.874;
+        std::string refusals;
+        bool refusedAll = true;
+        for (const char* text : { "0", "-0.5", "abc", "inf", "nan", "1e999" }) {
+            const std::string answer = ApplyAuto(parsed(std::string("autounit ") + text), core, cost);
+            refusals += answer + " | ";
+            if (answer != std::string("mark1probe autounit: refused ") + text + " (unit must be a positive finite number)"
+                || cost.Unit() != 0.874) refusedAll = false;
+        }
+        const std::string off = ApplyAuto(parsed("autounit off"), core, cost);
+        const bool backOff = cost.Unit() == ForgePact::kMark1ReplenishUnit;
+        const std::string whole = ApplyAuto(parsed("autounit 1"), core, cost);
+        check("autounit/apply_and_refuse", set == "mark1probe autounit: unit=0.874" && inForce && refusedAll
+              && off == "mark1probe autounit: unit=0.745" && backOff && whole == "mark1probe autounit: unit=1"
+              && cost.Unit() == 1.0,
+              set + " | " + refusals + off + " | " + whole);
+        bool listed = false;
+        for (const std::string& line : Usage())
+            if (line.find("mark1probe autounit <unit>|off") != std::string::npos) listed = true;
+        check("autounit/usage_listed", listed && why("bogus").find("autounit") != std::string::npos);
     }
 
     // ---- the replan's research forms: statask, manaregen, procgaps ---------------------

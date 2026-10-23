@@ -275,6 +275,16 @@ class Mark1ProbeBehaviorTests(unittest.TestCase):
         # `refused - shape unset` and keeps the press.
         self.assertScenarios("auto/parse_and_refuse", "auto/apply_answers_the_value_in_force")
 
+    def test_automation_autounit_sets_refuses_and_resets(self):
+        # Amendment 11's `autounit <v>|off`: the replenish unit the drain
+        # divides by, for the session. `mark1probe autounit: unit=0.874` after a
+        # set, `unit=0.745` after `off`; 0, a negative, a non-number, infinity
+        # and NaN answer `refused <text> (unit must be a positive finite
+        # number)` and leave the unit in force; no argument answers the usage.
+        self.assertScenarios("autounit/parse", "autounit/apply_and_refuse", "autounit/usage_listed")
+        self.assertIn("mark1probe autounit: unit=0.874 | mark1probe autounit: refused 0 (unit must be a positive finite number)",
+                      self.line("autounit/apply_and_refuse"))
+
     # ---- the replan's research forms (Live procedure 2) ----------------------------
 
     def test_probe_procgaps_line(self):

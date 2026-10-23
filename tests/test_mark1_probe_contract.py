@@ -990,6 +990,29 @@ class Mark1ProbeContract(unittest.TestCase):
         self.assertIn('"mark1probe vitals: hook installed now; ask again"', vitals)
         self.assertLess(vitals.index("hook installed now"), vitals.index("M1pVitalsRead()"))
 
+    def test_autounit_is_research_only_and_the_stat_line_reads_the_unit_in_force(self):
+        # Amendment 11's `mark1probe autounit <v>|off`: routed to the session
+        # overrides' handler beside `autodrain`, inside the research block, so
+        # the player build gets no new command; the cost's setter is reached
+        # only from the probe. `mark1set stat`'s `unit=` reads the unit in
+        # force, in both builds, so a capture says which unit a window ran under.
+        command = self.body("static void M1pCommand(const std::string& rest)")
+        self.assertIn("case M1pNs::Form::AutoUnit:", command)
+        self.assertLess(command.index("case M1pNs::Form::AutoDrain:"), command.index("case M1pNs::Form::AutoUnit:"))
+        self.assertLess(command.index("case M1pNs::Form::AutoUnit:"), command.index("M1pAuto(c); return;"))
+        self.assertIn('if (head == "autounit") {', self.header)
+        self.assertIn("mark1probe autounit <unit>|off", self.header)
+        self.assertIn("cost.SetUnit(c.autoValue)", self.header)
+        self.assertIn("cost.ResetUnit();", self.header)
+        self.assertIn("(unit must be a positive finite number)", self.header)
+        player_text = strip_research_blocks(self.plugin)
+        self.assertIn("g_M1aCost.Answer(", player_text)   # control: the cost itself ships
+        for word in ("autounit", "SetUnit", "ResetUnit", "AutoUnit"):
+            with self.subTest(word=word):
+                self.assertNotIn(word, player_text)
+        self.assertIn("f.unit = g_M1aCost.Unit();", player_text)
+        self.assertIn("f.drain = g_M1aCost.DrainPct();", player_text)   # control: its neighbour
+
     def test_research_only_the_profile_scope_says_which_it_read(self):
         resolve = self.body("static bool M1pResolveScope(CInstance* player, M1pNs::Scope scope, M1pScopeRef& out, std::string& why)")
         self.assertIn('"playerProfileSlot"', resolve)

@@ -120,6 +120,11 @@ class Mark1CostBehaviorTests(unittest.TestCase):
         self.assertScenario("baseline/unit_one_is_mana_a_second")
         self.assertScenario("baseline/bad_unit_answers_original")
 
+    def test_cost_baseline_no_unit_override_divides_by_the_constant(self):
+        # Before `mark1probe autounit`: the drain divides by kMark1ReplenishUnit,
+        # id 42 answered R - n x 1% x M / 0.745 for one column and for four.
+        self.assertScenario("baseline/no_unit_override_divides_by_the_constant")
+
     # ---- target -----------------------------------------------------------------
     def test_cost_target_drain_scales_with_proc_columns(self):
         self.assertScenario("target/drain_scales_with_proc_columns")
@@ -168,6 +173,16 @@ class Mark1CostBehaviorTests(unittest.TestCase):
     def test_cost_research_overrides(self):
         self.assertScenario("override/percent_and_cost")
         self.assertScenario("override/words")
+
+    def test_cost_target_unit_override(self):
+        # Amendment 11 (`mark1probe autounit`, the owner 2026-10-23: tune the
+        # drain in the next build without a rebuild): the unit in force divides
+        # the next answer, `off` and the overrides' reset restore
+        # kMark1ReplenishUnit, and what Mark1ReplenishUnitUsable refuses (0, a
+        # negative, NaN, infinity) changes nothing. The constant stays 0.745.
+        self.assertScenario("override/unit_in_force_until_off_or_reset")
+        self.assertScenario("override/unit_refuses_what_cannot_scale")
+        self.assertIn("inline constexpr double kMark1ReplenishUnit = 0.745;", self.header)
 
     def test_cost_shipped_values(self):
         self.assertScenario("route/constants")

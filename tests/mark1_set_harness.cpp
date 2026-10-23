@@ -1536,6 +1536,29 @@ int main()
             && std::string(DescFontName(DescFont::Unresolved)) == "unresolved" && AnsweredIndex(163) == 1 && AnsweredIndex(64) == -1;
         check("stat/second_line_filled", ok, line);
     }
+    {
+        // `unit=` prints the unit in force, read off the cost the way the
+        // adapter fills the line: after `mark1probe autounit 0.874` it reads
+        // 0.874, after `autounit off` the constant again; a refused value
+        // leaves it as it was.
+        ForgePact::Mark1Cost cost;
+        BonusStatFields f;
+        f.unit = cost.Unit();
+        const std::string shipped = BonusStatLine(f);
+        cost.SetUnit(0.874);
+        f.unit = cost.Unit();
+        const std::string tuned = BonusStatLine(f);
+        cost.SetUnit(0);
+        f.unit = cost.Unit();
+        const std::string refused = BonusStatLine(f);
+        cost.ResetUnit();
+        f.unit = cost.Unit();
+        const std::string off = BonusStatLine(f);
+        check("stat/second_line_unit_after_override",
+              has(shipped, " drain=1.00 unit=0.745 drained=0 ") && has(tuned, " drain=1.00 unit=0.874 drained=0 ")
+              && has(refused, " unit=0.874 ") && has(off, " drain=1.00 unit=0.745 drained=0 ") && !has(tuned, "unit=0.745"),
+              tuned);
+    }
 
     std::cout << (failures ? "RESULT FAIL " + std::to_string(failures) : std::string("RESULT OK")) << std::endl;
     return failures ? 1 : 0;

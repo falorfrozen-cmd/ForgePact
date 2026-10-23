@@ -500,6 +500,15 @@ class Mark1SetBehaviorTests(unittest.TestCase):
         self.assertScenarios("stat/second_line_fresh_exact", "stat/second_line_filled")
         self.assertEqual(self.line("stat/second_line_fresh_exact")[len("PASS stat/second_line_fresh_exact "):], expected)
 
+    def test_stat_line_target_unit_in_force(self):
+        # Amendment 11: `unit=` prints the unit the drain divides by now, so a
+        # capture says which unit a window ran under: 0.874 after `mark1probe
+        # autounit 0.874`, 0.745 again after `autounit off`, unchanged by a
+        # refused value. The adapter fills it from the cost, not the constant.
+        self.assertScenario("stat/second_line_unit_after_override")
+        plugin = (ROOT / "plugin/ModuleMain.cpp").read_text(encoding="utf-8")
+        self.assertIn("f.unit = g_M1aCost.Unit();", plugin)
+
     def test_tooltip_target_bonus_line_needs_the_install(self):
         # Round 1's NON-BLOCKING finding: the bonus line is lit only while the
         # bonus is installed too. On and not installed grey, on and installed
