@@ -495,9 +495,11 @@ class Mark1SetContract(unittest.TestCase):
         # nothing read or counted. Any other self: the original alone, counted.
         # A gate call a proc makes itself (g_M1aProcRunning, the proc route)
         # passes by the same way.
-        self.assertEqual(lines[0], "if (!g_Mark1.Enabled() || g_M1sBusy || g_M1aProcRunning || !S) "
+        # Switched off, the core is told first (test_gate_tells_the_core_when_the_bonus_is_off).
+        self.assertEqual(lines[0], "if (!g_Mark1.Enabled()) ForgePact::Mark1Automation::Instance().Inactive();")
+        self.assertEqual(lines[1], "if (!g_Mark1.Enabled() || g_M1sBusy || g_M1aProcRunning || !S) "
                                    "return g_M1sOrigCheckTalentUse(S, O, R, argc, A);")
-        self.assertEqual(lines[1], "if (S != g_M1sPlayer) { ++g_M1sGateOther; "
+        self.assertEqual(lines[2], "if (S != g_M1sPlayer) { ++g_M1sGateOther; "
                                    "return g_M1sOrigCheckTalentUse(S, O, R, argc, A); }")
         self.assertIn("g_Mark1.Active(", detour)
         self.assertIn("Mark1ReadWorn", detour)
@@ -1876,6 +1878,26 @@ class Mark1SetContract(unittest.TestCase):
         self.assertLess(around.index("inputs.lockCount"), around.index("plan.Press(column)"))
         self.assertLess(around.index("plan.Press(column)"), around.index("if (anyPressed) {"))
         self.assertLess(around.index("if (anyPressed) {"), around.index("inputs.maskCount"))
+
+    def test_gate_tells_the_core_when_the_bonus_is_off(self):
+        # PR #237 review: the gate returned before Plan whenever the switch was
+        # off or the bonus inactive, so Plan(false)'s reset never ran in the
+        # game and a column's patience ran on across the time the set was off.
+        detour = self.body("detour")
+        lines = [line.strip() for line in detour.splitlines()]
+        for gate in ("!g_Mark1.Enabled()", "!active"):
+            told = lines.index(f"if ({gate}) ForgePact::Mark1Automation::Instance().Inactive();")
+            # Told just before the early return it guards, and only for that gate:
+            # the reentrancy guards (busy, a proc running) leave the priority alone.
+            self.assertTrue(lines[told + 1].startswith(f"if ({gate}"), lines[told + 1])
+            self.assertTrue(lines[told + 1].endswith("return g_M1sOrigCheckTalentUse(S, O, R, argc, A);"), lines[told + 1])
+        self.assertEqual(detour.count(".Inactive();"), 2)
+        core = strip_comments(self.automation_header())
+        plan = function_body(core, "Mark1FramePlan Plan(bool bonusActive, long long frame, const Mark1GateClock& clock,")
+        self.assertIn("if (!bonusActive) {\n            Inactive();", plan)
+        off = function_body(core, "void Inactive(")
+        self.assertIn("if (m_WasActive) ClearPriority();", off)
+        self.assertIn("m_WasActive = false;", off)
 
     def test_proc_route_calls_talentuseclass_by_name(self):
         fire = self.body("fire_proc")

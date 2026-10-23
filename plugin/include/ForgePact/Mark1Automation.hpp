@@ -194,6 +194,16 @@ public:
     // callable is invoked and nothing is counted, and the next active call
     // starts the priority afresh (the proc clocks kept, as on a room change).
     // With no clock nothing is fired.
+    // The bonus is not active (a piece off, or the switch off): the next
+    // active call starts the priority afresh. Plan(false) and the gate's own
+    // early returns both come here, so a column's patience does not run on
+    // across the time the set was off.
+    void Inactive()
+    {
+        if (m_WasActive) ClearPriority();
+        m_WasActive = false;
+    }
+
     template <class ReadColumn, class ReadToggle>
     Mark1FramePlan Plan(bool bonusActive, long long frame, ReadColumn&& readColumn, ReadToggle&& readToggle)
     {
@@ -206,8 +216,7 @@ public:
         Mark1FramePlan plan;
         plan.frame = frame;
         if (!bonusActive) {
-            if (m_WasActive) ClearPriority();
-            m_WasActive = false;
+            Inactive();
             return plan;
         }
         if (!m_WasActive) { ClearPriority(); m_WasActive = true; }

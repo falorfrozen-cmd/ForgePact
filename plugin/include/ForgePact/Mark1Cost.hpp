@@ -66,7 +66,8 @@ inline constexpr double kMark1MaxManaCutPct = 20.0;
 // S9's below-zero window 0.887; the readings disagree. The drain divides by
 // it, so each column takes about kMark1DrainPctPerSecond % of maximum mana a
 // second (the owner's choices of 2026-10-23, "Scale to 1%/s", then 0.745);
-// that rate is not measured in a game session yet. The 1.0 build Live 3
+// Stats live 5 measured it: 1.117% a second per column at about 144 frames a
+// second, 0.956% at 60 (the game's tick is frame-rate bound). The 1.0 build Live 3
 // measured took about 0.745% a second per column, read directly (S7 minus
 // S8); the 0.87% recorded for it elsewhere is inferred from S7's 0.874. The
 // hub model's REPLENISH_UNIT is the same.

@@ -64738,12 +64738,17 @@ static volatile long g_M1sRethrowLines = 0;   // RethrowLine's count for the gat
 // stat read keeps.
 static RValue& Mark1HookCheckTalentUse(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
+    // Switched off or the bonus inactive: the core is told (Inactive), so the
+    // priority starts afresh when the set comes back, in this room or not.
+    // The reentrancy guards (busy, a proc running) are not "off" and leave it.
+    if (!g_Mark1.Enabled()) ForgePact::Mark1Automation::Instance().Inactive();
     if (!g_Mark1.Enabled() || g_M1sBusy || g_M1aProcRunning || !S) return g_M1sOrigCheckTalentUse(S, O, R, argc, A);
     if (S != g_M1sPlayer) { ++g_M1sGateOther; return g_M1sOrigCheckTalentUse(S, O, R, argc, A); }
     bool active = false;
     g_M1sBusy = true;
     try { active = g_Mark1.Active((unsigned long long)g_RuntimeFrame, Mark1ReadWorn); } catch (...) { active = false; }
     g_M1sBusy = false;
+    if (!active) ForgePact::Mark1Automation::Instance().Inactive();
     if (!active) return g_M1sOrigCheckTalentUse(S, O, R, argc, A);
     ++g_M1sGateCalls;
     ForgePact::Mark1Automation& automation = ForgePact::Mark1Automation::Instance();
