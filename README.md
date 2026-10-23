@@ -49,7 +49,8 @@ none of these diagnostic hooks or the recorder. See
 | **Jump Through Scenery** | Mods → Quality of Life, off by default (plugin command `jumpscenery 1` / `jumpscenery 0`, `jumpscenery stat`). Your universal jump carries you over rocks, fences, carts and other scenery that stop it today, when your mouse cursor is on open ground past the scenery: the landing is checked where the jump is aimed, and a jump aimed into the scenery itself stays blocked as in the game. On at launch, it waits for your character to load before it hooks in. The first jump after loading needs no practice jump, and changing zone keeps what it learned about your jump. Locked doors and zone gates still block it. Some jumps the game itself refuses to start stay refused ([details](#jump-through-scenery-jump-over-the-props-that-stop-it)) |
 | **Loot Announcements** | Mods → Quality of Life, off by default (plugin command `lootann 1` / `lootann 0`, `lootann stat`). Offline play shows no chat line when a great item drops; online play announces it. With this on, a Heroic, Angelic or Unholy item the game drops on the ground is announced once in the in-game chat, as a red `SERVER: <your character> found <item name>` line (not the game's own online announcement). Satanic, Mythic and lower items, gold, gems, materials and relics are not announced, and neither are items you drop yourself from the bag. In the Chaos Tower, where the game holds a floor's drops until the floor is cleared, the line comes when the floor's loot lands at its end (checked in play on 2026-10-23 on a first floor). Checked in play on 2026-10-04: a placed Heroic and Angelic item announced, a Satanic one not, an item dropped from the bag not announced again, nothing with the switch off, and a drop from a kill announced ([details](#loot-announcements)) |
 | **Always Show Chaos Pillar Mods** | Mods → Quality of Life, off by default (plugin command `pillartips 1` / `pillartips 0`, `pillartips stat`). A Chaos Pillar shows its box of mods only while your mouse cursor is on it. With this on, every Chaos Pillar on screen shows its box without being hovered, like a strongbox in Path of Exile: the game's own box, text and colours. A pillar that leaves the screen hides it again, and a pillar you have activated stops showing its box. Mouse play only; gamepad is not supported. Checked in a game session with mouse play ([details](#always-show-chaos-pillar-mods)) |
-| **Flight Charms** | Mods → Items, three switches, all off by default (plugin command `flightcharm elf\|wings\|broom 1` / `0`, `flightcharm stat`). Three charms of ForgePact's own: **Pocket Elf** (Satanic, one cell), **Gabriel Wings** (Angelic, 2x2, 1-12% less physical and magic damage taken) and **Witch's Broomstick** (Unholy, 1x5, +10-100% movement speed), each with its own icon and a gold Flight line. While you wear one, you walk through scenery and are drawn in front of it, tree canopies included, and you walk through monsters too, though they still hit you (owner-confirmed in play, 2026-10-13); walls, zone gates, locked doors and the map's edge still stop you, though a few stone walls the game builds as scenery, such as the town church's, can be crossed (measured as scenery in a game session, not yet walked with a charm on). The game counts only one flight charm at a time. Each switch lets its charm drop from the game's own rolls (Pocket Elf among the ordinary uniques, the other two from the Angelic roll); a charm you own works either way. Offline only. Checked in three game sessions on a research build, drop rates included, plus the owner's play check for monsters ([details](#flight-charms-pocket-elf-gabriel-wings-witchs-broomstick)) |
+| **Flight Charms** | Mods → Items, three switches, all off by default (plugin command `flightcharm elf\|wings\|broom 1` / `0`, `flightcharm stat`). Three charms of ForgePact's own: **Pocket Elf** (Satanic, one cell), **Gabriel Wings** (Angelic, 2x2, 1-12% less physical and magic damage taken) and **Witch's Broomstick** (Unholy, 1x5, +10-100% movement speed), each with its own icon and a gold Flight line. While you wear one, you walk through scenery and are drawn in front of it, tree canopies included, and you walk through monsters too, though they still hit you (owner-confirmed in play, 2026-10-13); walls, zone gates, locked doors and the map's edge still stop you, though a few stone walls the game builds as scenery, such as the town church's, can be crossed (measured as scenery in a game session, not yet walked with a charm on). The game counts only one flight charm at a time. Each switch lets its charm drop from the game's own rolls (Pocket Elf among the SS uniques a kill can drop, at the rarity and tier of Aimbot.exe, the other two from the Angelic roll); a charm you own works either way. Offline only. Checked in three game sessions on a research build, drop rates included, plus the owner's play check for monsters, and in a fourth Pocket Elf dropped from a kill, with its share raised for the test ([details](#flight-charms-pocket-elf-gabriel-wings-witchs-broomstick)) |
+| **Mark 1 Set** | Mods → Items → **Mark 1 set** and **Mark 1 drops**, both off by default (plugin commands `mark1set bonus 1` / `mark1set bonus 0`, `mark1set drops 1` / `mark1set drops 0`, `mark1set stat`). Four Satanic pieces of ForgePact's own, like the game's own set pieces: the Mark 1 Helmet, Body Armor, Boots and Gloves, each with its own art and its own rolled stats (Defense, Enhanced Defense and more, sockets on the helmet and body armor). With the switch on, the set gives a bonus at 2, 3 and 4 pieces worn (`+500 Defense`; then All Resistances and Replenish Life; then All Skills, `+750 to Life` and Physical Damage Taken Reduced). With all four worn, the skills on your Q, E, R and Y slots cast themselves whenever the game lets them, by priority in Q, E, R, Y order: a skill with a cooldown as soon as it is ready, a skill with no cooldown continuously, fired the way an item's proc fires a skill (a toggle skill is pressed, only while it is off); an automated skill cannot be cast by hand and its icon is drawn grey, each slot outlined; each automated skill drains about 1% of your maximum mana a second, taken off your mana regeneration; your jump always goes three times as far toward your cursor, over scenery, and lands only where you can walk (until it has learned your reach, a jump can stop short of its landing); in exchange you walk at half speed, and a cast still slows you as it does without the set. With **Mark 1 drops** on, the pieces drop from kills (seen in Hell), through the draw the game uses for a kill's unique items, among its SS uniques like the game's own SS set pieces, and join the Heroic roll a vault runs; how often a kill gives one at the normal setting is not measured. Checked in play: the pieces, their art and stat ranges, the set bonus at 2, 3 and 4 pieces, the jump, the half walk, the Q, E, R, Y order with a toggle skill on R, the lock on casting by hand, the grey icons, the mana drain, and all four pieces dropping from kills with their share raised for the test; a piece from a vault not yet ([details](#mark-1-set)) |
 | **Goburin's Head pity** | Mods → Quality of Life, off by default (plugin command `gambapity <1-200>` / `gambapity off`, `gambapity status`). A switch and a slider from 1 to 200. Each slot machine explosion without a head counts one, and the explosion that reaches your number drops exactly one Goburin's Head; then the count starts over. If the game drops the charm itself, the count starts over too. The count carries over between machines and between sessions, kept in `forgepact_gamba_pity.json`. Checked in play on 2026-10-06 with the number at 2: the first machine to explode dropped nothing and was counted, the second dropped one Goburin's Head, and the count started over. A head the game drops on its own has not been observed yet ([details](#goburins-head-pity)) |
 | **Extra Packs As You Approach** | Mods → Quality of Life, off by default; matters only with Monster Density above 1x. Monster Density's extra spawners are made within about 3,000 px of you, and ahead of you as you move, instead of across the whole zone at once, so the far ones cost nothing until you get there. Up close nothing changes: in Act_01_01 at 5x the spawners and monsters within 1,500 px of the player were the same, while the zone held 430 spawners instead of 1,570 and the game's own work per frame fell from 84% to 70% of a 60 fps frame ([details](#extra-packs-as-you-approach-lighter-frames-at-high-density)) |
 | **Timed skill countdown** | For a small set of timed skills measured and tested in-game, plus most other skills with both a duration and a real cooldown, covered by rule and untested: draws how much of the cast is left over its skill-bar slot, in one of four looks (arc / bar / number / fade), disappearing at zero. A few skills are left out where a measurement showed the timer on the skill's own object is not the skill's duration. Companion skills (turrets, totems, hydra) are not covered. A few skills whose duration is a buff on you, measured in-game, are covered too, and other buff-only skills are not. In a fight, hits can add a little time to some skills (roughly 0.2 s each in our test) and the countdown rises slightly to match. A skill switched on as a toggle never gets a countdown. Off by default; a cast already running when you turn it on shows as full until the next cast |
@@ -191,7 +192,7 @@ taken from the test sandbox, which reports the game open without the mod plugin
 **Mods › Quality of Life**: every mod not tied to a forged item, one card each.
 
 ![The Mods tab, Items](assets/panel/mods-items-1280.png)
-**Mods › Items**: the Miner's Helmet and the Custom Forge mechanics for items made in the Item Editor.
+**Mods › Items**: the Miner's Helmet, the Custom Forge mechanics for items made in the Item Editor, and ForgePact's own items: the flight charms' drop switches and the Mark 1 set.
 
 ![The Mods tab, Gameplay](assets/panel/mods-gameplay-1280.png)
 **Mods › Gameplay**: the [Bosses](#bosses-uber-and-uber-uber-bosses) setting, which changes how the bosses you meet are made, and [Dungeon chest opens early](#dungeon-chest-opens-early).
@@ -217,7 +218,8 @@ everything that is not tied to a specific forged item (the relic drop pool
 filter, orb pickup radius, map reveal, pet quest pickup, auto-prospect, the
 toggle marker/guard, the timed skill countdown and Goburin's Head pity), **Items**, the custom
 forge mechanics tied to items made in the Item Editor (Headhunter, Tyrant's
-Crown, Beacon) and the drop switches of ForgePact's own flight charms, and **Gameplay**, which holds the Bosses setting and Dungeon
+Crown, Beacon), the drop switches of ForgePact's own flight charms and the switch of
+its Mark 1 item set, and **Gameplay**, which holds the Bosses setting and Dungeon
 chest opens early. Quality of
 Life opens first; clicking another sub-tab (or
 using the arrow keys) switches which set of mods you see, and the panel remembers
@@ -1707,7 +1709,7 @@ line too.
   the charm off while you stand inside scenery or a monster, flight stays on
   until you have walked out of it, and then ends.
 - **Drops.** Each switch lets one charm drop from the game's own rolls: Pocket
-  Elf among the ordinary unique items a monster drops, Gabriel Wings and
+  Elf among the unique items a monster drops, Gabriel Wings and
   Witch's Broomstick from the game's Angelic roll (the one a Blood Pact or
   dungeon "Angelic item drop chance" effect turns on). For the length of each
   roll ForgePact adds the charm to the roll's list in place of one real unique
@@ -1716,11 +1718,16 @@ line too.
   ForgePact adds no die of its own. So the charm is about as rare as one
   particular unique, and no drop chance changes: Gabriel Wings and Witch's
   Broomstick each come as about 1 in 50 of the Angelic roll's drops (the
-  same share as Headhunter and Tyrant's Crown), and Pocket Elf on about 1 in
-  51 to 1 in 222 of the ordinary unique roll's draws, depending on which of
-  the game's unique lists the roll draws from. If the plugin cannot set the
-  roll up safely on your game, the switch says why and the roll stays the
-  game's own.
+  same share as Headhunter and Tyrant's Crown). Pocket Elf joins the draw
+  the game itself uses for a kill's unique items, which picks from one of
+  its unique lists: it stands in for one SS Satanic unique, the rarity and
+  tier of Aimbot.exe, on each of the lists that draw can pick from. SS
+  uniques are rare. A Pocket Elf has dropped from a kill this way in a
+  test where its share was raised 400-fold; how often a kill gives one at
+  the normal setting is not measured. It also still joins the game's named
+  unique roll (about 1 in 51 to 1 in 222 of that roll's draws), which
+  kills seldom run. If the plugin cannot set a roll up safely on
+  your game, the switch says why and the roll stays the game's own.
 - **You keep what you have.** A charm you already own works, and keeps its
   look and size, whether its switch is on or off. With ForgePact removed it
   loads as a plain Small Charm.
@@ -1751,7 +1758,232 @@ walls still stop a flying walk. Walking through monsters, with monsters still
 hitting you and you still hitting them, is owner-confirmed in play,
 2026-10-13: the owner played with a Pocket Elf on the research build and
 reported it working as intended. That is the owner's report, not a measured
-test.
+test. A later session (2026-10-21) checked Pocket Elf dropping from kills
+through the game's own draw: with its share raised 400-fold and magic find
+raised, one Pocket Elf dropped in Hell, among 67 unique items that draw
+built.
+
+## Mark 1 set
+
+Mods → Items → **Mark 1 set** (plugin command `mark1set bonus 1|0`) and
+**Mark 1 drops** (plugin command `mark1set drops 1|0`), with `mark1set stat`
+for the state. Both off by default.
+
+Mark 1 is an item set of ForgePact's own: four Satanic pieces, like the game's
+own set pieces, **Mark 1 Helmet**, **Mark 1 Body Armor**, **Mark 1 Boots** and
+**Mark 1 Gloves**. Each piece has its own stats, rolled within a range like
+any item's, and the set gives more for every piece you wear.
+
+- **The pieces' own stats.** Every piece has Defense and Enhanced Defense.
+  The **Helmet** also has All Resistances, All Skills, +35 Vitality and 1 or
+  2 sockets; the **Body Armor** Life, All Skills, 125% Faster Hit Recovery
+  and 3 or 4 sockets; the **Boots** Life after each Kill and All Resistances;
+  the **Gloves** All Skills and +20 All Attributes. A piece's stats are its
+  own and count whatever the Mark 1 switches say, and they stay the same
+  after saving and loading. A piece you got before the pieces had stats keeps
+  being a piece, with every stat at the bottom of its range.
+- **The set bonus, by pieces worn.** With 2 pieces: `+500 Defense`. With 3:
+  also `+35% to All Resistances` and `Replenish Life 25%`. With all 4: also
+  `+1 to Automation` (below), `+5 to All Skills`, `+750 to Life`, `Physical
+  Damage Taken Reduced by 20%` and `-50% Movement Speed`. The set bonus works
+  only while the **Mark 1 set** switch is on. Your character sheet (the
+  talent screen, T) shows the set's Life, Defense and its other lines too,
+  as your HUD does; your mercenary and monsters never get the set bonus.
+  The character sheet's Mercenary tab shows your mercenary's own numbers,
+  without the set bonus or the mana drain.
+- **The tooltip.** Each piece's tooltip reads `Satanic Set <type>` under its
+  name, shows the piece's own stats, then the set's bonus lines, each lit
+  while you wear enough pieces for it and grey otherwise, with what
+  Automation does underneath `+1 to Automation` in the game's smaller grey
+  description text, then the set's name and its four pieces, the ones you
+  wear in green. The piece's sockets are listed under the set. Wherever the
+  game shows its own items' roll ranges, each rolled stat line shows its
+  range after it in grey, as theirs do, for example
+  ` [120-180]`, and the Defense line and the sockets line show the piece's
+  own ranges; the fixed lines (Vitality, Faster Hit Recovery, All
+  Attributes) show none.
+- **Your skills cast themselves.** With all four worn, the skills on your
+  skill bar's Q, E, R and Y slots are cast for you. A skill that is not a
+  toggle fires the way an item's proc fires a skill: at once, with no cast
+  time, and without the game's usual checks before a cast, so holding a
+  button yourself, such as the right mouse button, never keeps it from
+  firing. Each one fires on its own timer: its cooldown (shortened by your
+  Skill Haste) plus its cast time (shortened by your Faster Cast Rate), so a
+  skill with no cooldown, such as Shadow Bolt, fires continuously, and when
+  two are due at once they go in Q, E, R, Y order. These casts cost no mana,
+  so instead **each automated skill drains about 1% of your maximum mana a
+  second** while the bonus is on, taken off your mana regeneration: how
+  many automated skills your regeneration keeps going depends on how much
+  you have, and a drain larger than your regeneration empties your mana, so
+  the skills you cast yourself have less to spend. When
+  your mana runs out the automated skills keep firing. A skill under automation cannot be cast by
+  hand: pressing its key does nothing while the set casts it for you, and
+  its icon on the skill bar is drawn grey, the way the game greys a skill
+  you cannot use. Each of those slots is also outlined, as Mark A Running
+  Toggle Skill outlines a running toggle. A toggle skill is still pressed for
+  you, as its key would be, and the game checks it as usual: it is switched
+  on and left on, pressed only while it is off, so you cannot switch it off
+  while the bonus is active. An aura slot and an empty slot are left alone.
+  Because a fired skill skips the game's checks, a skill the game would
+  sometimes refuse to cast, such as Mana Orb while its orb is still out,
+  can be fired anyway, and they stack: in a test session Mana Orb fired
+  this way had 7 orbs out at once.
+- **Your jump goes three times as far.** The universal jump always goes three
+  times your jump's normal reach, in the direction of your cursor however near
+  the cursor is, and passes over rocks, fences, carts and other scenery. It
+  lands only where you could walk: when that spot is blocked, it lands on the
+  farthest walkable spot along the way that is still past your normal reach,
+  and when there is none you get your normal jump. It never crosses a zone gate
+  or a locked door. Your normal reach is learned from your own jumps on open
+  ground, the same way Jump through scenery learns it, and shared with it;
+  until your first such jump a starting guess is used. While that guess, or a
+  reach learned on a character who jumps farther, is longer than your own
+  jump, a jump can stop short of the spot it checked, somewhere along the way
+  that was not checked; one jump on open ground with the cursor far away
+  teaches your real reach.
+- **In exchange, you walk at half speed** (`-50% Movement Speed`). The set halves your walk through
+  your movement speed, so while the bonus is on, what else reads your
+  movement speed, such as the character sheet, can show the changed value
+  too.
+- **A cast still slows you.** Casting a skill slows your walk for about a
+  second, as it does without the set, and the set does not remove that. The
+  slowdown comes on top of the half speed.
+- **Its own art.** Each piece shows its own icon in the bag and on the
+  ground from the moment you have one, whatever the Mark 1 switches say: a
+  piece loaded from your save, one that drops and one placed for a test
+  alike. If its art cannot load, a piece looks like the base item it is built
+  on. A piece put on the ground within about a second of your character
+  loading can show a missing-sprite icon there.
+- **Getting the pieces.** Switch on **Mark 1 drops** (Mods → Items, off by
+  default, apart from the set's own switch). The pieces then join the draw
+  the game itself uses for a monster's unique items: when a kill drops
+  loot, the game picks one of its unique lists and may draw a unique from
+  it. Each piece stands in for one of the game's SS Satanic uniques of its
+  kind on each of the lists that draw can pick from; only when the game has no SS item of a piece's kind
+  does it stand in for a lower one. So the pieces drop from kills
+  (seen in Hell). SS uniques are rare, and how often a kill gives a piece at the
+  normal setting is not measured. The pieces also still join the
+  game's named unique roll, which kills seldom run, and the
+  game's own Heroic roll, the one that runs when you open a vault from your
+  bag (and, as far as is known, for one Chaos Tower NPC), each about as
+  likely as any single Heroic unique that roll can give. A dropped piece
+  shows its own art on the ground and in the bag. If the game holds no
+  fitting item of a piece's kind on a roll, that piece cannot drop from it
+  (`mark1set stat` shows it as `none`); the other pieces still can. With the
+  switch off every roll is the game's own. The pieces are **SS tier**, so a
+  loot filter that shows SS items shows them.
+
+`mark1set stat` prints the switch, whether you wear the full set and where
+each piece was found, the casts it pressed, the skips, the casts that landed
+and the times each of the four slots was passed over or rested, the jumps it
+lengthened or left alone and the reach it used, how many of the pieces' icons
+loaded, how many set displays it drew in the pieces' tooltips, and how many
+movement-speed answers it halved. The tooltip counts are for tooltips you
+hover on screen only. The game draws a tooltip once when you start hovering
+and then shows a copy of it for as long as you stay, so: `tip-armed=` the
+tooltips drawn for a piece (one per hover), `tip=` the set displays drawn in
+them, and of those tooltips `typeline=` the ones whose line under the name it
+changed to `Satanic Set <type>` and `typeline-miss=` the ones where it did
+not; `tip-cached=` the frames the game showed its own copy instead of
+drawing again; and `typeline-hook=` whether the hook that changes that line
+is in (`in`), could not go in (`failed`), or has not been tried yet
+(`not-tried`). A second line, beginning `mark1set bonus:`, shows the set
+bonus (how many pieces you wear, which bonus lines are lit and how often they
+were applied), the automation's priority (which slots hold a skill with no
+cooldown, how often it held back a button you held, how often it kept a key
+from casting an automated skill), the description's font, the icons drawn
+grey, and the pieces dressed with their rolls. A third line,
+beginning `mark1set drops:`, shows the drops: the switch, how many Heroic
+rolls, named unique rolls and kill draws it saw and added the pieces to,
+each piece's drops from each, and the game's item each piece stands in for on
+each.
+
+The set was checked in play on a research build of the plugin (2026-10-19):
+the pieces, their art in the bag, on the ground and on the worn body armour,
+the full-set read, the outlines and the jump all worked. In that session, with
+every slot pressed at once, Shadow Bolt was cast 20 times and Heavenly Fire
+beside it not once, which is why one skill is pressed at a time.
+A second session (2026-10-20) checked the earlier rule, the skills taking
+turns, on that same bar: in about 32
+seconds with no key pressed, Shadow Bolt was cast 31 times, Heavenly Fire 30
+and Healing Zone 3, each counted in `mark1set stat` as it landed. The same
+session measured the walk with the set on at half its normal step, and a
+cast's slowdown coming on top of that: while a cast slows you, you walk at
+about a third of your normal speed. An earlier session found no way to lift
+the cast slowdown. A later session (2026-10-21) checked the drops from
+kills: with the pieces' share raised 400-fold and magic find raised, kills
+in Hell dropped all four pieces through the game's own draw (2 Helmets, 4
+Body Armors, 1 Boots and 1 Gloves among 67 unique items that draw built),
+and the ones seen on the ground were labelled SS. A piece dropping from a vault has not been seen in play
+yet.
+
+The set display in the tooltip, the `Satanic Set <type>` line and the art
+showing from the moment you have a piece came after those sessions and were
+checked in two more (2026-10-21). The pieces showed their own art with every
+Mark 1 switch off, on the ground, in the bag and worn, and again after
+saving and loading the character. Each piece's tooltip read `Satanic Set
+<type>` and showed the set on the ground, in the bag and worn: the names of
+the pieces worn in green, `+1 to Automation` lit only with all four worn and
+the set's switch on, and every line inside the tooltip. `mark1set stat`
+counted one drawn tooltip per hover and the game's copy for every frame
+after it.
+
+The pieces' stats, the set bonus, the priority order, the casting through a
+held button, the lock on casting an automated skill by hand and the grey
+icons came from the owner's playtest (2026-10-22). A session later that day
+on a research build checked that a skill fired the way an item's proc fires
+one is cast at the skill's own level, the grey icons in the game's own dark
+look and the 20% lower maximum mana with three automated skills, and found
+the roll ranges missing from the pieces' lines, which they now show. A
+second session that day checked these settings together on a research
+build: each rolled line's range in grey, and the Defense and sockets lines'
+own ranges; the set's bonus lines lit with 2, 3 and 4 pieces worn; the
+set's values added to your stats as the game reports them (with all four
+worn your maximum life on the HUD went from 4901 to 5651); half speed; the
+skills firing in Q, E, R, Y order; Shadow Bolt, which has no cooldown,
+fired 20 times in 10 seconds against 21 casts from holding its key; the
+skills kept firing while the right mouse button was held, and the right
+button's own skill kept casting (16 times in 8 seconds); pressing an
+automated skill's key cast nothing, where with the lock switched off for
+the test the same key cast 9 times; and the grey icons, back to normal when
+the set's switch went off. Those counts are the times the set fired a
+skill, not casts seen landing in the game. That build cut your maximum
+mana by 20% per automated skill, the cost then; the mana drain replaced
+it.
+
+A third session (2026-10-23), on a research build carrying the mana drain,
+checked the drain at 1%: with two automated skills your mana
+regeneration fell by about 1.5% of your maximum mana a second (each
+skill's 1% came off the game's mana replenish stat, which the game turned
+into about three-quarters of 1% a second), and a drain larger than your
+regeneration does empty your mana rather than stopping at zero. That
+session also measured how much mana the game takes for each point the drain
+removes, and this version scales the drain by it, aiming at about 1% of your
+maximum mana a second per automated skill. It checked
+the character sheet too: with all four worn it showed the set's Life,
+Defense and Physical Damage Taken Reduced, the same numbers the game's own
+stat calls return for you, while your mercenary and summons got none of
+the set bonus and no monster asked for it. It also found the sheet's Mercenary tab showing the
+bonus and the drain on your mercenary's numbers; this version leaves that
+tab with the mercenary's own numbers.
+
+A fourth session (2026-10-23), on the build with that change, checked it:
+the Mercenary tab showed your mercenary's own numbers with nothing of the
+set added, and going back to your own tab showed the set's Life again.
+With all four worn and the switch on, each of four times a monster hit
+you the game asked for your Physical Damage Taken Reduced, which the set
+answers with its 20% added (the session read the ask, not the number the
+game got back), and once, not at a hit, for your Defense. Not checked in
+play yet: whether the set's Defense and Physical Damage Taken Reduced make
+a hit do less damage (your life stayed full), how soon the HUD shows a
+lower maximum after you take a piece off, and whether every fired skill
+casts.
+
+A fifth session (2026-10-23), on this version's drain, measured it inside
+the game: on the test character, with two automated skills, each one took about 1.1% of your
+maximum mana a second at about 144 frames a second, and a little less,
+about 0.96%, with the game running at 60 frames a second, because the game
+gives mana back in slightly fewer steps a second at the lower frame rate.
 
 ## Goburin's Head pity
 

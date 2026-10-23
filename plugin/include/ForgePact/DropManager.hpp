@@ -56,8 +56,8 @@ public:
         HookOneScript("DropBifrostKey",      "bp_dbifrost", (void*)Hook_DropBifrostKey,      &m_Orig_DropBifrostKey);
         HookOneScript("DropGold",            "bp_dgold",    (void*)Hook_DropGold,            &m_Orig_DropGold);
         HookOneScript("DropItemBoss",        "bp_dibos",    (void*)Hook_DropItemBoss,        &m_Orig_DropItemBoss);
-        HookOneScript("DropItem",            "bp_ditem",    (void*)Hook_DropItem,            &m_Orig_DropItem);
-        HookOneScript("CreateItemDrop",      "bp_citemd",   (void*)Hook_CreateItemDrop,      &m_Orig_CreateItemDrop);
+        InstallDropItemHook();
+        HookOneScript("CreateItemDrop",     "bp_citemd",   (void*)Hook_CreateItemDrop,      &m_Orig_CreateItemDrop);
         HookOneScript("DropItemAngelic",     "bp_dangit",   (void*)Hook_DropItemAngelic,     &m_Orig_DropItemAngelic);
         HookOneScript("DropAngelicKey",      "bp_dangkey",  (void*)Hook_DropAngelicKey,      &m_Orig_DropAngelicKey);
         HookOneScript("DropAngelicCharm",    "bp_dangchm",  (void*)Hook_DropAngelicCharm,    &m_Orig_DropAngelicCharm);
@@ -68,6 +68,28 @@ public:
         HookOneScript("DropOres",            "bp_dores",    (void*)Hook_DropOres,            &m_Orig_DropOres);
         HookOneScript("DropOreMaterials",    "bp_doremat",  (void*)Hook_DropOreMaterials,    &m_Orig_DropOreMaterials);
     }
+
+    // DropItem's hook alone (#166): the Mark 1 drops' and Pocket Elf's kill draw
+    // needs this one detour and none of the other 18. One install whichever
+    // comes first, this or InstallHooks() (which goes through here too), so a
+    // later InstallHooks() never installs DropItem a second time, table-only.
+    // Answers the route the one install read back: `detoured`, `TABLE-ONLY` or
+    // `not-found`.
+    std::string InstallDropItemHook() {
+        if (!m_DropItemTried) {
+            m_DropItemTried = true;
+            bool native = false;
+            const bool ok = HookOneScript("DropItem", "bp_ditem", (void*)Hook_DropItem, &m_Orig_DropItem, &native);
+            m_DropItemRoute = !ok ? "not-found" : native ? "detoured" : "TABLE-ONLY";
+        }
+        return m_DropItemRoute;
+    }
+
+    // The saved original Hook_DropItem calls, once per original call, every
+    // `dropmult item` copy included (#166): the kill draw's call-out pair is
+    // spliced in here by ModuleMain, over the trampoline only, so the hook
+    // body above stays the macro's.
+    PFUNC_YYGMLScript* DropItemOriginal() { return &m_Orig_DropItem; }
 
     // "dropmult <name> <n>". Does not itself install hooks - ModuleMain's
     // SetDropMult calls InstallDropMultHooks() first (which also handles the
@@ -171,6 +193,8 @@ public:
 private:
     DropManager() = default;
     bool m_HooksInstalled{ false };
+    bool m_DropItemTried{ false };
+    std::string m_DropItemRoute{ "not-installed" };
 
 #define FP_DROP_HOOK(NAME) \
     PFUNC_YYGMLScript m_Orig_##NAME{ nullptr }; \

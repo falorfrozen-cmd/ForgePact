@@ -1,0 +1,69 @@
+{
+  "schema": 1,
+  "assets": [
+    {
+      "file": "mark1_helmet.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA",
+      "bit_depth": 8,
+      "sha256": "9ee0f0b213beb30c3d9034c177672ebe6346085f2cfd17aaa97b15477b34ef77"
+    },
+    {
+      "file": "mark1_helmet_ground.png",
+      "width": 32,
+      "height": 32,
+      "mode": "RGBA",
+      "bit_depth": 8,
+      "sha256": "b18ab7fed26368eda790480cc1c8b277dddf4a072685b82696cb44d8c33952e9"
+    },
+    {
+      "file": "mark1_body_armor.png",
+      "width": 64,
+      "height": 96,
+      "mode": "RGBA",
+      "bit_depth": 8,
+      "sha256": "2fcec2292d20cf050e0ec65bf5d75650160f8493572e7ca1b126c46b6602124a"
+    },
+    {
+      "file": "mark1_body_armor_ground.png",
+      "width": 32,
+      "height": 48,
+      "mode": "RGBA",
+      "bit_depth": 8,
+      "sha256": "d976b0867acd4031f1e225bbd85c1fa189b4f056338fcabc32f34a4e6629ee41"
+    },
+    {
+      "file": "mark1_boots.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA",
+      "bit_depth": 8,
+      "sha256": "1555758b31da6122a02f3ac919523b396e02bedc30e864ededa7b82e018e28a9"
+    },
+    {
+      "file": "mark1_boots_ground.png",
+      "width": 32,
+      "height": 32,
+      "mode": "RGBA",
+      "bit_depth": 8,
+      "sha256": "e38374d1312753b1ae34bca69cc9c06415c3583cba32b69d0519a16070fdc2aa"
+    },
+    {
+      "file": "mark1_gloves.png",
+      "width": 64,
+      "height": 64,
+      "mode": "RGBA",
+      "bit_depth": 8,
+      "sha256": "59ac16163c3da2a4bb3f887997a39b84bb989ff700860faa5a8416952f5a1942"
+    },
+    {
+      "file": "mark1_gloves_ground.png",
+      "width": 32,
+      "height": 32,
+      "mode": "RGBA",
+      "bit_depth": 8,
+      "sha256": "5c43a2b1773a54dc8e459cedf3b5659ba9bc7854b592d56c9a08c82d7f3356d9"
+    }
+  ]
+}

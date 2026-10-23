@@ -1,0 +1,6224 @@
+# Mark 1 set (ForgePact #166): research phase
+
+**Question.** Issue #166 asks for a four-piece item set, **Mark 1**, whose
+full-set bonus casts the skills on the bar's Q, E, R and Y slots whenever the
+game would let them be cast, takes away the movement penalty of those casts,
+halves the final movement speed, triples the jump's distance, and lets the
+jump ignore collisions while landing only somewhere walkable. Five things
+behind that are not known on this build. How can the game's own cast gate be
+made to cast a bar slot without a key press, so that the game keeps every
+cooldown, resource and requirement check? What slows or stops the caster
+while a skill is cast? Where can the player's final walking speed be scaled by
+exactly 0.5? Where can the jump's length be scaled by 3? And how can a
+walkable landing point be told from one past the walkable map's edge?
+
+**Why it matters.** A mod written against a guess at any of these costs a
+player build and a launch per wrong guess. Each question has several
+candidate routes, and the shared references had none of the names the cast
+gate reads. So this phase folds the static readings into the toolkit's shared
+references, adds one research-build instrument (`mark1probe`) that holds
+every candidate lever for all five questions behind one command, runs two live
+sessions on that one build, and records a `## Decision`. The set itself (the
+four pieces as Custom Forge entries, the worn-set read, the automation with
+the toggle border, the movement and jump levers, the walkable landing check,
+a panel switch that is off by default and the release notes) is phase 2,
+written against that Decision.
+
+**Posture.** Everything here is measured runtime behaviour, a reading written
+in our own words, or our own code. Game objects and scripts are named by their
+`hs-game-sdk` names and indices. This doc carries no decompiled script text, no
+address and no struct offset. A reading is labelled as a reading, and it is not
+a fact until a live session records it.
+
+**Out of scope for this phase.** The mod itself and every phase 2 choice;
+pressing keys from the mod, calling `TalentUse` by name as a cast route, and
+writing cooldown, mana or talent state (§ Static search, "Rejected routes");
+art, the Item Editor, co-op, and classes other than the live character's; and
+anything that suspends the game's own loop.
+
+## Status
+
+- **Phase:** research (phase 1 of 2). Nothing in this phase is
+  player-visible, and the player build is free of it.
+- **Static reading:** done on 2026-10-13 (§ Static reading). The readings
+  about the game are also in the toolkit's `docs/RUNTIME_DATA_MODELS.md`,
+  § 7.7 "The cast gate and its input", § 7.8 "What a cast does to movement",
+  § 19.10 "Walking speed and jump length" and § 19.11 "The walkable map and
+  its edge", labelled as static readings.
+- **Instrument:** `mark1probe`, research build only (§ Instrument).
+- **Live procedure 1** (the cast) and **Live procedure 2** (speed, the jump
+  and walkability): both run on 2026-10-13 on one research DLL (§ Results,
+  "Live 1 results" and "Live 2 results"). The measured facts are folded into
+  the same four sections of `docs/RUNTIME_DATA_MODELS.md`, relabelled
+  measured, and into the hub's `hs-game-sdk/curated/mark1_set_measurements.json`.
+- **Live procedure 3** (walkability only, after Live 2's walkable control
+  failed and the probe's walkable read was corrected): run on 2026-10-13 on a
+  rebuilt research DLL (§ Results, "Live 3 results"), folded the same way.
+- **Decision:** recorded (§ Decision). A bar slot casts through the game's
+  own gate when its `inputState` entry is set to the press value during the
+  gate's call, and in more than 480 forced frames Mana Orb was cast once
+  (what refused the repeats was not read); the jump is moved by `skillsLeap` alone
+  and scaling that displacement tripled it; halving movement speed at the
+  stat dispatcher slowed the walk to 0.785 of its step, not 0.5; and in town
+  a walkable landing point is one inside the room where the player would meet
+  nothing of `Collision_Parent_obj`. The cast's movement penalty was measured
+  but no member holding it was found (§ Not established).
+- **Phase 2 (the mod):** its research session, Mod live procedure 1, ran on
+  2026-10-19 (§ Phase 2: the mod). The walk's step is affine in the speed
+  stat, so an answer of (151 - 200) / 2 halves Sorak's walk
+  (`speed-route: stat-model`); the cast's slowdown follows
+  `playerEffect[199]` only through its ramp, and nothing found removes it
+  (`penalty-route: none`). The facts are folded into the same four sections
+  of `docs/RUNTIME_DATA_MODELS.md` and into `mod_live_1` of the curated
+  measurements.
+- **Mod live procedure 2** (the built set with its switch on): run on
+  2026-10-19 in two attempts, the second after the worn read was fixed
+  (§ Phase 2: the mod, "Mod live 2 results"). The pieces, their art, the
+  full-set read, the border and the jump passed; the automation failed,
+  because pressing every column let Shadow Bolt keep Heavenly Fire from ever
+  casting; and the half walk and the cast's slowdown on it were not observed,
+  because the automated casts kept the slowdown on through every window. The
+  facts are folded into `docs/RUNTIME_DATA_MODELS.md` (the equipment slots,
+  § 7.7, § 7.8, § 19.10, § 19.11 and § 21.7) and into `mod_live_2` of the
+  curated measurements.
+- **Mod live procedure 3** (the turn rule, and the half walk re-measured with
+  Healing Zone alone on the bar): run on 2026-10-20 (§ Phase 2: the mod, "Mod
+  live 3 results"). The turns passed: on Mod live 2's own bar Shadow Bolt,
+  Heavenly Fire and Healing Zone were each cast with no key, 31, 30 and 3
+  times, every landing attributed to its column. The half walk measured 0.500
+  of the control, and a cast's 0.65 slowdown stacks on it
+  (`penalty-stack: stacks`). `landed-control` failed on one clause only: one
+  Healing Zone cast can leave two zone instances. The facts are folded into
+  `docs/RUNTIME_DATA_MODELS.md` § 7.7, § 7.8 and § 19.10 and into
+  `mod_live_3` of the curated measurements.
+- **Phase 3 (the drops):** Mod live 4 to Mod live 6 ran on 2026-10-20 (§
+  Phase 3: the drops, "Mod live 4 results" to "Mod live 6 results", and
+  "Phase 3 decision"). Mod live 4 measured the Heroic roll's pool (T_H = 203
+  on list 5, a stand-in for every class) and the pieces' share by name; Mod
+  live 5 the `DropUniqueItems` route by name, the pieces at SS tier and the
+  owner's filter; Mod live 6 the kill lever, which showed that ordinary kills
+  never run that route (`vanilla-unique-path: other-path`). The facts are
+  folded into `docs/RUNTIME_DATA_MODELS.md` § 13.1, § 18.5 and § 23.4, into
+  `mod_live_4` to `mod_live_6` of the curated measurements and into UP21 and
+  UP22 of `hs-game-sdk/curated/unique_pick_measurements.json`.
+- **Phase 4 (the unique draw inside `DropItem`):** the route a kill's unique
+  really takes, measured by Mod live 7 and taken by the pieces and Pocket Elf
+  in Mod live 8 (§ Phase 4, "Mod live 7 results", "Phase 4 decision" and "Mod
+  live 8 results"). It supersedes the `DropUniqueItems` route as the kill
+  route, and its `draw-claim` decides what the player text says about kills.
+- **Phase 5 (the set tooltip and the pieces' art):** built (§ Phase 5). The
+  pieces show their art from the moment they exist, whatever the switches
+  say, and each piece's tooltip draws the set the way the game draws its own
+  sets. The game facts it rests on are in `docs/RUNTIME_DATA_MODELS.md`
+  § 16.12.
+- **Mod live procedure 9** ran on 2026-10-21: 12 of its 15 checks passed and
+  three failed (`tip-ground`, `art-spawn`, `tip-layout`); replan 1 recounted
+  the tooltip per call, wrapped the description at 478 and lit the bonus line
+  only with the bonus installed, and **Mod live procedure 10** (2026-10-21)
+  passed all 13 of its checks on that build, those three included (§ "Mod
+  live 9 results", § "Mod live 10 results").
+- **The 2026-10-22 playtest (stats, cast priority and held input):** built
+  on the research build; Stats live procedure 1 pending, then Stats live
+  procedure 2 on the build it decides (§ "The 2026-10-22 playtest: stats,
+  cast priority and held input"). The game facts it rests on are in
+  `docs/RUNTIME_DATA_MODELS.md` § 7.9, § 7.10 and § 16.13, labelled as
+  static readings.
+
+## Static search
+
+Searched on 2026-10-13 over `hs-game-sdk/cpp/include/hs_game_sdk/scripts.hpp`
+and `objects.hpp` for every script and object whose name contains `talent`,
+`cast`, `input`, `queue`, `move`, `speed`, `jump`, `leap`, `path`, `grid` or
+`wall` (case-insensitive; the generated anonymous functions and struct
+constructors left out). Code spells each name through its SDK constant; each
+script index below is its `gml_Script_` constant's index. "Role" is what the
+static reading (§ Static reading) found, or "(name)" where only the name
+speaks for it.
+
+### Talent: 122 scripts, 19 objects
+
+| Name | SDK index | Role (reading) |
+| --- | --- | --- |
+| `gml_Script_CheckTalentUse` | 539 | the cast gate: loops over the bar's slots and calls `TalentUse` for a slot that asks; called from `PlayerMovement` |
+| `gml_Script_TalentUse` | 3829 | the cast; one call per key press (RDM § 7.2, measured) |
+| `gml_Script_TalentUseClass` | 3833 | the class's cast body, about 19 frames later (RDM § 7.2, measured) |
+| `gml_Script_TalentUseSetSpeed` | 3830 | cast speed; also writes six `playerEffect` entries (§ Static reading) |
+| `gml_Script_TalentRequirement` | 3769 | the gate's requirement check, just before `TalentUse` |
+| `gml_Script_GetTalentInfo` | 1788 | talent data lookups, by the gate and by `TalentUseSetSpeed` |
+| `gml_Script_GetTalentCooldown` | 1782 | called by `TalentUseSetSpeed` and the class body |
+| `gml_Script_CA_playerTalentActive` | 368 | network handler; the second direct caller of `TalentUseSetSpeed` |
+| `gml_Script_MobileTalentInput` | 1265 | the mobile layout's touch buttons; called from `DrawHudMobile` |
+| `gml_Script_GetPlayerTalentHudObj` | 1725 | the HUD bar object, called by the gate |
+| `gml_Script_NetworkSendClientTalentUse` | 2523 | network echo of a cast (RDM § 7.2 saw it beside a double cast) |
+| `gml_Script_TalentsUniversal` | 3825 | universal talents; one of the callers of `IsObtainablePlace` |
+| `Mobile_Talent_Direction_obj` | 2902 | writes `mobileTalentPressed`, one of the gate's per-slot flags |
+| `UI_Hud_Talent_obj` | 5099 | the drawn skill bar (`row0`, RDM § 8.3) |
+
+Not this question (talent screens, loadouts, per-class talent tables and
+bodies, tooltips, network sync, mercenary talents): `ApplyMercenaryTalentReset`, `CA_playerExtraTalentUpdate`, `CA_playerTalentUpdate`, `ChangeTalentLoadout`, `DrawMobileTalentIcon`, `DrawTalentLines`, `DrawTalentUiTopButtons`, `GetMercenaryTalentStartIndex`, `GetMobileTalentPosition`, `GetSubTalentInfo`, `GetTalentDescription`, `GetTalentId`, `GetTalentLevelReq`, `GetTalentLoadoutAmount`, `GetTalentSeed`, `LoadMonsterTalentModifiers`, `LoadSubTalentDamage`, `LoadTalentDamage`, `LoadTalentDamageBase`, `NetworkSendClientAllTalents`, `NetworkSendMercenaryTalentReset`, `NetworkSendTalentUpdate`, `PopulateTalentStructMap`, `PopulateTalentStructMapAmazon`, `PopulateTalentStructMapBard`, `PopulateTalentStructMapButcher`, `PopulateTalentStructMapDemonSlayer`, `PopulateTalentStructMapDemonspawn`, `PopulateTalentStructMapExo`, `PopulateTalentStructMapIllusionist`, `PopulateTalentStructMapJotunn`, `PopulateTalentStructMapMarauder`, `PopulateTalentStructMapMarksman`, `PopulateTalentStructMapNecromancer`, `PopulateTalentStructMapNomad`, `PopulateTalentStructMapPaladin`, `PopulateTalentStructMapPirate`, `PopulateTalentStructMapPlagueDoctor`, `PopulateTalentStructMapProphet`, `PopulateTalentStructMapPyromancer`, `PopulateTalentStructMapRedneck`, `PopulateTalentStructMapSamurai`, `PopulateTalentStructMapShaman`, `PopulateTalentStructMapShieldLancer`, `PopulateTalentStructMapStormweaver`, `PopulateTalentStructMapViking`, `PopulateTalentStructMapWhiteMage`, `ReturnClassTalentTrees`, `ReturnClassTalents`, `ReturnSubTalentLevel`, `ReturnTalentLevel`, `ReturnTalentValue`, `TalentBenediction`, `TalentHonedDefenses`, `TalentPullMonster`, `TalentTaunt`, `TalentsAmazon`, `TalentsAugments`, `TalentsButcher`, `TalentsDemonSlayer`, `TalentsDemonSpawn`, `TalentsExo`, `TalentsIllusionist`, `TalentsJotunn`, `TalentsMarauder`, `TalentsMarksman`, `TalentsMercenary`, `TalentsNecromancer`, `TalentsNomad`, `TalentsPaladin`, `TalentsPirate`, `TalentsPlagueDoctor`, `TalentsPyromancer`, `TalentsRedneck`, `TalentsRelics`, `TalentsSamurai`, `TalentsShaman`, `TalentsShieldLancer`, `TalentsStormWeaver`, `TalentsViking`, `TalentsWhiteMage`, `Talents_23_Bard`, `Talents_24_Prophet`, `UiAActiveTalentSelect`, `UiAContextTalentLoadout`, `UiAContextTalents`, `UiAMercenaryTalent`, `UiAMercenaryTalentReset`, `UiAMercenaryTalentResetConfirm`, `UiAOpenTalents`, `UiATalentChange`, `UiATalentScreenAssign`, `UiATalentScreenRename`, `UiATalentScreenResetAttributes`, `UiATalentScreenResetTalents`, `UiATalentScreenTalent`, `UiATalentScreenTalentLoadout`, `UiATalentsEther`, `UiATalentsIncarnation`, `UiATalentsMercenary`, `UiATalentsPlayer`, `UiDrawTalentLoadout`, `UiHideTalentsWithNoBind`, `UiHudTalentNavigation`, `UiSetTalentSelectTopRowEnabled`, `UiSetTalentSelectTopRowEnabledGamePad`, `UiTalentNavigation`, `UiUpShowAngelicTalentTooltip`, `close_talents`, `s_TalentInfo`; objects
+`Create_Char_Talent_Tooltip_obj`, `Player_Talent_Tooltip_obj`, `UI_Button_Mercenary_Talent_obj`, `UI_Button_Subtalent_obj`, `UI_Button_Talent_Demo_obj`, `UI_Button_Talent_Filler_obj`, `UI_Button_Talent_Player_obj`, `UI_Mercenary_Talent_Screen_Attributes_Container_obj`, `UI_Mercenary_Talents_obj`, `UI_Mobile_Talent_Round_Button_obj`, `UI_Sub_Talents_obj`, `UI_Talent_Button_obj`, `UI_Talent_Node_Tree_Parent_obj`, `UI_Talent_Screen_Allocate_obj`, `UI_Talent_Screen_Attribute_obj`, `UI_Talent_Screen_Attributes_Container_obj`, `UI_Talent_Screen_obj`.
+
+### Cast: 7 scripts, 7 objects
+
+| Name | SDK index | Role (reading) |
+| --- | --- | --- |
+| `gml_Script_StatFasterCastRate` | 3367 | the getter behind dispatcher id 106, which `TalentUseSetSpeed` asks for |
+| `gml_Script_DrawCastbar` | 1198 | the cast bar's drawing (name) |
+| `Castbar_Parent_obj` | 773 | the cast bar (name) |
+| `Universal_Double_Cast_obj` | 5318 | the double-cast proc's caller (RDM § 7.2, measured) |
+
+Not this question (town portal, an enemy's cast, a castle, a monster): `CA_temporalCast`, `CastTownPortal`, `ContextCastTownPortal`, `PathFindAggroBroadcast`, `PlayerCastTownPortal`;
+objects `Dead_Sarcaster_obj`, `Fall_Castle_Town_House_01_obj`, `Fall_Castle_Town_House_02_obj`, `Fuji_Castle_01_obj`, `Sarcaster_obj`.
+
+### Input: 17 scripts, 3 objects
+
+| Name | SDK index | Role (reading) |
+| --- | --- | --- |
+| `gml_Script_InputSimulate` | 1903 | the game's own input simulation: stores a value under a key in a profile slot's `inputSimMap`; no direct caller found |
+| `gml_Script_InputCheck` | 1885 | reads a profile slot's `inputState`, as the gate does |
+| `gml_Script_InputPressed` | 1886 | the same, for a press |
+| `gml_Script_InputReleased` | 1887 | (name) |
+| `gml_Script_InputCleared` | 1888 | (name) |
+| `gml_Script_ClearSpecificInput` | 1734 | clears one input of a profile slot; one caller is `PlayerMovement` |
+| `gml_Script_ControllerCheckInput` | 636 | gamepad input; calls `ClearSpecificInput` at eleven sites |
+| `gml_Script_KeyboardMouseInput` | 1900 | (name) |
+| `gml_Script_PollKeyboardInputs` | 644 | (name) |
+| `gml_Script_PollGamepadInputs` | 645 | (name) |
+| `gml_Script_MobileTalentInput` | 1265 | the mobile layout's touch buttons (under Talent) |
+| `Input_Device_Manager_obj` | 2259 | holds `playerProfileSlot`, the profile entries whose `inputState` the gate reads |
+
+Not this question (device names, bindings, the inventory grid, string
+commands, the layout editor): `CheckDeviceInput`, `GetPlayerInputBindings`, `ProcessInventoryGridInput`, `ReturnDeviceInput`, `StringReplaceInputCommands`, `UI_Layout_Apply_Input`; objects `Office_Input_Devices_Left_obj`, `Office_Input_Devices_Up_obj`.
+
+### Queue: no script, 1 object
+
+No script name contains `queue`. The one object, `UI_Login_Queue_obj`, is the login
+queue's interface. The cast gate's queue is a variable, `abilityQueue` (§
+Static reading).
+
+### Move: 52 scripts, 4 objects
+
+| Name | SDK index | Role (reading) |
+| --- | --- | --- |
+| `gml_Script_PlayerMovement` | 2774 | the walk step, called from the player's Step event; calls the cast gate (RDM § 19.6) |
+| `gml_Script_PlayerMoveSkill` | 2776 | called once from `skillsLeap`; reads `pSt` and sets `x` and `y` |
+| `gml_Script_StatMovementSpeed` | 3389 | the getter behind dispatcher id 64 |
+| `gml_Script_CanMove` | 467 | not observed during a walk (RDM § 19.6, measured) |
+| `gml_Script_CA_playerMove` | 352 | network handler (name) |
+| `gml_Script_CA_playerSetMoveDirection` | 364 | network handler: reads a direction from a packet into `clientMoveDir` |
+| `gml_Script_RefreshMouseMove` | 3252 | called by `PlayerMovement`, `TalentUseSetSpeed` and `playerJumpGravity` (name) |
+| `Mouse_Move_obj` | 2980 | the click-to-move marker; named by the gate, `PlayerMovement` and `TalentUseSetSpeed` |
+
+Not this question (every `Remove` name, enemy, camera, network and interface
+movement): `BuffRemove`, `BuffRemoveMorph`, `CA_eacRemovePlayer`, `CA_enemyBuffRemove`, `CA_moveInstance`, `CA_moveInstancePool`, `CA_playerRemoveFlag`, `CameraMoveSmooth`, `EnemyRemoveBuff`, `EnemyRemoveBuffStack`, `GoblinMovement`, `GridRemoveItem`, `InventoryGridRemoveItem`, `InventorySocketUpdateAndRemove`, `InventoryStackUpdateAndRemove`, `MarketRemoveItem`, `MonsterClientMovement`, `NetworkSendClientMoveDir`, `NetworkSendEnemyMovePool`, `NetworkSendFlagRemove`, `NetworkSendMoveInstance`, `OnlineRemoveItem`, `RelicRemoveQuest`, `RelicRemoveSlot`, `RemoveFromRenderer_anon_1667_BulbShadowOverlay_BulbShadowOverlay`, `RemoveFromRenderer_anon_1688_BulbLightOverlay_BulbLightOverlay`, `RemoveFromRenderer_anon_1761_BulbDynamicOccluder_BulbDynamicOccluder`, `RemoveFromRenderer_anon_1816_BulbStaticOccluder_BulbStaticOccluder`, `RemoveFromRenderer_anon_610_BulbDirectionalLight_BulbDirectionalLight`, `RemoveFromRenderer_anon_909_BulbLight_BulbLight`, `RemoveItemFromMap`, `RemoveMetamorphosisSkill`, `StringRemoveCommands`, `SummonStepMoveToPlayer`, `UI_Layout_Apply_Move`, `UiAChatDropdownGuildRemove`, `UiAMarketRemove`, `UiAMarketRemovePrompt`, `UiAOptionsIngameMoveStick`, `UiAPresetMove`, `UiMoveNode`, `UiRemoveEtherNode`, `UiRemoveIncarnationNode`, `UiRemoveNode`, `UiUpOptionsIngameMoveStick`; objects `Move_Platform_Horizontal_obj`, `Move_Platform_Vertical_obj`, `UI_Preset_Move_All_obj`.
+
+### Speed: 8 scripts, 2 objects
+
+| Name | SDK index | Role (reading) |
+| --- | --- | --- |
+| `gml_Script_StatMovementSpeed` | 3389 | the movement speed stat (dispatcher id 64); asked for by the player's Step event |
+| `gml_Script_TalentUseSetSpeed` | 3830 | cast speed (above) |
+| `gml_Script_StatAttackSpeed` | 3392 | dispatcher id 72 (name) |
+| `gml_Script_StatAttackSpeedMainHand` | 3393 | dispatcher id 68, asked for by `TalentUseSetSpeed` |
+| `gml_Script_StatAttackSpeedOffHand` | 3394 | dispatcher id 69, asked for by `TalentUseSetSpeed` |
+| `gml_Script_SetRoomSpeed` | 3645 | the game's frame rate (`game_set_speed`), not the player's |
+
+Not this question: `DrawInventoryAttackSpeed`, `EnemyKillBurstOfSpeed`; objects `Debug_Speedometer_obj`, `Helheim_River_Speedlines_obj`.
+
+### Jump: 5 scripts, 9 objects
+
+| Name | SDK index | Role (reading) |
+| --- | --- | --- |
+| `gml_Script_StatJumpPower` | 3391 | dispatcher id 66; asked for only by the player's Alarm 8 event |
+| `gml_Script_playerJumpGravity` | 2764 | runs every frame of a jump (RDM § 19.1, measured); the landing side |
+| `gml_Script_CA_playerJump` | 348 | not called by the local jump (RDM § 19.1, measured) |
+| `gml_Script_PlayerForceJump` | 2770 | not called by the local jump (RDM § 19.1, measured) |
+| `Universal_Jump_Land_Stun_obj` | 5343 | named by `skillsLeap` and `playerJumpGravity`; a landing effect (name) |
+
+Not this question (an enemy's jump, quest and secret jump spots, spawn
+triggers): `CA_enemyJump`; objects `Monster_Jump_Spawn_obj`, `Monster_Jump_Trigger_obj`, `Quest_Jump_Spot_obj`, `Secret_Jump_obj`, `Trigger_03_Spawn_Jump_01_obj`, `Trigger_03_Spawn_Jump_02_obj`, `Trigger_03_Spawn_Jump_03_obj`, `Trigger_03_Spawn_Jump_04_obj`.
+
+### Leap: 1 script, 7 objects
+
+| Name | SDK index | Role (reading) |
+| --- | --- | --- |
+| `gml_Script_skillsLeap` | 3664 | runs every frame of a jump (RDM § 19.1, measured); sets `x` and `y`, calls `PlayerMoveSkill` and `IsObtainablePlace` |
+
+Not this question (class skills' leap effects): objects `Amazon_Leaping_Ambush_obj`, `Jotunn_Freezing_Leap_Shockwave_obj`, `Jotunn_Freezing_Leap_obj`, `Prophet_Leaping_Charge_Claw_obj`, `Prophet_Leaping_Charge_Herald_obj`, `Prophet_Leaping_Charge_Shuriken_obj`, `Prophet_Leaping_Charge_Trail_obj`.
+
+### Path: 39 scripts, 8 objects
+
+| Name | SDK index | Role (reading) |
+| --- | --- | --- |
+| `gml_Script_PathFindControllerCreate` | 2714 | builds `global.pathGrid` (RDM § 22.7, measured; § 19.11) |
+| `gml_Script_PathFindApplyStaticBlockers` | 2718 | adds the static rectangles to the grid |
+| `gml_Script_PathFindBuildStaticBlockers` | 2717 | builds those rectangles from the zone generator's outside list |
+| `gml_Script_PathFindUpdateGridCell` | 2710 | path grid upkeep (name) |
+| `gml_Script_PathFindMarkInstances` | 2719 | path grid upkeep (name) |
+| `gml_Script_PathFindRestoreArea` | 2720 | references `global.pathStaticRects` (name) |
+| `gml_Script_PathFindStartPath` | 2708 | a monster's path start (name) |
+| `Path_Blocker_obj` | 3401 | (name) |
+| `Pathfinding_obj` | 3402 | (name) |
+
+Not this question (monster pathing ticks, the Ether and Incarnation boards'
+paths, path decorations): `CheckPath`, `CheckPathEther`, `FindPathEther`, `FindPathIncarnation`, `PathFindAggroBroadcast`, `PathFindAttackTick`, `PathFindChaseTick`, `PathFindCleanUp`, `PathFindControllerStep`, `PathFindCreate`, `PathFindDirectApproach`, `PathFindDisabledTick`, `PathFindDropBadTarget`, `PathFindInitTimers`, `PathFindLeashCheck`, `PathFindReceiveTarget`, `PathFindRepathToSocket`, `PathFindRetargetTick`, `PathFindScanTick`, `PathFindSeparate`, `PathFindSeparateTick`, `PathFindStep`, `PathFindStepChase`, `PathFindStepIdle`, `PathFindTakeTarget`, `PathFindTauntTick`, `PathFindTrySocket`, `PathFindValidateTarget`, `SocketDirectPath`, `SocketRepathSkip`, `UpdatePathfind`, `UpdatePathfindLight`; objects `Autotile_Dark_Path_obj`, `Autotile_Path_obj`, `Aztec_Pyramid_Blood_Path_01_obj`, `Goblin_Pathpoint_obj`, `Plague_Doctor_Plague_Master_Pathogens_obj`, `Scythe_Path_obj`.
+
+### Grid: 42 scripts, 9 objects
+
+| Name | SDK index | Role (reading) |
+| --- | --- | --- |
+| `gml_Script_PathFindUpdateGridCell` | 2710 | path grid upkeep (name) |
+| `gml_Script_mp_grid_free` | 2078 | (name) |
+| `gml_Script_ds_grid_floodfill` | 1426 | (name) |
+
+Not this question (inventory, stash, crafting, shop and interface grids):
+`CraftEditGrid`, `GetGridTypeName`, `GetInventoryGridNode`, `GetItemPreferredGrid`, `GetStackOpLocationFromGridType`, `GridAddItem`, `GridAddToStack`, `GridClear`, `GridHasSpace`, `GridRemoveItem`, `GridSettle`, `GridStopIdentify`, `InvGridClearItemNode`, `InvGridEquipGamepad`, `InvGridEquipV2`, `InventoryGridAddItem`, `InventoryGridAddItemPos`, `InventoryGridAddItemToTab`, `InventoryGridAddToStack`, `InventoryGridCanAddToStack`, `InventoryGridHasSpace`, `InventoryGridHasSpaceMulti`, `InventoryGridRemoveItem`, `InventoryInitGrids`, `ParseItemToGrid`, `PopulateBlackMarketGrid`, `PopulateMerchantGrid`, `PopulateTravelingMerchantGrid`, `ProcessInventoryGridInput`, `PushEntryToGrid`, `PushPresetToGrid`, `SetBresenhamLineToGrid`, `StashGridAddItem`, `UiOutOfGridNavigationFunc`, `UiResetGrid`, `UiSetGrid`, `UiSetGridArray`, `ds_grid_upscale`, `s_ItemGridInfo`; objects `Customize_Grid_Item_Tooltip_obj`, `Debug_Item_Grid_obj`, `UI_Character_Customize_Grid_obj`, `UI_Emote_Grid_obj`, `UI_Grid_obj`, `UI_Inventory_Grid_obj`, `UI_Inventory_Relic_Grid_obj`, `UI_Inventory_Tarot_Grid_obj`, `UI_Shop_Grid_Item_obj`.
+
+### Wall: 2 scripts, 76 objects
+
+| Name | SDK index | Role (reading) |
+| --- | --- | --- |
+| `gml_Script_ZoneGenMakeZoneWalls` | 3601 | writes the zone generator's `heatGridL` (§ 19.11 of the shared references) |
+| `gml_Script_ZoneWallCheckNearby` | 3600 | called by `ZoneGenMakeZoneWalls`; places zone walls and lights (name) |
+| `Wall_Parent_obj` | 5701 | the wall family; a child of `Collision_Parent_obj` (RDM § 19.8) |
+| `Wall_obj`, `Wall_Wooden_obj`, `Wall_Boss_obj` | 5700 and family | walls (RDM § 19.8) |
+| `Invisible_Wall_obj`, `Invisible_Wall_Not_Minimap_obj` and the six other `Invisible_Wall_*` objects | 2269, 2268 and family | the map's invisible edges; walls (RDM § 19.8) |
+| `Wall_Creator_obj` | 5698 | (name) |
+| `Wall_Indicator_obj` | 5699 | (name) |
+
+Not this question (decorative walls of each act, boss walls, skill effects
+named for walls): objects `Architect_Vector_Wall_Horizontal_obj`, `Architect_Vector_Wall_Vertical_obj`, `Autotile_Minimap_Wall_obj`, `Aztec_Pyramid_Glyph_Wall_01_obj`, `Bad_Trip_Wall_01_obj`, `Bad_Trip_Wall_01b_obj`, `Bad_Trip_Wall_02_obj`, `Bad_Trip_Wall_02b_obj`, `Bifrost_Wall_obj`, `CT_Boss_Wall_01_obj`, `CT_Boss_Wall_02_obj`, `Cathedral_Window_Wall_01_obj`, `Chaos_Tower_Lobby_Wall_01_obj`, `Chaos_Tower_Lobby_Wall_02_obj`, `Chaos_Tower_Lobby_Wall_03_obj`, `Chaos_Tower_Lobby_Wall_04_obj`, `Cthulhu_Wall_Block_obj`, `Fallen_Realm_Ruins_Wall_01_obj`, `Fallen_Realm_Ruins_Wall_02_obj`, `Fallen_Realm_Ruins_Wall_03_obj`, `Fallen_Realm_Ruins_Wall_04_obj`, `Fallen_Realm_Ruins_Wall_05_obj`, `Fallen_Realm_Ruins_Wall_06_obj`, `Fallen_Realm_Ruins_Wall_07_obj`, `Fuji_Wall_01_obj`, `Fuji_Wall_02_obj`, `Fuji_Wall_03_obj`, `Fuji_Wall_04_obj`, `Fuji_Wall_05_obj`, `Fuji_Wall_06_obj`, `Mevius_Tentacle_Wall_obj`, `Mevius_Wall_obj`, `Niflhel_Ruins_Wall_01_obj`, `Niflhel_Ruins_Wall_02_obj`, `Niflhel_Ruins_Wall_03_obj`, `Niflhel_Ruins_Wall_04_obj`, `Niflhel_Ruins_Wall_05_obj`, `Niflhel_Ruins_Wall_06_obj`, `Niflhel_Ruins_Wall_07_obj`, `Odin_Wall_obj`, `Quest_Gladsheim_Secret_Wall_obj`, `Satan_Firewall_obj`, `Shield_Lancer_Shield_Wall_Vortex_Projectile_obj`, `Shield_Lancer_Shield_Wall_Vortex_obj`, `Shield_Lancer_Shield_Wall_obj`, `Uber_Anubis_Decaying_Wall_obj`, `Uber_Anubis_Wall_01_obj`, `Underground_Wall_Vines_obj`, `Universal_Wall_of_Eternity_obj`, `Universal_Wallbanger_obj`, `Valhalla_Halls_Wall_Torch_Lever_obj`, `Valhalla_Halls_Wall_Torch_obj`, `Valhalla_Ruins_Wall_01_obj`, `Valhalla_Ruins_Wall_02_obj`, `Valhalla_Ruins_Wall_03_obj`, `Valhalla_Ruins_Wall_04_obj`, `Valhalla_Ruins_Wall_05_obj`, `Valhalla_Ruins_Wall_06_obj`, `Valhalla_Ruins_Wall_07_obj`, `Wall_Vines_obj`, `Winter_Cliff_Wall_01_obj`, `Winter_Cliff_Wall_02_obj`.
+
+### Found by following the reading
+
+These match none of the words above, and the reading led to them.
+
+| Name | SDK index | Role (reading) |
+| --- | --- | --- |
+| `gml_Script_ReturnSpecificStat` | 3344 | the stat dispatcher; id 64 is movement speed, 66 Jump Power |
+| `gml_Script_IsObtainablePlace` | 2076 | the game's "can something stand here" test, over the zone generator's heat grid |
+| `gml_Script_IsObtainablePosition` | 2077 | a second reader of the heat grid; used to place loot and monsters |
+| `gml_Script_InstancePlaceTallest` | 599 | holds the walk (RDM § 19.6, measured); called by `playerJumpGravity` |
+| `gml_Script_skillsBlink` | 3660 | another movement skill step that asks `IsObtainablePlace` |
+| `objZoneGenV2` | 3259 | the zone generator; holds `heatGridL` and the outside block list |
+| `Profile_Manager_obj` | 3673 | holds `inputState` (RDM § 10.4, measured) and makes `inputSimMap` |
+| `Prison_Catapult_Bottom_obj` | 3629 | launches the player; references `playerSkipCollisions` |
+| `Krampus_obj` | 2426 | references `playerSkipCollisions` |
+
+### Rejected routes
+
+- **Pressing the slot's key from the mod** (a posted key message, the way
+  hs-drive's `hs_input` does for tests). The key bound to a slot cannot be
+  read (`castKeyRule` is not measured), it would fight the player's own
+  input, and it is the input-simulation family the pet-quest B4 plan
+  explored. Not a lever. (The game's own `InputSimulate` above is a
+  different route: it hands the gate a value through the game's profile, and
+  the gate still decides. It stays a candidate.)
+- **Calling `TalentUse` by name.** Measured to cast while skipping the
+  gate's mana and requirement checks (`castByNameRoute`, skill actions
+  research). Rebuilding that gate ourselves cannot promise "any condition the
+  game checks". Not a lever in this phase; it would come back only as the
+  owner's decision.
+- **Writing cooldowns, mana or talent state directly.** The talent state is
+  hash-checked (`skill-actions-research.md`, § Static readings).
+- **A -50% movement speed affix on the pieces.** Additive; the issue asks for
+  x0.5 on the final speed.
+- **Skipping `PlayerMovement`, or any game call.** Blocking it outright
+  crashed the game, because it also does collision, depth and state work (the
+  co-op hook's own note); a lever wraps the original call. The toolkit's
+  rule against suspending the game's own runtime says the same.
+
+## Static reading
+
+Made on 2026-10-13 in the build the Ghidra project imported (the one the
+toolkit's `py -3 tools/decomp_index.py build-hash` names). Written in our own
+words; every claim is a **static reading** unless it says measured.
+
+**Sources.** The ghidra MCP decompiled the small functions:
+`PathFindControllerCreate`, `PathFindApplyStaticBlockers`,
+`IsObtainablePlace` and `InputSimulate`. `CheckTalentUse` was read from a
+local headless decompile made on 2026-09-25 for this build, with the
+decompile index's slot names. The large bodies (`StatMovementSpeed`,
+`TalentUseSetSpeed`, `PlayerMovement`, `skillsLeap`, `playerJumpGravity`)
+did not decompile: the MCP timed out on each, and earlier headless runs on
+them timed out at the default limit. For those, and for callers, a local scan
+of each script's compiled code listed the variable, builtin and script names
+it references, whether each reference reads or writes, the direct calls it
+makes and the constant ids it passes. The scan's positive control: on
+`PathFindControllerCreate` it listed exactly what the MCP decompile of that
+function shows, and on `CheckTalentUse` its read and write counts for
+`abilityQueue` and `mobileTalentPressed` match the decompile. A scan of
+direct call sites is blind to calls through the script table, a pointer or a
+method value, so a caller it did not find is not observed, not absent.
+
+### The cast gate (question 1)
+
+- **Where it runs.** The only direct call of `CheckTalentUse` found is in
+  `PlayerMovement`, which the player's Step event calls; so the gate runs
+  inside the movement step. Measured elsewhere: its entry logs about 85 calls
+  a second in town, with `self` equal to `other` and three arguments (the
+  toolkit's x64dbg notes). Why that is more than one call a frame is not
+  read.
+- **Which argument names a slot: none.** All three are optional. The first
+  is the player instance (when undefined, a value from the game's protected
+  global data). The second is the player number (default: the global
+  `mplr`), passed with the player into the talent-info and requirement
+  lookups. The third (default 1) is the index into `Input_Device_Manager_obj`'s
+  `playerProfileSlot`, and is handed on unchanged as `TalentUse`'s third
+  argument, which the shared references measured as 1 on a key cast. Live 1's
+  `ctu-args` records the values this machine passes.
+- **The slots are a loop inside the gate,** a counter from 0 to 11. For each
+  value the gate looks the slot's talent id up and decides whether the slot
+  asks to cast.
+- **Where each variable lives.** `playerProfileSlot` is an array on
+  `Input_Device_Manager_obj`, indexed by the gate's third argument; its entry
+  carries `inputState` (read on 15 paths, at an index an unnamed helper
+  derives from the slot counter) and `inputSimMap`, so the entry is plausibly
+  a `Profile_Manager_obj` instance. `abilityQueue`, `mobileTalentPressed` and
+  `autoAim` are global arrays (created in the game's global definitions)
+  indexed by the slot counter. `stackSkillList` is a variable of the gate's
+  own `self`.
+- **An `abilityQueue` entry is a 0-or-1 flag per bar slot.** When a slot's
+  key state does not ask for a cast, the gate reads the slot's
+  `abilityQueue` entry, and when that is unset too its `mobileTalentPressed`
+  entry; a slot with all three unset is skipped. Later the gate writes both
+  entries of the slot back with 0; one other path writes 1 into
+  `abilityQueue`'s entry 0. `PlayerMovement` writes `abilityQueue` at five
+  sites (values not read), and nothing else found references it.
+- **The cast.** For a slot that asks, the gate calls `GetTalentInfo` and
+  `TalentRequirement`, then `TalentUse` with the player, the slot's talent
+  id, its third argument and false. It also asks the stat dispatcher for id
+  199 (no case in the dispatcher's table) and calls `PlayerManaUpdate` and
+  `PlayerHpUpdate`.
+- **`InputSimulate`** stores a value under a key in a profile slot entry's
+  `inputSimMap`. That map is read by `Profile_Manager_obj`'s and
+  `Controller_obj`'s Begin Step events, which run before the Step event that
+  reaches the gate. What its keys are, and how the Begin Step folds the map
+  into `inputState`, were not read.
+- **The earlier `inputState` negative does not cover this reader.** The
+  pet-quest B4 research measured that writing `inputState` from the frame
+  callback did nothing for the interact key, whose check reads the keyboard
+  directly, and the write landed after the frame's readers ran. A write
+  inside the gate's own call, just before it reads, is untested: not refuted.
+
+### What a cast does to movement (question 2)
+
+- **`TalentUseSetSpeed`** has two direct callers found, `TalentUse` and
+  `CA_playerTalentActive`. It asks the dispatcher for ids 68, 69 and 106 (the
+  two attack speeds and faster cast rate). Besides the cast speed it writes
+  six entries of the player's `playerEffect` array (entries 40, 46, 79, 182,
+  231 and 282; what each means is not read) and sets `image_speed` on an
+  instance or object it names. It names no movement-speed variable
+  (`hSpeedFactor`, `vSpeedFactor`, `mobileSpeedFactor`, `moveSpeed`).
+- **`PlayerMovement`** calls `TalentUseClass` once, reads its `playerEffect`
+  at 21 sites and takes it for writing at 19, and reads its stat values
+  `pSt` at 32 sites. The player's Step event calls `TalentUseClass` at five
+  more sites. Which of these holds the caster still is not established: Live
+  1's `penalty-vars` diffs them across a cast.
+
+### Walking speed (question 3)
+
+- **The stat is read in the player's Step event.** Dispatcher id 64 goes to
+  `StatMovementSpeed`, whose only direct caller found is the dispatcher. The
+  scripts found asking for id 64 are the player's Step event (once),
+  `StatTotalDamage`, `StatAttackDamage`, `StatMagicSkillDamage`,
+  `TalentsSamurai` and the mercenary's Alarm 5. `PlayerMovement` does not ask
+  for it; it asks for id 336, which has no case.
+- **What `StatMovementSpeed` reads.** The player's `playerBuff` (about 380
+  reads, through the buff value and stack methods), `buffArray`,
+  `debuffArray`, `buffMult` and `skpDb`; dispatcher ids 106, 531, 532 and 598
+  (only 106 has a case); `ReturnSubTalentLevel` and `LoadSubTalentDamage`;
+  `floor` and `power`. Whether it caps is not established: this build
+  compiles `min`, `max` and `clamp` inline, so a cap does not show as a name.
+- **The speed names the walk uses.** `PlayerMovement` reads `hSpeedFactor`
+  and `vSpeedFactor` (five sites each, no write found), `mobileSpeedFactor`,
+  `roomSpd` and `pSt`. The player's Step event reads `move_dist`, `new_x`,
+  `new_y`, `hSpeedFactor`, `vSpeedFactor` and another instance's
+  `mountSpeed`, writes `moveOverrideHor` and `moveOverrideVer`, and uses
+  `mp_linear_step`. Which of these the final step is computed from is not
+  read: Live 2's `walk-mover`, `speed-move` and `speed-stat` measure it.
+
+### Jump length (question 4)
+
+- **Jump Power is read by the player's Alarm 8 event,** the only script found
+  asking for id 66. That event asks the dispatcher about 350 times, so it is
+  plausibly the routine that refreshes the player's stat values, which fits
+  the measurement that `StatJumpPower` logged no call during a jump.
+- **`skillsLeap`** has three direct callers found: the player's Step event,
+  `ClassStepEvent` and the mercenary's Step event. It sets `x` and `y` at
+  three sites each (on which instance is not read: it also creates instances
+  and handles leap skills' damage), sets `direction` (four sites),
+  `deltaSpeed` (two) and `max_range` (one), reads `height` and
+  `jumpDirection`, and calls `PlayerMoveSkill` (which sets `x` and `y`),
+  `IsObtainablePlace` (five sites), `InheritModifiers` and the collision
+  builtins, naming `Collision_Parent_obj`, `Wall_Parent_obj` and `Block_obj`.
+  It asks for id 337 (no case) and damage stat ids. It names no mouse
+  coordinate, so the jump's target is plausibly decided before it runs (the
+  Step event reads `mouse_x`, `mouse_y`, `xMouse` and `yMouse`).
+- **`jumpDirection` belongs to the scenery.** The Create events of
+  `Collision_Parent_obj`, `Collision_Prop_obj` and about thirty cliff objects
+  reference it: plausibly the direction a cliff lets a leap go down.
+- **`playerJumpGravity`** has one direct caller found, the player's Step
+  event. It reads `x` and `y` (no write found), `height`, `pSt` and
+  `playerEffect`, sets `stickHost`, references `unstuck`, `unstuckDir`,
+  `myShadow`, `groundDepth` and `playerSkipCollisions`, calls
+  `InstancePlaceTallest`, `IsInWater` and `UpdateDepth`, and asks for id 337.
+  By this reading `skillsLeap` (or `PlayerMoveSkill` inside it) moves the
+  player during a jump and `playerJumpGravity` handles the landing; Live 2's
+  `jump-mover` measures which.
+- **The game's own collision skip.** `playerSkipCollisions` is set up in the
+  player's Create event and read in its Step event, and is referenced through
+  another scope by `playerJumpGravity`, the player's collision event with
+  `Collision_Parent_obj`, `Krampus_obj` and `Prison_Catapult_Bottom_obj`'s
+  Alarm 0 (which also names `launchPlayer`, `forceMovePlayer`, `jump` and
+  `zSpeed`). The player's collision event names `x`, `y`, `xprevious`,
+  `yprevious`, `speed` and `height`, the shape of an event that puts the
+  player back where it was. Whether the flag gates that event, and who sets
+  it when, is not read. It is the game's own candidate for a jump that
+  ignores collisions.
+
+### The walkable map's edge (question 5)
+
+- **The path grid marks blockers, not the edge.** `PathFindControllerCreate`
+  destroys any earlier `global.pathGrid`, sets `global.gridSize` to 16, makes
+  an mp_grid the size of the room in 16 px cells, clears it, and adds every
+  instance of `Collision_Parent_obj` with precise masks, then
+  `Player_Only_Passage_obj` and `Projectile_Only_Passage_obj` when any
+  exist. `PathFindApplyStaticBlockers` then adds every rectangle of
+  `global.pathStaticRects` when `global.pathStaticRoom` is the current room.
+  Neither marks a cell because it lies beyond the floor.
+- **In a generated zone the rectangles are the outside.**
+  `PathFindBuildStaticBlockers`, called from the zone generator's Create
+  event, fills those rectangles from the generator's `outsideBlockList`,
+  scaled by `zoneOuterScale` and the grid size. So in a generated zone the
+  outside is plausibly blocked in the path grid; in a room the generator did
+  not build, such as a town, nothing found marks it.
+- **The game's "can something stand here" test.** `IsObtainablePlace` takes
+  a point. With no `objZoneGenV2` it answers yes for any point; otherwise no
+  outside the room, no when the generator's `heatGridL` is negative, and yes
+  only when the point's 32 px cell and its four diagonal neighbours all hold
+  something other than 30000. `heatGridL` is written by the generator's
+  Create event and `ZoneGenMakeZoneWalls`, so 30000 plausibly marks a wall or
+  void cell. `skillsLeap` asks it at five sites, as do `skillsBlink`, the
+  player's Step event, the enemy creators and the quest manager.
+
+### What the reading means for the instrument
+
+- `mark1probe`'s `profile` scope should resolve `playerProfileSlot` on
+  `Input_Device_Manager_obj`, indexed by the gate's third argument, not on
+  the player; and its `queue` scope reads `abilityQueue` and
+  `mobileTalentPressed` as globals and `stackSkillList` on the player.
+- A `set` of the slot's `abilityQueue` entry during `CheckTalentUse` tests
+  the queue route directly; a `set` of the slot's `inputState` entry tests
+  the input route.
+- The `walkable` verdict's fields (`grid`, `family`, `wall-line`, `tile`)
+  do not include the game's own test, `IsObtainablePlace` over the heat
+  grid; in a town that test answers yes everywhere if no generator exists
+  there.
+
+## Instrument
+
+`mark1probe` exists only in the research build (`build.bat dev`): the player
+build compiles none of it, and it is not a player command. Its decisions (the
+parsing, the lever state, the displacement and scale arithmetic, the walkable
+verdict and every reply line) live in a game-independent core,
+`plugin/include/ForgePact/Mark1Probe.hpp`, which
+`tests/test_mark1_probe_behavior.py` compiles whole and runs against
+controlled calls. The adapter in `ModuleMain.cpp` does the game's side, and
+`tests/test_mark1_probe_contract.py` pins it. Every script is named by its
+`hs-game-sdk` constant, every object by its `hs-game-sdk` name or through
+`asset_get_index`, and nothing calls or reads through an address.
+
+### The rows and `hook`
+
+Nine rows, one per script the five questions lean on: `CheckTalentUse`,
+`TalentUse`, `TalentUseSetSpeed`, `PlayerMovement`, `ReturnSpecificStat`,
+`StatMovementSpeed`, `skillsLeap`, `playerJumpGravity` and `StatJumpPower`.
+
+- **Bare `mark1probe`** reads nothing in the game. It prints
+  `mark1probe: research build`, then
+  `mark1probe: rows=9 hooked=<k> held=<h> lever=<form|off> watch=<on|off>`,
+  then the usage. Before `hook` it reads `rows=9 hooked=0 held=0`, which is
+  the sessions' `marker` check.
+- **`hook`** installs every row by name through `HookOneScript`, both
+  routes: the script-table swap and the inline detour at the script's own
+  code. A row counts as hooked only when its inline detour went in, because
+  compiled GML reaches these scripts by direct calls that a table-only hook
+  never sees; a row whose detour did not go in is reported `failed` and named
+  table-only. The reply is
+  `mark1probe hook: <n> detoured, <f> failed, <h> held`, then the holder of
+  each held row. A second `hook` leaves the rows already installed alone.
+  Positive control: the sessions' `hook-native` check reads
+  `9 detoured, 0 failed, 0 held`, and `show` then counts `CheckTalentUse`
+  calls rising while the player stands still, since the gate runs every
+  frame.
+- **A row another hook holds is left to it.** A second install of a script
+  only gets the table route, which is blind, so the probe reads each row's
+  holder first (from the holders' own records and from the script table),
+  reports the row `held` with the holder's name where it is known, and never
+  installs on top. The holders known when this was written: `CheckTalentUse`
+  (`tgprobe`, `jumpprobe`), `TalentUse` (co-op's own hook, installed only by
+  co-op rendering), `TalentUseSetSpeed` (`tgprobe`, `projprobe`),
+  `ReturnSpecificStat` (`skillslider`, `projprobe`), `skillsLeap`
+  (`jumpscenery`, `jumpprobe`), `playerJumpGravity` and `StatJumpPower`
+  (`jumpprobe`). `toggleguard` holds `TalentUseClass`, which is not a row but
+  runs inside a cast, and a worn flight charm arms flight's collision hooks.
+  So the sessions start with none of `jumpscenery`, a worn flight charm,
+  `skillslider`, `toggleguard`, `tgprobe`, `jumpprobe` or `projprobe` armed.
+- **Only the local player's calls are touched.** Each row compares the
+  call's `self` with the local player, found by the shared resolver that
+  accepts the runner's reference handle as well as an object. Every other
+  call, and every call while no lever is on, runs the original once and
+  returns its result unchanged: that is the baseline, and the behaviour suite
+  pins it for every row.
+
+### The reading forms
+
+- **`off`** turns every lever, watch, `args`, `count` and `pos` off. The rows
+  stay installed and pass every call through.
+- **`show`** prints, per row, `calls=<local>/<all>` (the calls whose `self`
+  was the local player, over all calls), the lever's counts (`applied=`,
+  `missing=`, `moved=`, `still=` and the stat counters below), and `casts=`
+  per talent id of the local player's `TalentUse` calls since `hook` or the
+  last `show reset`. Positive control: a key cast of the ordinary skill adds
+  one cast of its talent id (`key-cast-control`).
+- **`args <n>`** (1 to 100) prints the next n local-player calls of
+  `CheckTalentUse`, one line each:
+  `ctu #<k> f=<frame> argc=<c> a0=<v> a1=<v> a2=<v>`, each argument as a
+  number or bool, or as its kind (`ref:`, `str:`, `undefined` and so on), and
+  `none` past the count. Positive control: the gate runs every frame, so an
+  idle `args` fills within a few frames; one that does not means the row is
+  not detoured.
+- **`watch <scope> <frames> [after <row>]`** takes a snapshot of the scope's
+  number and bool members every frame and prints one line per change,
+  `watch f=<frame> <scope>.<name>=<old>-><new>`, with `none` for a member that
+  appeared or went away. With `after <row>` the window opens at that row's
+  next local-player call instead of now. After 400 lines the watch ends and
+  its end line counts what was dropped. The scopes, as the instrument
+  resolves them:
+  - `player`: the local player instance's own variables.
+  - `pst`: the struct the player holds in `pSt`.
+  - `profile`: the entry of `Input_Device_Manager_obj` instance 0's
+    `playerProfileSlot` array at the gate's third argument (the local
+    player's latest `CheckTalentUse` call; 1 until one has been seen). The
+    reply names the index and where it came from (`:a2` or `:default`) and
+    what the entry is (`=Profile_Manager_obj` or the object's name). An
+    unresolved route is refused with its reason; nothing stands in for it.
+  - `input`: the same scope's `inputState` array, each element printed as
+    `input[<i>]`.
+  - `queue`: `abilityQueue`, `mobileTalentPressed` and `stackSkillList`, each
+    as its kind, its length and its first four entries. `abilityQueue` and
+    `mobileTalentPressed` read as globals and `stackSkillList` on the player;
+    the watch's `scope=` names where each was read, and a member that is not
+    there reads `absent`. Any other `queue.<name>` is refused, and a global
+    is written only as an element (`queue.abilityQueue[<i>]`), never as a
+    whole.
+
+  Positive control: a `watch player` while the player walks shows `x` or `y`
+  changing; a watch that prints nothing then is the instrument, not the game.
+- **`count <object name> <frames>`** resolves the object by name and prints
+  one line per change of its instance count,
+  `count f=<frame> <object>=<old>-><new>`. A name that is not an object is
+  refused. Its reading is checked against the screen: a toggle's aura that
+  appears or goes away while `count` prints nothing means the count, not the
+  game.
+- **`pos <frames>`** prints the cursor in room coordinates at the start (the
+  same cursor routes `jumpscenery` reads), then a line
+  `pos f=<frame> <row> dx=<px> dy=<px>` for each local-player call of a row
+  that moved the player, and at the end
+  `pos total=<px> frames=<n> movers=<row>:<count>,...`. It also samples the
+  player's position once a frame, so a move no row made shows up as an
+  `outside` line and as `outside:` among the movers, rather than reading as a
+  player who stood still. Positive control: the sessions' `walk-control` and
+  `jump-control`, two equal walks or jumps whose totals agree within 10%.
+
+### The levers
+
+One lever is on at a time; a lever form while another is on replaces it and
+says so. Every lever runs for `frames` frames (600 when not given, at most
+3600) and then ends on its own, printing its counts. A lever on a row that is
+not hooked is refused, and a lever on a row that is hooked table-only says
+that only the table's calls reach it.
+
+- **`set <scope>.<name>[<i>] <value> during <row> [frames]`**: before each
+  local-player call of the row, write the value into that member (or array
+  element); after the original returns, or throws, put back what was there.
+  Only a member or element that already exists is written; nothing is
+  created, and a write that finds nothing counts `missing=`. The reply names
+  the scope it resolved, the value supplied and the value it will restore;
+  `show` counts `applied=` only for a write that reads back as the value
+  written. This is the route that tests whether the gate
+  casts a slot from its input entry or its queue entry, written inside the
+  gate's own call, just before the gate reads it.
+- **`scale <scope>.<name>[<i>] <mult> during <row> [frames]`**: the same,
+  multiplying the member's number.
+- **`move <row> <mult> [frames]`**: after each local-player call of the row
+  that changed the player's `x` or `y`, set them to where the call started
+  plus mult times the call's own displacement. A call that did not move the
+  player is left alone. `show` counts `moved=` and `still=`.
+- **`stat <id> <mult> [frames]`**: a `ReturnSpecificStat` call whose `self` is
+  the local player and whose stat id is the one given returns the original's
+  number times mult. For the two ids with a getter row (64 movement speed,
+  `StatMovementSpeed`; 66 jump power, `StatJumpPower`), a local-player call of
+  that getter is scaled too, because compiled GML can call a getter directly
+  as well as through the dispatcher. The counts keep the two routes apart:
+  `changed-dispatch=`, `changed-getter=`, `getter-direct=` (getter calls no
+  dispatcher call was around) and `skip=` (a matching call whose result was
+  not a number). Both changed counts at 0 means the lever never engaged where
+  the game reads the stat, which is not the same as engaged and changed
+  nothing.
+
+### The walkable verdict
+
+`walkable here <dx> <dy>` reads one point relative to the player,
+`walkable at <x> <y>` one point in room coordinates, and
+`walkable scan <deg> <step> <count>` a line of points from the player in that
+direction. Each point prints
+`walkable x= y= room=<in|out> grid=<free|blocked|unreadable> family=<free|blocked|unreadable> wall-line=<clear|crossed|unreadable> tile=<layer>:<value>,... grid-raw=<raw> family-raw=<raw> wall-line-raw=<raw>`,
+followed by ` met=<object name>:<instance id>` when `family` reads blocked:
+
+- `room`: whether the point lies inside the room.
+- `grid`: the point's 16 px cell in `global.pathGrid` (`mp_grid_get_cell`,
+  -1 for a blocked cell).
+- `family`: whether the player, placed at the point, would meet the
+  `Collision_Parent_obj` family (`place_meeting`).
+- `wall-line`: whether a line from the player to the point crosses the
+  `Wall_Parent_obj` family (`collision_line`).
+- `tile`: up to four tile layers' cell values at the point, by layer name.
+- `grid-raw`, `family-raw`, `wall-line-raw`: the builtin's answer as the
+  probe received it, `<kind>:<value>`, the kind in lower case without its
+  prefix (`bool`, `real`, `int32`, `int64`, `ref`, `undefined`, ...);
+  `error` when the call itself failed, `none` when it was not made.
+- `met`: what a blocked `family` met, `instance_place` on the same family
+  at the same point, by object name and instance id.
+
+Each field reads its builtin's answer by that builtin's meaning. `family` is
+a meeting answer: true or a non-zero number is blocked, false or 0 is free.
+`wall-line` is an instance answer: an instance (an id or ref of 0 or more)
+is crossed, `noone` (-4) is clear. Live 2's build read both as an instance
+answer, so `place_meeting`'s numeric 0 counted as a meeting and `family`
+printed blocked everywhere (Live 2 results, `walkable-control`). Live 3
+measured that `place_meeting`, called this way, answers a `real` 0 or 1, not
+a `bool`, and `collision_line` a `ref` (-4 for `noone`); ForgePact `61243b2`
+made the correction and added the raw fields and `met`.
+
+Every field starts unreadable and only a read that succeeded replaces it, so
+a failed read never turns into either answer. The game's own test,
+`IsObtainablePlace` over the zone generator's heat grid, is not one of the
+fields (§ Static reading, "What the reading means for the instrument").
+Positive control: the sessions' `walkable-control`, a point 32 px from the
+player on open floor reading `room=in grid=free family=free wall-line=clear`
+(Live 3 reads the player's own position and 32 px to either side).
+
+### Where the `profile` and `queue` scopes read
+
+The instrument follows the reading (§ Static reading, "The cast gate"):
+`profile` and `input` resolve `Input_Device_Manager_obj.playerProfileSlot[<third
+argument>]`, and `queue` reads `abilityQueue` and `mobileTalentPressed` as
+globals and `stackSkillList` on the player. The `profile` reply names the
+index and the entry's object, so Live 1 records whether the entry is a
+`Profile_Manager_obj` instance.
+
+### The debugger logpoints
+
+Both sessions attach the headless debugger to the running game after
+`mark1probe hook` and the game's own control, and log hits at script entries
+without stopping the game. The precondition is that the toolkit's decompile
+index still names the build the Ghidra project imported; otherwise the
+locations are stale and the session is `LIVE-ABORTED`. The locations come
+from that project and stay in the session's local notes, never in this doc.
+
+- `dbg-control`: `CheckTalentUse`'s entry, counting hits. Its hits rise while
+  the player stands still. It is the control for every other logpoint in the
+  same session.
+- `dbg-cast-speed` (Live 1): `TalentUseSetSpeed`'s entry, counting hits and
+  recording where each call returns to.
+- `dbg-stat-movement` and `dbg-stat-jump` (Live 2): the entries of
+  `StatMovementSpeed` and `StatJumpPower`, the same way.
+
+`mark1probe hook` detours these entries itself, so the logpoints are armed
+without matching the file's bytes, and the first bytes each logpoint reports
+are recorded in the capture. A candidate whose first byte differs from the
+control's is `not-run (instrument: bytes)`. Return locations are written in
+the capture as module offsets only; the record names their callers in words.
+The debugger is detached before the game is stopped.
+
+## Live procedure 1
+
+The cast: its route, whether the game still gates it, which input belongs to
+each slot key, the toggle outlier and the cast's movement penalty. This is
+the procedure the session runs, written here before it runs. The capture is
+the workorder's live capture 1.
+
+**Setup:**
+
+- **Build:** the research build from `plugin_build\build.bat dev` at the
+  branch's head once this procedure is written. The owner is asked before it
+  is installed, and its SHA-256 is recorded.
+- **Character:** save slot 14, "Sorak" (White Mage), in `Town_01_rm`, with no
+  flight charm worn (a worn flight charm arms flight's hooks). The saves are
+  backed up first and restored at the end.
+- **Control:** `ping` answers `pong (YYTK 4.0.1)`; bare `mark1probe` answers
+  `mark1probe: research build`, then `rows=9 hooked=0 held=0`.
+- **Cases:** `skillstate` is read first. The ordinary case is the first of
+  bar slots 0,3 to 0,6 whose skill shows an `effect=` count and is not a
+  toggle (Mana Orb on 0,3 when the character was last read). The toggle
+  outlier is Soul Spurn on any of those slots (0,5 when last read); without
+  it, `toggle-flips` is `not-run`. The empty-slot outlier is any of them with
+  talent id 0; without one, `empty-slot` is `not-run`. No other skills.
+- **Relies on:** `CheckTalentUse` and `TalentUse` (the toolkit's
+  `docs/RUNTIME_DATA_MODELS.md` § 7.2 and § 7.7); `TalentUseSetSpeed`
+  (`skill-sliders-research.md` § Static reading, and § 7.8);
+  `PlayerMovement` (§ 19.6); `inputState` (§ 10.4); `playerProfileSlot`,
+  `abilityQueue`, `mobileTalentPressed` and `stackSkillList` (§ 7.7, a static
+  reading); `UI_Hud_Talent_obj`'s `row0` and `skillstate` (§ 8.3,
+  `skill-actions-research.md` § Decision); `White_Mage_Soul_Spurn_AOE_obj` as
+  Soul Spurn's on-state (§ 7.2, and the toggle research).
+- **Debugger:** attached at S3, after S2's `hook` and the game's own control,
+  then its module list read; `dbg-control` armed first, `dbg-cast-speed`
+  before S15 (§ Instrument, "The debugger logpoints"). Detached in S18,
+  before the game stops.
+- **Keys:** pressed through hs-drive's key input, one second apart where a
+  step presses several.
+
+**Checks.** `dll-hash`, `marker`, `control`, `hook-native` and `dbg-control`
+establish that the session is valid, and must pass. Each part's own control
+gates its research checks: `bar-read` and `key-cast-control` gate S6 to S13,
+and `walk-control` gates S15 to S17. When a part's control fails, its
+research checks are `not-run (instrument: <control>)`, never `fail` or
+`not-observed`. `cast-input` or `cast-other` must have cast for S10, S12 and
+S13 to run; when neither cast they are `not-run (instrument: cast-route)`,
+because with no lever that casts, their counts measure the lever, not the
+game. For the rest, a `fail` or a `not-observed` is itself the finding, as
+long as its control passed in the same session.
+
+| Step | Check | What is done | Expected |
+| --- | --- | --- | --- |
+| S0 | `dll-hash` | the installed `BloodPactPlugin.dll`'s SHA-256 | equals the built research DLL's |
+| S1 | `control`, `marker` | `ping`, then bare `mark1probe` | as **Control** above |
+| S2 | `hook-native` | `mark1probe hook` | `9 detoured, 0 failed, 0 held` |
+| S3 | `dbg-control` | attach the debugger; arm `dbg-control` | its hits rise while the player stands still |
+| S4 | `bar-read` | `skillstate`; pick the cases | the bar is listed |
+| S5 | `key-cast-control` | cast the ordinary slot by its key (hs-drive's skill cast with the Q key, 81, when it is the Q slot) | `confirmed: true` |
+| S6 | `ctu-args` | `mark1probe args 120` while idle, then again while S5's key is pressed | which argument changes with the slot, and its value for the pressed slot; the values this machine passes |
+| S7 | `slot-keys` | `mark1probe watch input 90`, then press Q, E, R and Y one second apart | one `input[<i>]` change per key, with its pressed and resting values |
+| S8 | `queue-observed` | `mark1probe watch queue 120`, then press the ordinary key twice, 10 frames apart | what `abilityQueue`, `mobileTalentPressed` and `stackSkillList` hold during a cast, or no change (read with § Instrument, "Where the `profile` and `queue` scopes read") |
+| S9 | `cast-input` | once the ordinary skill's `effect=` reads 0: `mark1probe set profile.inputState[<its i>] <S7's pressed value> during CheckTalentUse 600`, no key pressed; `skillstate` after two seconds | `effect=` rises; `show` counts `applied=` above 0 and a cast of that talent |
+| S10 | `cast-gate` | with the lever that cast: S9's (`profile.inputState[<S7's i>]`), or else S11's (`queue.abilityQueue[i]` or `queue.mobileTalentPressed[i]` at the i S11 mapped to that slot), run again for 600 frames on the ordinary slot, no key pressed; during that window, `show` every two seconds, and `mark1probe watch player 120` | that talent is cast no more often than its cooldown allows, and a mana member falls with each cast |
+| S11 | `cast-other` | only if S9 did not cast: for each i in 0..11, one at a time with no key pressed, `mark1probe show reset`, `mark1probe set queue.abilityQueue[i] 1 during CheckTalentUse 60`, then `mark1probe show`, recording `applied=` and the `casts=` talent id for each i; then the same sweep for `queue.mobileTalentPressed[i]`; then a `set` of each `profile` or `player` member S8 showed moving, one at a time | which i casts which bar slot (the slot-counter mapping); the queue route reads as a negative only if no i cast while its `applied=` was above 0 |
+| S12 | `toggle-flips` | toggle outlier: `mark1probe count White_Mage_Soul_Spurn_AOE_obj 600`, with the lever that cast: S9's (`profile.inputState[<S7's i>]`), or else S11's (`queue.abilityQueue[i]` or `queue.mobileTalentPressed[i]` at the i S11 mapped to that slot), on Soul Spurn's slot for 600 frames | the on and off flips, counted from the aura's instance count; `show` counts `applied=` above 0 and at least one `casts=` of Soul Spurn's talent id, else `not-run (instrument: lever-not-on-slot)`; `stays` only when `show` counts at least two `casts=` of Soul Spurn's talent id in the window while the aura's count rose and then held; one cast is `not-run (instrument: single-cast)`; record the `casts=` count beside the flip count |
+| S13 | `empty-slot` | empty-slot outlier: the lever that cast: S9's (`profile.inputState[<S7's i>]`) on the empty slot's index for 120 frames, or else S11's lever (`queue.abilityQueue[i]` or `queue.mobileTalentPressed[i]`) at the empty slot's i, only when the other slots' mapped i values fix it unambiguously; otherwise `not-run (instrument: empty-slot-index)` | `applied=` above 0 and no `TalentUse` call |
+| S14 | `walk-control` | `mark1probe pos 240` while hs-drive holds D for three seconds; once more | the two totals within 10% of each other |
+| S15 | `penalty-baseline`, `dbg-cast-speed` | arm `dbg-cast-speed`; `pos 240` while D is held for three seconds and E is pressed at one second | the total against S14's; `dbg-cast-speed`'s hits and return locations |
+| S16 | `penalty-vars` | `mark1probe watch player 90 after TalentUse`, then `watch pst 90 after TalentUse`, each during an E press in the middle of a walk | the members that change after the cast and settle back |
+| S17 | `penalty-lever` | for each S16 member: `set player.<name> <its resting value> during PlayerMovement 240` (or the `pst` member), then S15's walk | the total back near S14's |
+| S18 | none | `mark1probe off`; detach the debugger; stop the game; restore the backup | a clean restore |
+
+A mover that `pos` reports as `outside` means the player moved with no row's
+call moving it: the row that moves the walk is not among the nine.
+
+The checks feed § Decision: `cast-route` from S9 and S11 (with S8),
+`cast-gate` from S10, `slot-keys` from S7, `toggle-under-automation` from S12,
+`cast-penalty` from S16 and `penalty-lever` from S17.
+
+## Live procedure 2
+
+Walking speed, the jump and walkability. The capture is the workorder's live
+capture 2. It runs after Live procedure 1, in the same sitting or later,
+with its own backup: its starting state is the save as it was before Live 1.
+
+**Setup:**
+
+- **Build, character, control and debugger precondition:** as Live
+  procedure 1. The session starts in town with `jumpscenery` off.
+- **Cases:** a walk on open ground; a jump on open ground with the cursor
+  about 100 px away (inside the jump's measured reach of about 246 px, the
+  toolkit's `docs/RUNTIME_DATA_MODELS.md` § 19.5) and about 300 px away
+  (beyond it); walkability at a point of open floor, at a point inside a prop,
+  and along a line from the town's walkable floor out past its edge.
+- **Relies on:** `PlayerMovement` (§ 19.6); `ReturnSpecificStat`'s cases 64
+  and 66 and `StatMovementSpeed` (§ 19.10, a static reading); `skillsLeap`,
+  `playerJumpGravity` and `StatJumpPower` (§ 19.1); the jump's cursor read
+  (§ 19.5); `global.pathGrid` (§ 22.7); `Collision_Parent_obj` and
+  `Wall_Parent_obj` (§ 19.2, § 19.8); the edge (§ 19.11); `playerwarp` (the
+  module guide's Command Reference) to stand at a point.
+- **Debugger:** as Live 1, with the same control, `dbg-control`; the
+  candidates are `dbg-stat-movement` and `dbg-stat-jump` (§ Instrument, "The
+  debugger logpoints"), under the same bytes rule.
+
+**Checks.** The same five validity checks must pass. `walk-control` gates T5
+to T7, `jump-control` gates T9 to T11 and `walkable-control` gates T13 and
+T14, the same way as in Live procedure 1.
+
+| Step | Check | What is done | Expected |
+| --- | --- | --- | --- |
+| T0 to T3 | `dll-hash`, `control`, `marker`, `hook-native`, `dbg-control` | as S0 to S3 | as there |
+| T4 | `walk-control` | `mark1probe pos 240` while hs-drive holds D for three seconds, the inventory closed; twice | the two totals within 10% |
+| T5 | `walk-mover`, `dbg-stat-movement` | arm `dbg-stat-movement`; one T4 walk; `pos` lists the movers | which row moved the player; the stat's calls and return locations |
+| T6 | `speed-move` | `mark1probe move <T5's mover> 0.5 240`, then T4's walk | a total about half of T4's |
+| T7 | `speed-stat` | `mark1probe stat 64 0.5 240`, then T4's walk | the total against T4's, with the lever's `changed-dispatch=` and `changed-getter=` |
+| T8 | `jump-control` | a jump (Space, key 32) on open ground with the cursor about 100 px away, `pos 150` armed; twice | two lengths within 10%; the cursor printed |
+| T9 | `jump-mover`, `dbg-stat-jump`, `jump-vars` | arm `dbg-stat-jump`; T8's jump; then `watch pst 110 after skillsLeap` over a second jump | the movers; the stat's calls; the members that hold the jump's state |
+| T10 | `jump-move` | `move <T9's mover> 3 150`, T8's jump, then the same with the cursor 300 px away | the lengths against T8's and against the far jump's baseline |
+| T11 | `jump-stat` | `stat 66 3 150`, the same two jumps | the lengths against the baselines |
+| T12 | `walkable-control` | `mark1probe walkable here 32 0` on open floor | `room=in grid=free family=free wall-line=clear` |
+| T13 | `walkable-prop` | `walkable here` at a point inside a prop | which fields read blocked |
+| T14 | `walkable-edge` | `playerwarp` to the town's walkable edge; `walkable scan <degrees toward the edge> 16 24`, with a screenshot | where each field flips, against the edge seen on screen |
+| T15 | none | `mark1probe off`; detach the debugger; stop the game; restore the backup | a clean restore |
+
+The checks feed § Decision: `walk-mover` from T5, `speed-lever` from T6 and
+T7, `jump-mover` from T9, `jump-lever` from T10 and T11, and `walkable-test`
+from T13 and T14.
+
+## Results
+
+Live 1 and Live 2 ran on 2026-10-13, one after the other, on one research DLL
+(sha256 `0557663379cfbb08d1a976896f1b79712eae72dff47138e8f38194c08b02b97f`,
+plugin v2.2.1 banner, YYTK 4.0.1), built with `plugin_build\build.bat dev`
+from ForgePact `2feb9b4`, whose `plugin/` tree is unchanged at the head of
+the `166-mark1-set` branch. Save slot 14 "Sorak" (White Mage), in
+`Town_01_rm`, on the game build whose executable hashes to
+`498d588550d80d0d100a4ce6958bcc044e6b79339920d3d8a931bca9a1b142c0` (the copy
+the Ghidra project imported, so the debugger logpoints belong to this build).
+No flight charm was worn and no config file existed, so every shipped mod was
+off. The records are the session captures
+`forgepact-166-mark1-set-live-1.md` and `forgepact-166-mark1-set-live-2.md`,
+kept with the hub's workorder files on the researcher's machine and not
+tracked. Every verdict below is what the toolkit's `tools/live_checks.py`
+reads from them. Each session restored its own save backup at teardown and
+read it back clean. Live 3, walkability only, ran later the same day on a
+rebuilt research DLL (§ Live 3 results).
+
+### Live 1 results
+
+The cast, the slot keys, the toggle and the cast's movement penalty (Live
+procedure 1, 18:46 to 18:56 UTC). `tools/live_checks.py` reads 20 checks from
+`forgepact-166-mark1-set-live-1.md`: 15 pass, none fail, 3 not-observed, 2
+not-run. The five validity checks passed, and so did each part's own control
+(`bar-read` and `key-cast-control` for the cast, `walk-control` for the
+penalty), so each not-observed below is a negative of its part within what
+the instrument reads, not a broken instrument.
+
+Three things were done differently from the procedure, each recorded in the
+capture: `args` takes at most 100 calls, so S6 ran `args 100` (not 120); S7
+used one 90-frame `watch input` per key, since one window cannot span four
+presses a second apart; and one of S14's walks was stopped by a building, so
+the player was moved back and walked again.
+
+| Check | Verdict | What it showed |
+|---|---|---|
+| `dll-hash` | pass | The installed DLL was the research build above. |
+| `control` | pass | `ping` answered `pong (YYTK 4.0.1)`. |
+| `marker` | pass | `mark1probe: research build`, then `rows=9 hooked=0 held=0`. |
+| `hook-native` | pass | `mark1probe hook` detoured all nine rows; none failed and none was held. |
+| `dbg-control` | pass | The x64dbg logpoint on `CheckTalentUse`'s entry kept logging while idle and up to teardown, and the debugger's control hold proved the attach: the game's frame counter stopped answering during the hold and moved on after it. |
+| `bar-read` | pass | `skillstate` listed the bar: Chain of Holy Light on 0,2, Mana Orb (talent 253) on 0,3, Healing Zone (252) on 0,4, Soul Spurn (240) on 0,5, and nothing on 0,6. The cases: Mana Orb ordinary, Soul Spurn the toggle, 0,6 the empty slot. |
+| `key-cast-control` | pass | hs-drive's Q press on slot 0,3 cast Mana Orb (`effect=` went from 0 to 1). |
+| `ctu-args` | not-observed | Over 100 local `CheckTalentUse` calls idle, and 100 more twice with Q held down, every call carried the same three arguments: the player (as a `VALUE_REF`), 1 and 1, one call per frame. No argument names a slot, as the static reading said. Holding Q down cast nothing in either window, so the value for a pressed slot was not seen. |
+| `slot-keys` | pass | Each key moved one entry of the profile slot's `inputState`: Q entry 3, E entry 4, R entry 5 and Y entry 6 (entries 26 and 25 moved together with Q and E). Each entry rests at 1, reads 4 on the press frame, 3 while held, 2 on the release frame and then 1 again. The entries are the bar columns the four slots sit on. The profile slot read was entry 1 of `Input_Device_Manager_obj` instance 0's `playerProfileSlot`, the index `CheckTalentUse`'s third argument names. |
+| `queue-observed` | pass | Over two Q presses ten frames apart (one cast counted), none of the first four entries (0-3) of `abilityQueue`, `mobileTalentPressed` or the player's `stackSkillList` changed between end-of-frame samples; later slots, and an entry set and cleared within one gate call, were not visible, so whether a key cast uses the queue is not established. |
+| `cast-input` | pass | With no key pressed, `mark1probe set profile.inputState[3] 4 during CheckTalentUse 600` cast Mana Orb: `effect=` went from 0 to 1, the lever had applied 210 times by the first `show`, and one Mana Orb cast was counted. Writing the press value into a slot's entry just before the gate reads it, and restoring it after, casts that slot. |
+| `cast-gate` | not-observed | Across more than 480 applied frames of that lever, with the press value in place on every gate call, Mana Orb was cast once. What refused the repeats (cooldown, mana, the orb still alive) and Mana Orb's cooldown were not read, so whether the cooldown applies to a forced press is not established. The mana half was not seen: in a 120-frame watch of the player no member named for mana fell (`manaArrayPos` moved, upwards). Where the player's mana is kept was not read. |
+| `cast-other` | not-run | Not needed: `cast-input` cast. |
+| `toggle-flips` | pass | The same lever on Soul Spurn's entry 5 for 600 frames: the count of `White_Mage_Soul_Spurn_AOE_obj` went from 0 to 1 and back 13 times, ending at 0 (off), and 22 Soul Spurn casts were counted. A toggle held "pressed" this way switches on and off again every 10 to 30 frames; it does not stay on. |
+| `empty-slot` | pass | The lever on the empty slot's entry 6 for 120 frames: no `TalentUse` call at all. |
+| `walk-control` | pass | Two three-second walks to the right (D) from the same spot covered 1049.3 and 980.5 px in the 240-frame window, 6.6% apart. Every walk's movement came from outside the nine rows (`in-rows=0`). |
+| `penalty-baseline` | pass | The same walk with E (Healing Zone) pressed after one second covered 949 px, 6.5% below the two controls' mean. From the cast the step per frame fell from about 6.0 px to about 3.9 px for about 21 frames, then climbed back to 6.0 px. |
+| `dbg-cast-speed` | pass | The logpoint on `TalentUseSetSpeed`'s entry (its first byte the same as the control's, so the same instrument) logged 17 hits by teardown, each returning to one location, which lies in `TalentUse` (below). The probe's row counted one local call during the walk's cast. |
+| `penalty-vars` | not-observed | A 90-frame watch of the player from the cast on saw `playerSequenceTopPrev`, `playerSequenceBottomPrev`, `playerSequenceDirection` and `manaArrayPos` change, and none settled back. The `pst` watch read nothing: `pSt` is an array of 54 entries, neither a struct nor an instance, and the probe's `pst` scope reads named members only. |
+| `penalty-lever` | not-run | No member to hold back: `penalty-vars` listed none that settles back. |
+
+**The caller behind `dbg-cast-speed`.** Every logged return location of the
+`TalentUseSetSpeed` logpoint was the same one. Looked up in the Ghidra project
+through the ghidra MCP, it lies past `TalentUse`'s entry and before the next
+function entry the project knows, named or unnamed, and the five bytes before
+it in the game file are a direct call to `TalentUseSetSpeed`. That is the one
+direct call site the static reading found in `TalentUse` (§ Static reading,
+"What a cast does to movement"). One caller, `TalentUse`, 17 hits;
+`CA_playerTalentActive`, the other direct caller the reading found, was not
+observed in this session.
+
+### Live 2 results
+
+Walking speed, the jump and walkability (Live procedure 2, 18:58 to 19:11
+UTC). `tools/live_checks.py` reads 19 checks from
+`forgepact-166-mark1-set-live-2.md`: 13 pass, 1 fails, 1 not-observed, 4
+not-run. The five validity checks passed, and so did `walk-control` and
+`jump-control`. `walkable-control` failed, so the two walkability checks it
+gates did not run.
+
+Recorded deviations: T4's `pos` window and its D press had to go out in one
+batch (two windows sent first expired before the press and read 0, not
+counted); T5's second per-frame logpoint slowed the frame, so that logpoint
+was cleared before T7; T8's window was lengthened to `pos 300` after two
+`pos 150` windows ended mid-jump (not counted), and T10's and T11's levers ran
+for 300 frames instead of 150 for the same reason; T12 read two extra points
+and one more spot beside the control point.
+
+| Check | Verdict | What it showed |
+|---|---|---|
+| `dll-hash` | pass | The same research DLL as Live 1. |
+| `control` | pass | `ping` answered `pong (YYTK 4.0.1)`. |
+| `marker` | pass | `mark1probe: research build`, then `rows=9 hooked=0 held=0`. |
+| `hook-native` | pass | All nine rows detoured, none failed or held. |
+| `dbg-control` | pass | As in Live 1: the `CheckTalentUse` logpoint logged while idle and to teardown, and the control hold proved the attach. |
+| `walk-control` | pass | Two three-second walks to the right from the same spot: 932.7 and 855 px, 8.3% apart, both windows ending with D still held. All movement came from outside the nine rows. |
+| `walk-mover` | pass | During a walk, `PlayerMovement` ran 810 times (once a frame) and no call of any of the nine rows moved the player: `pos` counted every moving frame as `outside`. The walk's displacement is applied somewhere none of the nine rows covers. |
+| `dbg-stat-movement` | pass | The logpoint on `StatMovementSpeed`'s entry (first byte as the control's) logged one hit for each `CheckTalentUse` hit, so once a frame, standing or walking: 2008 hits, each returning to one location, which lies in `ReturnSpecificStat` (below). The probe's row agrees: 810 local calls in the 810 frames of the walk's window, none called directly. The second per-frame logpoint slowed the frame from about 13.4 ms to 23.2 ms and the step per frame grew with it (about 9 and 12 px against 6), so this walk's total is not compared with T4's. |
+| `speed-move` | not-run | Instrument: no row moved the walk, so there was no row for `move` to scale. |
+| `speed-stat` | pass | `mark1probe stat 64 0.5 240` halved id 64's result on all 240 dispatcher calls (`changed-dispatch=240`; `changed-getter=0`, `skip=240`: every `StatMovementSpeed` call inside the dispatcher returned a non-number to the probe, so the getter route never scaled, against the core's tested model). The walk covered 696.9 px, 22% below T4's mean of 893.9 and below the 878.9 px of a walk without the lever straight after. The step per frame fell from 5.979 px to 4.693 px: 0.785 of the unscaled step, not 0.5. The walk does read movement speed through the dispatcher every frame, but halving the dispatcher's id-64 answer gave 0.785 of the step. |
+| `jump-control` | pass | Two jumps on open ground with the cursor about 100 px away (100.95 and 100.31 px as printed) both covered 96.9 px. |
+| `jump-mover` | pass | The jump was moved by `skillsLeap` alone: 102 calls in a jump, every one a moving call, and nothing outside the rows. `playerJumpGravity` ran 101 times in a jump and never moved the player. |
+| `dbg-stat-jump` | not-observed | The logpoint on `StatJumpPower`'s entry (first byte as the control's) logged nothing over two jumps, nor over the four jumps of T10 and T11, while the control kept logging; the probe's row counted 0 calls too. A jump does not call `StatJumpPower`, as the toolkit's § 19.1 measured with another instrument. |
+| `jump-vars` | not-run | Instrument: `pSt` is an array of 54 entries and the `pst` scope reads no members of it. |
+| `jump-move` | pass | `mark1probe move skillsLeap 3 300` tripled the displacement of all 102 `skillsLeap` calls of a jump. With the cursor about 100 px away the jump covered 290.7 px against 96.9 px (3.00 times); with it about 300 px away, 738.8 px against an unscaled 250.3 px (2.95 times), so the scaled jump goes well past the jump's usual reach. |
+| `jump-stat` | pass (the lever never engaged) | `mark1probe stat 66 3 300` found no call to scale (`changed-dispatch=0`, `changed-getter=0`). The jumps covered 96.9 px with the cursor about 100 px away and 246.3 px with it about 300 px away (250.3 without the lever). Jump Power is not read during a jump. |
+| `walkable-control` | fail | On open floor the player stood on and walked across, `mark1probe walkable here 32 0` read `room=in grid=free family=blocked wall-line=clear`. `family` read `blocked` at the player's own position too, 32 px to either side, and at a second open spot. So the `family` field, the player's `place_meeting` against `Collision_Parent_obj` as the probe asks it, does not tell open floor from anything else; why it reads blocked there is not established. |
+| `walkable-prop` | not-run | Instrument: `walkable-control` failed. |
+| `walkable-edge` | not-run | Instrument: `walkable-control` failed. |
+
+**The caller behind `dbg-stat-movement`.** Every one of the 2008 logged return
+locations was the same. Looked up the same way as Live 1's, it lies past
+`ReturnSpecificStat`'s entry and before the next function entry the Ghidra
+project knows, and the five bytes before it in the game file are a direct
+call to `StatMovementSpeed`: the dispatcher's case for id 64, the only direct
+caller the static reading found. One caller, `ReturnSpecificStat`, 2008 hits.
+`dbg-stat-jump` logged no hit, so it has no caller to name.
+
+Locating a return by the nearest function entry before it can be wrong when
+an object event the symbol dump does not name sits in between (the flight
+charms research found that once, `flight-charms-research.md`, Live 1
+results). Here each location sits right after a direct call to the logged
+script, and that call is the one the static reading found in the named
+script, so the two agree.
+
+### Live 3 results
+
+Walkability only (Live procedure 3, 20:59 to 21:03 UTC). It ran because
+Live 2's `walkable-control` failed, after ForgePact `61243b2` corrected how
+the probe reads `place_meeting`'s answer and made the walkable line print
+each builtin's raw answer and what a blocked `family` met (§ Instrument,
+"The walkable verdict"). Research DLL sha256
+`8c47459b15dd0691336efd65e5c9ded6ebd1a46b23e578e9688f71d023ad516e`, built
+with `plugin_build\build.bat dev` from `61243b2`, plugin v2.2.1 banner, YYTK
+4.0.1, on the same game build. Same character, room and starting save as
+Live 1 and Live 2, no flight charm worn, `jumpscenery` off; no debugger and
+no `mark1probe hook`, since the walkable read hooks nothing.
+
+The procedure, in the order of Live procedure 2's T12 to T14: `walkable
+here 32 0`, `here 0 0` and `here -32 0` on open floor by the town's
+waypoint (`walkable-control`, which gates the other two); points inside a
+prop (`walkable-prop`); and, after `playerwarp` to walkable floor near the
+town's south edge, `walkable scan 270 16 24` toward that edge, with a
+screenshot (`walkable-edge`). The record is the capture
+`forgepact-166-mark1-set-live-3.md`, kept beside the other two and not
+tracked. `tools/live_checks.py` reads 6 checks from it: all pass, the two
+research checks as recorded. The session restored its own save backup and
+read it back clean.
+
+| Check | Verdict | What it showed |
+|---|---|---|
+| `dll-hash` | pass | The installed DLL hashed to the built research DLL above. |
+| `control` | pass | `ping` answered `pong (YYTK 4.0.1)`. |
+| `marker` | pass | `mark1probe: research build`, then `rows=9 hooked=0 held=0`. |
+| `walkable-control` | pass | At the player's own position on open floor and 32 px to either side, every point read `room=in grid=free family=free wall-line=clear`, each with `grid-raw=real:0 family-raw=real:0 wall-line-raw=ref:-4`. `place_meeting`'s "no meeting" reached the probe as a `real` 0, not a `bool` false, so Live 2's `family=blocked` everywhere was the old read counting that 0 as a hit, not anything at the points. |
+| `walkable-prop` | pass (research: recorded) | Inside the Bounty Board (`Bounty_Board_obj`), on a scan west of the player and at two points read with `walkable at`, only `family` read blocked (`family-raw=real:1`, `met=Bounty_Board_obj`); the path grid's cell stayed free (`grid-raw=real:0`) and the wall line clear. The board blocks about 64 px of that line, five points 16 px apart, at its base; three points picked on its drawn sprite above the base read free on every field. Further along the same line, `family` met an `Invisible_Wall_Not_Minimap_obj` one point before the grid cell turned blocked and the wall line crossed. |
+| `walkable-edge` | pass (research: recorded) | From walkable floor south of the town, scanning south in 16 px steps: `family` turned blocked first, meeting an `Invisible_Wall_Not_Minimap_obj`; one point (16 px) later the grid cell read blocked (`real:-1`) and the wall line crossed (its answer a `ref` to that same instance); all three stayed blocked to the end of the scan, still inside the room. The edge is that invisible wall, and nothing on screen draws it. A coarse scan from the waypoint at 96 px steps, past the room's bottom, showed the rest of the way: water (`Block_Dynamic_Sprite_obj`) and fallen rocks and trees (`Fall_Rock_01_obj`, `Fall_Dead_Tree_02_obj`) read blocked on both `grid` and `family` with the wall line clear; open pockets between them read free on every field; and past the room's bottom (`room=out`) the grid stayed blocked and the wall line crossed, but `family` read free again once the points were past the invisible walls. |
+
+What the session settles about the four fields, in town:
+
+- **`family` is the one field that sees a prop.** The Bounty Board blocked
+  `family` alone. Why its cells read free in the path grid, when the static
+  reading has the grid built from every `Collision_Parent_obj` instance, is
+  not established.
+- **At the edge `family` leads.** It turned blocked 16 px before the grid
+  and the wall line, at the invisible wall the other two then saw too.
+- **`family` says nothing past the room.** Beyond the room's bottom it read
+  free; only `room` (and the grid) still said no.
+- **None of the four tile layers read (`Darkness`, `Hay_Ground`,
+  `Leaves_Ground`, `Water`) marks the edge; the room's later tile layers were
+  not read.** The layers' values vary across open
+  floor, the `Water` layer is non-zero only on the water, and every layer
+  reads -1 outside the room.
+
+## Decision
+
+Recorded on 2026-10-13 from the three sessions (§ Results). Each key takes
+exactly one of its listed values, on a line of its own, and the check that
+decides it is on the line below. A `not-observed` closes nothing unless its
+positive control passed in the same session; each one below says whether it
+did.
+
+cast-route: input
+Decided by `cast-input` (Live 1, pass): writing the press value 4 into the slot's `inputState` entry during the gate's own call cast Mana Orb with no key pressed, and the same lever cast Soul Spurn (`toggle-flips`). `queue-observed` saw the queue arrays unchanged by a key cast; the `queue` and `mobile` levers were not tried (`cast-other` not-run, as the input route had cast).
+
+cast-gate: not-observed
+Decided by `cast-gate` (Live 1, not-observed; its control `key-cast-control` passed): one Mana Orb was cast in more than 480 forced frames, with what refused the repeats not read, and an empty slot cast nothing (`empty-slot`), but no mana member was seen to fall, so whether the gate still charges mana is open.
+
+slot-keys: measured
+Decided by `slot-keys` (Live 1, pass): Q, E, R and Y are the profile slot's `inputState` entries 3, 4, 5 and 6, resting at 1, 4 on the press frame, 3 while held and 2 on the release frame.
+
+toggle-under-automation: flips
+Decided by `toggle-flips` (Live 1, pass): Soul Spurn held "pressed" through the lever switched on and off 13 times in 600 frames, ending off.
+
+cast-penalty: not-observed
+Decided by `penalty-vars` (Live 1, not-observed; its control `walk-control` passed): the penalty itself was measured (`penalty-baseline`: the step fell to about 0.65 of itself for about 21 frames after the cast), but no player member that changes at the cast and settles back was found, and `pSt` could not be read by the watch.
+
+penalty-lever: not-run
+Decided by `penalty-lever` (Live 1, not-run): there was no member to hold back.
+
+walk-mover: outside-rows
+Decided by `walk-mover` (Live 2, pass): `PlayerMovement` runs once a frame during a walk, but no call of any of the nine rows moved the player.
+
+speed-lever: stat
+Decided by `speed-stat` (Live 2, pass): x0.5 on id 64's result at the dispatcher slowed the walk, to 0.785 of its step rather than 0.5, so the stat route reaches the walk but does not halve it; `speed-move` did not run (instrument: no row moves the walk). Only the dispatcher's answer was scaled: the getter route is an open instrument question for the choice of lever, since every `StatMovementSpeed` call inside the dispatcher returned a non-number to the probe (`skip=240`, `changed-getter=0`), so a lever at the getter is untested, not ruled in or out.
+
+jump-mover: skillsLeap
+Decided by `jump-mover` (Live 2, pass): all 102 moving calls of a jump were `skillsLeap`'s; `playerJumpGravity` ran alongside and never moved the player.
+
+jump-lever: move
+Decided by `jump-move` (Live 2, pass): x3 on `skillsLeap`'s displacement tripled the jump (3.00 times near, 2.95 times far); `jump-stat` showed the stat route never engages, since a jump does not read Jump Power (`dbg-stat-jump` not-observed with the control logging).
+
+walkable-test: combined
+Decided by `walkable-prop` and `walkable-edge` (Live 3, both recorded; their control `walkable-control` passed): a point is a walkable landing when it lies inside the room and the player placed there meets nothing of `Collision_Parent_obj` (`room=in` and `family=free`). `family` alone saw the prop, which the path grid and the wall line missed, and turned blocked at the town's edge 16 px before them, but read free again past the room's bottom, where only `room` and the grid still said no; none of the four tile layers read marks the edge (the later layers were not read). Measured in a town only (§ Not established). Live 2's `walkable-control` had failed on the old read of `place_meeting` (§ Live 3 results).
+
+The values each key may take (Live 1 decides the first six, Live 2 the next four, Live 3 the last):
+
+- `cast-route`, how a bar slot can be cast through the game's own gate:
+  `input`, `queue`, `mobile`, `not-observed` or `lever-not-engaged`.
+- `cast-gate`, whether the game still gates such a cast: `game-gates`,
+  `bypassed`, `not-observed` or `not-run`.
+- `slot-keys`, which input belongs to each of Q, E, R and Y: `measured`,
+  `partial` or `not-observed`.
+- `toggle-under-automation`, what a toggle skill does under the lever:
+  `flips`, `stays` or `not-run`.
+- `cast-penalty`, the member names that change while a skill is cast, or
+  `none-observed` or `not-observed`.
+- `penalty-lever`, whether holding those members back restores the walk:
+  `restores`, `partial`, `no-effect` or `not-run`.
+- `walk-mover`, the row that moves the player on a walk: `PlayerMovement`,
+  `skillsLeap`, `playerJumpGravity`, `outside-rows` or `not-observed`.
+- `speed-lever`, where x0.5 lands: `move`, `stat`, `both`, `neither` or
+  `not-observed`.
+- `jump-mover`, the row that moves the player during a jump: `skillsLeap`,
+  `playerJumpGravity`, `PlayerMovement`, `outside-rows` or `not-observed`.
+- `jump-lever`, where x3 lands: `move`, `stat`, `both`, `neither` or
+  `not-observed`.
+- `walkable-test`, which reading tells a walkable landing from one past the
+  edge: `grid`, `wall-line`, `tile`, `family`, `combined`, `none` or
+  `not-observed`.
+
+## Not established
+
+Settled by the sessions, and so off this list: which `inputState` value
+means pressed (4, on the press frame); which entries Q, E, R and Y use (3 to
+6); what `CheckTalentUse`'s arguments are on this machine (the player, 1 and
+1, once a frame); that a write into the slot's entry inside the gate's call
+casts the slot; which script moves the
+player during a jump (`skillsLeap`); why Live 2's walkable control failed
+(the probe read `place_meeting`'s `real` 0 as a meeting); and, in town, how a
+walkable landing point is told from one past the edge (inside the room, and
+`family` free). Mod live 3 (2026-10-20) settled two more: a cast's slowdown
+stacks on the half walk (`penalty-stack: stacks`, the cast frames' step 0.650
+of the bonus-on step), and Heavenly Fire casts by key on Sorak in town with
+Shadow Bolt and Healing Zone beside it (Part B's positive control), which Mod
+live 2's starvation could not tell from a skill that does not cast there.
+Still open:
+
+- **Whether the gate still charges mana** for a cast made through the input
+  lever (`cast-gate`, not-observed: no mana member was found to watch), and
+  whether it checks the other requirements `TalentRequirement` covers.
+- **What unit `abilityCooldown` is in, and Mana Orb's cooldown.** Over more
+  than 480 forced frames Mana Orb was cast once (`cast-gate`), but what
+  refused the repeats (cooldown, mana, the orb still alive) was not read. Mod
+  live 2 showed the game refusing forced presses of Healing Zone between
+  casts (`gate-kept`, `cooldown-recast`), so a forced press does wait for
+  something, but its recasts came 501 to 1071 frames apart against an
+  `abilityCooldown` of 14, which in seconds would be 2016 frames at that
+  session's frame rate; what the value counts, and what makes the intervals
+  differ, was not read. Mod live 3 widened the spread: with Healing Zone
+  alone on the bar its automated recasts came 1575 frames apart in both
+  windows, and beside Shadow Bolt and Heavenly Fire 587 to 1627 frames apart.
+- **Why one Healing Zone cast can leave two zone instances.** In Mod live 3
+  (`landed-control`) a rise of `White_Mage_Healing_Zone_obj`'s count went
+  from 0 to 2 at one cast in each of two windows while the probe counted one
+  cast, and in Part B four rises stood against three casts, the extra zone
+  lasting 88 frames. So the zone count is at least the casts, not equal to
+  them; what the second instance is, and when the game makes one, was not
+  read.
+- **In which order the gate serves the bar slots.** With Q, E and R all
+  pressed in every gate call, Heavenly Fire on R never cast while Shadow Bolt
+  on Q cast about once in 60 frames (Mod live 2, `on-automation`). Whether
+  the gate serves one asking slot a call, and in which order, was not read.
+  The turn rule presses one column a call, so the set no longer depends on
+  it (Mod live 3, `on-automation`).
+- **Why the cast's flat slowdown ran longer under the half walk.** In Mod
+  live 3 (`on-penalty`) an automated Healing Zone cast held the step at
+  0.650 of the bonus-on step for 76 frames before the 16-frame ramp, against
+  Mod live 1's 57 flat frames for a key cast without the set at the same
+  frame time. Whether the flat part depends on the walk's speed, the cast's
+  route or something else was not read.
+- **The gear slots the set does not use.** Mod live 2 measured the helmet at
+  gear slot 0, body armour 1, boots 2 and gloves 4 on Sorak; with the off hand
+  (9) and the relics (10 to 14) measured earlier, slots 3 and 5 to 8 hold
+  nothing measured, and whether another character wears its gloves at 4 too
+  was not read.
+- **The other bar columns.** Only the entries of Q, E, R and Y (3 to 6) were
+  measured; how the gate derives the entry for the other columns, and why
+  entries 26 and 25 move with Q and E, were not read. Whether a slot's
+  `abilityQueue` or `mobileTalentPressed` entry, or `InputSimulate`, would
+  also cast it was not tried.
+- **What holds the caster back during a cast.** The penalty was measured
+  (`penalty-baseline`), but no player member holding it was found
+  (`penalty-vars`), `pSt` is an array the probe's watch cannot read, and what
+  each `playerEffect` entry `TalentUseSetSpeed` writes means was not read. So
+  where a lever could take the penalty away is open (`penalty-lever`
+  not-run).
+- **Where the walk's displacement is applied, and why x0.5 on movement speed
+  gives 0.785.** No row moves the walk (`walk-mover`), and halving id 64 at
+  the dispatcher slowed the step to 0.785 of itself (`speed-stat`). Three
+  questions are open: whether the step is not proportional to the
+  dispatcher's id-64 answer (a base the stat adds to, a cap or a floor);
+  whether the walk also reads movement speed by a route the dispatcher lever
+  does not reach, such as the cached `pSt` values `PlayerMovement` reads; and
+  why `StatMovementSpeed`'s own result was not a number to the probe
+  (`skip=240`), which is an open instrument question for the choice of speed
+  lever. Which value the final step is computed from was not read; the
+  factor that gives an exact 0.5 is not known.
+- **Where the jump's length is decided.** Scaling `skillsLeap`'s own
+  displacement tripled the jump (`jump-move`), and a jump does not read Jump
+  Power (`jump-stat`, `dbg-stat-jump`), but how `skillsLeap` turns the
+  cursor distance into a step, and the jump's state members (`jump-vars`
+  not-run: `pSt` unreadable), were not read. A tripled jump's landing check
+  was not measured: the walkable test was read by command at chosen points,
+  never at a jump's landing.
+- **Whether `playerSkipCollisions` lets the player pass collision props**,
+  and who sets it.
+- **The walkable test outside a town.** `walkable-test: combined` (inside
+  the room, and `family` free) was measured in `Town_01_rm` only, at one
+  prop and one stretch of its south edge, an invisible wall. Whether a
+  generated zone marks its edge the same way, with a `Collision_Parent_obj`
+  instance, or only in the path grid through the zone generator's outside
+  rectangles, was not read live; nor whether `objZoneGenV2` exists in a town,
+  and so whether `IsObtainablePlace` says anything there.
+- **Why the path grid missed the Bounty Board.** The board blocked `family`
+  but its cells read free in `global.pathGrid` (`walkable-prop`), against the
+  static reading that the grid is built from every `Collision_Parent_obj`
+  instance. Whether the board came after the grid was built, or its mask
+  covers no cell centre, was not read.
+- **Pockets the floor does not reach.** Points between the water and the
+  fallen rocks south of the waypoint read free on every field; whether the
+  player could walk to them was not checked, and the test does not say.
+
+## Phase 2: the mod
+
+Phase 2 builds the set itself (`mark1set`, off by default) on what phase 1
+found. Two of its levers were left open by phase 1 (§ Not established): what
+halves the walk exactly, and what could take the cast's slowdown away. So
+phase 2 opened with one more research session, on `mark1probe` extended for
+the walk: eleven builtin rows beside the nine script rows, `statlog`,
+`statpin`, `hold`, the `effect`, element-wise `pst` and `builtin` watch
+scopes, `pos`'s modal step and mean frame time, and `base` (the toolkit's
+ForgePact guide documents each form). Each lever is then picked from what
+that session measured (§ Phase 2 decision). The set's switch was never
+turned on in it.
+
+### Mod live procedure 1
+
+The walk's speed curve, the cast penalty, the gate's mana, the toggle's
+settle time, the piece bases, a generated zone's edge and the debugger's
+walk callers. The capture is the workorder's mod live capture 1.
+
+**Setup:**
+
+- **Build:** the research build from `plugin_build\build.bat dev` at
+  ForgePact `109c908`, DLL SHA-256
+  `a2f64cf3889a4333e03c4fb0667045799b5fcb05f91e535c9fc171ff154ea493`. The
+  owner was asked before it was installed.
+- **Character:** save slot 14, "Sorak" (White Mage), in `Town_01_rm`, later
+  the Outskirts of Inoya (`Act_01_01`), reached through the town waypoint's
+  map. No flight charm worn, `jumpscenery` off, the saves backed up first and
+  restored at the end.
+- **Control:** `ping` answers `pong (YYTK 4.0.1)`; bare `mark1probe` answers
+  `mark1probe: research build` and a rows line with `hooked=0 held=0`.
+- **Cases:** walking right (D) on open ground from one fixed spot, recorded,
+  and walking down (S) for the vertical factor; Healing Zone (E, bar column
+  4) as the ordinary cast; Soul Spurn (R, column 5) as the toggle. No other
+  skills.
+- **Walk ratios:** a walk's ratio is its modal step over the walk control's
+  mean modal step (the vertical walks over their own two S controls). Modal
+  steps are compared only at matched frame time: a walk whose mean frame time
+  differs from its control's by more than 10% is repeated, then taken against
+  a fresh control pair, and a third mismatch is recorded as not comparable.
+  A single step of half or one and a half times the mode is the frame clock,
+  not a lever or the penalty (§ Live 2 results).
+- **Debugger:** only after every walk measurement, because a per-frame
+  logpoint lengthens the frame and moves the modal step (§ Live 2 results).
+  The build is first checked against the decompile index's build hash. A
+  control logpoint on `CheckTalentUse`'s entry comes first; then logpoints on
+  `PlayerMoveSkill`, `PlayerMoveSkillFunc` and `CA_playerMove`, each one's
+  bytes compared with the research project's before it is armed, and later
+  `CA_playerTalentActive` in place of a candidate with no hit. A hit's return
+  location stays in the capture; the callers are named here, never located.
+
+**Checks**, in the order they run:
+
+- `dll-hash`, `control`, `marker` (validity): the installed DLL is the build
+  above, and the game and the probe answer as under Control.
+- `hook-native` (validity): `mark1probe hook` detours every script row and
+  every builtin row the runtime knows, none failed or held.
+- `walk-control` (the control for every walk check): two D walks whose modal
+  steps lie within 3% and whose frame times lie within 10% of each other.
+- `stat-trace`: `statlog 64` over a D walk: about one dispatcher call for id
+  64 a frame, its original answer a number, and the rows each call sits in.
+- `speed-sweep`: id 64's answer multiplied by 1.5, 0.75, 0.5, 0.25, 0 and
+  -0.5 in turn, a walk under each; the ratio of each, and the lever's counts
+  showing it changed the dispatcher's answer.
+- `speed-half`: the multiplier interpolated between the two whose ratios
+  bracket 0.5, and a walk under it: a ratio in 0.47 to 0.53 passes.
+- `speed-builtin`: which rows `pos` credits with moving an unlevered walk,
+  with `place_meeting`'s calls during it as the builtin rows' control; only
+  if a builtin moved the walk, that builtin's displacement halved.
+- `speed-factor`: `hSpeedFactor` held at half during `PlayerMovement` on a D
+  walk, and `vSpeedFactor` the same on an S walk against two S controls.
+- `penalty-control` (the control for the penalty checks): a D walk with E
+  pressed after one second shows a run of at least 10 frames below 0.8 of
+  the mode.
+- `penalty-stat`: `statlog 64` through that walk's cast: whether the answer
+  falls at the cast and recovers with the step.
+- `penalty-watch`: three such walks under `watch effect`, `watch pst` and
+  `watch builtin`, each for 90 frames from the next `TalentUse`: every
+  element that changes within 2 frames of the cast and back within 40.
+- `penalty-lever`: `statpin 64` if the answer fell; otherwise the watched
+  element whose settle is closest to the penalty's end, held at its resting
+  value during `PlayerMovement`. It passes when, through the frames the
+  penalty covered, the modal step stays at least 0.95 of the mode with no run
+  of 3 or more frames below 0.8 of it, and the cast still happens.
+- `cast-mana`: `watch pst` on a key cast of E, then on a forced cast (the
+  probe writing the press value into the slot's `inputState[4]` during one
+  `CheckTalentUse` call): the element that fell on the key cast falls by the
+  same amount on the forced one (`charged`), does not (`not-charged`), or no
+  element fell (`not-observed`).
+- `toggle-settle`: `count` on Soul Spurn's on-state object,
+  `White_Mage_Soul_Spurn_AOE_obj`, beside one forced press of `inputState[5]`:
+  the frames from the press to the object's appearance; a second pair should
+  switch it off.
+- `base-control` (the control for `base-check`): `base 0 7` builds a
+  helmet with a name.
+- `base-check`: `base` for body armour, boots and gloves at base 0, and for a
+  class that does not build, bases 1, 2 and 3 in turn: the lowest base that
+  builds, per class.
+- `zone-control` (the control for `zone-edge`): in the Outskirts, `walkable
+  here` 32 px either side of the player and at it, on open floor, every field
+  free.
+- `zone-edge`: `walkable scan` in steps of 96 px for 60 points, up, down,
+  left and right of the arrival point; a 16 px scan across the first point
+  where a field turns blocked toward open void; a screenshot.
+- `dbg-control` (validity): the control logpoint logs about once a frame, and
+  the attach is proven by the game's own frame counter.
+- `dbg-walk-movers`: each candidate's hits over a D walk and over the
+  `penalty-control` walk with its cast.
+- `dbg-cast-active`: `CA_playerTalentActive`'s hits over one E cast made
+  standing.
+
+A research part whose control failed is recorded `not-run (control)` for its
+checks, never `not-observed`.
+
+### Mod live 1 results
+
+The walk, the cast penalty, the toggle, the bases, the zone's edge and the
+debugger (Mod live procedure 1, 2026-10-19, 16:04 to 16:23 UTC).
+`tools/live_checks.py` reads 23 checks from
+`forgepact-166-mark1-set-mod-live-1.md`: 19 pass, 3 fail (`penalty-watch`,
+`penalty-lever`, `toggle-settle`), 1 not-observed (`cast-mana`), none
+not-run. The validity checks passed, and so did every part's own control
+(`walk-control`, `penalty-control`, `base-control`, `zone-control`), so no
+part is `not-run (control)` and each fail or not-observed below is a result
+within what the instrument reads.
+
+The session ran at 6.94 ms a frame (about 144 frames a second), against
+phase 1's 13.4 ms, and the walk's modal step was 2.989 px, half of phase 1's
+5.979 px. So a 240-frame window lasted 1.67 s, too short for a separate input
+call to start inside it, and the operator changed four things, each recorded
+in the capture. The lever walks held D down across the command, so the lever
+and the `pos` window both sat inside the walk. The cast walks ran `pos` for
+2400 frames with the input in the following call. The `penalty-lever` hold
+ran 1200 frames instead of 150. And the `penalty-stat` cast was forced by the
+probe (the press value into `inputState[4]` for one gate call, in the same
+command as the `statlog`) instead of keyed, because a `statlog` prints every
+frame and the command only returns once it stops. The forced cast gave the
+same slowdown as the keyed one. Soul Spurn was left on after
+`toggle-settle`; the saves were restored.
+
+| Check | Verdict | What it showed |
+|---|---|---|
+| `dll-hash` | pass | The installed DLL was the research build above. |
+| `control` | pass | `ping` answered `pong (YYTK 4.0.1)`. |
+| `marker` | pass | `mark1probe: research build`, `rows=20 hooked=0 held=0`. |
+| `hook-native` | pass | `hook`: 20 detoured, none failed, held or not found. |
+| `walk-control` | pass | Two D walks from the town waypoint, modal step 2.989 px both, 6.94 and 6.95 ms a frame. |
+| `stat-trace` | pass | 60 dispatcher calls for id 64 in 60 frames, every answer 151, every call outside all 20 rows, and no call of the getter outside the dispatcher. |
+| `speed-sweep` | pass | Ratios 1.215, 0.893, 0.785, 0.678, 0.570 and 0.355 for multipliers 1.5, 0.75, 0.5, 0.25, 0 and -0.5; the lever changed all 240 dispatcher answers in each window. |
+| `speed-half` | pass | The interpolated multiplier, -0.162 (an answer of about -24.5), gave a modal step of 1.495 px: a ratio of 0.500. |
+| `speed-builtin` | pass | `pos` credited no row with the walk's movement; `place_meeting` was called 8270 times by the player during it, and no `mp_*`, `move_*` or `motion_*` row was called at all. No builtin to halve, so its second half did not run. |
+| `speed-factor` | pass | Holding `hSpeedFactor` (D walk) and `vSpeedFactor` (S walk) at half during `PlayerMovement` left both ratios at 1.000, with the hold applied on all 240 frames. |
+| `penalty-control` | pass | After the E cast the step fell to 1.943 px (0.650 of the mode) for 57 frames, then climbed back over 16 frames; 64 consecutive frames were below 0.8 of the mode. |
+| `penalty-stat` | pass | Id 64's answer did not fall: 151 on all 120 frames through the slowdown and its recovery. |
+| `penalty-watch` | fail | `playerEffect[199]` fell from 1 to 0.65 on the cast frame and rose back to 1 over the 16 ramp frames, 57 to 73 frames after the cast, in step with the walk; nothing came back within 40 frames. The `pst` watch saw no change in the number and bool entries it reads, which is not observed rather than a negative: how many of the 54 entries it read was not counted, and with no `pSt` change in any watch of the session it had no positive control there. Of the builtin variables only `image_index` moved. |
+| `penalty-lever` | fail | Holding `playerEffect[199]` at 1 during `PlayerMovement` took the 16-frame ramp away, but the 57 frames at 0.650 of the mode stayed; the cast was made (Healing Zone's count rose by one). |
+| `cast-mana` | not-observed | None of the `pSt` entries the watch reads (number and bool entries only) changed on the key cast nor on the forced one, though both cast (Healing Zone's count rose by one each). A forced press made too soon after the key cast cast nothing. |
+| `toggle-settle` | fail | One forced press switched Soul Spurn on 19 frames later. The second pair did not end off: the toggle went off 20 frames after the press and on again 57 frames after it, and was still on minutes later. |
+| `base-control` | pass | Helmet base 7 built, "Arcane Resisting Great Helm". |
+| `base-check` | pass | Body armour, boots and gloves all built at base 0: "Steel Armor of Vitality", "Boots of Sorcerer", "Heavy Gloves of Energy". |
+| `zone-control` | pass | At the Outskirts' arrival point and 32 px either side, every field read free and the line clear. |
+| `zone-edge` | pass | Upward from the arrival point the floor ended at an `Invisible_Wall_obj`: `family` met it one 16 px step before the grid read blocked and the wall line crossed it; past the wall `family` read free again while the grid stayed blocked to the room's edge. |
+| `dbg-control` | pass | The control logged about once a frame, and the attach was proven by the game's frame counter stopping at the control hold and running after. |
+| `dbg-walk-movers` | pass | `PlayerMoveSkill`, `PlayerMoveSkillFunc` and `CA_playerMove` logged no hit over either walk, while the control logged 920 and 1056 lines in the same windows; each candidate's bytes matched the research project's. |
+| `dbg-cast-active` | pass | `CA_playerTalentActive` logged no hit over one standing E cast, while the control logged 1187 lines. |
+
+**The walk's speed is affine in the speed stat.** The six swept ratios and
+the half fall on one straight line in the multiplier to within 0.02% at every
+point: the modal step is proportional to id 64's answer plus about 200
+(fitted 200.0), with Sorak's 151 standing at 1.755 of the step an answer of 0
+gives. No cap was reached up to an answer of 226.5, negative answers slowed
+the walk further, and phase 1's 0.785 at half the answer is the same point
+again at a different frame rate. So halving the walk means answering
+(151 - 200) / 2, about -24.5, which is what `speed-half` measured as 0.500.
+`stat-trace` found the id-64 call outside every row the probe wraps,
+`PlayerMovement` included, as phase 1's reading placed it in the player's
+Step event; where inside the Step event it is read was not read.
+
+**The walk is moved outside all twenty rows.** No script row and no builtin
+row moved it, `mp_linear_step` and the other movement builtins were not
+called at all during `speed-builtin`'s walk, and the debugger saw `PlayerMoveSkill`,
+`PlayerMoveSkillFunc` and `CA_playerMove` never run on a walk. The
+`speed-factor` result is weaker than its pass suggests: the values the
+probe read and halved were 163556 for `hSpeedFactor` and 163557 for
+`vSpeedFactor`, consecutive whole numbers that do not look like speed
+factors, so whether the walk scales with those members is **not
+established**. Against phase 1's Live 2 the modal step's ratio was 0.500
+(2.989 against 5.979 px) at a frame-time ratio of 0.518 (6.94 against
+13.4 ms): the step halved exactly while the frame time did not quite, so
+whether and how the step follows the frame clock is **not established**.
+
+**The slowdown is two parts, and only the ramp follows `playerEffect[199]`.**
+The cast drops the walk to 0.650 of its step for 57 frames, then a ramp of
+16 frames brings it back. `playerEffect[199]` falls to 0.65 on the cast frame
+and climbs to 1 frame for frame with that ramp, so it is the cast's speed
+factor. Holding it at 1 during `PlayerMovement` removed the ramp and nothing
+else, so during the flat part the walk takes its 0.65 from somewhere the hold
+does not reach (written back after `PlayerMovement`, or read elsewhere).
+`playerEffect[204]` turned from true to false 56 frames after the cast, the
+frame before the ramp began, which makes it a candidate for what holds the
+flat part; it was not held, and what it means is **not established**. The
+cast also turned `playerEffect[205]` from true to false and changed
+`playerEffect[196]` and `playerEffect[250]` 18 frames after it, and
+`playerEffect[54]`, `[56]` and `[192]` count down by one a frame. In frames
+the slowdown is longer than phase 1's 21 at about half this frame rate;
+whether it is timed in frames or in time is **not established**.
+
+**No caller to name.** None of the four candidate logpoints hit, so the
+capture holds no return location, and there is no caller to look up. With the
+control logging through the same windows, these are negatives with a working
+instrument: the walk and a standing cast do not reach those four scripts in
+this build (not observed).
+
+### Mod live procedure 2
+
+The built set, verified on the research build with its switch on: the
+pieces, their art, the full-set read, the automation, the half walk, the
+cast's slowdown on it, the jump and the switch's teardown. The capture is the
+workorder's mod live capture 2.
+
+**Setup:**
+
+- **Build:** the research build from `plugin_build\build.bat dev` at the
+  ForgePact commit that completes the worn read over the gear slots
+  (`c598b5b`), DLL SHA-256
+  `0a44a9d06ecd3780f1b4b4117e3178b4115f1094531e7869f368017c36b76362`. The
+  owner was asked before it was installed. The first attempt ran the build
+  before that commit (SHA-256 `13abbd1e…7857`).
+- **Character:** save slot 14, "Sorak" (White Mage), in `Town_01_rm`, later
+  the Outskirts of Inoya for the zone check. No flight charm worn,
+  `jumpscenery` off, the saves backed up first and restored at the end.
+- **Control:** as Mod live procedure 1 (`ping`, bare `mark1probe`).
+- **Pieces:** `mark1probe spawn set` at the player, one piece per class, each
+  picked up by a left click and worn by a right click, then Save & Exit and a
+  reload from character select.
+- **Bar:** `hs_skills_status` and `tgprobe talents` for every learned skill,
+  recording each one's `abilityCooldown`. A no-cooldown skill is a learned
+  skill that is not an aura and whose `abilityCooldown` is at most 0.25. Q
+  takes Shadow Bolt, R the next such skill (ties: Heavenly Fire first), E
+  keeps Healing Zone as the one cooldown skill, and Y stays empty as the
+  empty-slot outlier. Soul Spurn left the bar for the session, so there is no
+  toggle case. The bind goes through the game's skill popup.
+- **Walks:** Mod live procedure 1's modal-step rule (`pos 240` from one spot,
+  `ms=` within 10%). A walk with the bonus on also runs `watch effect` over
+  the same window, and its mode is taken over the frames whose
+  `playerEffect[199]` reads 1 (casts left out); fewer than 60 such frames is
+  not-observed for that check.
+- **Debugger:** none: every check is an outcome, and a per-frame logpoint
+  lengthens the frame and moves the modal step.
+
+**Checks**, in the order they run:
+
+- `dll-hash`, `control`, `marker` (validity).
+- `fresh-off`: before any `mark1set` command, the stat line reads the switch
+  off and nothing installed.
+- `art-default`: before anything arms the art, a spawned body armour shows
+  its base item's sprite on the ground and in the bag, never our art and
+  never the error sprite.
+- `arm-at-select`, `art-load`: `mark1set bonus 1` at character select waits
+  for the character and installs after the load; the art loads every
+  embedded PNG and the armour from `art-default` takes our bag icon.
+- `art-ground`, `art-fallback`: with every PNG loaded the spawned pieces lie
+  on the ground as our ground copies; with none, as their base items'
+  sprites. Only one of the pair can be seen in one build.
+- `spawn-control` (validity for what follows), `art-bag`, `art-tooltip`
+  (research): the four pieces carry the table's names, Heroic rarity and the
+  gold `Mark 1` row; the bag draws our icon; what the tooltip draws as its
+  icon is recorded.
+- `equip-detect`, `art-equipped` (research): with all four worn the set reads
+  full with no unreadable read; what the worn body slot draws is recorded.
+- `walk-control` (validity for the walks): two walks with the switch off,
+  modes within 3%.
+- `off-vanilla`: with the switch off, no press, only the key cast counted,
+  and a jump of about 97 px for a cursor 100 px away.
+- `on-automation`: with the switch on and no key, each skill on Q, E and R
+  cast at least once, column 6 never pressed, and every failure count 0.
+- `gate-kept`: Healing Zone's column casts fewer than half its presses.
+- `cooldown-recast`: Healing Zone cast at least twice with no key, its
+  presses refused in between, the frames between casts recorded.
+- `on-border`: the deep-red border on each bound column, none on an empty one.
+- `on-speed`: the bonus-on mode over its effect-1 frames is 0.47 to 0.53 of
+  `walk-control`'s mean.
+- `on-penalty`, `penalty-stack` (research): the run of frames below 0.9 of
+  the bonus-on mode around an automated cast; and, for a keyed Healing Zone
+  cast, the cast frames' mode against the same walk's pre-cast mode (about
+  0.65 if the slowdown stacks on the half walk, about 1.3 if it replaces it).
+- `jump-learn`, `jump-near`, `jump-far`: the jump's maximum M as learned, and
+  jumps with the cursor 300, 100, about 500 and about 900 px away each landing
+  about 3M (738 px) away.
+- `jump-backoff`, `jump-prop`, `jump-edge`, `zone-jump-edge` (research): a
+  take-off whose 3M point is blocked backs off to a walkable point past M; a
+  jump across the Bounty Board lands past it; a jump at the town's south edge
+  and one at the Outskirts' edge are refused, the player staying inside, and
+  the refusal comes from read answers, not failed reads.
+- `unequip-stops`, `bonus-off-restores`: the gloves off stop the presses and
+  give back the walk; the switch off stops them too, and the jump returns to
+  about M.
+
+**Amendment 11**, after the first attempt's `equip-detect` failed: the worn
+read finds each piece wherever the worn gear holds it among gear slots 0 to 9
+rather than at the table's slot for its class, and the stat line names the
+slot each piece was found in (`worn=`); the build became that commit's; from
+character select the operator clicks Back before loading the slot; and
+`lootshow` follows each spawn, because the owner's loot filter hides the
+pieces, with no piece spawned twice. The steps and the checks were otherwise
+unchanged.
+
+### Mod live 2 results
+
+The built set on the research build (Mod live procedure 2, 2026-10-19, two
+attempts: 18:18 to 18:27 UTC and, after Amendment 11, 19:15 to 19:33 UTC).
+`tools/live_checks.py` reads 32 checks from the second attempt's block of
+`forgepact-166-mark1-set-mod-live-2.md` (its last `## Checks` block): 26
+pass, 1 fail (`on-automation`), 5 not-observed (`art-fallback`, `on-speed`,
+`on-penalty`, `penalty-stack`, `jump-far`), none not-run. The validity checks
+passed, and so did `spawn-control`, `equip-detect` and `walk-control`, which
+the later checks stand on.
+
+**The first attempt** ran the earlier build and stopped at `equip-detect`.
+Everything before it passed as in the second attempt below, but with all four
+pieces worn the stat line read `set=` `partial(3)`, `unreadable=0`, on seven reads,
+a reload included, and taking the gloves off and putting them back left it at
+`partial(3)`: the read did not see the gloves. That build read each piece
+only at its class's row of the toolkit's equipment-slot table, whose gloves
+row (slot 3) had never been measured. The walk, automation and jump checks
+were not run, and Amendment 11 followed.
+
+The second attempt ran at about 6.94 ms a frame (6.93 to 6.96 in every
+window), as Mod live 1 did. With the four pieces worn in place of Sorak's own
+gear, the unlevered modal step was 2.385 px, against Mod live 1's 2.989 px in
+that gear.
+
+| Check | Verdict | What it showed |
+|---|---|---|
+| `dll-hash` | pass | The installed DLL was the research build above. |
+| `control` | pass | `ping` answered `pong (YYTK 4.0.1)`. |
+| `marker` | pass | `mark1probe: research build`, `rows=20 hooked=0 held=0`. |
+| `fresh-off` | pass | At the main menu, before the first load: `bonus=off`, `install=not-armed`, `set=none`, `reads=0`. |
+| `art-default` | pass | `icons=0/8 art=off ground=0`; the spawned body armour lay as a small grey plate and showed a grey chest-plate icon in the bag, its base item's art; no error sprite. |
+| `arm-at-select` | pass | `bonus=on install=waiting-for-character` at select, then `installed` after the load with `set=none`, presses 0 and `art=armed`. |
+| `art-load` | pass | `icons=8/8`, `ground-route=both`; the armour from `art-default` now drew our detailed 2x3 icon. |
+| `art-ground` | pass | Four spawn lines `dressed=yes`, `ground=4`; the body armour on the ground drew our armour sprite. |
+| `art-fallback` | not-observed | The build embeds all eight PNGs (`icons=8/8`), so the no-art case could not occur. |
+| `spawn-control` | pass | `Mark 1 Body Armor` (`Heroic Body Armor`) with the gold `Mark 1` row and two `Full set:` rows; the other three labelled `Mark 1 Helmet`, `Mark 1 Boots`, `Mark 1 Gloves`. |
+| `art-bag` | pass | Both body armours in the bag drew our 2x3 icon. |
+| `art-tooltip` | pass | The armour's tooltip draws no item icon at all, only its text rows (research, recorded). |
+| `equip-detect` | pass | `set=full unreadable=0 worn=0/1/2/4`: helmet at gear slot 0, body armour 1, boots 2, gloves 4; the same after a reload. |
+| `art-equipped` | pass | The worn body slot drew our armour art, the same as the bag (research, recorded). |
+| `walk-control` | pass | Two walks with the switch off, modal step 2.385 px both, 6.93 and 6.94 ms a frame. |
+| `off-vanilla` | pass | Switch off: presses 0, the probe's `TalentUse` row counted one call and `casts=252:1` (the key cast of Healing Zone); a jump with the cursor 101 px west covered 96.9 px. |
+| `on-automation` | fail | The switch on and no key, for 1350 gate calls (one a frame): Q, E and R pressed 1350 times each and column 6 never; Shadow Bolt (Q) cast 20 times, Healing Zone (E) once, Heavenly Fire (R) not at all; the gate was called 1350 times and every failure count read 0, `threw=0`. |
+| `gate-kept` | pass | From the same window: E's 1350 presses gave 1 cast, Q's 1350 gave 20 and R's 1350 gave 0. |
+| `cooldown-recast` | pass | With no key for the 3600-frame count, `White_Mage_Healing_Zone_obj`'s count rose at five frames, 661, 910, 1071 and 501 frames apart, and the probe read `casts=252:4`; E's presses rose from 5250 to 9750 while its casts stayed put. The setup read Healing Zone's `abilityCooldown` as 14. |
+| `on-border` | pass | The deep-red border framed Q, E and R; Y is empty and the bar does not draw it. |
+| `on-speed` | not-observed | No frame of the window read `playerEffect[199]` at 1: it read 0.65, rising to 0.670833 for one frame at each automated Shadow Bolt cast, about 60 frames apart. The whole window's mode was 0.775 px at 6.93 ms. |
+| `on-penalty` | not-observed | Under the same reading no frame ran below 0.9 of the bonus-on mode (0.6975 px) although casts rose (Shadow Bolt by 26, Healing Zone by 1, over the walk and the seconds around it): with the slowdown held on by the automation, a cast's dip cannot be told from the bonus-on mode. |
+| `penalty-stack` | not-observed | No frame read `playerEffect[199]` at 1, so there was no pre-cast mode, and the keyed E cast fell after the window, because the walk's calls ran one after another. |
+| `jump-learn` | pass | `max=` read `250.3(cap)`, jumpscenery's cap; with the cursor 300 px west, jump 1 covered 525.0 px and jump 2 734.9 px. |
+| `jump-near` | pass | Cursor 110 px west: 740.9 px, to the full distance and not the cursor; `granted` 2 to 3. |
+| `jump-far` | not-observed | The 500 px case (cursor 510 px away) landed 750.9 px away; the 900 px case was not run, because no point on screen is 900 px from the player. |
+| `jump-backoff` | pass | From (912, 1560), cursor due south: 250.0 px to y 1810, short of the blocked ground, `backed-off` 1 to 2, the landing walkable. |
+| `jump-prop` | pass | From (1300, 822) west across the Bounty Board: 718.9 px, landing past it on free ground, `granted` 5 to 6. |
+| `jump-edge` | pass | At the town's south edge: `refused-landing` 0 to 1 and a vanilla jump of 40.3 px; `refused-unreadable` 0 and every `unread=` count 0; the family's `rejected=` count rose; `grid-reads` rose only in its free count through the town jumps (18/0/0), never nogrid. |
+| `zone-jump-edge` | pass | At the Outskirts' edge: `refused-landing` 1 to 2, a vanilla jump of 125.1 px that stopped inside the wall (research). |
+| `unequip-stops` | pass | Gloves off: `set=` `partial(3)` and `worn=0/1/2/-`, presses held at 78873 across two reads about a second apart (the first about 140 frames after the gloves came off, not within 60), and the walk's mode back at 2.385 px. |
+| `bonus-off-restores` | pass | Switch off with the set worn: presses unchanged across about 360 frames, the mode 2.385 px, and a 300 px jump covered 250.3 px with the mod's jump count unchanged. |
+
+**The set is read where the pieces really are.** The worn read found the
+helmet at gear slot 0, the body armour at 1, the boots at 2 and the gloves at
+4 of the local player's worn gear, and lost only the gloves when they came
+off (`worn=0/1/2/-`). So slot 3 is not where this character's gloves are
+worn, against the toolkit's equipment-slot table, whose rows 1 to 8 had no
+measurement behind them.
+
+**The automation pressed every column, and one skill took every turn
+that mattered.** Pressing Q, E and R inside every gate call cast Shadow Bolt
+about once in 60 frames and Healing Zone whenever it was ready, but
+Heavenly Fire, whose `abilityCooldown` (0.25) is Shadow Bolt's, was never
+cast in those 1350 frames. Plausibly the gate serves one asking slot a call
+in a fixed order and Shadow Bolt, ready again within about 60 frames, keeps
+it from reaching R; in which order the gate serves the slots, and whether
+it serves more than one a call, was not read. The owner's answer after the
+session (take turns: when a column's cast lands, the next press goes to
+the column that has waited longest) is this workorder's turn rule.
+
+**The game's cooldown holds a forced press.** Healing Zone's column was
+pressed every gate call and cast once in `on-automation`'s 1350 presses, and in the
+3600-frame count it was recast 501 to 1071 frames apart. Its
+`abilityCooldown` reads 14; at 144 frames a second 14 seconds would be 2016
+frames, longer than every measured interval, so what unit it is in, and
+whether something shortens it, is **not established**. Five rises of the
+zone object's count stand against four casts the probe counted in the same
+window; the two were not reconciled.
+
+**The half walk under the automation: not observed.** With Shadow Bolt
+recast about every 60 frames, `playerEffect[199]` never returned to 1 in a
+bonus-on window, so no window had frames free of the cast's slowdown, and
+`on-speed`, `on-penalty` and `penalty-stack` are not observed. One number
+is still worth keeping, as a consistency observation and not a verdict: the
+bonus-on windows' mode, 0.775 px, is 0.325 of `walk-control`'s 2.385 px, and
+0.325 is exactly 0.5 × 0.65, the half walk times the slowdown's flat factor
+from Mod live 1. That is what stacking would give, but by arithmetic only:
+the frames behind it are all under the slowdown, nothing measured them
+against an unslowed bonus-on step, and the check that would tell (`on-speed`
+with no automated cast) did not run. The `watch effect` reply also hit its
+400-line cap after about 126 of the 240 frames in each window, so the rest
+of each window was not watched.
+
+**The jump.** M read 250.3 px, jumpscenery's cap; landings of 734.9, 740.9
+(cursor 110 px away) and 750.9 px (cursor 510 px away) are 2.94 to 3.00 times
+it, a back-off stopped at 250.0 px, and a jump across the Bounty Board covered
+718.9 px. Both edges refused: the town's south edge, and the Outskirts' edge,
+which loaded in a different layout from Mod live 1 and was found again by the
+same signature (an `Invisible_Wall_obj` met by the family, then the grid alone
+blocked over the cliff tiles). The view is 1280 × 720 room pixels centred on
+the player, so an on-screen cursor reaches about 645 px across and 741 px at a
+corner: `jump-far`'s 900 px case cannot be made with the mouse, and no
+on-screen cursor lies past 3M (751 px) either. It is recorded not observed and
+not re-run; the harness scenario for a cursor past 3M pins that rule.
+
+**The art.** The worn body slot draws the piece's `"11"` sprite, our art, as
+the bag does; the tooltip draws no item icon at all; and the fallback to base
+art was not observed in this build, which embeds all eight PNGs.
+
+**The toggle guard was not observed live**: Soul Spurn left the bar's cases
+for the session (owner, 2026-10-19).
+
+### Mod live procedure 3
+
+The turn rule that replaced Mod live 2's press-every-column automation, and
+the half walk re-measured with Healing Zone alone on the bar (the owner's
+answers after Mod live 2, 2026-10-19), on the research build with the switch
+on. The capture is the turns workorder's live capture 1,
+`forgepact-166-mark1-set-turns-live-1.md`, kept with the hub's workorder
+files and not tracked.
+
+**Setup:**
+
+- **Build:** the research build from `plugin_build\build.bat dev` at the
+  ForgePact commit that completes the landing detour and the turn rule's
+  adapter (`506038b`), DLL SHA-256
+  `96c6d215ac87ab5e614b908abc937a404664b3aec60214a24a44c3401781483e`. The
+  owner was asked before it was installed.
+- **Character:** save slot 14, "Sorak" (White Mage), in `Town_01_rm`, from
+  the save before Mod live 2 (no Mark 1 pieces yet), with Mana Orb (253) on
+  Q, Healing Zone (252) on E, Soul Spurn (240) on R and Y empty. No flight
+  charm, `jumpscenery` off, the saves backed up first and restored at the
+  end.
+- **Control:** as Mod live procedure 1 (`ping`, bare `mark1probe`).
+- **Pieces:** `mark1probe spawn set` once, then `lootshow`; each piece picked
+  up by a left click and worn by a right click from the bag (C).
+- **Install:** `mark1set bonus 1`, then `mark1set bonus 0` (the install stays
+  in), and only then `mark1probe hook`, so that the probe's `TalentUse` row
+  goes in and the rows the set holds are named as held by `mark1set`.
+- **Part A, Healing Zone alone:** Q and R emptied through the game's skill
+  popup, so Healing Zone is the one automated column and Y the empty one.
+- **Part B, Mod live 2's own bar:** Shadow Bolt (239) on Q, Healing Zone on
+  E, Heavenly Fire (245) on R and Y empty, bound through the popup.
+- **Walks:** from `playerwarp 912 822`, D held, `mark1probe pos <n>`; with the
+  bonus on, `mark1probe watch effect <n>` in the same command file, and a
+  window's mode taken over its watched frames whose `playerEffect[199]` reads
+  1. Fewer than 60 such frames leaves that window not observed.
+- **Debugger:** none. Every check is an outcome counted by the probe's
+  `TalentUse` row and `mark1probe count` beside the set's own counters, and
+  a per-frame logpoint lengthens the frame and moves the modal step.
+
+**Checks**, in the order they run:
+
+- `dll-hash`, `control`, `marker` (validity).
+- `equip-detect` (validity): with the four pieces worn, `set=full`,
+  `unreadable=0` and four slots in `worn=`.
+- `install` (validity): `install=installed` with no refusal, `landed=0/0/0/0`
+  and `cast-calls=` on the stat line, and the probe's `hook` naming
+  `mark1set` for the rows it holds.
+- `walk-control` (validity for the walks): two walks with the switch off,
+  modes within 3%.
+- `cast-control` (validity for Part A): one key cast of E, counted by the
+  probe as `casts=252:1`.
+- `landed-control`: Part A, the switch on and no key for a 2400-frame count of
+  `White_Mage_Healing_Zone_obj`: Healing Zone cast at least once, column 4's
+  `landed=` equal to the probe's casts within 1, the count showing as many
+  new zones, presses on column 4 only and `yielded=0/0/0/0` (a lone column
+  never rests).
+- `on-speed`: Part A, the bonus-on mode over at least 60 watched frames
+  reading 1 is 0.47 to 0.53 of `walk-control`'s mean.
+- `on-penalty`, `penalty-stack` (research): Part A, a bonus-on walk holding
+  an automated Healing Zone cast after at least 60 watched frames reading 1:
+  the run of frames below 0.9 of the pre-cast mode, its length and lowest
+  ratio; and the cast frames' modal step against the pre-cast mode, about
+  0.65 if the slowdown stacks on the half walk, about 1.3 if it replaces it.
+- Part B's positive control (no check of its own): with the switch off, one
+  key cast of Q and one of R, counted as 239 and 245. No session had yet
+  recorded a cast of Heavenly Fire, so without it the two checks below would
+  be recorded not observed, never failed.
+- `on-automation`: Part B, the switch on and no key for a 3600-frame count:
+  239, 245 and 252 each cast at least once, 239's and 245's casts each at
+  least half the other's, column 6 never pressed, the four failure counts
+  `0/0/0/0` and `threw=0`.
+- `turn-landed`: from the same reads, each column's `landed=` rise equals the
+  probe's casts for its talent within 1, and `cast-calls=` rose at least as
+  much as their sum.
+- `cooldown-recast`: from the count, at least two new Healing Zone instances
+  with no key, and the frames between them.
+
+`landed-control` is off the session's required passes by the owner's
+decision of 2026-10-20, after it ran: one Healing Zone cast can leave two zone
+instances, so the zone count is no exact control for landings (below).
+
+### Mod live 3 results
+
+The turn rule and the half walk on the research build (Mod live procedure 3,
+2026-10-20, 09:37 to 09:50 UTC, one attempt). `tools/live_checks.py` reads 14
+checks from `forgepact-166-mark1-set-turns-live-1.md`: 13 pass, 1 fail
+(`landed-control`), none not observed, none not run. The validity checks
+passed, and so did `equip-detect`, `install`, `walk-control` and
+`cast-control`, which the later checks stand on. The session ran at 6.93 to
+6.94 ms a frame, as Mod live 1 and 2 did, and the unlevered modal step in the
+set was 2.385 px, Mod live 2's.
+
+| Check | Verdict | What it showed |
+|---|---|---|
+| `dll-hash` | pass | The installed DLL was the research build above. |
+| `control` | pass | `ping` answered `pong (YYTK 4.0.1)`. |
+| `marker` | pass | `mark1probe: research build`, `rows=20 hooked=0 held=0`. |
+| `equip-detect` | pass | `set=full unreadable=0 worn=0/1/2/4`, the slots Mod live 2 measured. |
+| `install` | pass | `install=installed`, no refusal; `landed=0/0/0/0` and `cast-calls=0`; `mark1probe hook` detoured 15 rows, its `TalentUse` row among them, and named `CheckTalentUse`, `TalentUseSetSpeed` and `ReturnSpecificStat` as held by `mark1set`. |
+| `walk-control` | pass | Two walks with the switch off, modal step 2.385 px both, 6.93 and 6.94 ms a frame. |
+| `cast-control` | pass | One key cast of E: the probe's `TalentUse` row counted one call and `casts=252:1`. |
+| `landed-control` | fail | Every clause but one held: over the first window column 4's `landed=` read 4 and the probe `casts=252:4`; presses only on column 4 (`presses=0/5760/0/0`, `skip-empty=5760/0/5760/5760`); `yielded=0/0/0/0`. The clause that missed is the zone count's: in each of two windows one rise of `White_Mage_Healing_Zone_obj`'s count went from 0 to 2, so the second window's two casts left three new zones. |
+| `on-speed` | pass | 103 watched frames read `playerEffect[199]` at 1, every one at a step of 1.192 px: 1.192 / 2.385 = 0.4998 of `walk-control`. |
+| `on-penalty` | pass | An automated Healing Zone cast (no key) after 86 watched frames at 1 dropped the step below 0.9 of the pre-cast 1.192 px for 86 of the next 87 frames (one double step broke the run, 28 and 58 frames); lowest step 0.775 px, 0.650 of the pre-cast mode (research, recorded). |
+| `penalty-stack` | pass | The cast frames' modal step, from the fall to the step's return to 1.192 px 92 frames later, was 0.775 px on 75 of them: 0.650 of the pre-cast mode. The slowdown stacks on the half walk. |
+| `on-automation` | pass | The switch on and no key, over 4590 gate calls (one a frame): `casts=239:31,245:30,252:3`; column 6 never pressed; `col-unreadable`, `orig-unreadable`, `write-failed` and `restore-failed` `0/0/0/0`, `threw=0`. Part B's positive control had cast both by key first (`casts=239:1,245:1`). |
+| `turn-landed` | pass | `landed=` rose 31, 3 and 30 on columns 3, 4 and 5 against the probe's 239:31, 252:3 and 245:30, and `cast-calls=` by 64, their sum. |
+| `cooldown-recast` | pass | With no key, `White_Mage_Healing_Zone_obj`'s count rose at four frames, 1064, 587 and 1627 frames apart, against three casts the probe counted; the extra zone lasted 88 frames. |
+
+**The skills take turns.** On Mod live 2's own bar, where pressing every
+column had given Shadow Bolt 20 casts and Heavenly Fire none, one column a
+call gave Shadow Bolt 31, Heavenly Fire 30 and Healing Zone 3 in 4590 frames
+(about 32 seconds). Over the same calls the set pressed Q 1772 times, E 993
+and R 1825, never Y, and counted `skip-turn=` rises of 2818, 3597 and 2765.
+Healing Zone, the column on cooldown most of the time, gave up its turn 11
+times (`yielded=0/11/0/0`), and the two no-cooldown skills never did. Those
+are the casts per column the provisional patience (90 frames) and rest (288
+frames) give on this bar. Heavenly Fire cast by key in the positive control
+and 30 times through the press write here, so Mod live 2's zero came from
+pressing every column at once, not from the skill or the route; which of
+several pressed slots the gate serves is still not read.
+
+**The landing instrument agrees with the probe.** Every landing the set
+counted matched a cast the probe's `TalentUse` row counted, column by column,
+alone (4 against 4) and beside two other skills (31, 3 and 30 against the
+same), and `cast-calls=`, the detour's own control, rose by exactly their
+sum. A lone eligible column was pressed on every call and never rested
+(5760 presses, `yielded=0`).
+
+**One Healing Zone cast can leave two zones.** The only clause that failed,
+in `landed-control`, was the zone count's: one rise of
+`White_Mage_Healing_Zone_obj`'s count went from 0 to 2 in each of two
+windows, and in Part B four rises stood against three casts, the extra zone
+lasting 88 frames. So the zone count is at least the casts and not equal to
+them; it was the wrong control for landings, and what the second instance is
+was not read (§ Not established). Alone on the bar, Healing Zone was recast
+1575 frames apart in both windows; beside the other two, 587 to 1627 frames
+apart.
+
+**The half walk measures half, and a cast's slowdown stacks on it.** With
+no cast in its window, the bonus-on step was 1.192 px against 2.385 px
+switched off, 0.4998: the shipped lever halves Sorak's walk in the set, as
+`speed-half` found in his own gear. An automated Healing Zone cast then held
+the step at 0.775 px, 0.650 of the bonus-on step, for 76 frames (one double
+step among them) and brought it back over a 16-frame ramp. So the slowdown
+multiplies the halved walk rather than replacing it: under a cast the set
+walks at 0.325 of the unlevered step, which Mod live 2's 0.325 only matched
+by arithmetic and this session measured. The flat part ran 76 frames here
+against Mod live 1's 57 for a key cast without the set (§ Not established).
+The `watch effect` reply again hit its 400-line cap, after 132 of the 480
+frames, so the step's return was read from `pos`.
+
+**Emptying a bar slot.** The operator emptied Q and R without the owner:
+a left click on the bar slot opens the skill popup, and a left click on the
+skill already bound to that slot (the one labelled with the slot's key)
+unbinds it. `hs_skills_status` then read the two slots at talent 0.
+
+**What ran differently.** In Part A's first window the operator idled about
+5760 frames, longer than the 2400-frame count, so that window's probe and
+stat reads cover more than its count; the second window took the reads right
+after the count, but the set's counters were cumulative there. Neither
+changes a verdict: the first window's landings and casts were counted over
+the same span from zero.
+
+### Phase 2 decision
+
+Recorded on 2026-10-19 from Mod live 1 and the owner's answers after it;
+`penalty-stack` on 2026-10-20 from Mod live 3. Each key takes exactly one
+value, on a line of its own, and the check that decides it is on the line
+below.
+
+speed-route: stat-model
+Decided by `speed-sweep` and `speed-half` (both pass, control `walk-control` passed): one affine shape fits every swept point within 0.02%, and the interpolated answer gave 0.500; `speed-builtin` found no builtin that moves the walk and `speed-factor` no effect from the factor members. `stat-trace` placed the id-64 call outside every row Mark 1 wraps, so the halved answer goes to every local id-64 call, and the character sheet and the damage scripts that read id 64 see it too.
+
+speed-shape: affine
+Decided by `speed-sweep` (pass): the modal step is proportional to id 64's answer plus about 200, every point within 0.02%, with no cap reached up to an answer of 226.5.
+
+penalty-route: none
+Decided by `penalty-stat` (pass: the answer never fell), `penalty-watch` and `penalty-lever` (both fail: `playerEffect[199]` held at rest removed only the ramp, leaving 57 frames at 0.650), so neither the stat route nor an element route qualifies. The owner chose to ship with the slowdown unchanged and to measure in Mod live 2 whether it stacks on the half speed or replaces it.
+
+cast-mana: not-observed
+Decided by `cast-mana` (not-observed): no `pSt` element changed on a key cast or a forced one, and none changed in any `pst` watch of the session, so the watch has no positive control within `pSt` and where mana is held stays open.
+
+toggle-settle: 19
+Decided by `toggle-settle` (fail on its second pair; the value taken by the owner): one forced press switched Soul Spurn on 19 frames later. Measured finding: the second forced press switched it off 20 frames after the press and on again 57 frames after it, with no further press from the probe; what switched it back on was not read.
+
+piece-bases: 0:7,1:0,2:0,4:0
+Decided by `base-control` and `base-check` (both pass): the helmet builds at base 7 and body armour, boots and gloves each at base 0.
+
+zone-edge: both
+Decided by `zone-edge` (pass, control `zone-control` passed): at the Outskirts' upper edge `family` met an `Invisible_Wall_obj` one step before the path grid turned blocked, and past the wall only the grid still read blocked, to the room's edge, as in town; the tile layers read did not mark it. One edge of one zone was measured.
+
+penalty-stack: stacks
+Decided by `penalty-stack` (Mod live 3, research; `on-speed` passed in the same walk form, control `walk-control` passed): an automated Healing Zone cast in a bonus-on walk held the step at 0.775 px against the walk's pre-cast 1.192 px, a ratio of 0.650, the slowdown's flat factor, and not about 1.3, so the cast's slowdown multiplies the half walk. Mod live 2 had left it not observed.
+
+The values each key may take:
+
+- `speed-route`, the lever that halves the walk: `stat-model`, `builtin`,
+  `factor` or `none`.
+- `speed-shape`, the step against the id-64 answer: `affine`, `capped`,
+  `affine-capped`, `other` or `not-run`.
+- `penalty-route`, the lever that removes the cast's slowdown: `stat-dip`,
+  `entry` or `none`.
+- `cast-mana`, whether a forced cast still costs mana: `charged`,
+  `not-charged` or `not-observed`.
+- `toggle-settle`, frames from a forced press to the toggle's on-state: a
+  whole number, or `not-observed`.
+- `piece-bases`, the base each piece's class builds at: `<class>:<b>` four
+  times, comma-separated.
+- `zone-edge`, which fields mark a generated zone's edge: `grid`, `family`,
+  `both`, `neither` or `not-observed`.
+- `penalty-stack`, how a cast's slowdown combines with the half walk:
+  `stacks` (the cast frames' step about 0.65 of the bonus-on step),
+  `replaces` (about 1.3) or `not-observed`.
+
+## Phase 3: the drops
+
+Phase 3 lets a player find the four pieces. Behind a second switch, **Mark 1
+drops** (`mark1set drops`, off by default), each piece joins the game's own
+Heroic roll, `DropItemHeroic`, with one entry's share, through the stand-in,
+attribution and rewrite machinery the flight charms (#74) use for the Angelic
+roll. The game builds the piece's base item and the Mark 1 dressing turns it
+into the piece. Only that roll is built; the ordinary unique roll on kills,
+the Angelic roll, vendors and crafting stay out of scope, because how the
+pieces are obtained is still the owner's call and the Heroic roll is phase 1's
+default. The toolkit's ForgePact guide documents the switch, its stat line
+and the probe forms.
+
+### Phase 3 static reading
+
+Read on 2026-10-20 through the hub's ghidra MCP, and, for the two callers the
+MCP could not decompile (`VaultUse` timed out at 240 s and at 500 s), a
+headless decompile on the same build. The shared facts are in the hub's
+`docs/RUNTIME_DATA_MODELS.md` § 23.4; this is the part phase 3 builds on, in
+short. No decompiled text is quoted here.
+
+- **The roll's arguments.** `DropItemHeroic` (1374) takes an x, a y and a
+  sub-list index. An undefined x or y is read from `self`, and an undefined
+  index means sub-list 5. **Static reading.**
+- **No empty pick.** It draws from `Controller_obj.lootListUnique` at that
+  index and draws again until an entry passes both tests: the definition's
+  flag 40 clear and a rarity (field 27) that is neither 7 nor 10. Every draw
+  makes one `GetUniqueRepoStruct` lookup. So an entry listed r times among
+  the T_H entries that pass is placed r / T_H of the time, whether or not the
+  random index can reach the list's length, and one pushed stand-in per piece
+  gives each piece 1 / (T_H + 4) of the calls with all four pushed. **Static
+  reading**; the share is arithmetic on it, not measured.
+- **One build per call.** After the loop it calls `CreateDefaultParams`
+  once, from the kept entry's sub-type and base, and then the placement with
+  the entry's own type. So the placed class comes from the entry, not the
+  parameters: a stand-in has to share its piece's class, and
+  `CreateDefaultParams` is the point where the hit is attributed and the
+  record rewritten, as in the Angelic roll. **Static reading.**
+- **Who calls it.** A byte scan for direct calls found two sites, one in
+  `VaultUse` (4597) and one in the Chaos Tower NPC's closure, with
+  `CreateDefaultParams`' 177 direct sites as the positive control in the same
+  run. The MCP's callers, callees and disassembly for `DropItemHeroic` and
+  `VaultUse` are empty: **not observed**, never "none", and a call through the
+  script table is invisible to both. As far as is read, the roll runs when a
+  player uses a vault or that NPC, and not on a kill.
+- **What a vault passes.** `VaultUse` runs from a vault item's right-click in
+  the bag. It sorts the vault into one of seven tiers and starts the roll at
+  sub-list 4, moving it to 5 on a random check whose threshold rises with the
+  tier; a second random check, also rising with the tier, sends the use to an
+  unnamed draw of the Angelic kind instead (by its body and its place most
+  likely `DropItemAngelic`, an inference). When it does call `DropItemHeroic`
+  it passes its own `self`, the x and y of an instance resolved earlier in the
+  body, and that index. So a vault's Heroic roll reads sub-list 4 or 5. The
+  random bound, and so the chances, were **not read**. **Static reading.**
+- **What the NPC passes.** The closure calls `DropItemHeroic` in a loop a
+  number of times worked out from `floor`, with all three arguments
+  undefined: its own position and sub-list 5. **Static reading.**
+- **Measured before.** Ten by-name calls with the player as `self` placed
+  seven Heroic (9) and three Satanic (6) uniques (flight charms Live 1,
+  2026-10-12, `heroic-route`).
+- **Not established.** Which Heroic uniques of the four piece classes
+  `lootListUnique[5]` (380 entries) and `[4]` hold, and so T_H and which class
+  has a stand-in. The Item Editor's catalog lists 13, 15, 17 and 17 Heroic
+  uniques of classes 0, 1, 2 and 4, but that is not a reading of the game.
+  Mod live procedure 4's `pool` reads both: `mark1probe pool` for sub-list 5
+  and `mark1probe pool 4` for the vault's starting list. How often a vault
+  reads [4] rather than [5] is still not read, and the procedure does not
+  measure it.
+
+### Mod live procedure 4
+
+The drops on the research build: that the switch starts off and changes
+nothing, that the roll's pool has a stand-in for each piece class, that each
+piece is reached through the roll, built as the piece and shown with its art,
+the share against one entry's, the switch's teardown, and one use of the
+game's own vault as the outlier that takes the direct-call path. The capture
+is the drops workorder's live capture 1,
+`forgepact-166-mark1-set-drops-live-1.md`, kept with the hub's workorder files
+and not tracked.
+
+**Setup:**
+
+- **Build:** the research build from `plugin_build\build.bat dev` at the
+  ForgePact commit that completes the drop adapter; its SHA-256 is recorded in
+  the capture. The owner is asked before it is installed.
+- **Character:** save slot 14, "Sorak", in `Town_01_rm`. No flight charm
+  worn; `mark1set bonus`, `jumpscenery`, Headhunter, Tyrant's Crown and the
+  flight charms' drop switches stay off. The saves are backed up first and
+  this session's backup is restored at the end.
+- **Control:** `ping` answers `pong (YYTK 4.0.1)`, and a bare `mark1probe`
+  answers `mark1probe: research build` with its rows line.
+- **Cases:** `mark1probe heroic`, the measured by-name call shape, for every
+  count; the game's own vault use once, as the outlier.
+- **Debugger:** the hub's x64dbg MCP, attached under the hs-drive lease, only
+  if the decompile index's build hash is this build's (else the session is
+  aborted). Two non-breaking logpoints: the control on `CheckTalentUse`,
+  which logs about once a frame, armed first; then the candidate on
+  `DropItemHeroic`'s own entry. The locations and expected entry bytes are in
+  the capture and the hub's x64dbg guide, never in this doc. Both are armed
+  before the switch goes on, so they see the game's bytes, not the detour's
+  jump; once the detour is in, a call through the script table enters the
+  hook rather than the entry, so from then on the candidate counts direct
+  calls only. The debugger detaches before the game is stopped.
+
+**Steps and checks**, in the order they run:
+
+- `dll-hash` (validity): the installed DLL's SHA-256 equals the build's.
+- `control`, `marker` (validity): `ping` and `mark1probe` answer as above.
+- `fresh-off` (acceptance): `mark1set stat`'s first line reads `bonus=off`
+  and `art=off`, and its drops line is the guide's fresh-session line
+  (`drops=off`, `install=not-armed`, `heroic-calls=0`, every piece `0/0`).
+- `dbg-control` (validity): attached, the control logpoint and then the
+  candidate armed; the control logs about once a frame.
+- `heroic-control` (validity): `mark1probe heroic 10` places at least 8
+  items, every rarity 6 or 9, `pieces=` all 0, and the candidate's hits are
+  recorded.
+- `pool` (research): `mark1probe pool`, then `mark1probe pool 4`, each
+  recorded whole: the length, `droppable=` above 0, and per class a stand-in
+  or `none`. The driver records the stand-ins per list (for example
+  `[5]: all`, `[4]: partial`) and sets the route from [5] alone, the list
+  `mark1probe heroic` reads: stand-ins for all four classes, for some, or for
+  none. `reach` and `rate`'s T_H are for [5] only. A vault starts its roll at
+  [4] and moves to [5] only on a random check whose bound was not read, so
+  which share of a vault's rolls read [4] is not measured, and a route of
+  `all` taken from [5] does not mean every piece can drop from a vault.
+- `drops-on` (acceptance): `mark1set drops 1` replies `drops=on
+  install=installed`; `mark1set stat`'s drops line shows `gate=on`,
+  `hook=detoured` and each class's stand-in as `pool` named it, and its first
+  line `art=armed` and `ground-route=both`.
+- `reach` (acceptance): `mark1probe copies 200`, then `mark1probe heroic 20`
+  twice and `mark1set stat`. Every piece `pool` gave a stand-in is placed at
+  least once in the 40 calls; each piece's `ours` equals its `built`;
+  `refused=0 anomalies=0`; `heroic-calls=` up by 40; the candidate's count
+  recorded.
+- `drop-built`, `drop-art` (acceptance): a placed piece screenshotted on the
+  ground, then picked up by a left click and the bag (C) screenshotted. The
+  probe's placed line names it `Mark 1 <piece>` at rarity 9; on the ground it
+  shows the owner's ground art while `art=armed` (the base item's sprite while
+  `art=off`), never `Error_spr`; the bag shot is recorded (a full bag is
+  recorded not observed).
+- `rate` (research): `mark1probe copies 1`, then `mark1probe heroic 20` five
+  times and `mark1set stat`. The pieces' sum over the 100 calls lies inside
+  `observation_within`'s band for 4 / (T_H + 4), T_H from `pool`'s [5], run
+  from the hub checkout's root; `refused=0 anomalies=0`.
+- `drop-off` (acceptance): `mark1set drops 0`, `mark1probe copies 200`,
+  `mark1probe heroic 20` and `mark1set stat`: at least one item placed,
+  `pieces=` all 0, and `injected=` unchanged since before the step.
+- `heroic-natural`, `dbg-heroic` (research): `mark1set drops 1`; if Sorak's
+  bag holds a vault item, the owner right-clicks it once and confirms; then
+  `mark1set stat`. `heroic-calls=` and the candidate's count each rise by 1
+  and an item is placed. With no vault in the bag, not observed. A vault may
+  send the use to the Angelic-kind draw instead (Phase 3 static reading), so
+  a rise in neither count with an Angelic or Unholy item placed is that
+  branch, not a fault.
+- Last: detach, stop the game, inspect the saves, restore this session's
+  backup and inspect again.
+
+The session passes on `dll-hash`, `control`, `marker`, `fresh-off`,
+`dbg-control`, `heroic-control`, `drops-on`, `reach`, `drop-built`,
+`drop-art` and `drop-off`. `pool`, `rate`, `heroic-natural` and `dbg-heroic`
+are research and never required. A research check whose control failed
+(`heroic-control`, `dbg-control`) is recorded `not-run (control)`.
+`heroic-natural` with `heroic-calls=` unmoved while the candidate's count
+rose is a blind hook, recorded as a fail, never as "the vault does not
+roll".
+
+### Phase 3 kill route static reading
+
+The owner's decision, 2026-10-20, after Mod live procedure 4 ran: "Nooo, it
+should drop normally from kills like white mage set the holy one (sacred) or
+zealots prophecy (zealot). Both are ss rarity sets with drops available
+anywhere". Asked about the two defaults that followed, the owner chose
+"Kills and vaults (default)", so the Heroic route stays beside the kill
+route, and for the pieces' rarity "Satanic, like real sets", so the pieces
+come out Satanic (6) at SS tier instead of Heroic (9).
+
+**Why the Heroic roll was not enough.** As far as is read, `DropItemHeroic`
+runs when a player uses a vault or the Chaos Tower NPC, never on a kill
+([Phase 3 static reading](#phase-3-static-reading)). A piece that only that
+roll can place is a vault reward, not a drop "available anywhere". The
+ordinary unique roll is the one a kill runs, and it keeps only rarities below
+7, so the Heroic route's rarity-9 stand-ins are refused there; the kill route
+needs Satanic stand-ins of the pieces' classes.
+
+Read on 2026-10-20 through the hub's ghidra MCP on the same build. The shared
+facts are in the hub's `docs/RUNTIME_DATA_MODELS.md` § 23.4; this is the part
+the kill route builds on, in short. No decompiled text is quoted here.
+
+- **A kill reaches the ordinary roll.** A dying monster's Destroy event calls
+  `DropItem`, `DropItem` calls `LoadDrops`, and `LoadDrops` calls
+  `DropUniqueItems` (1424). Drop type 45 is the one the shared references
+  measured as "a unique item" by opening every gate on one monster
+  (2026-08-27). How often type 45's gate passes on a kill was **not read** and
+  not measured. Chests, goblins, destructibles and piles reach `DropItem`
+  too, so the route covers them as well (an inference). **Static reading.**
+- **One draw, no set branch.** `DropUniqueItems` picks a sub-list k from 0 to
+  4 by a zone value with random step-ups, draws one random index of
+  `Controller_obj.lootListUnique[k]`, keeps the entry only when its rarity is
+  below 7 and it is not hidden, then builds and places it with the entry's
+  own type. A refused draw places nothing. Nothing in it treats set items
+  differently. **Static reading**, agreeing with the 2026-10-11 reading.
+- **Set items are Satanic uniques.** Mod live procedure 4's `heroic-control`
+  placed "Sacred Pendant" from the unique repository at rarity 6, and its
+  `pool` found `lootListUnique[4]`'s 218 droppable entries all rarity 6
+  (**measured**, 2026-10-20). The ordinary roll keeps every rarity below 7, so
+  a set piece on lists 0 to 4 drops through it like any other Satanic unique
+  (an inference). Which lists hold the Sacred or Zealot's Prophecy pieces is
+  **not established**.
+- **How the game names a set.** `GetSetInformation` maps a set's name to one
+  of 70 indices. `GetSetName`, `GetSetNames` and `DefineSetPieceRequirements`
+  exist by name and were not read, and how an item names its set was not
+  read. No drop script names a set: **not observed** by name, never "there is
+  none". The pieces are not made a game set item; only their rarity follows
+  the game's set pieces.
+- **Not readings of the game.** HS Offline Tracker's item table and the Item
+  Editor's catalog label the Sacred and Zealot pieces "Set"; neither says how
+  the game drops them.
+- **Not observed.** The MCP's callers and disassembly of `DropUniqueItems`
+  are empty, as for `DropItemHeroic`.
+
+**What the kill route does with it.** For each piece class (helmet 0, body
+1, boots 2, gloves 4) the stand-in is a distinct triple of that class on the
+unique lists that the ordinary roll keeps and that is listed the same number
+of times n on each of lists 0 to 4, preferring n = 0 and then the smallest n.
+The roll cannot say which list it drew, so the coin c / (n + c) that
+attributes a hit to the piece is exact only when n is equal on all five, the
+rule Pocket Elf's charm uses. A class with no such triple has no stand-in on
+the kill route; the other pieces still drop and the Heroic route is
+untouched. Each call pushes one entry per resolved piece onto each of lists
+0 to 4 and removes them on every way out, so each piece gets c / (L_k + p) of
+the calls that read list k, p being every entry pushed. With the measured
+lengths (50, 61, 79, 152 and 221) at c = 1 and p = 4 that is between 1 call
+in 225 and 1 in 54, the share of any single unique on that list; per kill it
+is that times type 45's chance, which is not measured. Pocket Elf already
+holds `DropUniqueItems`' one inline detour, and a second install would be
+table-only and blind, so both features share one detour and one install,
+called by whichever switch comes first; with Mark 1's switch off every flight
+charm drop behaves as before.
+
+### Mod live procedure 5
+
+The kill route, the pieces' tier and the owner's loot filter on the research
+build, with a re-check of Mod live procedure 4's `drops-on`, `drop-built` and
+`drop-art`. The capture is the drops workorder's live capture 2,
+`forgepact-166-mark1-set-drops-live-2.md`, kept with the hub's workorder files
+and not tracked.
+
+**Setup:**
+
+- **Build:** the research build from `plugin_build\build.bat dev` at the
+  ForgePact commit that completes the kill route's adapter, with the tier
+  change in it; its SHA-256 and `DropUniqueItems`' expected entry bytes are
+  recorded in the capture. The owner is asked before it is installed.
+- **Character:** save slot 14, "Sorak", in `Town_01_rm`, with no Mark 1 piece
+  in the bag. No flight charm worn; `mark1set bonus`, `jumpscenery`,
+  Headhunter, Tyrant's Crown and every flight charm drop switch, Pocket Elf's
+  included, stay off. The saves are backed up first and this session's
+  backup is restored at the end.
+- **Control:** `ping` answers `pong (YYTK 4.0.1)`, and a bare `mark1probe`
+  answers `mark1probe: research build` with its rows line.
+- **Cases:** the four pieces through the ordinary roll called by name
+  (`mark1probe unique`, the measured call shape of Pocket Elf's `rate-elf`);
+  one piece through the Heroic roll, the route the owner kept; `mark1probe
+  spawn set`, the loader route, as an outlier; and real kills in
+  `Act_01_01`, the game's own direct call from `LoadDrops`, as the other
+  outlier. A piece loaded from a save is not run (not observed live).
+- **Debugger:** the hub's x64dbg MCP, attached under the hs-drive lease, only
+  if the decompile index's build hash is this build's (else the session is
+  aborted). Two non-breaking logpoints: the control on `CheckTalentUse`,
+  which logs about once a frame, armed first; then the candidate on
+  `DropUniqueItems`' own entry. The locations and expected entry bytes are in
+  the capture and the hub's x64dbg guide, never in this doc. Both are armed
+  before the switch goes on, so they see the game's bytes. Before the shared
+  detour is in, a by-name call reaches the entry, which proves the logpoint;
+  once it is in, a by-name call enters the hook through the script table, so
+  from then on the candidate counts direct calls only, which a kill's is. The
+  debugger detaches before the game is stopped.
+
+**Steps and checks**, in the order they run:
+
+- `dll-hash` (validity): the installed DLL's SHA-256 equals the build's.
+- `control`, `marker` (validity): `ping` and `mark1probe` answer as above.
+- `dbg-control` (validity): attached, the control logpoint and then the
+  candidate armed; the control logs about once a frame.
+- `kill-control` (validity): with the drops switch off, `mark1probe unique
+  10` places at least 8 items, every rarity below 7, `pieces=` all 0, and the
+  candidate's count rises by 10.
+- `filter-control` (control for `filter-shown`), still with the drops switch
+  off, so it runs on the game's own items before any tier of ours exists:
+  one item `kill-control` placed whose line read `tier=5`; if none did,
+  `mark1probe unique 10` again, switch still off, up to four more times
+  until one does. The ground around it screenshotted without `lootshow`,
+  then the item hovered and its tooltip screenshotted, its affix lines
+  recorded. It passes when that item's ground label shows past the owner's
+  loot filter and its tooltip lists no affix lines, the shape of a Mark 1
+  piece, which carries none. The match matters because the filter's one
+  test read so far, `LootFilterAffixTierVisible`, reads the affix slots'
+  tiers, not the item's own tier (RDM § 18.5, static reading), so a tier-5
+  item shown for its affixes does not control for a piece without them. A
+  tier-5 item with affix lines is recorded with them and is not the
+  control; no tier-5 item in the 50 calls is recorded not observed.
+- `drops-on` (acceptance): `sigdrop status` and `flightcharm stat` recorded
+  whole; `mark1set drops 1` replies `drops=on install=installed gate=pending
+  kill-gate=pending`; `mark1set stat` then shows `kill-hook=detoured`,
+  `gate=pending`, `kill-gate=pending`, every `standin-<key>=` and
+  `kill-standin-<key>=` `pending`, and its first line `art=armed`. After one
+  `mark1probe unique 1`, `mark1set stat` shows `kill-gate=on` or
+  `not-resolved`, each `kill-standin-<key>=` a stand-in or `none`,
+  `gate=pending` still, and `kill-calls=` up by 1.
+- `pool-kill` (research): `mark1probe pool kill`, recorded whole: the five
+  list lengths and, per class, a stand-in whose `counts=` are all equal, or
+  `none`. The driver records the route from it: stand-ins for all four
+  classes, for some, or for none.
+- `reach-kill`, `tier-read`, `sig-untouched` (acceptance): `mark1probe
+  copies 200`, then `mark1probe unique 20` twice, `mark1set stat`, `sigdrop
+  status` and `flightcharm stat`. Every class `pool-kill` gave a stand-in is
+  placed at least once in the 40 calls; each piece's `kill-<key>` ours equals
+  its built; `refused=0 anomalies=0`; `kill-calls=` up by 40 (`reach-kill`).
+  Every Mark 1 placed line reads `rarity=6 tier=5`, and the other lines'
+  `tier=` are recorded (`tier-read`). `sigdrop status`' `injected=`,
+  `ourHits=` and `built=`, and `flightcharm stat`'s drops line, equal those
+  recorded at `drops-on` (`sig-untouched`).
+- `filter-shown` (acceptance): the ground around the player screenshotted
+  without `lootshow`, under the same filter `filter-control` ran under. A
+  `Mark 1 <piece>` ground label shows past the owner's loot filter.
+- `drop-built`, `drop-art`, `tier-ss` (acceptance): if the filter showed no
+  piece, `lootshow` first. One piece hovered on the ground and
+  screenshotted, then picked up by a left click, the bag opened (C), the
+  piece hovered and screenshotted. Its placed line named it `Mark 1 <piece>`
+  at rarity 6; the ground sprite is the owner's art, never `Error_spr`; the
+  tooltip, on the ground or in the bag, reads the piece's name, Satanic and
+  "Tier SS"; the bag icon is the owner's art (a full bag is recorded not
+  observed).
+- `heroic-still` (acceptance): `mark1probe heroic 20` and `mark1set stat`:
+  at least one Mark 1 placed line reads `rarity=6 tier=5`, `gate=on`, and
+  `heroic-calls=` is up by 20.
+- `spawn-tier` (acceptance): `mark1probe spawn set`, `lootshow`, and one
+  spawned piece hovered and screenshotted: four lines `dressed=yes tier=5`,
+  and the tooltip reads "Tier SS".
+- `kill-natural` (acceptance), `dbg-unique` (research): `mark1probe copies
+  400`, `mark1set stat` and the candidate's count recorded; the waypoint to
+  `Act_01_01`, then monsters killed (by hs-drive input; by the owner only if
+  that fails, and recorded so), with every chest met opened and every pile
+  broken on the way, since those reach `DropItem` too (RDM § 13.1), until
+  the candidate's count has risen by at least 1, or for 30 minutes; then
+  `mark1set stat`. No by-name call runs in this step, so only the game's own
+  direct call moves the candidate. `dbg-unique` is the candidate's rise,
+  recorded whole. `kill-natural` passes when the candidate rose by N, at
+  least 1, and `kill-calls=` rose by the same N: the direct call from
+  `LoadDrops`, the one a kill makes, reached the hook the player build
+  ships. That is the only check of this session the script table cannot
+  satisfy; `drops-on` and `reach-kill` call the roll by name and so enter
+  the hook through the table. A Mark 1 piece on the ground from a kill,
+  with its `kill-<key>` ours and built each up by 1, is recorded when seen
+  and is not required, because whether a kill's one draw lands on a
+  stand-in is chance.
+- `drop-off` (acceptance): `mark1set drops 0`, `mark1probe unique 20` and
+  `mark1set stat`: at least one item placed, `pieces=` all 0, and
+  `injected=` and `kill-pushed=` unchanged since before the step.
+- Last: detach, stop the game, inspect the saves, restore this session's
+  backup and inspect again.
+
+The session passes on `dll-hash`, `control`, `marker`, `dbg-control`,
+`kill-control`, `drops-on`, `reach-kill`, `tier-read`, `sig-untouched`,
+`filter-shown`, `drop-built`, `drop-art`, `tier-ss`, `heroic-still`,
+`spawn-tier`, `kill-natural` and `drop-off`. `pool-kill` and `dbg-unique`
+are research and never required; `filter-control` is `filter-shown`'s
+control. A check whose control failed (`kill-control`, `dbg-control`) is
+recorded `not-run (control)`.
+
+`kill-natural` is read one of three ways, and `### Phase 3 decision`'s
+`kill-natural:` line takes the matching value:
+
+- `seen`: it passed. The shipped route sees a kill.
+- `blind`: the candidate's count rose and `kill-calls=` did not rise by the
+  same amount. The session fails: the kill route's hook does not see the
+  game's own call, whatever the by-name checks showed. It is never read as
+  "kills do not roll".
+- `not-observed`: the candidate's count did not rise in the 30 minutes.
+  This is not a pass. The session is inconclusive for the kill route,
+  nothing is written saying the pieces drop from kills, and the feature's
+  pull request is not opened on the by-name checks alone. The next sitting
+  needs a kill whose call is made reliably, and the owner chooses how: a
+  longer kill window, or, in a research build and only with the owner's
+  acceptance, the lever behind § 13.1's measurement of type 45 (every gate
+  opened on one monster), which this build does not carry. It is never read
+  as "kills do not run the roll", because type 45's chance per kill is not
+  read.
+
+`filter-shown` is read against `filter-control`. A pass needs no control. A
+fail while `filter-control` passed is a defect of ours: the tier we write is
+not what the filter reads. A fail while `filter-control`'s item was hidden
+too says the owner's filter hides SS items without affixes, and is recorded
+so, with both screenshots. A fail while `filter-control` was not observed,
+or found only tier-5 items with affix lines, cannot tell those two apart and
+is recorded `not-run (control)`, not a fail; the next sitting brings a
+matching control before the switch goes on.
+
+### Mod live procedure 6
+
+A short session on the research build that carries `mark1probe killgate`,
+the lever the owner chose on 2026-10-20 (route (a)) after Mod live procedure
+5's `kill-natural` saw no natural call in 30 minutes. It reruns
+`kill-natural` with the lever on, reruns `filter-shown` with
+`filter-control` in the same session, and checks that the lever, once off,
+leaves the gate vanilla, and ends with one window of the owner's own play
+with the lever off, which asks which code drops a vanilla unique from a
+kill (`vanilla-unique-path`). The capture is the drops workorder's live capture 3,
+`forgepact-166-mark1-set-drops-live-3.md`, kept with the hub's workorder
+files and not tracked. Its first attempt (2026-10-20) aborted: a debugger
+logpoint on `LoadDrops`' entry fired about 14,400 times in a few kills and
+froze the game, the kills were handed to the owner, and F on the town
+waypoint picked up a test item. The second attempt follows the procedure
+below, appends `# Attempt 2` to the same capture with its own checks, and
+reruns every step on the same DLL. Each check reads as Mod live procedure 5 defines it,
+except where this procedure says otherwise.
+
+**The lever** (research build only; the player build carries none of it).
+`mark1probe killgate 1` turns it on, `killgate 0` off, and `killgate` alone
+prints `mark1probe killgate: lever=<on|off>
+hook=<detoured|table-only|refused|none> loaddrops=<n> arrays=<n>
+c45-nonzero=<n> c45-max=<v> game45=<n> raised=<n> reentered=<n>
+unique-during=<n> threw=<n>`. It works only inside the game's own
+`LoadDrops` call, around the trampoline of the `LoadDrops` detour, at most
+once per `chances` array (one `DropItem` passes one array to all its
+`LoadDrops` calls, RDM § 13.1):
+
+- **raise:** when the game itself calls `LoadDrops` with type 45 ("a unique
+  item") on an array the lever has not handled, `chances[45]` is opened for
+  that call and put back after it;
+- **re-enter:** on the first game call of any other type on such an array,
+  the game's call runs untouched, then the trampoline runs once more at
+  type 45 with `chances[45]` opened, and the value is put back. This is the
+  mechanism of `dungeonkey typemap`, which is § 13.1's measurement of
+  type 45.
+
+What calls `DropUniqueItems` is `LoadDrops`' own code; the draw, the filter
+and the placement are the game's. The lever never calls `DropUniqueItems`
+and rolls no die. The opened value goes back on every way out, a throw
+included (`threw=`), and a call nested inside an opened one passes
+untouched. The first `killgate 0` or `1` installs the `LoadDrops` detour
+inline by its SDK name; a hook already there table-only (the typemap,
+`fullprobe` and `probe` forms install it that way) would miss `DropItem`'s
+direct call, so the lever refuses it with one line and nothing changed. With
+the lever off every call passes through with nothing written and nothing
+re-entered, and the counters still move: `loaddrops=` counts every call the
+detour sees, `arrays=` the distinct arrays, `c45-nonzero=` and `c45-max=`
+type 45's vanilla chance on them, read before anything else, and `game45=`
+the game's own type-45 calls. `unique-during=` is how far the shared
+`DropUniqueItems` detour's `kill-calls=` rose inside opened calls. The
+harness (`tests/mark1_probe_harness.cpp`, labels `killgate/*`) pins each of
+these and the exact text.
+
+**Setup:**
+
+- **Build:** the research build from `plugin_build\build.bat dev` at the
+  ForgePact commit that adds the lever; its SHA-256 and `LoadDrops`'
+  expected entry bytes are recorded in the capture. The owner is asked
+  before it is installed. The Mod live procedure 5 DLL still installed is
+  not this build.
+- **Character:** save slot 14, "Sorak", in `Town_01_rm`. Every session
+  restores its own backup at the end, so this one starts as Mod live
+  procedure 5 started, with no Mark 1 piece in the bag. No flight charm
+  worn; `mark1set bonus`, `jumpscenery`, Headhunter, Tyrant's Crown, every
+  flight charm drop switch and `dungeonkey` stay off. The owner's loot
+  filter stays as it is.
+- **Control:** `ping` answers `pong (YYTK 4.0.1)`, and a bare `mark1probe`
+  answers `mark1probe: research build` with its rows line.
+- **Cases:** one ordinary kill route (the lever on, monsters in
+  `Act_01_01`), the lever off (the operator's kills, then the owner's own
+  play), one piece placed by name for the filter, and one tier-5 item
+  without affixes as the filter's control. The operator runs no bosses or
+  other acts; in the owner's window they are whatever the owner meets.
+- **Places:** nothing is placed on or near the town waypoint. The filter
+  steps run at a free point well away from the waypoint and the stash
+  (found with `mark1probe walkable scan`, checked with `mark1probe
+  walkable at`, reached with `playerwarp`), and the player stands still
+  there through them. The zone change warps onto the waypoint and opens it
+  with F; if F picks something up instead, it is redone from a point a
+  little off, never by walking.
+- **Driving the kills:** the operator drives every kill in its own windows;
+  none is handed to the owner. No command lists monster positions, so the
+  operator takes a screenshot, picks a pack, converts its offset from the
+  screen centre to world units (half the client pixels on this view),
+  checks the spot just short of it with `mark1probe walkable here`,
+  `playerwarp`s there and right-click casts at the pack with hs-drive's
+  mouse input, up to five casts per batch. Kills are counted by `arrays=`
+  (one array per kill). After every batch, at most a minute apart, `ping`
+  must answer; if it does not, the debugger is detached first and the
+  session is aborted if `ping` still does not answer.
+- **Owner window:** the owner, 2026-10-20: a unique (Satanic or better)
+  "can drop from anything, but the tier of it depend on how rare it is", so
+  low-tier uniques drop easily without the lever once the loot filter
+  shows them; the window "has to be playable (at least 30 fps for longer
+  sessions)". Mod live procedure 5 saw no `DropUniqueItems` call in 30
+  minutes of kills, so whether a kill's unique comes through
+  `DropUniqueItems` at all is what this window answers. It runs after
+  `lever-off`'s confirmed `killgate 0`, with the drops switch on. Before
+  it the owner sets the loot filter to show every unique tier; the filter
+  file lives in the saves directory the session backs up, so the restore
+  at the end puts the owner's filter back (the filter checks above run on
+  the owner's own filter, before the change). Nothing per-frame or hot runs
+  in it: the debugger's once-a-frame control is disabled after its count
+  is read and enabled again afterwards, when it must log again;
+  `dbg-unique` stays armed because it is cold, its positive control being
+  `kill-control` in the same session, and is deleted if the frame rate
+  falls under 30. Before the hand-over the frame rate is measured from
+  `incident stat`'s frame counter over 5 s and must be at least 30; below
+  that the window is not run. The owner plays normally until 3 to 5
+  uniques have dropped from kills and shown, or until a time cap the owner
+  sets, and reports each one's name, rarity and tier. The operator reads
+  `kill-calls=`, `loaddrops=`, `arrays=`, `game45=`, `c45-nonzero=`,
+  `c45-max=`, `dbg-unique` and the frame rate at each reported drop and at
+  least every 5 minutes. The window's length is never a pass condition.
+- **Debugger:** the hub's x64dbg MCP, attached under the hs-drive lease, only
+  if the decompile index's build hash is this build's (else the session is
+  aborted). Two non-breaking logpoints at most, and none on `LoadDrops` at
+  any time (the first attempt's froze the game): the control on
+  `CheckTalentUse`, armed first, which logs about once a frame; then
+  `dbg-unique` on `DropUniqueItems`' own entry. The locations and expected
+  entry bytes are in the capture and the hub's x64dbg guide, never in this
+  doc. `dbg-unique` is armed before the switch and the lever install their
+  detours, so it sees the game's bytes; refused for a byte mismatch, it is
+  recorded `not-run` and is not re-armed without bytes. Once the detours
+  are in, a by-name call enters through the script table and skips the
+  entry, so it counts direct calls only; the lever's inner direct call to
+  `DropUniqueItems` does reach it. If it rises by more than 200 in one
+  batch it is deleted and recorded not observed (hot). `dbg-loaddrops`
+  keeps its name but is the plugin's own reading, `loaddrops=` and
+  `game45=` from `mark1probe killgate`. The debugger detaches before the
+  game is stopped.
+
+**Steps and checks**, in the order they run:
+
+- `dll-hash` (validity): the installed DLL's SHA-256 equals the build's.
+- `control`, `marker` (validity): `ping` and `mark1probe` answer as above.
+- `dbg-control` (validity): attached; the control, then `dbg-unique`
+  armed; the control logs about once a frame.
+- `kill-control` (validity): with the drops switch off, `mark1probe unique
+  10` places at least 8 items, and `dbg-unique` rises by 10.
+- `filter-control` (control for `filter-shown`): still with the drops
+  switch off and no `lootshow` at any point of the session, `lootcensus`,
+  `mark1probe unique 1`, about 1 s, `lootcensus`, repeated up to 30 calls
+  until a call placed one item whose line reads `tier=5`; that item hovered
+  and its tooltip screenshotted. It passes when the tooltip lists no affix
+  lines and that call's census rises are `ground=` +1 and `hidden=` +0.
+  Rises of +1 and +1 mean the item is hidden, recorded `fail`. A tier-5
+  item with affix lines does not count; none in 30 calls is recorded not
+  observed.
+- `drops-on` (acceptance): `mark1set drops 1` replies `drops=on
+  install=installed`, and `mark1set stat` shows `kill-hook=detoured`.
+- `filter-shown` (acceptance): `mark1probe copies 400`, then `lootcensus`,
+  `mark1probe unique 1`, about 1 s, `lootcensus`, repeated up to 10 calls
+  until a call placed exactly one item whose line names `piece=<key>` with
+  `rarity=6 tier=5`; the ground around it screenshotted. It passes when that
+  call's census rises are `ground=` +1 and `hidden=` +0 and the screenshot
+  shows a `Mark 1 <piece>` label.
+- `lever-sees` (validity), `dbg-loaddrops`, `natural-45` (research):
+  `mark1probe killgate 0`; `mark1probe killgate`, `mark1set stat` and
+  `dbg-unique`'s count recorded in town; the waypoint to `Act_01_01`, then
+  the operator's kills as above, every chest met opened, until `arrays=`
+  rose by 10 or 5 minutes; then the same three readings again. Expected
+  `lever=off hook=detoured` and `raised=0 reentered=0` throughout.
+  `lever-sees` passes when `loaddrops=` and `arrays=` each rose by at least
+  1 over the kills: the lever's hook sees the game's own direct calls.
+  `dbg-loaddrops` is `loaddrops=` and `game45=` before and after, recorded.
+  `natural-45` (operator part) is `arrays=`, `c45-nonzero=`, `c45-max=` and
+  `game45=`, recorded whole; `dbg-unique`'s and `kill-calls=`' rises are
+  recorded beside them.
+- `kill-natural` (acceptance), `dbg-unique`, `lever-opened` (research):
+  `mark1probe killgate 1`, `mark1probe killgate` recorded; the operator
+  kills the same way, chests opened, until `dbg-unique` has risen by at
+  least 3 since the step began, or `arrays=` by 40, or 15 minutes; then
+  `mark1probe killgate` and `mark1set stat`. `lever-opened` is `lever=on`
+  with `reentered=` or `raised=` above 0 and `threw=0`, with
+  `unique-during=` recorded beside `dbg-unique`'s rise, the independent
+  instrument.
+  `kill-natural` passes when, across this step and the previous one
+  together, `dbg-unique` rose by N, at least 1, and `kill-calls=` rose by
+  the same N. A Mark 1 piece on the ground from a kill, with its
+  `kill-<key>` ours and built each up by 1, is recorded when seen and is not
+  required.
+- `lever-off` (acceptance): `mark1probe killgate 0`; the operator kills
+  until `arrays=` rose by 5, or 3 minutes; `mark1probe killgate`. It passes on `lever=off` with `raised=`
+  and `reentered=` unchanged since the step began while `loaddrops=` rose:
+  the hook still sees the game's calls, so the unchanged counts are not
+  blindness.
+- `vanilla-unique-path` and `natural-45` (owner part), both research: the
+  owner window above, after the control's count is read and it is
+  disabled, and the frame rate measured; afterwards the same readings and
+  the control enabled, logging again. `vanilla-unique-path` reads
+  `via-dropuniqueitems` when every reported unique coincided with a rise
+  of `dbg-unique` or `kill-calls=`; `other-path` when at least one unique
+  dropped while both stayed flat and `kill-control` passed in the same
+  session; otherwise `not-observed`. `natural-45`'s owner part is the
+  window's rises of `loaddrops=`, `arrays=`, `c45-nonzero=`, `c45-max=`,
+  `game45=`, `kill-calls=` and `dbg-unique`, its length and the frame-rate
+  readings. Nothing rising is recorded as it is, never as a fail.
+- Last: `mark1set drops 0`, detach, stop the game, inspect the saves,
+  restore this session's backup and inspect again.
+
+The session passes on `dll-hash`, `control`, `marker`, `dbg-control`,
+`kill-control`, `lever-sees`, `drops-on`, `filter-shown`, `kill-natural`
+and `lever-off`. `filter-control` is `filter-shown`'s control.
+`dbg-loaddrops`, `natural-45`, `dbg-unique`, `lever-opened` and
+`vanilla-unique-path` are research and never required. If
+`vanilla-unique-path` reads `other-path`, a kill's unique does not come
+through `DropUniqueItems`, so the kill route would need a different hook:
+that is a design question for the owner before any release, not a
+record. A check whose control failed is recorded `not-run
+(control)`: `kill-natural` when `kill-control` or `lever-sees` failed, and
+`filter-shown` as Mod live procedure 5 says.
+
+`kill-natural` takes `seen`, `blind` or `not-observed` exactly as Mod live
+procedure 5 defines them, over the two operator windows before
+`lever-off`; the roll stays the game's own call, so `seen` is still its
+only accepted value. A `kill-calls=` rise in the owner window is recorded
+under `natural-45` as a rise in a lever-off window. Under the lever, `not-observed` with
+`reentered=` above 0 says the type-45 path did not call `DropUniqueItems`;
+that is recorded as a finding and is not a reading that kills do not roll.
+If `natural-45` reads zero on every array, ordinary kills of those monsters
+never run the roll the kill route hooks: that is a product finding for the
+owner and a Known Limitations entry, never a reason to ship the lever.
+`filter-shown` is read against `filter-control` as Mod live procedure 5
+says.
+
+### Mod live 4 results
+
+Mod live procedure 4 ran once on 2026-10-20 (14:21 to 14:38 UTC), on save
+slot 14, "Sorak", with the debugger attached, and restored its saves clean at
+the end. The capture is the drops workorder's
+`forgepact-166-mark1-set-drops-live-1.md`, kept with the hub's workorder files
+and not tracked. The research build is from ForgePact `9132dea` (DLL SHA-256
+`3ab4ec05ed3ad7f3bc92098fefbde89512f90d28aeffc860c56c054a5fae1da8`), on game
+build `498d5885…`. It predates the kill route and the tier change: the
+pieces it built read rarity 9 (Heroic), and their tier was not SS.
+
+`tools/live_checks.py` reads 15 checks: 10 pass, 1 fail (`drops-on`) and 4
+not observed (`drop-built`, `drop-art`, `heroic-natural`, `dbg-heroic`). The
+session does not pass as written, because `drops-on` failed and `drop-built`
+and `drop-art` were not observed; Mod live 5 re-checked all three.
+
+| Check | Verdict | Observed |
+|---|---|---|
+| `dll-hash` | pass | The lease's DLL hash is the build's. |
+| `control` | pass | `ping` answered `pong (YYTK 4.0.1)`. |
+| `marker` | pass | `mark1probe: research build` with its rows line. |
+| `fresh-off` | pass | Before any switch: bonus, art and drops off, the install not armed, `heroic-calls=0`, no piece. |
+| `dbg-control` | pass | The control logpoint logged about once a frame, and its hold test proved it. |
+| `heroic-control` | pass | With the drops off, 10 by-name `DropItemHeroic` calls placed 10 items, 4 of rarity 6 and 6 of rarity 9, no piece. `dbg-heroic` logged all 10. |
+| `pool` | pass (research) | `lootListUnique[5]`: length 380, 203 entries the Heroic roll keeps (93 of rarity 6, 110 of rarity 9), 48 refused for rarity 7 (31) or 10 (17), 129 flagged hidden. `[4]`: length 221, 218 kept, all rarity 6, 3 hidden. Every class (helmet, body, boots, gloves) had a stand-in on both lists, each listed once (n = 1): rarity 9 on [5], rarity 6 on [4]. So T_H = 203 on [5] and `standins: all`. |
+| `drops-on` | fail | `mark1set drops 1` read `drops=on install=installed gate=on`, `hook=detoured`, `art=armed` and `ground-route=both` as expected, but the four `standin-<key>=` fields read `none` (with `list=-`) instead of `pool`'s stand-ins. They read `pool`'s values after the first rolls (`reach`). |
+| `reach` | pass | At `mark1probe copies 200`, 40 by-name calls placed 32 pieces, helmet 10, body 13, boots 6 and gloves 3, each ours and built (`10/10`, `13/13`, `6/6`, `3/3`), with `refused=0` and `anomalies=0`; `heroic-calls=` rose from 0 to 40. `dbg-heroic` stayed at 10 across them: once the detour was in, the by-name calls no longer passed the entry the logpoint sat on, as Mod live 5 saw for `dbg-unique`. |
+| `drop-built` | not observed | The placed lines named the pieces (`Mark 1 Helmet` and the rest) at rarity 9, but none showed on the ground: the owner's loot filter hides items below S, and these pieces were not SS. The owner then decided the set is SS tier (the drops workorder's `tier` item), which Mod live 5 checked. |
+| `drop-art` | not observed | No piece showed on the ground, for the same reason. |
+| `rate` | pass (research) | At one copy, the player build's, 100 by-name calls gave 2 pieces (body 1, gloves 1), each hit handed over by the coin at 1 in 2. The band for 4 / (T_H + 4) = 4 / 207 over 100 calls is (-2.197, 6.062), and 2 lies inside it; `refused=0`, `anomalies=0`. |
+| `drop-off` | pass | After `mark1set drops 0`, at copies 200, 20 calls placed 20 items, no piece, and `injected=` stayed 32400. |
+| `heroic-natural` | not observed | Sorak's bag held no vault item (the active vault grid was empty), so no natural Heroic roll was made. |
+| `dbg-heroic` | not observed | No vault was used; its total stayed 10. |
+
+`drops-on`'s fail was in the check, not the route. A piece's stand-in on the
+Heroic roll is resolved on the list that call reads, inside the call, so
+before the first roll there is nothing to name and the field read `none`.
+The build after this session reads `pending` until the first call, and Mod
+live procedure 5 expects `pending` before one call and a stand-in after it;
+Mod live 5's `drops-on` passed that way. `heroic-natural` stays not
+observed: it says nothing about whether a vault rolls the pieces.
+
+### Mod live 5 results
+
+Mod live procedure 5 ran once on 2026-10-20 (from 16:47 UTC), on save slot
+14, "Sorak", with the debugger attached, its kill window in the Outskirts of
+Inoya on Hell, and restored its saves clean at the end. The capture is the
+drops workorder's `forgepact-166-mark1-set-drops-live-2.md`, kept with the
+hub's workorder files and not tracked. The research build is from ForgePact
+`9c6756e` (DLL SHA-256
+`d65ce50aad1ddf9b66f4552de6d0bbdbb8f2fa724eb838aabad4bec864376961`), the
+first with the kill route through the shared `DropUniqueItems` detour and the
+pieces written SS (rarity 6, tier 5), on game build `498d5885…`.
+
+`tools/live_checks.py` reads 20 checks: 17 pass, 2 not observed
+(`filter-control`, `kill-natural`) and 1 not run (`filter-shown`, its
+control not observed). Every by-name check passed; the session is
+inconclusive for the kill route, because `kill-natural` was not observed.
+
+| Check | Verdict | Observed |
+|---|---|---|
+| `dll-hash` | pass | The installed DLL's hash is the build's. |
+| `control` | pass | `ping` answered `pong (YYTK 4.0.1)`. |
+| `marker` | pass | `mark1probe: research build` with its rows line. |
+| `dbg-control` | pass | The control logpoint logged about once a frame, and its hold test proved it. |
+| `kill-control` | pass | With the drops off, 10 by-name `DropUniqueItems` calls placed 10 items, all rarity 6, no piece; `dbg-unique` logged all 10. |
+| `filter-control` | not observed | 50 by-name calls with the drops off gave tiers 3 and 4 only, no tier-5 item. |
+| `drops-on` | pass | `drops=on install=installed gate=pending kill-gate=pending`, then after one by-name call `kill-gate=on`, a stand-in for each class and `kill-calls=` 0 to 1. Mod live 4's `drops-on`, re-checked. |
+| `pool-kill` | pass (research) | `lootListUnique[0..4]` read lengths 50, 61, 79, 152 and 221 (#74's), none unread. Every class had a kill stand-in held an equal number of times on each list (0 each): helmet `0:15`, body `0:1`, boots `0:9`, gloves `0:16`, all rarity 6. So `kstandins: all`. |
+| `reach-kill` | pass | At `mark1probe copies 200`, 40 by-name calls built 35 pieces, helmet 5, body 8, boots 10 and gloves 12, each ours and built, `refused=0`, `anomalies=0`; `kill-calls=` rose from 1 to 41. |
+| `tier-read` | pass | All 35 Mark 1 placed lines read rarity 6, tier 5; the 5 other uniques read tier 3 or 4. |
+| `sig-untouched` | pass | #74's `sigdrop` counts (`injected=0 ourHits=0 built=0`) and the flight charms' drops line were the same before and after; only the shared detour's install fields changed. |
+| `filter-shown` | not run (control) | Without `lootshow`, no Mark 1 label showed at the pile, but neither did any item placed after the earlier batch, whatever its tier; after `lootshow`, pieces placed later showed `Mark 1 Gloves \| SS` labels with no further `lootshow`. With `filter-control` not observed, this cannot tell the filter from the pile view. |
+| `drop-built` | pass | `placed … rarity=6 tier=5 name="Mark 1 Gloves" piece=gloves`, picked up into the bag. Mod live 4's `drop-built`, re-checked. |
+| `drop-art` | pass | The pieces' own art on the ground and in the bag, never `Error_spr`. Mod live 4's `drop-art`, re-checked. |
+| `tier-ss` | pass | The tooltip, on the ground and in the bag: `Mark 1 Gloves`, `Satanic Gloves`, `Tier SS`. |
+| `heroic-still` | pass | 20 by-name Heroic calls gave 18 Mark 1 lines, all rarity 6, tier 5, `gate=on`, `heroic-calls=` up by 20. |
+| `spawn-tier` | pass | `mark1probe spawn set` dressed all four with `tier=5`; the helmet's tooltip read `Tier SS`. |
+| `kill-natural` | not observed | 30 minutes of kills and chests in the Outskirts of Inoya on Hell: `dbg-unique` stayed at 50 and `kill-calls=` at 42, while the control logged throughout. |
+| `dbg-unique` | pass (research) | N = 0 in the kill window; its 50 hits were all the by-name calls made before the detour went in. |
+| `drop-off` | pass | After `mark1set drops 0`, 20 calls placed 19 items, no piece, `injected=` and `kill-pushed=` unchanged. |
+
+`kill-natural` is `not-observed` by Mod live procedure 5's rule: no kill in
+30 minutes ran `DropUniqueItems` at all, so neither instrument could rise. It
+is not read as "kills do not roll". Mod live 6 took it up with a lever on
+drop type 45's gate. `filter-shown` was re-run there with a fresh control.
+
+### Mod live 6 results
+
+Mod live procedure 6 ran on 2026-10-20 on save slot 14, "Sorak", with the
+debugger attached, in two attempts. The capture is the drops workorder's
+`forgepact-166-mark1-set-drops-live-3.md`, kept with the hub's workorder
+files and not tracked. Both attempts ran the research build from ForgePact
+`38c35ea` (DLL SHA-256
+`0845ee4f6a7b2116d20e6ad5d10af4d912910f0d55a2269d858f980ebda67cb7`), which
+adds the `killgate` lever on `LoadDrops`, on game build `498d5885…`.
+
+- **Attempt 1** (from 18:28 UTC) was aborted. A hardware logpoint on
+  `LoadDrops` (`dbg-loaddrops`) was hot: it logged 14398 of the game's own
+  calls during the owner's first kills, the game fell to about 1 fps and
+  then froze with every thread suspended, and the plugin's counters could
+  not be read. The game was force-stopped and its saves restored. None of
+  its checks is used here.
+- **Attempt 2** (19:05 to 19:25 UTC) read `LoadDrops` through the plugin's
+  own `loaddrops=` count instead of a logpoint, and is the record: the block
+  `tools/live_checks.py --block last` reads. Its saves were restored clean
+  at the end. The operator's kills ran in the Outskirts of Inoya on Hell
+  (zone level 243); the owner's window began there, at about 101 to 227 fps.
+
+`tools/live_checks.py` reads 16 checks: 15 pass and 1 not observed
+(`filter-control`). It also prints a problem for the capture's last line,
+the lease's release, which is a teardown note and not a check. Every
+check the procedure requires passed.
+
+| Check | Verdict | Observed |
+|---|---|---|
+| `dll-hash` | pass | The lease's DLL hash is the build's. |
+| `control` | pass | `pong (YYTK 4.0.1)` and `mark1probe: research build` with its rows line. |
+| `marker` | pass | `playerwarp` reached the filter point in town, a free cell 557 px from the waypoint. |
+| `dbg-control` | pass | The control logpoint logged about once a frame, proven by its hold test, and logged again after the owner's window. |
+| `kill-control` | pass | 10 by-name `DropUniqueItems` calls placed 10 items; `dbg-unique` 0 to 10. |
+| `filter-control` | not observed | 30 by-name calls with the drops off gave no tier-5 item (28 placed, tiers 3 and 4). |
+| `drops-on` | pass | `drops=on install=installed gate=pending kill-gate=pending`, `kill-hook=detoured`. |
+| `filter-shown` | pass | A by-name call placed `Mark 1 Boots`, rarity 6, tier 5, and its ground label `Mark 1 Boots \| SS` showed past the owner's filter with no `lootshow`. A pass needs no control. |
+| `lever-sees` | pass | Lever off: `lever=off hook=detoured`, `raised=0 reentered=0` throughout; over one batch of the operator's kills `loaddrops=` rose 0 to 922 and `arrays=` 0 to 51, so the hook sees the game's own direct calls. |
+| `dbg-loaddrops` | pass (research) | The plugin's reading: `loaddrops=` 0 to 922 and `game45=` 0 to 0 over those kills. |
+| `natural-45` | pass (research) | The operator's batch: `arrays=` +51 with `c45-nonzero=`, `c45-max=` and `game45=` all 0. The owner's window, about 8.7 minutes: `loaddrops=` +45332 and `arrays=` +1831, with `c45-nonzero=` +0, `c45-max=` 0 and `game45=` +0, `kill-calls=` +0 and `dbg-unique` +0. |
+| `kill-natural` | pass (seen) | Across the lever-off batch and the lever-on batch, `dbg-unique` rose 40 to 97 (+57) and `kill-calls=` 1 to 58 (+57): N = 57 on both, every one in the lever-on batch. |
+| `dbg-unique` | pass (research) | +10 (`kill-control`), +30 (`filter-control`), +0 lever off, +57 lever on, +0 lever off again, +0 in the owner's window. |
+| `lever-opened` | pass | `lever=on`: `reentered=` 0 to 57, `raised=0`, `threw=0`, `unique-during=` 0 to 57 beside `dbg-unique`'s +57. That batch built 48 pieces, helmet 13, body 13, boots 9 and gloves 13, each ours and built (`kill-boots=` 1/1 to 10/10, the others 0/0 to 13/13), on screen with `SS` labels. |
+| `lever-off` | pass | Lever off again over two batches: `raised=` and `reentered=` unchanged (0 and 57) while `loaddrops=` rose 1565 to 2240 and `arrays=` 108 to 147, and `kill-calls=` and `dbg-unique` stayed flat. |
+| `vanilla-unique-path` | pass (research: `other-path`) | In the owner's window, lever off, 4 natural uniques dropped from kills (Molten Boots, Arcane Robes of Authority, Heaven's Champion, Gladiator's Skullet), each with `dbg-unique` +0 and `kill-calls=` +0 around it; `kill-control` passed in the same attempt. |
+
+`kill-natural` read `seen` only with the lever on. With it off, over three
+batches of the operator's kills and the owner's whole window, neither
+`dbg-unique` nor `kill-calls=` moved. The lever forces drop type 45's gate
+open once per kill, inside the game's own `LoadDrops` call, so `seen` shows
+that the shared detour sees `DropUniqueItems`' direct call from `LoadDrops`
+when that gate passes. It does not show that a kill without the lever rolls
+it. The same window read why: drop type 45's chance was 0 on every one of
+1831 `LoadDrops` arrays (and 51 more in the operator's lever-off batch),
+`game45=` 0. And `vanilla-unique-path` read `other-path`, with `kill-control`
+passing in the same attempt, so the instrument could rise: a vanilla kill's
+unique does not come through `DropUniqueItems`. Phase 4 found where it does
+come from.
+
+### Phase 3 decision
+
+Recorded on 2026-10-21 from Mod live 4, 5 and 6 (the results above). Each
+key takes exactly one value, on a line of its own. The checks that decide it
+are on the line below.
+
+standins: all
+Decided by `pool` (Mod live 4): each of the four classes had a stand-in on `lootListUnique[5]` and on `[4]`, each listed once.
+
+heroic-t: 203
+Decided by `pool` (Mod live 4): T_H, the entries the Heroic roll keeps on list [5], is 203 (93 of rarity 6, 110 of rarity 9), and `rate`'s 2 in 100 lies inside the band for 4 / (203 + 4). On list [4] the roll keeps 218.
+
+heroic-natural: not-observed
+Decided by `heroic-natural` (Mod live 4): Sorak's bag held no vault, so no natural Heroic roll was made.
+
+kstandins: all
+Decided by `pool-kill` (Mod live 5): each class had a kill stand-in held equally (0 times) on each of `lootListUnique[0..4]`.
+
+kill-natural: seen
+Read only with Mod live 6's `killgate` lever on (`kill-natural`, N = 57 on `dbg-unique` and `kill-calls=` alike, all in the lever-on batch): it shows that the detour sees `DropUniqueItems`' direct call when type 45's gate is forced open, not that an unlevered kill rolls it. Mod live 5's 30 minutes without the lever were not observed.
+
+vanilla-unique-path: other-path
+Decided by `vanilla-unique-path` (Mod live 6): four natural uniques dropped from unlevered kills with `dbg-unique` and `kill-calls=` both flat, while `kill-control` passed in the same attempt.
+
+The `DropUniqueItems` route is superseded as the kill route by Phase 4's
+draw inside `DropItem` ([Phase 4 decision](#phase-4-decision) below), which
+the pieces and Pocket Elf now join on kills. The route stays installed
+beside the draw, as the uniques workorder's default keeps it: a type-45
+drop or a by-name call still runs it. Whether the player text may say the
+pieces drop from kills is Phase 4's `draw-claim`, not anything recorded
+here. So this decision carries no `kill-claim` key: Amendment 7's rule for
+one is withdrawn, because with `no` it would have stripped the kill
+sentence `draw-claim: yes` now supports, and with `yes` it would have rested
+a claim on a levered reading.
+
+## Phase 4: the unique draw inside DropItem
+
+Mod live procedure 6's second attempt (2026-10-20) found that a vanilla kill
+does not drop its uniques through `DropUniqueItems`: four natural uniques
+dropped from kills in Hell while that roll's debugger logpoint and the shared
+detour's `kill-calls=` both stayed flat, their controls logged in the same
+session, and drop type 45's chance read 0 on every one of 1831 `LoadDrops`
+arrays. With the `killgate` lever open the same kills did run the roll and
+dropped Mark 1 pieces, so the stand-in, the hit and the rewrite work there;
+vanilla kills just never reach it. The owner chose to find the roll a kill's
+unique really comes from, Ghidra first and then one live session with the
+owner playing at normal fps, and to move both Mark 1's and Pocket Elf's kill
+routes onto it. Phase 4 is that research. The move waits on its result.
+
+### Phase 4 static reading
+
+Read on 2026-10-20 through the hub's ghidra MCP (`LoadSatanicDropTier`,
+`ReturnRandomSatanic`) and, because `DropItem` is too large to decompile and
+has no body in the MCP, headless byte scans and a call list of `DropItem`
+on the same build. The shared facts are in the hub's
+`docs/RUNTIME_DATA_MODELS.md` § 13.12, with pointers from § 13.1 and § 23.4;
+this is the part phase 4 builds on, in short. No decompiled or disassembled
+text is quoted here.
+
+- **`DropItem` draws a unique itself.** Besides calling `LoadDrops`, whose
+  type 45 is the only direct caller of `DropUniqueItems`, it takes
+  `Controller_obj.lootListUnique[k]`, with k the 0-to-5 answer of
+  `LoadSatanicDropTier` (monster-level brackets with random step-ups, only
+  ever called from `DropItem`), draws a random index, looks the triple up in
+  `GetUniqueRepoStruct` and builds the item with `CreateDefaultParams` and
+  the placement. **Static reading.**
+- **Re-draws.** A definition with field 40 or 41 set sends it back to draw
+  again, in a loop whose counter starts at 500. The rarity then takes one of
+  four branches (6, 9, 7 or 10, other); in the Satanic branch a tier-5 entry
+  meets one more test. **Static reading.** Whether each branch keeps the
+  entry, and whether the loop keeps the first entry it accepts or weighs the
+  accepted ones by a computed value, is **not established**; a large local
+  lowered inside the loop hints at a weighing. That decides the share a
+  stand-in can claim, so the live session measures it (`draw-reads`, and the
+  lever's pick rate, below).
+- **A second draw** reads a ds_list passed as `DropItem`'s argument 7, when
+  one is passed; whether a kill passes one was not read. **Static reading.**
+- **`ReturnRandomSatanic`** draws from a unique sub-list until an entry
+  matches what it was asked for. No direct call site was found, which is not
+  observed rather than none. **Static reading.**
+- The byte scan's positive control was `CreateDefaultParams` with 177 direct
+  sites in the same run, and the MCP's empty callers and xrefs count as not
+  observed.
+
+So the kill's own unique most likely comes from `DropItem`'s draw on
+`lootListUnique[k]`. Live 3's flat `DropUniqueItems` fits that, but it is an
+inference until Mod live procedure 7 sees each natural unique built inside
+that draw.
+
+### Mod live procedure 7
+
+One research session on the research build that carries `mark1probe draws`
+(the watch and its lever) and `mark1probe pool draw`. The capture is the
+uniques workorder's live capture 1,
+`forgepact-166-mark1-set-uniques-live-1.md`, kept with the hub's workorder
+files and not tracked. It asks which code builds a vanilla kill's unique, and
+it checks that the watch's stand-ins can be drawn there, before any player
+code moves.
+
+**The watch** (research build only). `mark1probe draws on` installs nothing
+new on `DropItem`: it scopes each build from research-only call-outs inside
+DropManager's one `DropItem` detour. It shares raredrop's one
+`LoadSatanicDropTier` detour to record each call's k, counts
+`ReturnRandomSatanic` through a count-only hook by name, and makes sure the
+shared `DropUniqueItems` detour is in. It answers `mark1probe draws:
+watch=on dropitem=detoured sattier=detoured retsat=detoured` when all three
+went in inline. Each unique build is classed by its innermost scope: `draw`
+(inside a `DropItem` call and outside every nested roll), `dropunique`,
+`angelic`, `heroic`, or `outside` (no `DropItem` call in progress). Each
+gets one `mark1probe draws built:` line with its name, triple, rarity,
+tier, scope, the call's k, the triple's count on each of the six lists, and
+`reads=`, the `GetUniqueRepoStruct` reads in its scope since the last build.
+A bare `mark1probe draws` prints the counters (`calls=`, `normal=`,
+`draw=`, `dropunique=`, `tiers=`, `arg7=`, `on-k=`, `off-k=`,
+`retsat-calls=`, `picks=`, `pick-builds=`, `anomalies=` and the rest).
+`mark1probe draws push <c>` is the lever: while the watch is on, each
+`DropItem` call pushes c copies of each piece's `pool draw` candidate (SS
+first), refused classes pushing nothing, onto each of
+`lootListUnique[0..5]` and takes them off on every way out; `picks=` counts
+the draw picking one, and nothing is rewritten. `push off` stops it. The
+reply to `draws push <c>` names, for each of the four pieces, either its
+stand-in with `side=ss` or `side=below-ss` (`(fallback)` when its class had
+no SS candidate) or `<piece>=refused (...)` with the reason, so s, the
+number of stand-ins pushed, is between 0 and 4 and is counted from that
+reply.
+
+**The debugger.** A control and three logpoints at `DropItem`'s own draw,
+its build and its argument-list draw, attached headless through the hub's
+x64dbg MCP under the session's lease, after the control. The control is the
+talent-check entry Mod live procedure 6 used (`dbg-control`, about once a
+frame). The three candidates are `dbg-draw`, `dbg-draw-build` and
+`dbg-arglist`. Each logpoint is checked against its expected bytes before
+it is set; its address is a research finding kept in the hub's workorder
+context, never here. A candidate that logs more than 200 lines in one batch
+is disabled and recorded `hot` with its count. The control is disabled
+during the owner's window, so the game runs at normal fps, and enabled
+again after it, so it logs on both sides.
+
+**Setup:**
+
+- **Build:** the research build (`plugin_build\build.bat dev`) at the
+  ForgePact commit that adds the watch; its SHA-256 is recorded in the
+  capture (`dll-hash`), and the owner is asked before it is installed. The
+  game build must be the one this reading was made on, or the logpoints do
+  not apply.
+- **Character:** save slot 14, "Sorak", saves backed up first and restored
+  at the end. Every Mark 1 and flight switch stays off.
+- **Control:** `ping` answers `pong (YYTK 4.0.1)`, and a bare `mark1probe`
+  answers `mark1probe: research build` with its rows line (`control`).
+- **Cases:** ordinary packs in Hell, Outskirts of Inoya; one elite or
+  Treasure Gobbler if one is on screen; and the owner's own play, bosses
+  only if he meets one. The operator teleports and casts its own kills, and
+  nothing is placed on or near the waypoint.
+
+**Steps:**
+
+- H1: the control, then `mark1probe draws on` (`draws-on`). `playerwarp`
+  to a free point at least 400 px from the waypoint, checked with
+  `mark1probe walkable here` (`marker`).
+- H2: attach and set the four logpoints, the control first
+  (`dbg-control`).
+- H3: `mark1probe draws`, `mark1probe unique 10`, `mark1probe draws`
+  (`kill-control`): at least 8 placed, `dropunique=` up by the number
+  placed, and `draw=`, `calls=`, `dbg-draw` and `dbg-draw-build` up by 0.
+  The by-name calls are the `dropunique` scope's positive control and the
+  `draw` scope's negative one.
+- H4: waypoint to Outskirts of Inoya and one operator kill batch
+  (`kill-normal`): `calls=` and `normal=` each up by at least 1. Record
+  `tiers=`, `arg7=`, `reads=`, the built lines and the three candidates'
+  counts.
+- H4b: `raredrop ceiling 10`, the player feature that divides the game's
+  own rare-roll ceiling (one value inside the game's own call; its effect on
+  uniques is not measured). Kill batches until 3 unique builds are seen or
+  6 batches have passed, recording each built line and the candidates'
+  counts.
+- H5: `mark1probe draws push 100`, the ceiling still at 10. Record its
+  reply verbatim in the step as the reading `push-standins`: s, the number
+  of pieces not `refused`, each refused piece with its reason, and each
+  pushed stand-in's triple and side. `push-standins` is a step reading, not
+  a line of the capture's checks; it is what `push-sees` and the draw mode
+  are read against. When s is at least 1, kill batches until `picks=` is at
+  least 1 or 8 batches have passed (`push-sees`). When s is 0 nothing is
+  pushed, `picks=` cannot rise, and no batch is run for it: `push-sees` is
+  recorded `not-observed (not measured: no draw candidate, s=0)`, never
+  `fail`. 100 copies, not 400, because `DropItem` runs on every kill and
+  every breakable.
+- H6: `mark1probe draws push off`, `raredrop ceiling 1`, one kill batch
+  (`push-off`): `picks=` unchanged, `anomalies=0`, `mark1probe pool kill`
+  reading lengths 50, 61, 79, 152, 221 and `mark1probe pool` reading list 5
+  at 380. Then `mark1probe pool draw` (`pool-draw`).
+- H7: read every counter and candidate count, disable `dbg-control`, and
+  hand over to the owner: about 10 minutes in Hell at normal fps with every
+  Mark 1 and flight switch off, naming each unique as it drops.
+- H8: on each report and at the end, read `mark1probe draws`, the new built
+  lines, `mark1set stat` (`kill-calls=`) and the candidates' counts; then
+  enable `dbg-control` again and wait until it logs.
+- H9: detach, stop the game, inspect and restore the saves.
+
+**Checks.** Session validity, all required: `dll-hash`, `control`,
+`marker`, `dbg-control`, `draws-on`, `kill-control`, `kill-normal` and
+`push-off`. Research, never required and recorded as read:
+
+- `push-sees`: under the lever, with s at least 1 in `push-standins`,
+  `picks=` and `pick-builds=` each up by at least 1, with built lines in
+  scope `draw` naming the stand-ins; the pieces `push-standins` lists as
+  refused were not pushed, and the check says nothing about them. With s
+  = 0 it reads `not-observed (not measured: no draw candidate, s=0)`: the
+  lever had nothing to push, so the zero is the instrument's, not the
+  draw's.
+- `pool-draw`: what `mark1probe pool draw` lists for helmet, body, boots,
+  gloves and elf, the candidates a stand-in on the draw would come from.
+- `vanilla-route`: for each natural unique, its built line's scope, k,
+  lists and reads, and the window's rises of `dropunique=`, `kill-calls=`
+  and `retsat-calls=`.
+- `tier-k`: `on-k=` and `off-k=` over H4, H4b and the window, whether each
+  natural `draw` build's triple sits on list k.
+- `draw-reads`: the `reads=` of the natural `draw` builds, set against the
+  lever's picks per `draw` build, which together say whether the draw keeps
+  the first entry it accepts or weighs them.
+- `arg7`: how often a kill passes a list in argument 7 (`arg7=`).
+- `retsat`: whether `ReturnRandomSatanic` runs on a kill (`retsat-calls=`).
+- `dbg-draw`, `dbg-draw-build` and `dbg-arglist`: the three logpoints'
+  counts over each window, the instrument independent of our own hooks.
+
+**What the result decides.** The session's decision records four values.
+The route is `satanic-draw` when every unique the owner reports has a built
+line of the same name in scope `draw` and `dbg-draw-build` rose by at least
+their number while `dbg-arglist` stayed flat; otherwise `arg-list`,
+`dropuniqueitems`, `outside-dropitem`, `mixed` or `not-observed`. Builds in
+scope `outside` during the window (vendor grids, tooltips) are recorded and
+are not natural uniques. `tier-k` matches when `off-k=0` and `on-k` is at
+least 1. The push route is seen when `push-sees` passed. When
+`push-standins` read s = 0, the push route is recorded `not-observed` with
+the reason `no draw candidate`, and the move's third gate turns on
+`pool-draw` instead of `push-sees`: whether any Mark 1 class has an entry
+the draw keeps as read is then `pool-draw`'s reading, and the move goes
+back to planning on that reading, never as a push that was not seen. The
+draw mode is `first-kept` when the median `reads=` of the natural `draw`
+builds is 10 or fewer and the lever's picks per `draw` build reach at least
+half of s*c / (L_k + s*c) (s from `push-standins`, c = 100, L_k the length
+of each build's list k, averaged), `weighed` otherwise, and `not-observed`
+with fewer than 3 natural `draw` builds or with s = 0. Only the first three
+gate the move onto the draw (`satanic-draw`, `matches`, `seen`); the draw
+mode decides only the share the player text may claim. Any other route
+value sends the move back to planning.
+
+### Mod live 7 results
+
+Mod live procedure 7 ran as three sessions, and this one record covers all
+three. Each ran on save slot 14, "Sorak", in Hell, with every Mark 1 and
+flight switch off, and each restored its saves clean at the end. The
+captures are the uniques workorder's
+`forgepact-166-mark1-set-uniques-live-1.md` (Live 1, 2026-10-20, 21:48 to
+22:06 UTC), `forgepact-166-mark1-set-uniques-live-1b.md` (Live 1b,
+2026-10-21, 08:37 to 09:19 UTC) and
+`forgepact-166-mark1-set-uniques-live-1c.md` (Live 1c, 2026-10-21, 09:51 to
+10:24 UTC), kept with the hub's workorder files and not tracked. The game
+build was `498d5885…` in all three.
+
+- **Live 1** ran the procedure above on the research build from ForgePact
+  c45f940 (SHA-256 `8aef7ec5…3884c`), with the debugger attached.
+- **Live 1b** answered the question Live 1 left open, `push-sees`, in the
+  setting where Live 1 saw draw builds: the owner's own play at normal fps.
+  It ran on the build from ForgePact 501a928 (`b46e5ab3…1f85`), which adds
+  the push's own counters (`push-held=`, `push-skipped=`, `pushed-reads=`)
+  and its side argument (`mark1probe draws push <c> ss|below`). The window
+  ran in two halves, below SS first and SS second, each with c = 25, and no
+  debugger.
+- **Live 1c** asked whether a pushed SS stand-in that the draw picks is ever
+  built. It ran on Live 1b's build, at magic find x10 (`stat magicfind 10`),
+  with the debugger attached. It ran its SS half only: the owner closed the
+  session once `ss-build` read seen, so the below control half was not run.
+
+`tools/live_checks.py` reads 18 checks from Live 1 (16 pass, 2 not
+observed), 9 from Live 1b (8 pass, 1 fail) and 15 from Live 1c (12 pass,
+1 fail, 1 not observed, 1 not run). Every session-validity check passed in
+all three.
+
+How to read a built line: `t=` is the item class and `b=` the base. The line
+does not print the sub, so a stand-in is matched on its class, base, tier
+and list counts together. `k=` is the call's `LoadSatanicDropTier` answer.
+`lists=` is the triple's count on lists 0 to 5 without the pushed copies:
+a stand-in built during the push still reads its natural count.
+`reads=` is the `GetUniqueRepoStruct` reads in that scope since the last
+build.
+
+**Live 1: operator kills, then the owner's window.**
+
+| Check | Verdict | What it showed |
+|---|---|---|
+| `dll-hash` | pass | The installed DLL hashed `8aef7ec5…3884c`, the research build. |
+| `control` | pass | `pong (YYTK 4.0.1)`; `mark1probe: research build`, `rows=20 hooked=0 held=0`. |
+| `marker` | pass | `playerwarp` to (1412, 822), free on every test, 557 px from the waypoint. |
+| `dbg-control` | pass | It logged from before the first candidate to after the window. The debugger's control hold proved the instrument by the game's frame counter. |
+| `draws-on` | pass | `watch=on dropitem=detoured sattier=detoured retsat=detoured`. |
+| `kill-control` | pass | `mark1probe unique 10` placed 10 uniques by name. `dropunique=` rose by 10; `draw=`, `calls=`, `dbg-draw` and `dbg-draw-build` each rose by 0. |
+| `kill-normal` | pass | One operator batch in Outskirts of Inoya, zone level 243. `calls=` went 0 to 40 and `normal=` 0 to 13. `reads=` rose 276, equal to `dbg-draw`'s 276. `tiers=0,2,1,0,12,19`, `arg7=undefined:12,list:28`, and no unique was built. |
+| `push-off` | pass | After `push off`, `picks=` stayed 0 and `anomalies=0`. The kill lists read 50, 61, 79, 152 and 221, and list 5 read 380. |
+| `push-sees` | not observed | With `push 100`, s = 4: the SS stand-ins 0:15, 0:1, 0:9 and 0:16, all tier 5. Over 8 operator batches (`calls=` 176 to 346) `draw=` stayed 0, so the lever had no draw to land in, and `picks=` and `pick-builds=` stayed 0. Live 1b read it again. |
+| `pool-draw` | pass | Candidates, SS candidates and best SS entry per class: helmet 73, 7, 0:15; body 84, 12, 0:1; boots 60, 5, 0:9; gloves 46, 5, 0:16; Pocket Elf's class 10: 51, 24, 0:1. Every best SS entry is tier 5 and sits on list 5 only. The best entry below SS was 0:0 in every class, at tiers 4, 4, 1, 2 and 4. |
+| `vanilla-route` | pass | The owner's window, about 10 minutes in Fields of Battle, built 4 uniques, all in scope `draw` (table below). `dropunique=`, `kill-calls=`, `retsat-calls=` and `outside=` each rose by 0. |
+| `tier-k` | pass | `on-k=4` and `off-k=0` over H4, H4b and the window. H4 and H4b built nothing through the draw. |
+| `draw-reads` | pass | `reads=` 28, 9, 19 and 85 for the window's four draw builds. |
+| `arg7` | pass | `arg7=undefined:105,list:392,other:0` over 497 calls, each with 12 arguments. Most calls pass a list in argument 7. |
+| `retsat` | not observed | `retsat-calls=0` all session. There was no positive control for `ReturnRandomSatanic`. |
+| `dbg-draw` | pass | 276 hits in H4's single batch, equal to the `reads=` rise. That is over 200 in one batch, so it was disabled as `hot` and not counted after H4. |
+| `dbg-draw-build` | pass | 0 from H3 to H7, then +4 in the window, equal to `draw=`'s +4. |
+| `dbg-arglist` | pass | 0 from H3 to H7, then +49 in the window: the argument-7 draw's lookup ran on the owner's kills. |
+
+| Unique (owner's window) | t, b | Rarity, tier | Scope | k | `lists=` | `reads=` | Owner |
+|---|---|---|---|---|---|---|---|
+| Unearthed Esoteric Panoply | 1, 63 | 6, 1 | draw | 1 | 0,1,0,0,0,0 | 28 | named, "C tier" |
+| Elder's Heart | 5, 14 | 6, 2 | draw | 2 | 0,0,1,0,0,0 | 9 | not named |
+| Thunderstone Amulet | 5, 41 | 6, 4 | draw | 4 | 0,0,0,0,1,0 | 19 | named, "S tier" |
+| Crystal Infused Shield | 6, 16 | 6, 2 | draw | 2 | 0,0,1,0,0,0 | 85 | not named |
+
+The operator's kills built no unique through the draw: 0 draw builds over
+the 345 calls of H4 to H6. H4b and H5 ran at `raredrop ceiling 10`. Over
+the window `calls=` rose by 112, `reads=` by 2590, and `arg7=` by 88 lists
+and 24 undefined. The session's final `tiers=` read
+`0,12,14,9,99,733`, or `0,9,11,6,73,81` over the window alone. These are
+`LoadSatanicDropTier`'s answers, and in Live 1 they outnumber `calls=`
+(867 against 497); why is not established.
+
+**Live 1b: the lever in the owner's play, in two halves.**
+
+| Check | Verdict | What it showed |
+|---|---|---|
+| `dll-hash` | pass | `b46e5ab3…1f85`, as recorded for the build. |
+| `control` | pass | `pong (YYTK 4.0.1)`; `mark1probe: research build`. |
+| `draws-on` | pass | `watch=on dropitem=detoured sattier=detoured retsat=detoured`. |
+| `push-standins` | pass | s(below) = 4: helmet, body, boots and gloves 0:0, at tiers 4, 4, 1 and 2, each on its own tier's list. s(ss) = 4: 0:15, 0:1, 0:9 and 0:16, all tier 5 and on list 5 only. No class was refused. |
+| `push-held` | pass | `push-held=` +971 below and +2336 SS, equal to each half's `calls=` rise. `push-skipped=` rose by 0 in both. |
+| `window-draw` | pass | `draw=` +3 below and +6 SS. The half's n, its typed draw builds, was 3 below and 6 SS. |
+| `push-kept-below` | pass | Below half: `picks=` 0 to 1 and `pick-builds=` 0 to 1. |
+| `push-sees` | fail | SS half: `picks=` +13 and `pick-builds=` +0. All 6 `draw` builds were at k = 4, and none was an SS stand-in. If Pitfiend's Thorn counts to the below half, as the owner says, the SS n is 5 and this reads not observed (n = 5 draw builds, too few for a zero). |
+| `push-off` | pass | `push: off`. `picks=` stayed 14 over 237 calls after it, with `anomalies=0`. The lengths equal the start's: 50, 61, 79, 152, 221 and 380. |
+
+| Half | Time (UTC) | `calls=` | `reads=` | `draw=` | `on-k=` | `off-k=` | `picks=` | `pick-builds=` | `push-held=` | `push-skipped=` | `pushed-reads=` | `dropunique=` | n |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| below, c = 25 | about 08:38 to 09:12 | +971 | +8562 | +3 | +2 | +0 | +1 | +1 | +971 | +0 | +1943 | +2 | 3 |
+| SS, c = 25 | 09:12 to 09:17:53 | +2336 | +20113 | +6 | +6 | +0 | +13 | +0 | +2336 | +0 | +4538 | +0 | 6 |
+
+The below half's built lines:
+
+- `draw` builds:
+  - Shadow's Grasp: 4, 0, tier 2, k = 5, lists 0,0,1,0,0,0, reads 4. This is the gloves below-SS stand-in: the same class, base, tier and list counts. It was built at k = 5, where no natural copy sits, and the watch typed it as the half's one pick-build. The capture's own check line missed it, because it compared built lines with the stand-ins' sub:b. That is this record's reading of the capture.
+  - Veil of Consecration: 0, 87, tier 4, k = 4, reads 4.
+  - Treasure Hunter's Boots: 2, 14, tier 4, k = 4, reads 2.
+- `dropunique` builds, inside the nested `DropUniqueItems` roll:
+  - Knight's Girdle: 8, 18, tier 4, k = 5, reads 2.
+  - Darkhide Boots: 2, 0, tier 1, k = 4, lists 0,1,0,0,0,0, reads 2. It has the boots below-SS stand-in's class, base, tier and list counts. Whether the roll drew a pushed copy or its natural one is not established.
+
+The SS half's six `draw` builds were all tier 4 at k = 4: Pitfiend's Thorn
+(6, 35, reads 5), Cocoon of the Berserker (1, 54, reads 3), Deep Sea Glaive
+(3, 10, reads 2), Masamune (3, 19, reads 2), Lancer's Glory (3, 10, reads
+4) and Odin's Battle Axe (3, 2, reads 3). The owner named every unique of
+both halves. Pitfiend's Thorn is the one disagreement. He named it as the
+below half's last drop, but its line sits in out.txt at the byte offset the
+SS-half baseline batch ended on, and its `draw=` and `on-k=` rises landed in
+the SS half. The plugin's offsets are what the counters above follow.
+
+The mean list-k length over the `draw` builds was 274.0 in the below half
+(k = 5, 4, 4) and 221 in the SS half. `ss-share`, the SS half's picks per
+typed draw build, is 13 / 6 = 2.17, or 13 / 5 = 2.6 with the owner's
+attribution. It is kept apart from `draw-mode`: the SS half's picks ran
+ahead of its builds, and none of the 13 was built. `incident` recorded one
+episode, a 405 ms hitch in town during the below half.
+
+**Live 1c: the SS half at magic find x10, with the debugger.**
+
+| Check | Verdict | What it showed |
+|---|---|---|
+| `dll-hash` | pass | `b46e5ab3…1f85`. |
+| `control` | pass | `pong (YYTK 4.0.1)`; `mark1probe: research build`. |
+| `switches-off` | pass | `bonus=off`, `drops=off` and `elf=off wings=off broom=off`, at the start and the end. |
+| `draws-on` | pass | `watch=on dropitem=detoured sattier=detoured retsat=detoured`. |
+| `mf-on` | pass | `stat StatMagicFind -> x10.00`, and the row read `kanca kurulu`. `cagri=` went 0 to 1835 to 12221. |
+| `push-held` | pass, SS half only | `push-held=` 0 to 8146, equal to `calls=`. `push-skipped=` stayed 0. |
+| `push-off` | pass | `push: off`. `picks=` stayed 47 and `anomalies=0`. The lengths equal the start's. |
+| `dbg-control` | pass, C14 not run | It logged before the SS half and again at its close. |
+| `ss-picks` | pass, recorded | Numbers below. |
+| `ss-build` | pass | `pick-builds=` 0 to 2. Two `draw` lines name SS stand-ins at k 0 to 4. "Pirate Captain's Hat": 0, 15, rarity 6, tier 5, k = 2, lists 0,0,0,0,0,1, reads 129, the helmet stand-in. "Pirate Captain's Boots": 2, 9, rarity 6, tier 5, k = 4, lists 0,0,0,0,0,1, reads 5, the boots stand-in. The owner named both. |
+| `ss-native` | not observed | No natural rarity-6, tier-5 unique was built in scope `draw`. The only natural tier-5 `draw` builds were at k = 5 and not rarity 6: "The Dawn Bringer" (3, 18, rarity 7, reads 4; the owner calls it Angelic), "Arachno Phobia" (3, 15, rarity 9, reads 219; Heroic) and "Arcanum Asphyxiators" (4, 54, rarity 9, reads 3). These meet the check's literal wording but not its intent. Aimbot.exe (10, 76, rarity 6, tier 5) was built 8 times, all in scope `outside`, with no `DropItem` call in progress. |
+| `below-builds` | not run | The owner closed the session after `ss-build` read seen, so C12 to C14 were skipped. |
+| `dbg-ss75-a` | pass, SS half only | The first slot-75 read site was reached. Its last logged counter was 25600 over `calls=8146`, at least 3.1 hits a call. |
+| `dbg-ss75-b` | pass, SS half only | The second site was reached. Its last logged counter was 12800, at least 1.57 hits a call. |
+| `dbg-draw-build` | fail | 105 hits, equal to `draw=`'s +105, but short of `draw=` plus `picks=` (152). The pair it read matched no built pair (the numbers below). |
+
+The SS half ran from 09:54 to about 10:22 UTC, about 28 minutes. It
+closed with the owner standing still and two reads 10 s apart that matched.
+
+- **Counter rises:** `calls=` +8146, `reads=` +71988, `builds=` +2317,
+  `normal=` +2199, `draw=` +105, `dropunique=` +2, `outside=` +11,
+  `angelic=` and `heroic=` +0, `on-k=` +103, `off-k=` +0, `picks=` +47,
+  `pick-builds=` +2, `pushed-reads=` +14729 and `anomalies=0`.
+- **Other counters:** `tiers=0,405,401,410,3449,3432`, about one answer a
+  call here, and `arg7=undefined:1212,list:6934`.
+- **Rates:** typed draw builds (`on-k=` + `off-k=` + `pick-builds=`) came to
+  105. That is about 3.75 `draw=` and 1.7 `picks=` a minute at magic
+  find x10.
+- **Picks against draw builds, read interval by read interval:** 10 against
+  12 (09:54 to 09:58:41), 7 against 20 (to 10:00:10), 30 against 73 (to
+  10:20:37), and 0 against 0 (to the close).
+- **The 60-pick threshold** was not reached (47). It decides only a
+  `rejected` reading, and the result was `seen`.
+- **Live 1b's 13 SS picks are not pooled with these**, because magic find
+  differed.
+
+The built lines: 118 since load, the cap of 200 not reached.
+
+- 105 in scope `draw`: the two stand-ins above and 103 natural uniques, each
+  built at the k its triple sits on (k = 1: 22, k = 2: 5, k = 3: 14, k = 4:
+  59, k = 5: 3).
+- Every natural draw build's tier equals its k. The k = 5 ones are the three
+  rarity-7 and rarity-9 builds named under `ss-native`, and every other draw
+  build is rarity 6. Their `reads=` run from 2 to 249, with a median of 3.
+- 2 in scope `dropunique`: Juggernaut's Siege Helm (0, 36, tier 3) and
+  Marksman's Quiver (10, 16, tier 4), both at k = 4.
+- 11 in scope `outside`: the eight Aimbot.exe lines, and Imperial Glaive,
+  Lost Wizard's Barrier and Earth Shaper's Talons once each.
+
+The capture lists every line.
+
+What the debugger logged:
+
+- **The slot-75 sites:** every one of the 139 logged lines at the two sites
+  carried the same value, 75.0 (a real). The log condition's literals were
+  read as hexadecimal, so lines were logged up to hit 32 and then every
+  512th hit. The counters jumped by 512 between logged lines, which confirms
+  that the hit counter rises on hits whose condition is false. Hit counts
+  are known only to the nearest 512.
+- **`dbg-draw-build`:** the 105 hits equal the 105 `draw` builds, the two
+  stand-ins among them. So the 45 picks that were not built never reached
+  the draw's build call.
+- **The pair `dbg-draw-build` read at that call:** it never matched a built
+  line's pair. Most hits read one repeated value. A few carried small
+  integers as reals with a repeated second value, and hits 103 and 105 read
+  zero for both values. `pick-builds=` is 2 too, but that is not interpreted.
+  The pair read is not the entry's.
+
+`incident` read 41 episodes and 437 slow judged frames at the close, with
+the debugger attached and magic find at x10. Which of the two caused them
+was not separated.
+
+### Phase 4 decision
+
+Recorded on 2026-10-21 from Mod live procedure 7's three sessions (Mod live
+7 results above). Each key takes exactly one value, on a line of its own.
+The checks that decide it are on the line below.
+
+unique-route: satanic-draw
+Decided by `vanilla-route`, `dbg-draw-build` and `dbg-arglist` (Live 1). Both uniques the owner reported have built lines of the same name in scope `draw`, as do the two he did not report. `dbg-draw-build` rose by 4, which is the window's `draw=` rise and at least the 2 reported. `dropunique=`, `outside=`, `kill-calls=` and `retsat-calls=` stayed flat. One clause of the rule did not hold as written: `dbg-arglist` did not stay flat. It logged 49 hits, so the argument-7 draw's lookup ran on these kills. Every `draw` build still went through the Satanic draw's own build call (4 of 4 in Live 1, and 105 of 105 in Live 1c), so none was built through the argument-7 draw. The driver read the route as `satanic-draw` on that evidence on 2026-10-21 (the workorder's Live 1 log), and this record keeps that reading. Every natural kill unique in Live 1b and Live 1c was built in scope `draw` too, except 4 built inside the nested `DropUniqueItems` roll, 2 in each session. One of Live 1b's 2 has the boots below-SS stand-in's class, base, tier and list counts.
+
+tier-k: matches
+Decided by `tier-k` (Live 1): `on-k=4`, `off-k=0`. Live 1b read `on-k=` +8 and `off-k=` +0, and Live 1c `on-k=` +103 and `off-k=` +0. Every natural draw build's triple sat on list k, and its tier equalled k.
+
+push-route: seen
+Decided by Live 1b's `push-held` (pass: +971 and +2336, `push-skipped=` +0) and its `pushed-reads=`, which rose by 1943 in the below half and by 4538 in the SS half. The draw read pushed entries in both halves. The below half built one: Shadow's Grasp at k = 5 (`push-kept-below`). Live 1c's SS half built two: `ss-build`.
+
+draw-mode: first-kept
+Decided by `draw-reads` and Live 1b's below half. Take the natural `draw` builds of Live 1 (`reads=` 28, 9, 19, 85) and Live 1b (4, 2, 5, 3, 2, 2, 4, 3): 12 builds with a median of 4, which is 10 or fewer. The below half's picks per typed draw build were 1 / 3 = 0.33, against half of s·c / (L_k + s·c) = 0.5 × 100 / (274.0 + 100) = 0.13. The lever half rests on 3 typed builds and 1 pick, so it is a weak reading. Live 1c's 103 natural draw builds (median `reads=` 3) are not part of the rule, but they agree. `ss-share` (2.17, Live 1b) is recorded apart and does not enter it.
+
+ss-build: seen
+Decided by `ss-build` (Live 1c, pass): `pick-builds=` rose by 2 in the SS half, and two `draw` built lines at k = 2 and k = 4 name the helmet and boots SS stand-ins. The owner named both. `ss-native` and `below-builds` are controls for a `rejected` reading only, so they do not bear on `seen`.
+
+Every gating value is `satanic-draw`, `matches` or `seen`, so nothing here
+sends the move back to planning. The driver set `move: go` on these values
+on 2026-10-21.
+
+`draw-mode: first-kept` lets the move use the per-list coin, c / (n_k + c),
+as written. Its lever half is thin, so Live 2's kill counts remain the
+measure of the share.
+
+The SS side needs care. A pushed SS stand-in that the draw picks is built,
+but rarely: 2 of 47 picks at magic find x10 in Live 1c, and 0 of 13 at x1
+in Live 1b. Each picked entry that was not built never reached the draw's
+build call. This record does not say why. Both slot-75 sites were reached,
+and they read 75.0 on every logged hit, but the comparison after that read
+was not logged. No natural Satanic SS unique was built through the draw in
+28 minutes at x10, so the SS rate a Mark 1 piece or Pocket Elf stand-in
+gets is far below its pick rate. The model and the player text take that
+from Live 2, not from the pick share.
+
+Mod live procedure 8 adds two more keys, recorded on 2026-10-21 from its
+second attempt ([Mod live 8 results](#mod-live-8-results) below) by the
+procedure's claim rule.
+
+draw-claim: yes
+Decided by `draw-pieces` (Mod live 8, pass). Over L4 the drops' own kill draw built 8 Mark 1 pieces (helmet 2, body 4, boots 1, gloves 1), and the Body Armor, the Helmet and the Boots were on screen with an `SS` label, with `anomalies=0` and `refused=0`. Mark 1's `draw-typed=` rose by 67 over L4, the agreements of `draw-class-check=` rose with it (17 to 13457) and its disagreements stayed 0, so the hit typing was reading the draw's builds throughout. Every own-stand-in typed build (8) was a hit, so the route shows no defect. The pieces' share was raised 400-fold (`mark1probe copies 400`) and magic find to x10, then x100 (an owner deviation), so this shows the route builds the pieces from kills; it does not measure their rate at the player build's one copy.
+
+elf-claim: yes
+Decided by `draw-elf` (Mod live 8, pass). Over L4 the kill draw built one Pocket Elf (`elf-draw=` 0/0 to 1/1), on screen as `Pocket Elf | SS`, with `anomalies=0` and `refused=0`. `elf-draw-typed=` rose by 67 over L4, the agreements of `elf-draw-class-check=` rose with it (17 to 13457) and its disagreements stayed 0. Its one own-stand-in typed build was the hit. As for the pieces, the share was raised 400-fold (`flightprobe copies 400`), so the rate at one copy is not measured.
+
+The values each key may take:
+
+- `unique-route`, where a kill's unique is built: `satanic-draw`,
+  `arg-list`, `dropuniqueitems`, `outside-dropitem`, `mixed` or
+  `not-observed`.
+- `tier-k`, whether a draw build's triple sits on the list k names:
+  `matches`, `differs` or `not-observed`.
+- `push-route`, whether entries the lever pushes reach the draw: `seen`,
+  `not-observed` or `instrument`.
+- `draw-mode`, how the draw chooses among its entries: `first-kept`,
+  `weighed` or `not-observed`.
+- `ss-build`, whether a pushed SS entry the draw picks is ever built:
+  `seen`, `rejected` or `not-observed`.
+- `draw-claim`, whether the player text may say the pieces drop from kills
+  (Mod live procedure 8's claim rule): `yes`, `no` or `not-reached`.
+- `elf-claim`, the same for Pocket Elf: `yes`, `no` or `not-reached`.
+
+### Mod live procedure 8
+
+One session on the research build that carries the moved kill routes: the
+Mark 1 drops and Pocket Elf on `DropItem`'s own draw, through DropManager's
+one `DropItem` detour and raredrop's one `LoadSatanicDropTier` detour (the
+hub guide's Mark 1 set › *Drops*, *kill draw*). The capture is the uniques
+workorder's live capture 2, `forgepact-166-mark1-set-uniques-live-2.md`,
+kept with the hub's workorder files and not tracked. Mod live procedure 7
+settled which code builds a kill's unique, so this session uses no
+debugger: it checks the shipped behaviour through the plugin's own counters
+and what lands on the ground, each with a control in the same session.
+
+**Setup:**
+
+- **Build:** the research build (`plugin_build\build.bat dev`) at the
+  ForgePact commit that moves both kill routes onto the draw; its SHA-256 is
+  recorded in the capture (`dll-hash`), and the owner is asked before it is
+  installed. The game build must be the one Mod live procedure 7 ran on.
+- **Character:** save slot 14, "Sorak", saves backed up first and restored
+  at the end.
+- **Control:** as in Mod live procedure 7: `ping` answers `pong (YYTK
+  4.0.1)`, and a bare `mark1probe` answers `mark1probe: research build`
+  with its rows line (`control`).
+- **Relies on:** everything Mod live procedure 7 relies on, plus
+  [Mod live 7 results](#mod-live-7-results) (the route, `satanic-draw`),
+  `flightprobe copies` and `sigdrop status` (the hub guide's Command
+  Reference).
+- **Cases:** ordinary packs in a Hell zone, where k reaches 5, at magic
+  find x10 (`stat magicfind 10`, as Live 1c's `mf-on`). The Heroic
+  roll and the `DropUniqueItems` route are run by name. The operator
+  teleports and casts its own kills, and nothing is placed on or near the
+  waypoint.
+- **Who makes the kills:** Live 1's operator kill batches built no unique
+  through the draw (0 draw builds over the 345 `DropItem` calls of H4 to
+  H6, [Mod live 7 results](#mod-live-7-results)), while the owner's play in
+  Live 1c built 105 in about 28 minutes at magic find x10. So L3 and L4
+  start with the operator's own kill batches, at most 4, and continue in
+  the owner's play when those batches type no build.
+
+**Steps:**
+
+- L1: the control, then `playerwarp` to a free point at least 400 px from
+  the waypoint, checked with `mark1probe walkable here` (`marker`), as in
+  Mod live procedure 7's H1.
+- L2: `mark1set drops 1` and `flightcharm elf 1`. The drops answer
+  `mark1set: drops=on install=installed gate=pending kill-gate=pending
+  draw-gate=pending`, and `mark1set stat`'s second line reads
+  `draw-hook=detoured` and `tier-hook=detoured` (`drops-on`). `flightcharm
+  stat` reads `elf-draw-hook=detoured` (`elf-on`).
+- L3: `stat magicfind 10`, then `sigdrop status`, `mark1set stat` and
+  `flightcharm stat`, then up to 4 operator kill batches at copies 1; if
+  `draw-typed=` has not risen after them, the owner plays until it does.
+  `draw-calls=`, `draw-pushed=`, `draw-typed=` (either half) and
+  `elf-draw-typed=` (either half) each rise by at least 1, the first number
+  of `draw-class-check=` and of `elf-draw-class-check=`, the agreements,
+  each rise by at least 1, and the second number of both, the
+  disagreements, is still 0 (`draw-control`). Every read records
+  `draw-class=` and `draw-class-check=` and their twins `elf-draw-class=`
+  and `elf-draw-class-check=` beside the typed fields. This is a
+  session-validity check: with a typed build counted and the class read
+  agreeing with the game's own, the kill draw's hit typing is shown to run
+  in this session, so a later miss can be read as one. `draw-control`
+  fails, and the session goes straight to L8 with the reads recorded, at
+  the first read where either line's `draw-class-check=` counts a
+  disagreement (the class read is wrong), where the true halves of
+  `draw-class=` (`bool` and `num` together) have risen by 5 or more while
+  `draw-typed=` has not risen (the class is read but the read match fails,
+  and `draw-untyped=` carries those builds), or where either line's third
+  number of `draw-class-check=`, `unread`, has risen by 5 or more while its
+  first number has not (the check cannot read the game's `c`, so a wrong
+  class read would show no disagreement and a right one no agreement).
+- Expected class, a static reading and not a measurement: on this game
+  build `DropItem` passes its third argument as a bool (hub
+  `docs/RUNTIME_DATA_MODELS.md` § 13.12), so `draw-class=` and
+  `elf-draw-class=` rise in their `bool` halves only, and
+  `draw-class-check=` and `elf-draw-class-check=` only in their first
+  number, the agreements.
+- L4: `raredrop ceiling 10` (as in Mod live procedure 7's H4b),
+  `mark1probe copies 400` and `flightprobe copies 400`, then kill batches,
+  the operator's first and then the owner's play, until each of the four
+  `draw-<key>=` fields and `elf-draw=` has risen, or until `draw-typed=`
+  (both halves together) has risen by 105 since L4 began. At least one
+  piece is built with an `SS` label on screen and no lootshow (a
+  screenshot), with `anomalies=0` and `refused=0` (`draw-pieces`). Pocket
+  Elf is built (`draw-elf`). Record each `mark1set drops hit: kill draw ->
+  <outcome>` and `flightcharm hit: kill draw -> <outcome>` line,
+  `tier-unread=`, `draw-nested=`, and each `draw-standin-<key>=` and
+  `elf-draw-standin=` as read. At every read, record `draw-typed=`,
+  `draw-untyped=`, `draw-normal=`, `draw-outside=`, `draw-class=` and
+  `draw-class-check=`, and their twins `elf-draw-typed=`,
+  `elf-draw-untyped=`, `elf-draw-normal=`, `elf-draw-outside=`,
+  `elf-draw-class=` and `elf-draw-class-check=`, and set the rise of `draw-typed=` and
+  `elf-draw-typed=` beside the model figures under *Expected hits per
+  typed build* below.
+- L5: `sigdrop status` matches L3's. `mark1probe pool kill` reads lengths
+  50, 61, 79, 152 and 221, and `mark1probe pool` reads list 5 at 380
+  (`nested-clean`): the entries came off every list, and #74's counters were
+  put back after every call.
+- L6: `mark1probe heroic 1` raises `heroic-calls=` by 1 with a build line
+  (`heroic-still`). `mark1probe unique 1` raises `kill-calls=` by 1
+  (`unique-still`). Both routes stay as built beside the draw.
+- L7: copies back to 1 (`mark1probe copies 1`, `flightprobe copies 1`),
+  `raredrop ceiling 1`, `mark1set drops 0` and `flightcharm elf 0`; then one
+  kill batch. `draw-calls=` rises and `draw-pushed=`, `draw-typed=` and
+  `elf-draw-typed=` are unchanged, with no piece and no Pocket Elf built
+  (`drop-off`); the read also records `draw-class=`, `draw-class-check=`,
+  `elf-draw-class=` and `elf-draw-class-check=`. Then `stat magicfind 1`.
+- L8: teardown as in Mod live procedure 7's H9: stop the game, inspect and
+  restore the saves.
+
+**Checks.** Session validity, all required: `dll-hash`, `control`,
+`marker` and `draw-control`. Acceptance, all required: `drops-on`,
+`elf-on`, `draw-pieces`, `draw-elf`, `nested-clean`, `heroic-still`,
+`unique-still` and `drop-off`. Research, never required and recorded as
+read: `natural-draw`, a piece or Pocket Elf built at copies 1 if one is
+seen, with its hit line; and `draw-scope`, `draw-untyped=`,
+`draw-normal=`, `draw-outside=`, `draw-class=` and `draw-class-check=` and
+their `elf-` twins (`elf-draw-untyped=`, `elf-draw-normal=`,
+`elf-draw-outside=`, `elf-draw-class=`, `elf-draw-class-check=`) as read
+at each of L3, L4 and L7.
+
+**Expected hits per typed build.** These are model figures, not
+measurements: hub `hs_game_sdk.unique_pick_model.draw_share` under
+`draw-mode: first-kept`, at UP19's fit, where the draw keeps a pushed SS
+entry it has read about 1 time in 100
+(`hs-game-sdk/curated/unique_pick_measurements.json`, UP19; why it keeps
+them so rarely is not established), with list lengths 50, 61, 79, 152, 221
+and 380 (UP20).
+
+- When a typed build is one of the item's own stand-ins, the coin makes it
+  that item's hit with chance c / (n_k + c). At copies 400, with the
+  stand-in's own count n_k at most 1, that is at least 400/401, so nearly
+  every own-stand-in typed build is a hit. Own-stand-in typed builds
+  counted (the first half of `draw-typed=` or `elf-draw-typed=`) with no
+  hit point at the route, not at luck.
+- What share of all typed builds lands on one item's own stand-in, with
+  Pocket Elf and all four pieces pushed at copies 400 (2000 entries a
+  call): about 1.7% on list 4 (221 long) and 1.0% on list 5 (380 long), and
+  more on the shorter lists. For the four pieces together, about 6.6% and
+  4.0%.
+- The chance that N typed builds bring no hit is one minus that share,
+  raised to the power N. At N = 105, the draw builds Live 1c counted in
+  about 28 minutes of the owner's play at magic find x10, that is 17% to
+  35% for Pocket Elf and 0.08% to 1.4% for the four pieces together.
+- At copies 1, the player build's constant, one item's share is about
+  4.5e-5 per typed build on list 4 and 2.6e-5 on list 5, so `natural-draw`
+  is not expected to see one.
+
+**What the result decides.** The session adds two values to
+[Phase 4 decision](#phase-4-decision), each on a line of its own.
+`draw-claim: yes` only if `draw-pieces` passed, and then the player text
+may say the pieces drop from kills. `draw-claim: no` only if `draw-pieces`
+did not pass, Mark 1's `draw-typed=` rose above 0 over L4, the first
+number of `draw-class-check=` (the agreements) rose with it, and its second
+number (the disagreements) did not rise over L4: the result then reads
+"not observed in N typed builds", N the rise of `draw-typed=`, with the
+model's chance of a miss at that N from the list above. `draw-claim:
+not-reached` when L4 counted no typed build, or when the class check
+counted a disagreement over L4 or no agreement beside the typed builds:
+the session then says nothing about the route, and a disagreement count is
+recorded as a defect of the instrument, not as a miss, since the typed
+builds then are not the unique builds the miss chance assumes.
+`elf-claim:` follows the same rule on `draw-elf`, `elf-draw-typed=` and
+`elf-draw-class-check=`: `elf-claim: yes` only if `draw-elf` passed,
+`elf-claim: no` with "not observed in N typed builds" and its miss chance
+only when the agreements rose and the disagreements did not, or
+`elf-claim: not-reached` when no typed build was counted or the class
+check failed that way. When the first
+half of either counter rose, own-stand-in typed builds, and no hit
+followed, the result records that as a defect of the route, not as a
+miss. A pass at copies 400 shows the route builds the item; it does not
+measure the rate per kill at copies 1, which `natural-draw` only samples.
+
+### Mod live 8 results
+
+Mod live procedure 8 ran twice on 2026-10-21, on save slot 14, "Sorak", in
+Hell, and each attempt restored its saves clean at the end. The capture is
+the uniques workorder's `forgepact-166-mark1-set-uniques-live-2.md`, kept
+with the hub's workorder files and not tracked; this record is its second
+attempt, the block `tools/live_checks.py --block last` reads.
+
+- **Attempt 1** (13:34 to 13:59 UTC) ran the research build from ForgePact
+  e19b70d (SHA-256 `e1642ea3…8d13`). It stopped in L3. Over 8342 draw
+  calls and 3990 normal builds, while the owner saw ordinary uniques drop,
+  `draw-typed=` and `draw-untyped=` both stayed 0 on both lines. The typed
+  count was blind to the unique builds it was meant to count: its class
+  read took only a number, and `DropItem` passes the class as a bool (hub
+  `docs/RUNTIME_DATA_MODELS.md` § 13.12). The owner stopped the session,
+  `draw-control` was not run, and so were none of the acceptance checks.
+- **Attempt 2** (14:57 to 15:45 UTC) ran the build from ForgePact b59a017
+  (SHA-256 `10fdd37c…572b`), which reads the class as the game reads it and
+  adds `draw-class=` and `draw-class-check=` to both stat lines. Every
+  result below is this attempt's. The capture does not record the game
+  build's hash.
+
+`tools/live_checks.py` reads 14 checks: 13 pass, 0 fail and 1 not observed
+(`natural-draw`). Every session-validity check passed. L3 and the
+operator's four L4 batches ran in the Outskirts of Inoya (zone level 243);
+the owner's L4 play ran in The Devil's Breach (zone level 276). Magic find
+was x10 from L3, as written, until the owner raised it to x100 partway
+through L4 to speed it up (an owner deviation from the procedure, at the
+read where `draw-typed=` stood at 2/21). L7's kill batch ran at x100 too,
+since the procedure sets magic find back to 1 after it.
+
+| Check | Verdict | What it showed |
+|---|---|---|
+| `dll-hash` | pass | The lease hashed the installed DLL as `10fdd37c…572b`, the saved Live 2 build. |
+| `control` | pass | `pong (YYTK 4.0.1)`; `mark1probe: research build`, `rows=20 hooked=0 held=0`. |
+| `marker` | pass | `playerwarp` to (1412, 822), free on every test, 500 px from the waypoint. |
+| `draw-control` | pass | At L3's second operator batch, at copies 1: `draw-calls=` and `draw-pushed=` 0 to 102, `draw-typed=` 0/0 to 0/2 and `elf-draw-typed=` 0/0 to 0/2, the agreements of `draw-class-check=` 0 to 17 on both lines with no disagreement, and `draw-class=bool:2/15,num:0/0`. No read met a fail exit. Batches 3 and 4 and the owner's L3 play were not needed. |
+| `drops-on` | pass | `mark1set: drops=on install=installed gate=pending kill-gate=pending draw-gate=pending`; the stat line read `draw-hook=detoured tier-hook=detoured`. |
+| `elf-on` | pass | `flightcharm: elf drop on`; the stat line read `elf-draw-hook=detoured`. |
+| `draw-pieces` | pass | Over L4 the drops' kill draw built 8 pieces: `draw-helmet=` 0/0 to 2/2, `draw-body=` 0/0 to 4/4, `draw-boots=` 0/0 to 1/1 and `draw-gloves=` 0/0 to 1/1, with `anomalies=0` and `refused=0`. The Body Armor, the Helmet and the Boots of the last screenshot were on screen with an `SS` label, each one the draw's by the counters read beside its screenshot. No frame showed a beam or an announcement; each screenshot came after the drop, so whether a lootshow played at that moment was not observed. |
+| `draw-elf` | pass | `elf-draw=` 0/0 to 1/1, `Pocket Elf \| SS` on screen, `anomalies=0` and `refused=0`. |
+| `nested-clean` | pass | `sigdrop status` read as at L3 in every field but its call counter `cdpCalls=` (0 to 13474), which counts the game's `CreateDefaultParams` calls and rises with every build, so this record reads it as outside the match. `mark1probe pool kill` read `kill lengths=50,61,79,152,221 unread=0` and `mark1probe pool` read list 5 at 380. `kill-nested=0`, `nested=0`. |
+| `heroic-still` | pass | `mark1probe heroic 1` raised `heroic-calls=` 0 to 1 with `mark1set drops hit: heroic roll -> Mark 1 Boots (stand-in 2/0/36, 400 in 401) built by the game`. |
+| `unique-still` | pass | `mark1probe unique 1` raised `kill-calls=` 7 to 8; it built a Pocket Elf (`flightcharm hit: unique roll -> Pocket Elf (stand-in Aimbot.exe, 400 in 400) built by the game`). |
+| `drop-off` | pass | With copies 1, `raredrop ceiling 1`, `mark1set drops 0` and `flightcharm elf 0`, one kill batch: `draw-calls=` 3143 to 3182, while `draw-pushed=` (3143), `draw-typed=` (8/61), `elf-draw-typed=` (1/68), `draw-class=` and `draw-class-check=` and their twins did not change. No new piece and no Pocket Elf on the ground. |
+| `natural-draw` | not observed | L3's two batches at copies 1 typed 2 builds and built no piece and no Pocket Elf. At one copy procedure 8's model gives one item about 4.5e-5 of the typed builds on list 4, so none was expected. |
+| `draw-scope` | pass | Read at L3, L4 and L7, the same on both lines. L3's end: `draw-untyped=0 draw-normal=15 draw-outside=busy:0,aside:0,lists:0,roll:0 draw-class=bool:2/15,num:0/0,none:0,other:0 draw-class-check=17/0/0`. L4's end and L7: `draw-untyped=0 draw-normal=13388 draw-outside=busy:0,aside:5,lists:0,roll:0 draw-class=bool:69/8482,num:0/0,none:4906,other:0 draw-class-check=13457/0/0`. |
+
+**Typed builds over L4, beside the model.** L4 ran at copies 400 for every
+piece and for Pocket Elf.
+
+| Counter | L4 start to end | Rise | At x10, then x100 | Hits |
+|---|---|---|---|---|
+| `draw-typed=` | 0/2 to 8/61 | 67 (own stand-ins 8, others 59) | 21, then 46 | 8 pieces |
+| `elf-draw-typed=` | 0/2 to 1/68 | 67 (own stand-in 1, others 66) | 21, then 46 | 1 Pocket Elf |
+
+- Every own-stand-in typed build was a hit, 8 of 8 for the pieces and 1 of
+  1 for Pocket Elf, as the coin at copies 400 (at least 400/401) predicts.
+  So no typed build on a stand-in went unclaimed, and the route shows no
+  defect.
+- The model's share at copies 400 is about 4.0% (list 5) to 6.6% (list 4)
+  of typed builds for the four pieces together, and 1.0% to 1.7% for Pocket
+  Elf, more on the shorter lists. The measured shares are 8 of 67 (11.9%)
+  and 1 of 67 (1.5%). The pieces' count lies above what lists 4 and 5 give
+  (2.7 to 4.4 expected). Shorter lists give larger shares, and no build's k
+  was recorded, so this record does not say whether the share differs from
+  the model's.
+- Not a rate at one copy: copies 400 and a raised magic find were the
+  session's levers. How often a piece or Pocket Elf drops from kills at the
+  player build's one copy is not measured.
+
+**What else the session showed.**
+
+- **The class as the game reads it** (**measured**, the static reading in
+  hub RDM § 13.12): over L3 and L4, 13457 builds in the draw's scope, every
+  one with the class read as a bool or absent and none as a number
+  (`num:0/0`, `other:0`). The 69 that read true are the 69 typed builds;
+  the 8482 that read false and the 4906 that read absent or undefined add
+  up to `draw-normal=13388`. `draw-class-check=` agreed with the `c` the
+  game's own `CreateDefaultParams` stored on all 13457 (0 disagreements, 0
+  unread). Which call made the 4906 normal builds with no class was not
+  read.
+- **The `DropUniqueItems` route ran on kills.** In the owner's L4 play,
+  `kill-calls=` rose 0 to 7 with `draw-nested=` 0 to 7 beside it: the
+  ordinary unique roll ran 7 times inside a kill's `DropItem` call, and at
+  copies 400 it built Mark 1 Boots twice and Mark 1 Gloves once
+  (`kill-boots=2/2`, `kill-gloves=1/1`; the first two Boots and the Gloves
+  on screen were these). The drops workorder's Live 3 saw it never run in Act
+  1 on Hell. Whether the zone, the zone level or the magic find opened drop
+  type 45's gate here is not established.
+- **No kill-draw hit line was seen.** The procedure asked for each
+  `mark1set drops hit: kill draw -> <outcome>` and `flightcharm hit: kill
+  draw -> <outcome>` line. None reached `bp_ipc\out.txt` for the 9 draw
+  hits, nor a `unique roll` line for the 3 `DropUniqueItems`-route hits
+  made by kills, while L6's by-name calls printed theirs in the command's
+  reply. Where a hit line made outside a command goes was not looked at.
+- `tier-unread=0`, `draw-outside=` `aside:5` and `busy:0,lists:0,roll:0`
+  throughout. `draw-standin-<key>=` read `0:15@6/5`, `0:1@6/5`, `0:9@6/5`
+  and `0:16@6/5`, each `x0,0,0,0,0,1`, and `elf-draw-standin=` `0:1@6/5`
+  with the same counts, at every read.
+- `incident stat` counted 29 episodes by the end of L4, at copies 400,
+  with frames over a second and `drops` the mod with the worst frame; the
+  session did not measure the drops' cost at copies 1.
+
+## Phase 5: the set tooltip and the pieces' art
+
+The owner's playtest of 2026-10-21, on a research DLL with the pieces placed
+by `mark1probe spawn set`, asked for three things before the pull requests
+([ForgePact#166, the owner's comment](https://github.com/falorfrozen-cmd/ForgePact/issues/166#issuecomment-6322675344)):
+
+1. **The pieces' own art, always.** The pieces showed base-item art. The art
+   was armed by the session's first `mark1set bonus 1`, and the pieces had
+   been built before it ran, so a piece loaded from a save or built before
+   the switch kept its base art.
+2. **A set display like the game's own set items:** the set's power, and
+   which of its pieces the player wears.
+3. **Automation as a passive:** the full-set bonus reads **+1 to
+   Automation**, with what Automation does underneath, the way a `+1 to
+   <talent>` line reads on Celestial Might.
+
+Phase 5 builds all three. One session on the research build,
+Mod live procedure 9 below, checks them.
+
+### Phase 5 static reading
+
+Read on 2026-10-21 through the hub's ghidra MCP, and measured from Item
+Truth's tooltip captures (game build `pe-6aaa6779-0cad4fc8`, 2026-09-27 to
+2026-10-21). The shared facts are in the hub's `docs/RUNTIME_DATA_MODELS.md`
+§ 16.12, with their labels; this is the part phase 5 builds on, in short. No
+decompiled or disassembled text is quoted here.
+
+- **How the game draws a set piece.** After the item's own stats and
+  sockets, and a two-row gap each time: the set's bonus lines, pale gold
+  (7844807) when active and dark grey (4210752) when not; then the set's
+  name, centred, in pale gold; then one centred row per piece, in the set's
+  order, green (65280) when worn and dark grey when not. No count of worn
+  pieces is drawn. **Measured** over 230 set-piece tooltips. The rule that
+  lights a bonus line, and how the pass decides an item belongs to a set,
+  are **not established**.
+- **How the game draws a skill grant.** Celestial's Authority's `+1 to
+  Celestial Might` is stat 203's line in orange (18687), and under it the
+  talent's description in grey (8421504), wrapped and centred, then a
+  parameter row. **Measured** on all 200 captured tooltips with a stat-203
+  line (161 of them potions and relics), all of them ALT views or items that roll no ranges, so whether the
+  description shows without ALT was not established from them. Mod live 9's
+  `desc-plain` then **measured** it: a gear item's grant description shows
+  with and without ALT (§ "Mod live 9 results").
+- **The set tables.** `GetSetName` turns a set index 1 to 70 into its
+  localized name; `DefineSetPieceRequirements` fills `requiredPieces` for
+  the same 70 sets with 2, 3 or 4; `gml_Script_s_SetItemInfo` names a piece
+  by three fields, `itemType`, `weaponType` and `itemId`, a unique triple;
+  `GetSetInformation` sorts a set name into one of 70 cases; and
+  `DrawInventoryItemV2`, the tooltip pass, is a method value whose body the
+  MCP's decompiler gives up on. **Static reading.**
+- **The art today.** The art was armed by the core's sticky flag, set only
+  by `mark1set bonus 1` and `mark1set drops 1`. A piece is dressed (our bag
+  sprite written, the icons loaded on first use) only when it is built,
+  inside `CreateItemNew`'s outermost return, and only while that flag is
+  set. So the playtest's pieces, placed before `bonus 1`, kept base art, and
+  right after `bonus 1` the stat line read `icons=0/8 art=armed ground=0`:
+  armed, with nothing dressed since. The switch gated the art because our
+  sprite draws `Error_spr` on the ground until the ground consumer, which
+  rides hidden loot's shared `LootGroundInit` detour, sets the ground
+  instance's sprite, and that detour is installed by the tick once the art
+  is armed and a character exists.
+- **The new rule.** The first dressing of a piece outside Item Truth's own
+  builds arms the art, before the armed test, so the first piece of a
+  session gets its art at once; `mark1set drops 1` still arms it; and on the
+  research build `mark1probe spawn` arms it and installs the ground consumer
+  before it builds anything. `mark1set bonus 1` no longer arms it. The flag
+  stays the core's, with one setter beside the drops' one. This follows the
+  flight charms, whose dressing arms flight and whose tick installs the same
+  shared detour whatever the switches say. A player who holds no piece still
+  loads, writes and installs nothing for the art; one who holds a piece gets
+  the art and the ground consumer with every switch off, which is the
+  piece's own display, not a mod turned on. One window stays: a piece moved
+  to the ground after the character loads and before the tick's install (at
+  most 60 frames after the player resolves) would draw `Error_spr`, as
+  `bonus 1` at character select could before; it is in the module guide's
+  Known Limitations.
+- **The set block.** In place of the pieces' old three gold rows, at the same
+  anchor and in the game's order: `+1 to Automation` (pale gold while all
+  four are worn and `mark1set bonus` is on, dark grey otherwise), its
+  description in grey, an empty row, `Mark 1` in pale gold, and the four
+  pieces' names, green when worn and dark grey when not. The pieces' type
+  line reads `Satanic Set <type>`, as the game's own set pieces do (the
+  owner's choice). `mark1set stat` counts, on the player's own (on-screen)
+  tooltips only, the blocks drawn (`tip=`) and those drawn on a worn read
+  that failed or had an unreadable slot (`tip-unread=`); the passes armed
+  for a piece, whether or not the block reached its anchor (`tip-armed=`);
+  and of those, the passes whose type line was drawn as `Satanic Set <type>`
+  (`typeline=`) and the ones that ended with no swap (`typeline-miss=`).
+  Item Truth's off-screen drawing passes count in none of the five. The
+  type line's hook goes in once a piece armed the art and a character
+  exists, whether or not the build embeds the pieces' art.
+- **Rejected: making the pieces a game set.** A 71st entry in
+  `GetSetInformation`, `GetSetName` and `requiredPieces` would let the pass
+  draw the section itself, but the section names pieces by unique triple and
+  a Mark 1 piece is a base item, no such triple; index 71 is past both
+  tables; a real set entry carries set-bonus stats, and the mod adds no item
+  stats; and how the pass finds an item's set was not read.
+- **Rejected: a real `+1 to <talent>` grant** (stats 202 to 204, as on
+  Celestial's Authority). No talent named Automation exists in
+  `translationsTalent.csv`, and a grant is an item stat. The block draws the
+  line itself.
+- **Rejected:** keeping the pieces' old affix rows beside the block (a
+  second, stale wording of the bonus on every piece), and re-dressing pieces
+  already built when a switch arms the art (a walk over every grid, for a
+  case the new rule removes).
+
+### Mod live procedure 9
+
+One session on the research build that carries Phase 5. The capture is the
+tooltip workorder's live capture 1,
+`forgepact-166-mark1-set-tooltip-live-1.md`, kept with the hub's workorder
+files and not tracked. Every Mark 1 switch stays off unless a step says
+otherwise.
+
+**Setup:**
+
+- **Build:** the research build (`plugin_build\build.bat dev`) at the
+  ForgePact commit that carries Phase 5; its path and SHA-256 are recorded
+  in the capture, and `dll-hash` compares the installed DLL with that
+  SHA-256. The owner is asked before it is installed.
+- **Character:** save slot 14, "Sorak", saves backed up first and restored
+  at the end. The session restores its own backup, so the pieces it saves
+  vanish with it.
+- **Control:** `ping` answers `pong (YYTK 4.0.1)` (`control`), and a bare
+  `mark1probe` answers `mark1probe: research build` with its rows line
+  (`marker`).
+- **Cases:** a bag piece hovered (the ordinary case); a ground piece hovered
+  (`UI_Pickup_Tooltip_obj`, a second tooltip object); a worn piece hovered;
+  pieces loaded from a save in a fresh game process.
+- **Debugger:** none. The one call question, whether a new hover runs a new
+  tooltip pass, is read from the plugin's own `tip-armed=` count (the
+  on-screen passes armed for a piece, whether or not the block reached its
+  anchor), with the first hover as its positive control; `tip=` counts only
+  the blocks drawn, so it cannot tell a pass that never ran from one whose
+  block never anchored. `typeline=` and `typeline-miss=` say whether each
+  armed pass drew its `Satanic Set <type>` line. A hover whose `tip-armed=`
+  did not rise is recorded as not observed to re-run, never as a cached
+  tooltip, unless a pass count backs that reading. Every other check is a
+  screenshot or a stat field.
+- **Relies on:** `mark1probe spawn` (the hub guide's Mark 1 set ›
+  *Commands*, and Mod live procedure 2's Pieces); the `mark1set stat` fields
+  (the hub guide's Command Reference, with `tip=`, `tip-unread=`,
+  `tip-armed=`, `typeline=` and `typeline-miss=` from Phase 5); one stat-call pass per hover (hub `docs/RUNTIME_DATA_MODELS.md`
+  § 16.6, measured); the set display's colours (§ 16.12, measured);
+  `hs_exit_to_menu`, `hs_stop_game`, `hs_launch`, `hs_select_character` and
+  `hs_input` (the hub's `docs/tools/hs-drive-mcp.md`); the bag on C, and a
+  pickup by hovering the item's name label and pressing F (the owner's
+  standing rules).
+
+**Steps:**
+
+- S1: a fresh game process with the character loaded: `dll-hash`,
+  `control` and `marker`. Then `mark1set stat` before any `mark1set`
+  command. With no piece in Sorak's gear, bag or stash it reads `art=off
+  icons=0/8 ground-route=not-installed` (`art-default`; not observed, with
+  the reading recorded, if a piece from an earlier save is already there).
+- S2: `mark1probe spawn set` (then `lootshow` if the labels are hidden). The
+  stat line reads `art=armed icons=8/8 ground-route=both` with `ground=` up
+  by 4, and the four pieces lie on the ground as our ground icons, never
+  base art or `Error_spr` (screenshot, `art-spawn`).
+- S3: hover one piece's ground label. The type line reads `Satanic Set
+  <type>`, with `typeline=` up and `typeline-miss=` unchanged; the tooltip
+  shows the block (`+1 to Automation` grey, the description, `Mark 1` gold,
+  four grey names), and `tip-armed=` and `tip=` rise (screenshot,
+  `tip-ground`).
+- S4: pick up all four (hover the name label, F) and open the bag (C). The
+  bag shows our four icons (screenshot, `art-bag`).
+- S5: hover a bag piece with none worn: the block as in S3, `tip-armed=`
+  and `tip=` up and `tip-unread=` unchanged (`tip-none`).
+- S6: wear the helmet and the body armour (right click), then hover a bag
+  piece again: those two names green, the other two and the bonus line grey
+  (`tip-two`).
+- S7: wear all four and hover a worn piece: four names green and the bonus
+  line grey, the switch being off (`tip-full-off`).
+- S8: `mark1set bonus 1` and hover a worn piece again: the bonus line gold
+  (`tip-full-on`). Then `mark1set bonus 0`.
+- For S3 and S5 to S8, every row sits inside the tooltip's box, none over
+  another or over the footer (`tip-layout`). `tip-armed=`, `tip=`,
+  `typeline=` and `typeline-miss=` are recorded before and after each hover
+  (`tip-rehover`).
+- S9: if Sorak holds a game item with a `+N to <skill>` line, hover it
+  without ALT (screenshot) and then with ALT held (screenshot), and record
+  whether its description shows in each (`desc-plain`).
+- S10: `hs_exit_to_menu` (the game saves), `hs_stop_game`, `hs_launch` and
+  `hs_select_character` 14. Before any `mark1set` command, `mark1set stat`
+  reads `bonus=off`, `art=armed` and `icons=8/8`, and the worn pieces show
+  our icons (screenshot, `art-save`).
+- S11: teardown: `hs_stop_game`, `hs_saves_inspect`, `hs_saves_restore` and
+  `hs_lease_release`.
+
+**Checks.** Session validity, all required: `dll-hash`, `control` and
+`marker`. Acceptance, all required: `art-spawn`, `art-bag`, `tip-ground`,
+`tip-none`, `tip-two`, `tip-full-off`, `tip-full-on`, `tip-layout` and
+`art-save`. `art-default` is acceptance too but not required, because a
+piece already in the save makes it not observed. Research, never required
+and recorded as read: `tip-rehover` (whether each hover's `tip-armed=` rose;
+one that did not is not observed to re-run, and reads as a cached tooltip
+only if a pass count backs it) and `desc-plain`.
+
+### Mod live 9 results
+
+Mod live procedure 9 ran once on 2026-10-21 (20:35 to 20:45 UTC), on save
+slot 14, "Sorak", in town, with no debugger, and restored its saves clean at
+the end. It ran the research build from ForgePact `064ddbc` (DLL SHA-256
+`9eda04c6b85dc5976f84035a83f70a65134435bdb04122590aa191d38eb83fbb`). The
+capture is the tooltip workorder's `forgepact-166-mark1-set-tooltip-live-1.md`,
+kept with the hub's workorder files and not tracked.
+
+`tools/live_checks.py` reads 15 checks: 12 pass and 3 fail (`tip-ground`,
+`art-spawn` and `tip-layout`). Every session-validity check passed.
+
+| Check | Verdict | What it showed |
+|---|---|---|
+| `dll-hash` | pass | The lease hashed the installed DLL as `9eda04c6…3fbb`, the Live 1 build. |
+| `control` | pass | `pong (YYTK 4.0.1)`. |
+| `marker` | pass | `mark1probe: research build` and `mark1probe: rows=20 hooked=0 held=0 lever=off watch=off statlog=off`. |
+| `art-default` | pass | Before any `mark1set` command: `icons=0/8 art=off ground=0 ground-route=not-installed`. |
+| `art-spawn` | fail | After `mark1probe spawn set` (four `dressed=yes tier=5` lines), with every switch off, the stat line read `icons=8/8 art=armed ground=4 ground-route=both`. The screenshots showed the four `SS` labels and no item sprite of any kind under them: no icon of ours, no base art and no `Error_spr`. The pieces lay on Inoya's waypoint (below). |
+| `tip-ground` | fail | The Helmet's ground tooltip read `Satanic Set Helmet` under its name, then `+1 to Automation` grey, the description, `Mark 1` gold and the four names grey, footer `Tier SS, Requires Level 26`. Over the one hover `tip=` and `typeline=` rose 0 to 1, but `tip-armed=` 0 to 767 and `typeline-miss=` 0 to 766 (below). |
+| `art-bag` | pass | Extra tab 1 showed the four pieces in the owner's steel art: a visored helmet, a cuirass with a blue core, boots and crossed gauntlets. |
+| `tip-none` | pass | A bag piece, none worn: the block as on the ground; `tip=` 4 to 5, `tip-armed=` 6349 to 7086, `tip-unread=` 0. |
+| `tip-two` | pass | With the Helmet and the Body Armor worn, a bag piece's tooltip showed those two names green, the Boots and the Gloves grey and `+1 to Automation` grey; the stat line read two pieces worn, `worn=0/1/-/-`. |
+| `tip-full-off` | pass | All four worn (`set=full worn=0/1/2/4`), the switch off: four names green, `+1 to Automation` grey. |
+| `tip-full-on` | pass | `mark1set bonus 1` answered `mark1set: bonus=on install=installed`; on a new hover `+1 to Automation` was gold and the four names green, and the stat line read `bonus=on active=yes install=installed set=full`. |
+| `tip-layout` | fail | No row overlapped another or the footer, but in all five tooltips the description's first row ran past both edges of the box, its first and last letters cut (below). |
+| `art-save` | pass | After `Save & Exit`, a fresh game process and slot 14 again, the first `mark1set stat` read `bonus=off`, `set=full worn=0/1/2/4`, `icons=8/8 art=armed ground=0 ground-route=both`, and the worn slots showed the steel art. |
+| `tip-rehover` | pass | Research. `tip-armed=` rose on every one of the five hovers (0 to 767, 6349 to 7086, 31718 to 32471, 33750 to 34566, 34566 to 36773), and `tip=` and `typeline=` by 1 each, the hover after each gear change included. It also rose with the cursor resting on a piece and no new hover (7086 to 31718 over about three minutes). Two other items hovered moved no counter. |
+| `desc-plain` | pass | Research. A worn Zealot's Book of Prophecy, line `+11 to Satan's Mark (White Mage)`: the skill's description showed under the line without ALT and with ALT held, and the tooltip was the same in both. |
+
+**The three fails, and what replan 1 changed.**
+
+- **`tip-ground`: counters on a call that runs every frame.**
+  `Hook_DrawInventoryItemV2` runs on every frame a tooltip shows, while the
+  game draws the tooltip's text on the first frame of a hover only and shows
+  a cached copy after (hub `docs/RUNTIME_DATA_MODELS.md` § 16.6 measured the
+  stat calls once per hover). This build counted every frame in
+  `tip-armed=` and every cached frame in `typeline-miss=`: per hover `tip=`
+  and `typeline=` rose by 1, and `typeline-miss=` stayed `tip-armed=` less
+  `typeline=` throughout. The type line itself showed as `Satanic Set
+  <type>` on every frame, so the cache holds the type line too. Replan 1
+  counts each call by what the game drew in it (`tip-armed=` the drawn
+  calls, `tip-cached=` the cached ones, `typeline-hook=` whether the type
+  line's hook is in).
+- **`art-spawn`: the waypoint.** `mark1probe spawn` places the pieces at the
+  player, and Sorak loads standing on Inoya's waypoint, so all four lay on
+  it. The waypoint is drawn over a ground item lying on it, whatever its art
+  (Mod live 2's V2a saw one piece there show its label and no sprite).
+  `ground=4` was right about what it counts, four ground instances given our
+  sprite; the screenshot could not see them. No code changed: Mod live
+  procedure 10 places the pieces off the waypoint.
+- **`tip-layout`: the wrap width.** The description wrapped at 622, the
+  width of a few wide boxes of the game's, and a piece's box is narrower.
+  Replan 1 wraps it at 478, the narrowest width the game's own description
+  rows used in Item Truth's captures (hub RDM § 16.12).
+
+**Observation, its cause not read.** After `mark1set bonus 1`, with all four
+worn and in town, Sorak's life read 720 / 3833 in the S9 screenshot (3833 /
+3833 at S7) and 1030 / 3833 a few seconds later, while the automation pressed
+(`presses=355/631/4/0`, `cast-calls=3`). Phase 5 touches neither life, casting
+nor the bonus.
+
+### Mod live procedure 10
+
+Mod live 9 (2026-10-21) passed 12 of its 15 checks and failed three. In
+`tip-ground` the type line and the block were right but the counters were
+not: the tooltip's call runs on every frame the tooltip shows, while the
+game draws the tooltip's text on the first frame of a hover only and shows a
+cached copy after (hub `docs/RUNTIME_DATA_MODELS.md` § 16.6 measured the
+stat calls once per hover), so `tip-armed=` counted every frame and
+`typeline-miss=` the cached ones. In `art-spawn` the four pieces lay on
+Inoya's waypoint, which is drawn over any ground item lying on it. In
+`tip-layout` the description, wrapped at 622, ran past both edges of the
+box. Replan 1 counts each call by what it drew (`tip-armed=` the calls that
+drew the tooltip, `tip-cached=` the ones that showed the copy,
+`typeline-hook=` whether the type line's hook is in), wraps the description
+at 478 and lights the bonus line only with the bonus installed. This
+session re-checks those three on that build, with the debugger; Mod live 9's
+passes (`art-default`, `art-bag`, `tip-two`, `art-save` and the rest) are not
+re-run. The capture is the tooltip workorder's live capture 2,
+`forgepact-166-mark1-set-tooltip-live-2.md`, kept with the hub's workorder
+files and not tracked. Every Mark 1 switch stays off unless a step says
+otherwise, and every `mark1set stat` line read is recorded.
+
+**Setup:**
+
+- **Build:** the research build (`plugin_build\build.bat dev`) at the
+  ForgePact commit that carries replan 1; its path and SHA-256 are recorded
+  with the workorder, and `dll-hash` compares the installed DLL with that
+  SHA-256. The owner is asked before it is installed.
+- **Character:** save slot 14, "Sorak", saves backed up first and restored
+  at the end, so the pieces vanish with the restore.
+- **Control:** `ping` answers `pong (YYTK 4.0.1)` (`control`), and a bare
+  `mark1probe` answers `mark1probe: research build` with its rows line, and
+  `mark1set stat` before any `mark1set` command ends
+  `ground-route=not-installed tip=0 tip-unread=0 tip-armed=0 typeline=0
+  typeline-miss=0 tip-cached=0 typeline-hook=not-tried | speed=…`
+  (`marker`, both, which also proves replan 1's build).
+- **Cases:** a ground piece hovered (`UI_Pickup_Tooltip_obj`), a bag piece
+  hovered with none worn (`UI_Inventory_Tooltip_obj`), a worn piece hovered
+  with the switch off and then on (both colours of the bonus line), and the
+  cursor resting on a piece (the cached frames). Two pieces worn and the
+  reload are not re-run (Mod live 9's `tip-two` and `art-save`).
+- **Debugger:** the hub's x64dbg MCP, attached under the session's lease
+  after S1 and detached after S6, before `mark1set bonus 1` detours
+  `CheckTalentUse` and before any `hs_stop_game`. Three non-breaking
+  logpoints, each named here by what it watches; their addresses and
+  expected bytes stay with the workorder. `dbg-control` on `CheckTalentUse`,
+  which runs many times a second in town, is the positive control.
+  `dbg-stat-site` on a direct call to `DrawInventoryStatsNew` inside the
+  tooltip pass (the site flight charms' Mod live 2 measured logging once per
+  hover) counts the drawn passes, read before and after each hover of S3,
+  S5 and S6 and across S4's rest. `dbg-ground-draw` on `LootGroundDraw`,
+  armed in S2 just before the spawn and cleared after the second warp,
+  shows that the pieces' ground draw runs, since `ground=` counts sprite
+  writes, not draws.
+- **Relies on:** `playerwarp <x> <y>` (the hub guide's Command Reference;
+  `912 960` and `1040 960` are Mod live 2's points south of Inoya's waypoint
+  at 912,822); the waypoint drawn over ground items lying on it (Mod live 2,
+  V2a); `mark1probe spawn set` (the hub guide's Mark 1 set › *Commands*);
+  `lootshow`; `soulprobe ground` (research build: each `Loot_Ground_obj`
+  within 300 px of the player, with its sprite by name and the item's `a=`);
+  a ground item's sprite and `Error_spr` (hub `docs/RUNTIME_DATA_MODELS.md`
+  § 23.7), and the ground Draw
+  calling `LootGroundDraw` (§ 18.5); the tooltip drawn once per hover
+  (§ 16.6, measured) while its call runs every frame (Mod live 9); the set
+  display's colours (§ 16.12, measured); the bag on C, a pickup by hovering
+  the name label and pressing F (the owner's standing rules), and wearing by
+  a right click (Mod live procedure 2).
+
+**Steps:**
+
+- S1: a fresh game process with the character loaded: `dll-hash`,
+  `control` and `marker`. Screenshot the life on the HUD (an observation).
+- D1: attach the debugger and arm `dbg-control` and `dbg-stat-site`.
+- S2, off the waypoint: `playerwarp 912 960` (if its `before=` is not
+  `912.0,822.0`, warp 138 px south of `before=` instead and record it); arm
+  `dbg-ground-draw` and read its count; `mark1probe spawn set` (four
+  `dressed=yes tier=5` lines, SS, which the owner's loot filter shows);
+  `playerwarp 1040 960`; `lootshow` only if no label shows. `mark1set stat`
+  reads `art=armed icons=8/8 ground=4 ground-route=both` and
+  `typeline-hook=in`; `soulprobe ground` lists four items, `a=777500` to
+  `777503`, each sprite neither `Error_spr` nor a `Pickup_` name (the names
+  recorded); a screenshot shows four item sprites in the owner's steel art
+  under the four labels, never base art or `Error_spr`. `art-spawn` needs
+  all three. Then read and clear `dbg-ground-draw`.
+- S3: read `mark1set stat` and `dbg-stat-site`, hover one piece's ground
+  label for 1 s, screenshot, and read both again. The type line reads
+  `Satanic Set <type>`; the block shows `+1 to Automation` grey, the
+  description wrapped, `Mark 1` gold and four grey names; `tip-armed=`,
+  `tip=` and `typeline=` rose by the same k of 1 or more, `typeline-miss=`
+  did not rise, `tip-cached=` rose, and `typeline-hook=in` (`tip-ground`).
+- S4: the cursor rests on that label for 5 s without moving, then read:
+  `tip-armed=`, `tip=` and `typeline=` as at S3's second read, `tip-cached=`
+  up by 100 or more (`tip-cached`). Move the cursor to empty ground.
+- S5: pick up all four (hover each label, then F) and open the bag (C),
+  Extra tab 1 if the Main tab is full. Hover a bag piece, none worn, with
+  S3's reads before and after: the block and the counters as in S3
+  (`tip-none`).
+- S6: wear all four (right click each), move the cursor off, then hover a
+  worn piece with S3's reads: four names green, `+1 to Automation` grey and
+  `bonus=off` (`tip-full-off`).
+- D2: detach the debugger.
+- S7: screenshot the life; `mark1set bonus 1` answers `mark1set: bonus=on
+  install=installed`; move the cursor off the worn piece and back onto it;
+  a screenshot shows `+1 to Automation` gold and four names green, and
+  `mark1set stat` reads `bonus=on active=yes install=installed set=full`
+  (`tip-full-on`). Screenshot the life about 5 s after `bonus 1` (an
+  observation). Then `mark1set bonus 0`.
+- In S3, S5, S6 and S7, every row sits inside the box, no letter cut at
+  either edge and none over another row or the footer (`tip-layout`).
+- S8: teardown: close the bag, `hs_stop_game`, `hs_saves_inspect`,
+  `hs_saves_restore`, inspect clean again, and `hs_lease_release`.
+
+**Checks.** Session validity, all required: `dll-hash`, `control`, `marker`
+and `dbg-control` (it logged throughout S2 to S6). Acceptance, all required:
+`art-spawn`, `tip-ground`, `tip-cached`, `tip-none`, `tip-full-off`,
+`tip-full-on` and `tip-layout`. Research, never required:
+`dbg-stat-site` (pass when it rose by the same k as `tip-armed=` on every
+hover and stayed flat across S4's rest while `dbg-control` logged; fail when
+it disagrees with `tip-armed=`; not observed when it logged nothing while the
+control logged) and `dbg-ground-draw` (pass when its count rose with the
+pieces on screen after staying flat before the spawn; not observed when it
+stayed flat while the control logged). The life readings are an observation,
+not a check. The results are in Mod live 10 results below.
+
+### Mod live 10 results
+
+Mod live procedure 10 ran once on 2026-10-21 (21:49 to 21:57 UTC), on save
+slot 14, "Sorak", in town, and restored its saves clean at the end. It ran
+the research build from ForgePact `2f16449` (DLL SHA-256
+`9567fb0d99fb28da02da164224e194cc4f4632cdb5042fefd6264093380b4777`), with
+the hub's x64dbg MCP attached from after S1 to after S6. The capture is the
+tooltip workorder's `forgepact-166-mark1-set-tooltip-live-2.md`, kept with
+the hub's workorder files and not tracked.
+
+`tools/live_checks.py` reads 13 checks, and all 13 pass: the four
+session-validity checks, the seven acceptance checks and both research
+checks. With Mod live 9's twelve passes, every check of Phase 5 has now
+passed live.
+
+| Check | Verdict | What it showed |
+|---|---|---|
+| `dll-hash` | pass | The lease hashed the installed DLL as `9567fb0d…4777`, the Live 2 build. |
+| `control` | pass | `pong (YYTK 4.0.1)`. |
+| `marker` | pass | `mark1probe: research build` and its rows line, and the first `mark1set stat` ended `ground-route=not-installed tip=0 tip-unread=0 tip-armed=0 typeline=0 typeline-miss=0 tip-cached=0 typeline-hook=not-tried \| speed=0 penalty=unavailable`, replan 1's fields. |
+| `dbg-control` | pass | The logpoint on `CheckTalentUse` logged 19214 lines, `ctu #1` to `ctu #19227`, rising in every step's window from S2 to S6. The attach tool proved the instrument by the game's frame counter: 7666 to 7774 before arming, no answer during the control's hold, 7959 after it. |
+| `art-spawn` | pass | `playerwarp 912 960` (from 912,822, the waypoint), `mark1probe spawn set` (four `dressed=yes tier=5` lines) and `playerwarp 1040 960`. The stat line read `icons=8/8 art=armed ground=4 ground-route=both` and `typeline-hook=in`; `soulprobe ground` listed four items, `a=777500` to `777503`, with the sprites `__newsprite32286`, `__newsprite32288`, `__newsprite32290` and `__newsprite32292`, none `Error_spr` and none a `Pickup_` name; and a screenshot showed four steel sprites, helmet, body armour, boots and gloves, under the four `SS` labels, with no `lootshow` needed. |
+| `dbg-ground-draw` | pass | Research. The logpoint on `LootGroundDraw`, logging every hit (the sampling condition was not used: x64dbg reads a bare number as hex), read 0 before the spawn with no ground item on screen, 353 right after the second warp, 745 five seconds later and 2099 when it was cleared. |
+| `tip-ground` | pass | The Helmet's ground label hovered for 1 s: `Satanic Set Helmet`, `+1 to Automation` grey, the description wrapped over four rows, `Mark 1` gold, the four names grey, footer `Tier SS, Requires Level 26`. `tip=`, `tip-armed=` and `typeline=` 0 to 1, `typeline-miss=` 0 to 0, `tip-cached=` 0 to 49, `typeline-hook=in`. |
+| `tip-cached` | pass | The cursor resting 5 s on that label: `tip=1 tip-armed=1 typeline=1` unchanged, `tip-cached=` 49 to 2239. |
+| `dbg-stat-site` | pass | Research. The logpoint on a direct `DrawInventoryStatsNew` call inside the tooltip pass rose by 1 on each timed hover, as `tip-armed=` did (S3 0 to 1, S5 10 to 11, S6 15 to 16), and stayed at 1 over S4's 5 s rest while the control rose by 390. |
+| `tip-none` | pass | A bag piece, none worn (Extra tab 1, the Main tab full): the block as on the ground; `tip=`, `tip-armed=` and `typeline=` 10 to 11, `typeline-miss=` 0, `tip-cached=` 3644 to 3759. The nine between S3 and S5 were the label hovers of the pickups, with the stat site's count rising 1 to 10 beside them. |
+| `tip-full-off` | pass | All four worn (`set=full worn=0/1/2/4`), the switch off, a worn piece hovered: four names green, `+1 to Automation` grey, `bonus=off`; the counters 11 to 12. |
+| `tip-full-on` | pass | `mark1set bonus 1` answered `mark1set: bonus=on install=installed`; on a new hover `+1 to Automation` was gold and the four names green, and the stat line read `bonus=on active=yes install=installed set=full`. |
+| `tip-layout` | pass | In S3, S5, S6 and S7 the description wrapped at 478 over four rows ("Your Q, E, R and Y skills cast themselves / whenever they are ready. Your jump / goes three times as far, over scenery. / You walk at half speed."), every row inside the box, no letter cut and none over another row or the footer. |
+
+**What else the session showed.**
+
+- **The tooltip's text is drawn once per hover, read two ways.** On every
+  timed hover one call drew the tooltip and every later call of the hover
+  showed the cached copy (`tip-cached=` 49 after 1 s, 2239 after 5 s more),
+  and the debugger's count of the tooltip pass's stat call agreed with
+  `tip-armed=` on every hover and stayed flat over the rest. So the cached
+  frames make no stat call, and the type line is in the cached part (Mod
+  live 9). Between hovers the stat site also counted other items' tooltips
+  (15 against 11 over the four equips, `tip=` flat): it counts every item's
+  pass, `tip-armed=` only a piece's.
+- **The name of a sprite added at runtime.** `sprite_get_name` read the
+  pieces' ground sprites, which ForgePact adds with `sprite_add` and sets
+  after the game's `LootGroundInit`, as `__newsprite<n>` (32286 to 32292,
+  one even number per piece, in spawn order). Hub RDM § 23.7 had that name as
+  not read live.
+- **A piece off the waypoint is drawn.** 128 px south of the waypoint the
+  four pieces showed their sprites, and `LootGroundDraw` ran with them on
+  screen after not running before the spawn. Mod live 9's empty screenshot
+  was the waypoint, not the art.
+- With `LootGroundDraw` logging every hit the game ran at about 19 frames a
+  second until it was cleared.
+- **Life, an observation, its cause not read.** Sorak's life read 4374 /
+  4374 at S1, 4108 / 4108 with the Helmet worn and 3833 / 3833 with all four
+  (the maximum falling as each piece took a worn slot; the pieces carry no
+  stats, and what the gear they replaced gave was not read). It read 3833 /
+  3833 before `mark1set bonus 1`, 3360 in the tooltip screenshot just after
+  it, 3779 about 5 s after it, and 645 about 30 s after `mark1set bonus 0`,
+  in town, with the damage meter reading 526 020. Mod live 9 saw the same
+  kind of drop after `bonus 1`. Phase 5 touches neither life, casting nor the
+  bonus.
+
+## The 2026-10-22 playtest: stats, cast priority and held input
+
+The owner played the tooltip workorder's Live 2 research build on
+2026-10-22, with the full set spawned on slot 14, and asked for six changes
+([ForgePact#166, the owner's comment](https://github.com/falorfrozen-cmd/ForgePact/issues/166#issuecomment-6334544500)):
+
+1. **The tooltip:** the description under **+1 to Automation** shows only
+   while the item's tooltip is shown, as the game's own items do, in
+   smaller grey text.
+2. **-50% Movement Speed** is a stat line of its own, not part of the
+   Automation passive.
+3. **Cast order:** automated skills cast by priority, Q, E, R, Y.
+4. **Priority over manual casts:** an automated skill comes before
+   non-automated ones; a held right mouse button that keeps other spells
+   from casting is interrupted so the automated spell casts, and then it
+   carries on.
+5. **No-cooldown skills** under automation cast continuously, as the game
+   casts them while their key is held.
+6. **More stats** for the set and its pieces, modelled on universal sets of
+   a similar rarity. This replaces the 2026-10-13 decision "no item stats".
+
+The stats scope the owner then gave, "Bulwark SS": the helmet Defense 60 to
+80, Enhanced Defense 120 to 180%, +35 Vitality, +10 to 30% All Resistances,
++2 to 3 All Skills and 1 or 2 sockets; the body Defense 210 to 240,
+Enhanced Defense 220 to 280%, 125% Faster Hit Recovery, +300 to 400 Life,
++3 to 4 All Skills and 3 or 4 sockets; the boots Defense 72 to 90, Enhanced
+Defense 150 to 200%, 15 to 25 Life After each Kill and +20 to 30% All
+Resistances; the gloves Defense 46 to 68, Enhanced Defense 75 to 100%, +20
+All Attributes and +2 to 3 All Skills. The set: at 2 pieces +500 Defense; at
+3 +35% All Resistances and Replenish Life 25%; at 4 +1 to Automation, +5 All
+Skills, +750 Life and Physical Damage Taken Reduced by 20%. No magic skill
+damage, cast speed, crit, attack speed or general damage reduction anywhere,
+and no movement speed on the pieces.
+
+Two amendments followed the same day. The first: the tooltip's description
+follows how the game's own items draw theirs, and the automation may fire
+its skills the way the game fires a proc, with no cast time, measured in
+Stats live 1 against the press route. The second: a skill under automation
+cannot be cast by hand and its bar icon is grey while automated, the proc
+route fires each skill at its cooldown plus its cast time at the player's
+cast speed, and a mana cost counters the free procs, a constant drain per
+automated skill planned and a 20% maximum-mana cut per skill the documented
+alternative, the numbers being the owner's call.
+
+### Playtest static reading
+
+Read on 2026-10-22 through the hub's ghidra MCP and headless Ghidra runs
+(`FindCallers.java`, whose positive control, `CheckTalentUse` called from
+`PlayerMovement`, was found in each run; `ListCallsIn.java`;
+`FindSlotRefSites.java`; long decompiles), measured from Item Truth's
+captures, and taken from the owner's own note on the universal Satanic
+sets. In our own words throughout; no decompiled text leaves the
+researcher's machine. The game facts are in the hub's
+`docs/RUNTIME_DATA_MODELS.md`: § 16.13 (set bonuses, item stat keys and the
+description font), § 7.9 (procs) and § 7.10 (the skill bar's buttons, mana
+and the cast's speed), each labelled claim by claim.
+
+**The owner's note** (a headless decompile of the set scripts the owner
+approved):
+
+- A game set's bonus lines come from `GetSetInformation`, one line per call,
+  each with a class id, a value, the stat dispatcher id it feeds, a draw
+  style and a format. No line carries a count of pieces. Pit Fighter's and
+  Zealot's lines decode to exactly what their captured tooltips show.
+- `DefineSetPieceRequirements` gives one number per set that matches its
+  piece count for 59 of 70 sets, and a set's line count does not follow its
+  piece count. What the game lights at 3 and 4 pieces is not established;
+  with 2 pieces counted, Zealot's Prophecy lit its first line (37 captures).
+  Mark 1 draws its own block, so ForgePact decides its thresholds: the owner
+  chose 2, 3 and 4.
+- `hs-game-sdk`'s `StatId` is not the game's item stat numbering (hub #546);
+  the item editor's keys are.
+
+**The readings and what each decided:**
+
+- **The pieces' stats live in the seed.** A save keeps only an item's
+  compact definition, and the Custom Forge dresses a piece on every build,
+  so the rolls come from the definition's `a`, as the flight charms' do.
+  Each piece gets a band of seeds exactly as wide as its roll count, mixed
+  radix in the table's order: the helmet 107,604 rolls, the body 763,964,
+  the boots 117,249, the gloves 1,196. The bands start at 1,000,000,000, one
+  million wide per piece, above every natural seed Item Truth saw (485,148
+  records, 0 to 999,981,452) and inside a 32-bit signed integer. The old
+  seeds 777500 to 777503 stay pieces, decoding to every stat at the bottom
+  of its range. The pieces' own stats apply whatever the switches say, as a
+  charm's do; only the set bonus sits behind `mark1set bonus`.
+- **The set bonus goes through the stat dispatcher.** Each getter the bonus
+  needs (`StatMaxLife`, `StatDefense`, `StatAllResistances`,
+  `StatLifeReplenish`, `StatPhysicalDamageReduction`, `StatAllSkills` and
+  others) has exactly one direct caller, `ReturnSpecificStat`, so a
+  consumer of the dispatcher's one detour, which the half walk already
+  proved, answers the local player's calls of ids 92, 161, 38, 2, 36 and 97
+  with the call's own original plus every line whose threshold is met. The
+  worn count is read at the point of use, from the ten gear fingerprints,
+  on every wanted call. Whether the element resistances take the
+  all-resistance answer was not read: Stats live 1's `allres-route`
+  decides between answering id 161 alone and answering each element id too.
+- **The tooltip follows the game's own items.** `DrawSkillDescription`'s
+  only direct caller found is the tooltip pass, `DrawInventoryItemV2`, and
+  its body reads no key, view or option; it draws in grey 8421504 in the
+  font `font_item_stats_small` holds. So the block's description is drawn
+  in that font, read by name at draw time, in every view, inside a piece's
+  tooltip pass only. Item Truth measured the game's description font
+  smaller (rows 26 px apart against the stat rows' 28). Whether the game
+  hides a grant description outside the information view was not read, and
+  the gameplay option `alwaysShowInfo` may make every view the information
+  view, which would explain why both of Mod live 9's `desc-plain`
+  screenshots showed ranges: Stats live 1's `desc-view` looks.
+- **The block's place and words.** The block anchors at the first stat
+  call after the piece's own last line, from the measured order of the
+  pieces' keys in a pass (29, 201, 48, 51, 52, 170, 59, 173). No stat call
+  follows a non-set item's `Sockets (N)` row (614 passes), so the sockets
+  row comes under the block. The bonus lines use the game's measured words
+  (`+500 Defense`, `Replenish Life 25%`, `-50% Movement Speed` and the
+  rest), and the description loses "You walk at half speed.", now a line of
+  its own.
+- **The movement line is words, not a stat.** Item key 294,
+  `stat_movement_diminish`, reduces the cast's slowdown and is not movement
+  speed; key 25 at -50 would slow the walk by (x + 150)/(x + 200), not by
+  half. The half walk's lever does not change; the line describes it.
+- **Cast priority.** The waiting-longest turn rule kept every column
+  waiting while one on cooldown held the turn. The new cycle, one press per
+  gate call, presses the first cooldown column in Q, E, R, Y order that is
+  not resting, and otherwise a no-cooldown column, pressed on every call
+  until it lands, as holding its key does. A no-cooldown column is a
+  non-toggle whose talent reads `abilityCooldown` 0.25 or less (hub RDM
+  § 7.1, measured).
+- **Held input.** On a call that presses an automated column, each other
+  bar entry of the same profile slot that reads held or pressed is written
+  resting before the gate runs and put back after, so the gate sees only
+  the automated column ask; between presses nothing is masked, so the held
+  input carries on. Stats live 1's `held-entry` measures which entry a held
+  right mouse button moves.
+- **Procs.** The game fires an item proc straight into `TalentUseClass`:
+  in its hit and kill paths a `SetCooldown` call comes just before it, and
+  none calls `TalentUse`. That skips the gate, the wind-up, the cast speed
+  and the mana charge. So the proc route calls `TalentUseClass` by name,
+  with the local player as self and other, for non-toggle columns only (a
+  re-cast flips a toggle, so toggles keep the press). Its argument shape is
+  a template the player build ships empty, so the press stays in force until
+  Stats live 1's `proc-cast` proves a shape; every shape tried is logged with
+  what was supplied. What a proc's level is, and whether `TalentUseClass`'s
+  own `SetCooldown` site sets a cooldown, were not read.
+- **The lockout (Amendment 2).** The gate reads each bar column's key from
+  `inputState`, column c at entry c (hub RDM § 7.7, measured for Q to Y),
+  and the detour already writes those entries around the gate. So on every
+  gate call while the bonus is active, each automated column's own entry
+  that reads held or pressed is written resting before the gate runs and
+  put back after, before the automation's own press, on both routes. A
+  proc is outside the gate, so the lockout cannot block it.
+- **The grey icon (Amendment 2).** The bar's buttons are
+  `UI_Talent_Button_obj` instances, and their Draw GUI event draws the icon
+  with a dark-grey blend (RGB 48,48,48) when the button's `enabled` reads
+  false or `TalentRequirement` refuses the talent: that is the game's own
+  "cannot use" look. The default redraws each automated button's own sprite,
+  frame, position, scale and angle with that blend from the draw hook the
+  border already uses, writing no game state; a dark box over the column's
+  slot is the counted fallback. Writing `enabled` false is a research form
+  only, since who else writes it, and what else it changes, was not read.
+- **The interval (Amendment 2).** Each proc column fires at its cooldown
+  plus its cast time, in milliseconds: the cooldown is 0 at an
+  `abilityCooldown` of 0.25 or less, otherwise `abilityCooldown` / (1 +
+  min(haste, 200) / 200) (hub RDM § 7.5, measured); the cast time is a base
+  over (1 + Faster Cast Rate / 100), the shape `TalentUseSetSpeed` was read
+  to use, with the base (1.0 s provisional, from the stat's own description
+  in the semantics file) measured by Stats live 1's `cast-interval` and
+  `cast-interval-fcr`. Haste and Faster Cast Rate (ids 103 and 106) are read
+  by name through `ReturnSpecificStat` at most once a second, at the point of
+  use. `TalentUseSetSpeed` starts a key cast's cooldown at the start of its
+  wind-up, so a held key plausibly repeats at the longer of the two, not
+  their sum; the owner's rule paces a proc slightly slower, and `proc-cd`
+  records both. The hub's `mark1_automation_model` holds the arithmetic, and
+  the plugin's core is checked against its cases.
+- **The mana cost (Amendment 2).** `PlayerManaUpdate` keeps mana in the
+  game's protected store and compares it with its own 100-sample history,
+  and on a mismatch can report the client, so mana is never written and the
+  update never called. The planned cost, (a), answers the local player's
+  mana replenish (id 42) with its original minus n × 1% of maximum mana a
+  second for n proc columns, so that mana is planned to fall through the
+  game's own update if the regen reads id 42 through the dispatcher each
+  time (not read). A byte scan (2026-10-22, `FindCallers.java` headless,
+  `-readOnly`, positive control `CheckTalentUse` <- `PlayerMovement` found
+  in the same run) finds exactly one direct caller of `StatManaReplenish`
+  and one of `StatMaxMana`, both `ReturnSpecificStat`: the same shape as
+  the life and defence getters above, so nothing calls either getter
+  around the dispatcher by `call rel32` (the log is kept beside the
+  workorder's other scan outputs, not tracked). That is all the scan says.
+  **Not established**: which code applies the per-frame mana regen, and
+  whether it asks the dispatcher for id 42 on each update or reads a value
+  stored at a stat refresh. `PlayerRegenSet`'s direct callers are hit and
+  skill handlers (`sc_hurt`, the projectile collisions, talent bodies), so
+  it is an event-time restore, not the per-frame regen; the kept bodies of
+  `PlayerRegenSet` and `PlayerManaUpdate` name neither the dispatcher nor
+  the getter among their resolved calls; the dispatcher's 396 and more
+  direct callers were not walked (a scan with it as the target stopped at
+  the script's 400-hit cap); and calls through the script table or a
+  method value are invisible to the scan. If the regen reads a stored
+  value, the drain does nothing in play while `drained=` still rises,
+  since the HUD, `bonusread` and every other dispatcher caller see the
+  lowered answer: a cost that reports itself armed and does nothing. So
+  Stats live 1's `drain-applies` first proves the instrument, with a
+  lowered answer that stays above zero (its `reach` part), and only then
+  asks what a replenish below zero does (its `below` part). A `reach`
+  failure is recorded as the hook point being blind to the regen (`blind`
+  or `cached`), never as "a replenish below zero stops at zero", and it
+  does not close the drain route: it says where the cost has to attach,
+  not that the game floors the regen.
+  The alternative, (b), cuts maximum mana (id 37) by 20% per proc column.
+  `StatManaReplenish` follows Energy and takes maximum mana only through one
+  part (id 43), so (b) plausibly leaves most of the regen in place. The
+  model, in % of maximum mana per second, with a 1500 pool and an assumed
+  2% a second baseline replenish (both assumptions until Stats live 1's
+  `regen-units`), and three reference investments (+100% Replenish Mana
+  +2.0%/s if it scales the base, +20 Mana per second +1.33%/s, +10 Mana After
+  each Kill at a kill a second +0.67%/s):
+
+  | drain per skill | skills | at baseline (2%) | one investment | two investments |
+  |---|---|---|---|---|
+  | 1.0% | 1 or 2 | sustained | sustained | sustained |
+  | 1.0% | 4 | empty in 50 s | Replenish +100% exactly carries it; per second alone 150 s, per kill alone 75 s | sustained |
+  | 1.25% | 4 | empty in 33 s | 43 to 100 s | Replenish + per second sustains; the others 100 to 300 s |
+  | 0.75% | 4 | empty in 100 s | sustained, except per kill alone (300 s) | sustained |
+
+  The rule behind the proposed 1.0%: the drain per skill is half the
+  baseline replenish, so two automated skills cost what the character
+  regenerates and four cost twice that; at a 1.0% baseline instead, 1.0%
+  per skill empties in 33 s at four. Under (b) the procs stay free and the
+  price falls only on manual casts: a build whose other skills cost little
+  pays nothing, and one that needs a large manual cast cannot cast it until
+  it stacks `Mana Increased by`, which is why (a) is planned. At zero mana
+  the procs keep firing and the drain holds mana at zero; pausing the
+  automation would need a read of current mana, which is in the protected
+  store and not established. The proc route alone pays the cost; toggles and
+  the press route pay the game's own mana.
+
+**Routes rejected:**
+
+- **A real game set** (a 71st entry): the game's set tables are a 70-case
+  switch and a 71-entry array, a set names its pieces by unique triple, and
+  a piece is a base item.
+- **The bonus as stats on a worn piece**: the tooltip would draw them as the
+  piece's own lines, and a change of count would rewrite worn items.
+- **`LoadSpecificStat` as the bonus lever**: it reads set lines, but its
+  arguments were not read and its direct callers are equip-time scripts.
+  Kept as the fallback if a dispatcher answer does not reach a stat.
+- **`hs-game-sdk`'s `StatId`**: the wrong numbering (hub #546).
+- **Key 25 at -50, or key 294, for the movement line**: the first does not
+  halve the walk, and the second is the cast slowdown's reduction.
+- **Reading the remaining cooldown, calling `SetCooldown`, or reading its
+  lists**: they live in the game's protected data, and the arguments that
+  pick a list were not read. The proc route paces itself with its own clock.
+- **Drawing the bonus lines by calling `DrawInventoryStatsNew` ourselves**:
+  it would re-enter our own detour.
+- **`TalentUse` by name as the no-cast-time route**: it skips the gate's
+  mana and requirement check but still runs the wind-up and sets the
+  cooldown, so the cast time stays.
+- **Writing mana, or calling `PlayerManaUpdate`**: the protected store and
+  the update's history check.
+- **A greyscale shader for the icon**: no grey shader is named in the SDK,
+  and a shader around the game's own draw would mean hooking that draw.
+- **Writing a button's `enabled` in the player build**, and **pausing the
+  automation at zero mana**: both rest on reads not made.
+- **Moving the sockets row above the block** through the `draw_text` hook:
+  it would match the text `Sockets (`, which another language does not
+  draw.
+
+### Stats live procedure 1
+
+Research and acceptance in one session on the research build, checking the
+rolled pieces, the set bonus, the tooltip, the priority cycle and held
+input, and measuring the proc route against the press route. The capture is
+the playtest workorder's live capture 1,
+`forgepact-166-mark1-set-playtest2-live-1.md`, kept with the hub's workorder
+files and not tracked. Every `mark1set stat` pair of lines read is recorded.
+
+**Setup:**
+
+- **Build:** the research build (`plugin_build\build.bat dev`) at the
+  ForgePact commit that carries the playtest's work; its path and SHA-256
+  are recorded with the workorder, and `dll-hash` compares the installed
+  DLL with that SHA-256. The owner is asked before it is installed.
+- **Character:** save slot 14, "Sorak" (White Mage), saves backed up first
+  (`hs_saves_backup` and a manual copy) and restored at the end, so the
+  pieces vanish with the restore.
+- **Control:** `ping` answers `pong (YYTK 4.0.1)` (`control`).
+- **Cases:** a no-cooldown skill (the bar's first free column, Shadow Bolt
+  where it sits), a cooldown skill (Healing Zone where it sits), and a held
+  right mouse button. Top rolls for exact values, and one reload. Not every
+  stat or skill.
+- **Debugger:** the hub's x64dbg MCP, attached under the session's lease
+  after S2 and detached after S7, before S8's walk (a per-frame logpoint
+  moves the walk's modal step, § Mod live procedure 3) and before
+  `mark1probe hook` (it detours `PlayerMovement`). Non-breaking logpoints,
+  each named here by what it watches; their addresses and expected bytes
+  stay with the workorder. `dbg-control` on `PlayerMovement`, which calls
+  the gate every frame and which no shipped hook patches, is the positive
+  control. In D1 and D2: `dbg-maxlife` on `StatMaxLife`, `dbg-allres` on
+  `StatAllResistances` and `dbg-fireres` on `StatFireResist`, each count
+  read at the start and end of a 10 s idle, before and after S7's equip
+  change, and at D2. In D3, after those three are cleared and with the
+  control kept: `dbg-manaregen` on `StatManaReplenish`, `dbg-maxmana` on
+  `StatMaxMana` and `dbg-manaupdate` on `PlayerManaUpdate`, read before and
+  after a 10 s idle and before and after five key casts of the free skill
+  2 s apart. `dbg-manaregen` counts calls at the getter's own address, so it
+  fires the same whether its caller is the dispatcher or not: it gives a
+  rate, not the route. It corroborates without deciding (a count near one
+  a frame while idle says something asks for id 42 every frame, and the
+  HUD could be that caller); P9's `drain-applies`, its `reach` part, is
+  what tells whether the drained answer reaches the regen.
+- **Relies on:** `CheckTalentUse`, the `inputState` entries 3 to 6, the
+  press value 4 and the landing through `TalentUseSetSpeed` (hub RDM § 7.7,
+  measured); a held key repeating its cast every 57 frames (§ 7.2);
+  `abilityCooldown` 0.25 meaning no cooldown (§ 7.1); the dispatcher ids
+  and their getters, the item stat keys and the set lines' words (§ 16.13);
+  the set display's colours and a stat call per line (§ 16.12, § 16.6);
+  `DrawSkillDescription`'s font (§ 16.13, static); `TalentUseClass`'s
+  measured shapes (§ 7.2) and what a direct call skips (§ 7.9, static); the
+  skill bar's buttons, their dark-grey blend, the interval's inputs and
+  where mana lives (§ 7.10, static); Skill Haste's cooldown formula (§ 7.5,
+  measured); `mark1probe spawn`, `hook`, `show`, `watch input`, `pos` and
+  `watch effect` and `tgprobe hook`, `verbose`, `vars` and `talents`
+  (the hub guide's Command Reference; `toggleguard 1`, when used, comes
+  before `tgprobe hook`); `skillprobe call` (the skill actions row, a
+  by-name dispatch measured on `TalentUse`); `skillstate`'s `effect=` (a
+  generated name table, so an empty `effect=` is not a negative); `statadd
+  castrate <n>` (the `statadd` row); `playerwarp 912 960` off Inoya's
+  waypoint (test items never on the waypoint); the walk of § Mod live
+  procedure 3; the bag on C, a pickup by hovering the name label then F,
+  wearing by a right click (§ Mod live procedure 2); `hs_input`'s `click`
+  with `button` `right` and `hold_ms` up to 10000, and `key_down`, `wait`
+  and `key_up`; the reload by `hs_exit_to_menu`, `hs_stop_game`,
+  `hs_launch` and `hs_select_character`. Not found in the shared
+  references, read from screenshots: the HUD's life and mana `current /
+  max`, socketing a gem by clicking it then the item, and the Options ›
+  Gameplay screen with its information option.
+
+**Steps:**
+
+- S1, character loaded: `dll-hash` and `control`. A bare `mark1probe`
+  answers `mark1probe: research build`, and the first `mark1set stat`
+  prints its second line fresh: `hold=4 yield=56 rest=24`, `route=press
+  procs=0 proc-fail=0 locked=0 cost=drain drain=1.00 drained=0
+  cast-base=1.00` and `grey=0 grey-box=0`, except that `dressed=` and
+  `legacy=` count the pieces Sorak's save already holds, recorded
+  (`marker`). Screenshot the HUD life.
+- S2: `mark1set bonus 1` (answers `install=installed`), then `mark1set bonus
+  0`; `mark1probe bonusread` records every original, the no-set baseline.
+- D1: attach, arm `dbg-control` and the three getter logpoints, the 10 s
+  idle read.
+- S3: `playerwarp 912 960`; `mark1probe spawn set top` prints four
+  `dressed=yes tier=5 ... roll=top` lines with `a=1000107603` (helmet),
+  `1001763963` (body), `1002117248` (boots) and `1003001195` (gloves), each
+  band's start plus its roll count minus one, and `mark1set stat`'s
+  `dressed=` rises by 4 (`roll-spawn`). Pick up all four and open the bag.
+- S4, none worn: hover each piece 1 s and screenshot. `roll-lines`: the
+  helmet shows `+180% Enhanced Defense`, `+3 to All Skills`, `+35 to
+  Vitality`, `+30% to All Resistances` and `Sockets (2)`; the body `+280%
+  Enhanced Defense`, `+4 to All Skills`, `+400 to Life`, `+125% Faster Hit
+  Recovery` and `Sockets (4)`; the boots `+200% Enhanced Defense`, `+25 Life
+  After each Kill` and `+30% to All Resistances`; the gloves `+100% Enhanced
+  Defense`, `+3 to All Skills` and `+20 to All Attributes`; each with a
+  `Defense:` header. `def-header`: the helmet's header number (224 if it is
+  80 × 2.8). `tip-order`: the block after the piece's own lines in the
+  bonus table's order, the description under `+1 to Automation`, then `Mark
+  1` and the four names, then `Sockets (N)` where the piece has one, then
+  the footer. `ms-line`: `-50% Movement Speed` is a row of its own, and the
+  description no longer says "half speed". `tip-layout`: every row inside
+  the box, none cut or over another. `desc-font`: the second line reads
+  `desc-font=small`, and the description's letters are smaller than the
+  bonus lines' (a screenshot crop). Then hover Sorak's worn Zealot's Book of
+  Prophecy: `desc-match`, our description's letters the same height as the
+  Book's grant description. `desc-view`: tap ALT once, screenshot the Book,
+  tap again, screenshot: whether the ranges and the grant description come
+  and go together; if both views show ranges, screenshot the Options ›
+  Gameplay information option, so the record says which view was plain.
+- S5: wear the helmet and the body, switch still off. `bonusread`
+  (`piece-sheet`: id 2 up by 7, 161 by 30 and 36 up, against S2).
+  `mark1set bonus 1`; hover a worn piece: `+500 Defense` lit, every other
+  line grey, two names green; the second line `pieces=2 lit=1/0/0`;
+  `bonusread`: id 92 answers its original + 500 and the other ids their
+  originals (`bonus-2`; id 21 recorded beside it).
+- S6: wear the boots: `pieces=3 lit=1/1/0`; id 161 answers its original +
+  35 and id 38 + 25 (`bonus-3`). `allres-route`: id 162's original with
+  `mark1set bonus 1` against `mark1set bonus 0` (+35: the elements take the
+  all-resistance answer through the dispatcher; unchanged: they do not).
+- S7: wear the gloves: `pieces=4 lit=1/1/1` and `bonus=on active=yes`;
+  hover: every line lit, four names green (`tip-lit`, with S5 and S6); id 2
+  + 5, 36 + 750 and 97 + 20 (`bonus-4`); screenshot the HUD life maximum
+  before and after `mark1set bonus 0` then `1` (it moves by 750). Record
+  `talents=` and `free=`. `bonus-equip`: with the switch on, take the
+  gloves off and screenshot the HUD within a second (the maximum down 750,
+  `pieces=3`), and wear them again. `bonus-off`: `mark1set bonus 0`;
+  `bonusread` shows every answer equal to its original and `answered=`
+  stops rising over 5 s; then `mark1set bonus 1`.
+- D2: read the getter counts. D3: clear them, arm the three mana
+  logpoints, run their reads, then detach.
+- S8 (`ms-applies`): the walk of § Mod live procedure 3 Part A, from
+  `playerwarp 912 822` with D held, `mark1probe pos 300` and `mark1probe
+  watch effect 300` in one command file, switch off then on: the switch-on
+  mode over at least 60 frames whose `playerEffect[199]` reads 1 is 0.47 to
+  0.53 of the switch-off mean. Back to `playerwarp 912 960`.
+- S9, switch on, full set: `mark1probe hook`, `mark1probe show reset`,
+  30 s with no key, `mark1probe show` and `mark1set stat`. `prio-order`:
+  every eligible column landed at least once; `free=` reads 1 exactly on
+  the columns whose talent reads `abilityCooldown` 0.25 or less and is no
+  toggle (each read with `tgprobe talents <abilityId>`); and for each
+  column the probe's `casts=` of its talent is not lower than its
+  `landed=`. `hold-cadence`: switch off, `show reset`, hold the free
+  column's key 10 s, `show`: its casts and, with `gate-calls=` per second,
+  the frames between casts. `free-cadence`: switch on, `show reset`, 10 s,
+  `show` (hold value 4); `mark1probe autohold 3`, repeat; `mark1probe
+  autohold 4`.
+- S10, switch on, full set: `held-entry`: `mark1probe watch input 300`
+  while `hs_input` holds the right button 3 s on open ground beside Sorak:
+  the entries that read 3 or 4. `held-blocks`: `mark1probe automask off`,
+  `show reset`, hold the right button 8 s, `show` and `mark1set stat`: the
+  automated columns' landings and the right button's skill's casts in the
+  window. `held-mask`: `mark1probe automask default` (or the `held-entry`
+  entries if the default lacks them, recorded), and the same window.
+  `held-continues`: the right button's skill's casts in that window, and in
+  the 3 s after with the switch off.
+- P1, `proc-control`, switch off, full set worn: `tgprobe hook
+  TalentUseClass`, `tgprobe verbose on`, `mark1probe show reset`; press the
+  free column's key once, wait 3 s, press Healing Zone's key once, wait
+  3 s; `mark1probe show`. One `tgprobe` `TalentUseClass` line per cast with
+  self `Player_obj` and a0 the talent's id, with argc and every argument
+  recorded verbatim, and the `TalentUse` row's `casts=` up by one for each
+  talent. Every later P check counts only with this one passed.
+- P2, `proc-cast`: for each of the two talents, two call shapes through
+  `skillprobe call TalentUseClass Player_obj 0 <arguments> confirm`: shape
+  A, P1's logged arguments as they are; shape B, the same with a4 `false`
+  and a6, a7 Sorak's x and y (`mark1probe pos 1`). Before each call
+  `mark1probe show reset` and `skillstate`; after it, a screenshot within a
+  second, `skillstate` and `mark1probe show`. Record our call's own
+  `tgprobe` line (what was supplied), whether it threw, the effect seen,
+  and the `TalentUse` row unmoved (no wind-up). Pass for a talent when one
+  shape casts it with `TalentUse` unmoved; Healing Zone's cooldown (15 s)
+  is waited out between its calls.
+- P3: `proc-cooldown`: press Healing Zone's key, then again within 1 s (the
+  second press casts nothing: the control); after 15 s, call Healing Zone
+  by its passing shape, then press its key within 1 s: whether the key cast
+  lands. `proc-mana`: the HUD mana before and after five key casts of the
+  free skill 2 s apart (the control: it falls), then before and after five
+  calls of its passing shape 2 s apart.
+- P4, `proc-level`: `tgprobe vars White_Mage_Healing_Zone_obj` straight
+  after a key cast of Healing Zone and straight after a call of its passing
+  shape, 15 s apart: the members carrying the skill's strength read the
+  same; every member that differs is listed.
+- P5: `proc-cd`: switch off, `mark1probe show reset`, hold Healing Zone's
+  key 30 s, `mark1probe show`: its casts and the milliseconds between them,
+  its `abilityCooldown`, and the second line's `fcr=` and `haste=`; pass
+  within 15% of the model's interval, both recorded either way with which
+  formula the key interval is closer to, the sum or the longer of the two.
+  `proc-auto`: `mark1probe autoproc <the passing shape, as a template>`,
+  `mark1probe autoroute proc`, `mark1set bonus 1`, `mark1probe show reset`,
+  30 s with no key, `mark1probe show` and `mark1set stat`: `route=proc`,
+  `procs=` up, `proc-fail=0`, the free skill's `tgprobe` lines at least
+  0.8 × its casts at the computed cast time's rate, Healing Zone called at
+  least once and never two calls closer than 0.9 × its computed interval,
+  and the `TalentUse` row unmoved for both (`proc-interval` records each
+  column's mean spacing against its computed interval). `proc-held`: hold
+  the right button 8 s on the proc route: `procs=` rising during the hold,
+  and the right button's skill's casts in the window. Then `mark1probe
+  autoroute press` and `tgprobe verbose off`.
+- P6: switch on, full set, press route, `mark1probe hook`, `mark1probe
+  autoyield 600`. The control: `mark1probe autolock off`, `mark1probe show
+  reset`, hold Q's key 4 s, `mark1probe show` and `mark1set stat`: Q's
+  talent's `TalentUse` `casts=` above its column's `landed=`. Then
+  `mark1probe autolock on` and the same hold: `casts=` equal to `landed=`
+  and `locked=` up (`lock-key`, both windows needed). `lock-click`: the same
+  pair of windows with a left click on Q's HUD icon every second instead of
+  the key. `mark1probe autoyield 56`. `lock-proc` (not run without a
+  passing P2 shape): `mark1probe autoroute proc`, hold Q's key 5 s:
+  `procs=` keeps rising and Q's talent's `TalentUse` `casts=` stays 0;
+  `mark1probe autoroute press`.
+- P7: switch on, full set, screenshot the bar. `icon-grey`: each automated
+  column's icon reads darker than the mouse columns' and than itself with
+  the switch off, inside its own slot box, nothing drawn outside the bar,
+  and `grey=` equals the number of automated columns with `grey-box=0` (or
+  `grey-box=` naming the columns that fell back). `icon-clear`: `mark1set
+  bonus 0`, screenshot: every icon at its normal colour and `grey=0`; then
+  `mark1set bonus 1`. `grey-enabled`: `mark1probe autogrey enabled`,
+  screenshot, hover and left click one automated icon (whether the game
+  draws it dark itself, and whether the tooltip and the click still work);
+  `mark1probe autogrey box`, screenshot; `mark1probe autogrey redraw`.
+  `grey-game` (not run when no skill on the bar fails its requirement): a
+  skill the game itself shows as unusable, beside an automated one.
+- P8, switch off: `mark1set stat` (`fcr=`, `haste=`), `mark1probe show
+  reset`, hold the free column's key 10 s, `mark1probe show`: its casts and
+  the milliseconds between them (`cast-interval`). `statadd castrate 100`;
+  `mark1set stat` shows `fcr=` up by 100 (`stat-read`, the read's positive
+  control); the same hold (`cast-interval-fcr`); `statadd castrate 0`.
+  `interval-model`: a base of interval × (1 + fcr / 100) from each window;
+  pass when the two agree within 15%, both recorded either way.
+- P9, the HUD mana read from cropped screenshots; every part after
+  `regen-units` runs on the proc route and is not run without a passing P2
+  shape. Switch off: cast the free skill five times 2 s apart, screenshot
+  the HUD mana, stand 10 s, screenshot, `mark1probe bonusread` (ids 42's
+  and 37's originals): `regen-units` is the mana gained over 10 s, over id
+  42's original. Switch on, full set, `mark1probe autoproc <the passing
+  shape>`, `mark1probe autoroute proc` (record n, the proc columns, from
+  `free=` and the toggle table). `drain-applies` has two parts, run in this
+  order; the first proves the instrument. Every 10 s window starts below
+  the HUD maximum and must not reach it (a full pool hides both the regen
+  and the drain); when one does, spend and repeat that window. Spend:
+  `mark1probe autolock off`, five key casts of one automated column's skill
+  2 s apart (key casts pay the game's own mana), `mark1probe autolock on`.
+  - `reach`, whether a lowered answer that stays above zero reaches the
+    regen: spend; `mark1probe autocost off`, screenshot, 10 s, screenshot:
+    the gain G0 (mana rises: the HUD read works, the control);
+    `mark1probe bonusread`: id 42's original R and id 37's answer M. Then
+    `mark1probe autocost drain`, `mark1probe autodrain <p>` with p = 50 × R
+    / (n × M), two decimals rounded down, which takes half of R off id 42's
+    answer and keeps it above zero (`reach` is not run when R is not above
+    zero or n is 0; when p would pass 10, use 10 and read the threshold
+    below as G0 × (1 − n × 10 × M / (200 × R))); `mark1probe bonusread`:
+    id 42's answer between 0.4 R and 0.6 R (when capped, within 10% of
+    R − n × 10 × M / 100) and above zero, so the dispatcher's answer
+    changed; spend if the HUD is near the maximum; screenshot, 10 s,
+    screenshot: the gain G1, with `drained=` rising. `reach` passes when
+    G1 ≤ 0.75 × G0 (the regen fell by at least half of the halving the
+    answer predicts). Otherwise unequip and re-equip one worn non-set item
+    (a ring, the amulet or the weapon; skipped when there is none),
+    `mark1set stat` (still `pieces=4`), 10 s again: the gain G2. G2 ≤
+    0.75 × G0 means the regen reads a value stored at a stat refresh
+    (`cached`); G2 above it, or no non-set item, means the regen does not
+    read the dispatcher's live answer (`blind`). `drained=` counts every
+    id-42 answer the consumer changes, the HUD's and `bonusread`'s
+    included, so on its own it shows the hook ran, not that the regen used
+    the answer.
+  - `below`, only when `reach` passed, whether a replenish below zero
+    drains: `mark1probe autodrain 5`, screenshot, 10 s, screenshot; passes
+    when mana fell by at least half of n × 5% × M × 10 s minus G0; mana
+    unchanged, within 1% of M, over the window means a replenish below zero
+    stops the regen at zero (`floors-at-zero`). The control in the same
+    window: `mark1probe autocost off`, 10 s: mana rises.
+
+  `drain-applies` passes when both parts pass. Otherwise it fails, and its
+  note starts with the class: `blind` or `cached` (`reach` failed, `below`
+  not run), `floors-at-zero` (`reach` passed) or `below-other` (`reach`
+  passed, mana neither fell enough nor held flat), followed by G0, G1, G2
+  and R. A `blind` or `cached` fail says the cost's hook point does not
+  reach the regen; it is never recorded as a replenish below zero stopping
+  at zero, it does not close the drain route, and the record's reason for
+  the `drain-route:` token names the class. `drain-zero` (not run unless
+  `drain-applies` passed): `mark1probe autocost drain`, `mark1probe
+  autodrain 5` until the HUD reads 0 mana: the game still runs, `procs=`
+  keeps rising, and nothing on screen reports a problem (screenshot).
+  `maxmana-applies`: `mark1probe
+  autocost maxmana`: the HUD maximum within 1 of the original × (1 − 0.2 ×
+  n), and `bonusread` id 37's answer the same; then `mark1probe autocost
+  drain`, `mark1probe autodrain 1` and `mark1probe autoroute press`.
+- S11, `socket-fill` (not run when the bag holds no gem or rune): click a
+  socketable, click the helmet, hover: the socket filled and its line
+  shown.
+- S12, the reload: close the bag, `mark1set bonus 0`, `hs_exit_to_menu`,
+  `hs_stop_game`, `hs_launch`, `hs_select_character` 14; `mark1set stat`
+  reads `dressed=` at least 4; hover each worn piece: S4's values, and the
+  socketed gem if S11 ran (`roll-save`).
+- S13, teardown: `hs_stop_game`, `hs_saves_inspect`, `hs_saves_restore`,
+  inspect clean again, and `hs_lease_release`.
+
+**Checks.** Session validity, all required: `dll-hash`, `control`,
+`marker`, `dbg-control` (it logged throughout D1 to D3) and `proc-control`.
+Acceptance, all required: `roll-spawn`, `roll-lines`, `tip-order`,
+`tip-layout`, `tip-lit`, `desc-font`, `ms-line`, `bonus-2`, `bonus-3`,
+`bonus-4`, `bonus-off`, `ms-applies`, `prio-order`, `roll-save`,
+`lock-key`, `icon-grey` and `icon-clear`. Research, never required:
+`dbg-maxlife`, `dbg-allres`, `dbg-fireres`, `dbg-manaregen`,
+`dbg-maxmana`, `dbg-manaupdate` (each: pass with a rate recorded while
+`dbg-control` logged; not observed when it logged nothing while the control
+logged), `def-header`, `desc-match`, `desc-view`, `piece-sheet`,
+`allres-route`, `bonus-equip`, `hold-cadence`, `free-cadence`,
+`held-entry`, `held-blocks`, `held-mask`, `held-continues`, `proc-cast`,
+`proc-cooldown`, `proc-mana`, `proc-level`, `proc-cd`, `proc-auto`,
+`proc-interval`, `proc-held`, `lock-click`, `lock-proc`, `grey-enabled`,
+`grey-game`, `cast-interval`, `cast-interval-fcr`, `stat-read`,
+`interval-model`, `regen-units`, `drain-applies`, `maxmana-applies`,
+`drain-zero` and `socket-fill`. The session's decision picks the route
+tokens: `allres-route:`, `hold-value:`, `held-route:`, `desc-view:`,
+`auto-route:`, `cost:` and `grey-look:`.
+
+### Stats live procedure 2
+
+The re-checks of Stats live 1's failed and unread checks, on the build that
+applies Stats live 1's decision (the proc route, the maximum-mana cost and
+the `enabled` grey look) and adds the pieces' roll ranges and replan 1's
+research forms (`mark1probe statask`, `manaregen` and `procgaps`). The
+capture is the playtest workorder's live capture 2,
+`forgepact-166-mark1-set-playtest2-live-2.md`, kept with the hub's workorder
+files and not tracked. Every `mark1set stat` pair of lines read is recorded.
+Stats live 1 results, below, say why each step is shaped as it is. The
+first attempt stopped at S3: it ran `mark1probe hook` before the set's own
+hooks went in, so every later `mark1set bonus 1` refused, and a conditional
+logpoint on the dispatcher froze the frame thread for 4141 ms. This text is
+the procedure as amended after it (the set's hooks first, S0b; no logpoint
+on the dispatcher; each getter line attributed by its self), and the
+capture's second attempt ran it (§ Stats live 2 results).
+
+**Setup:**
+
+- **Build:** the research build at the ForgePact commit that applies Stats
+  live 1's decision; its path and SHA-256 are recorded with the workorder,
+  and `dll-hash` compares the installed DLL with it. The owner is asked
+  before it is installed.
+- **Character:** save slot 14, "Sorak" (White Mage), saves backed up first
+  (`hs_saves_backup` and a manual copy) and restored at the end, so the bar
+  binds, the pieces and the stats vanish with the restore.
+- **Control:** `ping` answers `pong (YYTK 4.0.1)` (`control`). The mana
+  checks carry their own positive control, `mana-control`.
+- **Cases:** one cooldown column (Healing Zone on E), one no-cooldown column
+  (Shadow Bolt on Y), Mana Orb on Q (the skill the game refused by key), the
+  toggle on R (Soul Spurn), a held right button, each piece's tooltip once,
+  and one session with no reload. Not every skill or stat.
+- **Debugger:** the hub's x64dbg MCP, for one question: whether the game
+  itself ever asks for the player's Defense (id 92) or Physical Damage
+  Taken Reduced (id 97), and with which self. `statask` cannot answer it:
+  it is our own call of the dispatcher, with self the local player, and the
+  set's consumer answers exactly that self, so it shows only that the
+  consumer adds the line to our own question. `bonusread` cannot answer it
+  alone either: it records only calls whose self is the local player, the
+  same filter the consumer applies, so a game call with another self (a
+  hit path, the character sheet) is invisible to it. Attached under the
+  session's lease after S2 (D1) and detached after S5c (D2), before S6 and
+  S7's walk (a per-frame logpoint moves the walk's modal step, § Mod live
+  procedure 3), and long before `hs_stop_game` at S17. Non-breaking
+  logpoints (the hub's `docs/tools/x64dbg-mcp.md`, "Breakpoint rules"),
+  each named here by what it watches, at the ghidra MCP's function entries
+  as offsets from the game's module, research findings and never shipped
+  constants:
+  `dbg-control` at `Hero_Siege.exe+4E41250` (`PlayerMovement`),
+  `dbg-defense` at `Hero_Siege.exe+5BD21A0` (`StatDefense`) and `dbg-pdr`
+  at `Hero_Siege.exe+5B8F490` (`StatPhysicalDamageReduction`); their
+  expected first bytes, read from Ghidra's import copy of the game, stay
+  with the workorder. S1's `mark1probe hook` has detoured
+  `PlayerMovement`, so `dbg-control` is armed without matching the file's
+  bytes and the first bytes it reports are recorded (a jump is expected).
+  `dbg-defense` and `dbg-pdr` are armed against the file's bytes (no
+  `defense` multiplier is set this session, so nothing should detour
+  them); one refused on a mismatch is armed without the check only when the
+  bytes it read start with a jump (a detour), and otherwise left unarmed
+  with its lines not observed (instrument). Each getter line logs the
+  getter's self, its first argument. `dbg-control` (about once a frame, as
+  in Stats live 1) is the attach's positive control. `dbg-defense` and
+  `dbg-pdr` count every call of the getter whatever its caller and self;
+  each one's positive control is `statask 92` (or `97`), which reaches the
+  getter through the dispatcher and must add at least one line, and the
+  self those lines log is the local player's, the reference every other
+  logged self is compared with. No logpoint goes on `ReturnSpecificStat`:
+  the first attempt's, with a condition on the id, logged nothing and
+  arming it froze the frame thread for 4141 ms (a hardware logpoint with a
+  condition on a function called about 140,000 times), and the getter
+  lines carry the self, which is all the attribution needs. Every other
+  question here is a count or a value the plugin prints (`statask`,
+  `procgaps`, `bonusread`, the stat lines, the probe's rows) or a drawn
+  text the Item Truth journal records.
+- **Relies on:** everything Stats live procedure 1 relies on, and:
+  `ReturnSpecificStat`'s argument shape the adapter already reads with (self
+  and other the local player, then 1, the id and 0, element 0 of an array
+  answer; hub RDM § 7.5), read without a failure through Stats live 1
+  (`stat-fail=0`); Item Truth's tooltip journal, kept on (its
+  `capture.request` exists on this machine, each record carries each drawn
+  text with its stat and colour, and it records the first pass of each item
+  in a session; the guide's Item Truth section); `mark1probe hold
+  player.playerEffect[199] <v> during <row> [frames]` and `mark1probe count
+  <object> <frames>` (the guide's Command Reference, the `mark1probe` row;
+  the hold measured on that member); `skillstate`'s `effect=`, the instance
+  count of the skill's object (hub RDM § 7.3, measured for Mana Orb, Healing
+  Zone and Shadow Bolt in Stats live 1's P2); the skill-bar editor, which a
+  left click on any bar icon opens (Stats live 1, P6): to bind, the slot,
+  then the skill in the list above the bar; to unbind, the slot, then the
+  same skill again in the list above the equipped skills; a left click on
+  open ground closes it (the owner's method, not found in the shared
+  references); Healing Zone's constant life drain and Mana Orb's mana regen
+  (the owner's word, not measured); and, as in Stats live 1, the HUD's life
+  and mana `current / max` read from cropped screenshots, `tgprobe hook
+  TalentUseClass` and `tgprobe verbose on`, and `statadd castrate <n>`.
+  For the game-side reads: `bonusread` records each watched id's last local
+  call, `statask`'s included, as original -> answer (the guide's Command
+  Reference, the `mark1probe` row), so a record read after the switch went
+  on, with no `statask` and no hover since a switch-off `statask` of that
+  id, can only be a game call; id 36 is asked with the local self about
+  once a second in town (Stats live 1, `getter-reads: periodic`); the
+  waypoint to Outskirts of Inoya (`Act_01_01`) and back, opened with F, as
+  in § Mod live procedure 6. Not found in the shared references, read from
+  screenshots: how the character sheet opens (its HUD button or key,
+  recorded as found). The install order, read in the plugin's
+  `ModuleMain.cpp` at ForgePact `dd14209`: `Mark1SetInstall` refuses the
+  bonus for the session when `mark1probe hook` already holds
+  `CheckTalentUse`, `TalentUseSetSpeed`, `skillsLeap`, `ReturnSpecificStat`
+  or a collision builtin, while `mark1probe hook` leaves any row another
+  hook holds to that holder, reports it `held` and detours the rest. The
+  set holds neither `TalentUse` nor `PlayerMovement`, so a `mark1probe
+  hook` after the set's install still detours both (`casts=` and `hold
+  ... during PlayerMovement` keep working), and `tgprobe hook
+  TalentUseClass` touches nothing the set holds. `statask`, `bonusread`,
+  `manaregen` and the automation's overrides ride the set's own
+  `ReturnSpecificStat` part, not a probe row, and the installed hooks stay
+  in after `mark1set bonus 0`, passing the originals through.
+
+**Steps:**
+
+- S0, setup: `dll-hash`; `ping` (`control`); a bare `mark1probe` answers
+  `mark1probe: research build`, and the first `mark1set stat` second line
+  reads `hold=4 yield=61 rest=24 mask=0,1,2,7,8,9,10,11,27,40 route=proc
+  procs=0 proc-fail=0 locked=0 cost=maxmana`, `cast-base=0.86` and `grey=0
+  grey-box=0` (`marker`). `skillstate` records the bar. If Shadow Bolt is
+  not on 0,6 (Y), the operator binds it: a left click on Q's icon (client
+  136,1220) opens the editor, a left click on the Y slot (about 392,1220), a
+  screenshot, a left click on Shadow Bolt in the list above the bar, and a
+  left click on open ground (1500,500); `skillstate` then reads `slot=0,6
+  ... ability=shadowBolt`. Each click is recorded as a step of the
+  operator's, not the owner's.
+- S0b, the set's hooks before any probe hook: `mark1set bonus 1`, then
+  `mark1set bonus 0`. Expected: no `mark1set: refused` line, and `mark1set
+  stat`'s first line reads `install=installed`, the second `pieces=0`. If
+  it refuses anyway, the session stops with the line recorded (no relaunch:
+  this order is the fix). No `mark1probe hook` or `tgprobe hook` runs
+  before this step, and none is added later without the same check.
+- S1 (`proc-control`, validity for the proc checks): switch off; `tgprobe
+  hook TalentUseClass`, `tgprobe verbose on`, `mark1probe hook`,
+  `mark1probe show reset`; Y pressed once; `mark1probe show`. The hook
+  lines read `HOOK INSTALLED` on `TalentUse` and `PlayerMovement`, and the
+  rows the set holds (`CheckTalentUse`, `TalentUseSetSpeed`,
+  `ReturnSpecificStat`, `skillsLeap` and the shared collision builtins)
+  `held`, recorded as printed; `TalentUse` or `PlayerMovement` held or
+  failed fails `proc-control`. Pass: one `TalentUseClass` line with self
+  `Player_obj` and a0 239, and `casts=239:1`.
+- S2: `playerwarp 912 960`; `mark1probe spawn set top`; pick up the four
+  (hover the name label, then F); open the bag (C). With Main full the
+  pieces land in an Extra bag tab (seen in the first attempt), which is
+  opened to hover and wear them. Hover each piece 1 s and screenshot. Then read the session's Item Truth journal (the newest
+  `live-*-<pid>-1.ndjson` for this game's pid) with a script kept outside
+  the repository, each piece's tooltip record by its first text. `ranges`
+  (acceptance): every rolled line has its ` [lo-hi]` text, with that stat's
+  id and colour 8421504, drawn right of its label on the same y: the helmet
+  29 ` [120-180]`, 173 ` [10-30]` and 201 ` [2-3]`; the body 29
+  ` [220-280]`, 52 ` [300-400]` and 201 ` [3-4]`; the boots 29
+  ` [150-200]`, 59 ` [15-25]` and 173 ` [20-30]`; the gloves 29 ` [75-100]`
+  and 201 ` [2-3]`; and the fixed lines 48, 170 and 51 have none.
+  `range-header` (acceptance): the headers' grey ranges read helmet
+  ` [60-80]`, body ` [210-240]`, boots ` [72-90]` and gloves ` [46-68]`, the
+  sockets rows helmet ` [1-2]` and body ` [3-4]`, and none of ` [26-38]`,
+  ` [10-18]`, ` [2-6]`, ` [1-3]` or ` [1-4]` is drawn for a piece.
+  `roll-lines` and `tip-order` as Stats live 1's S4, from the same
+  screenshots and records, with every row inside the box recorded beside
+  them.
+- D1, after S2: attach under the session's lease, after the game's own
+  `control` passed; arm `dbg-control`, then `dbg-defense` and `dbg-pdr`,
+  each first-bytes line recorded; `dbg-control` logs about once a frame
+  over a 10 s idle (`dbg-control`, validity for the logpoints). `mark1probe
+  statask 92,97`: `dbg-defense` and `dbg-pdr` each up by at least 1, and
+  the self both lines log (the same on both) is recorded as the reference,
+  the local player (`dbg-getters`, validity for `dbg-defense` and
+  `dbg-pdr`). The two candidates' counts and selves are read at each point
+  S3, S5b and S5c name, and a rise counts only with `dbg-control` logging
+  in the same window.
+- S3, switch off: wear the helmet and the body (right click each).
+  `mark1probe statask 92`; `mark1set bonus 1`; hover a worn piece and
+  screenshot; `mark1probe statask 92`. The arithmetic: the second answer is
+  the first plus 500, with `pieces=2 lit=1/0/0`. `tip-lit`, part 1: `+500
+  Defense` lit, the rest grey, two names green. Then the game-side read,
+  with no hover and no `statask` inside it: `mark1set bonus 0`, `statask
+  92`, `mark1probe bonusread` (92 reads A->A); `mark1set bonus 1`; the
+  two logpoints' counts; open the character sheet, 3 s, screenshot,
+  close it; the counts again; `bonusread`. `bonus-2` passes on both: the
+  arithmetic, and 92's record reading A'->A'+500 (a game call with the
+  local self after the switch went on). If 92 still reads A->A, the
+  window's `dbg-defense` lines decide it, with `dbg-control` logging: a
+  line whose self equals the reference fails `bonus-2` (the game asks for
+  the player's Defense past the consumer, so the line is inert in play); a
+  line whose self is not the reference is recorded as "asked by another
+  instance (self, other)" and on its own leaves the game-side part not
+  observed, never failed; no line leaves it open for S5c.
+- S4: wear the boots. `mark1set bonus 0`, `mark1probe statask
+  38,161,162`; `mark1set bonus 1`, `statask 38,161,162`. `bonus-3`: 38 up
+  25 and 161 up 35, with `pieces=3 lit=1/1/0`. `allres-route` (research):
+  162's change (up 35: the element resistances take the all-resistance
+  answer through the dispatcher; unchanged: they do not). Hover and
+  screenshot: `tip-lit`, part 2, the three-piece lines lit and three names
+  green.
+- S5: wear the gloves. `mark1set bonus 0`, `statask 2,36,97`; `mark1set
+  bonus 1`, `statask 2,36,97`. The arithmetic: 2 up 5, 36 up 750 and 97
+  up 20, with `pieces=4 lit=1/1/1 active=yes`, and the HUD life maximum
+  moving by 750 between the two (screenshots). Hover: `tip-lit`, part 3,
+  every line lit and four names green. `tip-lit` passes on all three parts.
+- S5b, the character sheet with the full set, no hover and no `statask`
+  inside the window: `mark1set bonus 0`, `statask 36,92,97`, `bonusread`
+  (each reads X->X); `mark1set bonus 1`; the logpoints' counts; open the
+  character sheet, 3 s, screenshot, close it; the counts again;
+  `bonusread`. `game-control`: 36 reads Y->Y+750 (the game asked for the
+  maximum life with the local self after the switch went on); without it
+  the window's `bonusread` is no evidence and S5b's reads are not-observed
+  (instrument). Record 92's and 97's records, the two counts' rises and
+  each self the two logpoints logged.
+- S5c, hits taken outside town, the full set: the waypoint to Outskirts of
+  Inoya (`Act_01_01`); on arrival, before monsters engage, `mark1set bonus
+  0`, `statask 36,92,97`, `bonusread`; `mark1set bonus 1`; the counts. The
+  self the `dbg-defense` and `dbg-pdr` lines of that `statask` log is this
+  room's reference (the player's instance may change across the
+  waypoint). Stand where monsters reach Sorak until the HUD life has
+  fallen at least three times (screenshots), the operator's own window, no
+  `statask`; the counts again and `bonusread`; the waypoint back to Inoya.
+  `game-control` as in S5b. `bonus-2`'s game-side part, if S3 left it
+  open, and `bonus-4`'s id-97 part, from S5b and S5c together, each window
+  against its own reference: pass when 92's record (or 97's) reads
+  X'->X'+500 (or X'->X'+20) after either window; fail when, with
+  `game-control` and `dbg-control` passed, a `dbg-defense` (or `dbg-pdr`)
+  line whose self equals the reference was logged while the record still
+  read X->X (the game asks for the player's value past the consumer, so
+  the line is inert in play); a line whose self is not the reference is
+  recorded as "asked by another instance (self, other)" and on its own
+  leaves the part not observed, never failed; not-observed when neither
+  window shows a game call of the id with the reference self (no such
+  line, the record X->X). `bonus-4` passes only on the arithmetic and that
+  id-97 part; a `bonus-2` or `bonus-4` left not-observed records its line
+  as not observed in play, never as passed.
+- D2: the counts and each self logged recorded; detach, before S6.
+- S6 (research), switch off: `piece-sheet`: `statask 2,36,161`; take the
+  helmet off (right click; it goes to the bag); `statask 2,36,161`; wear it
+  again. Pass when 2 is down 3, 161 down 30 and 36 down. `bonus-equip`,
+  switch on: `statask 36`; take the gloves off; screenshots of the HUD life
+  maximum at about 0.4, 1.5 and 3 s; `statask 36`; then the same pair with
+  the switch off. Pass when the switch-on drop is the switch-off drop plus
+  750 (within 1) and the HUD maximum reaches it within 3 s. Wear the gloves
+  again.
+- S7 (`ms-applies`): `playerwarp 912 822`; D held 1.5 s first; in one
+  command file `mark1probe hold player.playerEffect[199] 1 during
+  PlayerMovement 300` and `mark1probe pos 300`; switch off, then switch on,
+  each from `playerwarp 912 822`. Pass: the switch-on mode is 0.47 to 0.53
+  of the switch-off mode, over at least 60 moving samples each. `ms-cast`
+  (research): the same switch-on walk without the hold, with `mark1probe
+  watch effect 300` beside it: the mode against 0.5 × `playerEffect[199]`
+  as read. Then `playerwarp 912 960`.
+- S8, switch on, full set, the proc route in force: `tgprobe reset` and
+  `tgprobe verbose on` (S1 spent the three-line budget), `mark1probe
+  procgaps reset`, `mark1probe show reset`, 30 s with no key, then
+  `mark1probe procgaps`, `mark1probe show`, `mark1set stat`, `skillstate`
+  and `mark1probe count White_Mage_Mana_Orb_obj 1`. `prio-order`: Q, E and
+  Y each fired at least once (the `procgaps` counts), R stays on (a toggle,
+  pressed only when off), and `proc-fail=0`. `proc-casts`: the first three
+  `tgprobe` `TalentUseClass` lines read self `Player_obj` and a1 `kind=15
+  ... ref instance <the player's id>`, the `TalentUse` row of `mark1probe
+  show` is unmoved for 253, 252 and 239, and `skillstate` reads Healing
+  Zone's `effect=` at least 1 within 1 s of one of its procs (one
+  `skillstate` straight after a `procgaps` line shows a new E proc).
+  `proc-interval` (research): each column's minimum gap is at least 0.9 ×,
+  and its mean gap within 15% of, the interval `procgaps` prints.
+  `proc-stack` (research): the Mana Orb count at the window's end; more than
+  1 means the proc fired a skill the game would have refused.
+- S9: `free-continuous`: switch off, `show reset`, Y held 10 s, the
+  `TalentUse` casts of 239 (N_hold); switch on, `procgaps reset`, 10 s, Y's
+  proc count (N_auto). Pass: N_auto at least 0.8 × N_hold. `held-procs`:
+  switch on, `procgaps reset`, `show reset`, the right button held 8 s on
+  open ground beside Sorak: procs keep rising (Y's count in the 8 s at
+  least 0.64 × N_auto). `held-continues`: the right button's skill's
+  `TalentUse` casts in that window at least 1.
+- S10 (`lock-key`), switch on: `mark1probe autolock off`, `show reset`, Y
+  held 4 s, `mark1probe show`: 239's `TalentUse` casts above 0 (the
+  control: the key casts by hand). `mark1probe autolock on`, `show reset`,
+  Y held 4 s: 239's `TalentUse` casts 0, `locked=` up and `procs=` up.
+  Pass: both windows.
+- S11, switch on: screenshot the bar and crop it; `mark1set stat`.
+  `icon-grey`: Q, E, R and Y each read darker (the mean luminance of the
+  slot box) than the same slot 18 s after the switch goes off, `grey=`
+  equals the automated columns, and `procs=` kept rising while the look was
+  on. `icon-clear`: `mark1set bonus 0`; 18 s; screenshot: every slot back
+  to its switch-off look, `grey=0`; hover Y: its tooltip shows; `mark1set
+  bonus 1`.
+- S12, switch off (research): `stat-read`: `statask 106` three times 1 s
+  apart; `statadd castrate 100`; `statask 106` three times; pass when the
+  medians differ by 100 ± 2. `cast-base`: `statask 106` and Y held 10 s
+  (the `TalentUse` casts of 239), and the same with `castrate 100`, before
+  `statadd castrate 0`: base = (10 s / casts) × (1 + F / 100) per window;
+  pass when the two agree within 15%; both recorded.
+- S13, switch on, Q still bound: `maxmana-applies` (acceptance, the adopted
+  cost): with n the proc columns (`free=` and the toggle table), the HUD
+  maximum within 1 of the original × (1 − 0.2 n) and `statask 37`'s answer
+  the same.
+- S14, the mana instrument: unbind Mana Orb from Q (a left click on any bar
+  icon, on the Q slot, on Mana Orb in the list above the equipped skills,
+  then on open ground; `skillstate` shows 0,3 empty); `mark1probe count
+  White_Mage_Mana_Orb_obj 1` until it reads 0. Switch off. `mark1probe
+  manaregen 0`; `statask 42` reads 0. Screenshot; Y held 10 s; screenshot
+  at once (`mana-control`: mana at least 1% of the maximum lower); 5 s;
+  screenshot (`regen-zero`: no rise, within 0.5% of the maximum). Idle
+  10 s, screenshots either side: D0 (`toggle-drain`, research, recorded).
+  The checks below run only with `mana-control` passed; otherwise each is
+  not-run with that reason.
+- S15, regen still 0: `proc-mana` (research): switch on (proc route),
+  `mark1probe autocost off`, screenshot, 10 s, screenshot: Dq; then
+  `mark1probe autoroute press`, 10 s: Dp (the automation's key casts pay,
+  the window's control); `mark1probe autoroute proc`. Free: Dq − D0 within
+  0.5% of the maximum while Dp − D0 is at least 1%; costs: Dq − D0 at least
+  1%; not-observed when Dp − D0 is under 1%.
+- S16 (research): `regen-units`: switch off, `manaregen off`, `statask 42`
+  (R); screenshot, 3 s, screenshot: (gain / 3 s) / R. The window must not
+  reach the maximum (spend first with `manaregen 0` and Y held, then
+  `manaregen off`). `drain-applies`: switch on, proc route, `mark1probe
+  autocost drain`, `mark1probe autodrain <p>` with p = 50 × R / (n × M),
+  two decimals, M the maximum, and `statask 42` between 0.4 R and 0.6 R;
+  from below the maximum (spend: `mark1probe autocost maxmana` 2 s, then
+  `autocost drain`), screenshot, 3 s, screenshot: pass when the gain is at
+  most 0.75 × `regen-units`' 3 s gain. `drain-below`: `mark1probe manaregen
+  -<R>` (R rounded), screenshot, 10 s, screenshot: mana falls (a replenish
+  below zero drains) or holds within 0.5% (it stops at zero), recorded as
+  one or the other. Then `manaregen off`, `autocost maxmana`, `autodrain 1`.
+- S17, teardown: `hs_stop_game`, `hs_saves_inspect`, `hs_saves_restore`,
+  inspect clean, `hs_lease_release`.
+
+**Checks.** Session validity, all required: `dll-hash`, `control`,
+`marker` and `proc-control`. Validity for the logpoints and the
+game-side reads, not required: `dbg-control`, `dbg-getters` and
+`game-control`; a game-side part whose control failed is not-observed
+(instrument), and so is its check. Acceptance, all required: `ranges`,
+`range-header`, `roll-lines`, `tip-order`, `tip-lit`, `bonus-2`, `bonus-3`,
+`bonus-4`, `ms-applies`, `prio-order`, `proc-casts`, `free-continuous`,
+`held-procs`, `held-continues`, `lock-key`, `icon-grey`, `icon-clear` and
+`maxmana-applies`. Research, never required: `allres-route`,
+`piece-sheet`, `bonus-equip`, `ms-cast`, `proc-interval`, `proc-stack`,
+`stat-read`, `cast-base`, `mana-control`, `regen-zero`, `toggle-drain`,
+`proc-mana`, `regen-units`, `drain-applies` and `drain-below`. After the
+session, the owner's replan took `bonus-2`, `bonus-4` and `proc-casts` off
+the required passes: each passed the part it could read and left one part
+not observed (§ Stats live 2 results), and Stats live procedure 3 re-asks
+the first two with hits taken.
+
+### Stats live procedure 3
+
+What Stats live 2 left open, on the build that ships the mana drain as the
+cost (Stats live 2 decision, `cost: drain`), answers the character sheet's
+askers (§ Static reading after Stats live 2, "The answered askers") and adds
+two research forms, `mark1probe bonusothers` and `mark1probe vitals`. The
+capture is the playtest workorder's live capture 3,
+`forgepact-166-mark1-set-playtest2-live-3.md`, kept with the hub's workorder
+files and not tracked. Every `mark1set stat` pair of lines read is recorded.
+
+**Setup:**
+
+- **Build:** the research build at the ForgePact commit that applies the
+  drain and the answered askers; its path and SHA-256 are recorded with the
+  workorder, and `dll-hash` compares the installed DLL with it. The owner is
+  asked before it is installed.
+- **Character:** save slot 14, "Sorak" (White Mage), saves backed up first
+  (`hs_saves_backup` and a manual copy) and restored at the end.
+- **Control:** `ping` answers `pong (YYTK 4.0.1)` (`control`). The in-process
+  mana and life reads have their own control (`vitals-control`), the
+  recorder of other askers its own (`others-control`), and the logpoints
+  theirs (`dbg-control`).
+- **Cases:** the player struck by an enemy with two pieces worn (92 lit, 97
+  not: a negative for 97) and with four (97 lit); the sheet opened with the
+  switch off and on; the mercenary's calls as the negative control; the
+  drain at the default with two proc columns (E Healing Zone, Y Shadow
+  Bolt) from below the maximum; a replenish below zero from below the
+  maximum; `stat-read` in one command file. Soul Spurn (R, slot 0,5) and
+  Mana Orb (Q, slot 0,3) are unbound for the whole session: Soul Spurn's
+  Purgatory upgrade drains life (the owner) and Mana Orb raises the regen.
+  Not every skill or stat. `proc-casts` and `bonus-equip` are not re-run:
+  `proc-casts`' third part read `effect=1` in every read whatever the proc,
+  so a faster poll of the same count would not tell a new cast either, and
+  `bonus-equip`'s dispatcher arithmetic already matched.
+- **Debugger:** the hub's x64dbg MCP, for two questions: does the game ask
+  for the player's 92 and 97 with the player's self when an enemy strikes,
+  and is the player struck at all. Non-breaking logpoints at the ghidra
+  MCP's function entries as offsets from the game's module, research findings and
+  never shipped constants, each checked against the first bytes of Ghidra's
+  import copy of the game (the bytes stay with the workorder): `dbg-control`
+  at `Hero_Siege.exe+4E41250` (`PlayerMovement`), `dbg-defense` at
+  `Hero_Siege.exe+5BD21A0` (`StatDefense`), `dbg-pdr` at
+  `Hero_Siege.exe+5B8F490` (`StatPhysicalDamageReduction`) and `dbg-hurt` at
+  `Hero_Siege.exe+5ECFE80` (`sc_hurt`), four, the maximum. Each logs its
+  hit count and its self, the function's first argument. `dbg-control`
+  refused on a mismatch whose bytes start with a jump (a detour) is armed
+  without the check, its bytes recorded; no `mark1probe hook` runs this
+  session, so none is expected. Attached in town after S2 (D1), detached
+  back in town after S3 (D2), before S4 and long before `hs_stop_game`.
+- **Relies on:** who asks for 92 and 97, the mercenary, the talent screen,
+  argument 0 and `DrawHud`'s texts (§ Static reading after Stats live 2, a
+  static reading; hub RDM § 16.13); the answered askers and the `sheet=`
+  count (the same section); `mark1probe bonusothers` and `mark1probe
+  vitals` (the guide's Command Reference, the `mark1probe` row; new, their
+  controls `others-control` and `vitals-control`); `bonusread`, `statask`,
+  `manaregen <v>|off` and `statadd castrate <n>` (the guide's Command
+  Reference; `manaregen 0` measured in Stats live 2, `regen-zero`);
+  `mark1set bonus 1` before any probe hook (measured in Stats live 2's S0b),
+  and no `mark1probe hook` or `tgprobe hook` this session; the pieces from
+  `mark1probe spawn set top` at `playerwarp 912 960`, picked up by hovering
+  the label then F, worn by a right click in the bag's Extra tab (C opens
+  the bag; a right click can miss, so the slot is checked in a screenshot;
+  Stats live 2 S2 to S5); the bar editor (the owner's method, Stats live 2
+  S0 and S14: a left click on a bar icon opens it, a second on a slot
+  selects it, a left click on the skill in the list above the equipped
+  skills unbinds it, a left click on open ground (1500,500) closes it; slot
+  centres at the bar's y 1220: Q 136, E 223, R 309, Y 395); the waypoint to
+  Outskirts of Inoya and back (`playerwarp 912 822`, F, a left click on the
+  map's entry: Outskirts at 452,966, Town of Inoya at 324,1006; Stats live 2
+  S5c); the sheet (T opens and closes the talent screen on its Player tab,
+  Stats live 2 S3; a left click on `Defensive` at 744,544 did not switch the
+  tab there, and the owner says it scrolls and has several tabs; the
+  operator's input has no wheel or drag, so clicks on the tab labels and
+  keys such as Down and Page Down are tried and what worked recorded, and
+  the in-process recorder decides the checks); monsters in reach at
+  Outskirts' arrival point (Stats live 2 S5c), or the operator warps next
+  to one seen in a screenshot and never hands a kill or a move to the
+  owner; and the logpoints' self as the getter's first argument at entry
+  (Stats live 2 logged the player's self on `statask 92,97`).
+
+**Steps:**
+
+- S0: `dll-hash`; `ping` (`control`); a bare `mark1probe` answers
+  `mark1probe: research build`; the first `mark1set stat` second line
+  reads `route=proc`, `cost=drain drain=1.00` and `sheet=0` (`marker`).
+  `skillstate` records the bar. The operator unbinds Soul Spurn from R and
+  Mana Orb from Q through the bar editor and binds Shadow Bolt to Y if it is
+  not on 0,6; `skillstate` then shows 0,3 and 0,5 empty, 0,4 `healingZone`
+  and 0,6 `shadowBolt`. Every click is the operator's. Then `mark1probe
+  vitals` once to install its hook: it prints `mark1probe vitals: hook
+  installed now; ask again`, which is expected and not a reading; wait at
+  least one frame before S1's first `vitals`.
+- S0b: `mark1set bonus 1`, then `mark1set bonus 0`: `install=installed`, no
+  `refused` line.
+- S1, switch off (`vitals-control`): `mark1probe vitals`: both maxima within
+  1 of `mark1probe statask 36,37`; `mark1probe manaregen 0`, `statask 42`
+  reads 0; `vitals`; Y held 10 s; `vitals`: mana at least 1% of the maximum
+  lower. Pass on both parts. `manaregen off`. If `vitals` reads `unread`,
+  every check that reads mana or life through it is not-run with that
+  reason; the HUD is never read by eye instead.
+- S2: the four pieces spawned and picked up, and the helmet and the body
+  worn (two pieces).
+- D1, in town: attach under the session's lease after `control` passed; arm
+  `dbg-control`, which logs about once a frame over a 10 s idle
+  (`dbg-control`), then `dbg-defense`, `dbg-pdr` and `dbg-hurt`. The
+  reference self: `mark1probe statask 92,97` raises `dbg-defense` and
+  `dbg-pdr` by at least one each with one self, the local player's
+  (`dbg-getters`), read here and again on arrival in Outskirts (a room
+  change gives the player a new instance). A line counts only with
+  `dbg-control` logging in the same window.
+- S3, Outskirts: the waypoint there. On arrival: `mark1set bonus 0`;
+  `statask 36,92,97` (the room's reference self from its `dbg-defense` and
+  `dbg-pdr` lines); `bonusread`; `mark1probe bonusothers reset`; `mark1set
+  bonus 1`. S3a, two pieces: 30 s where monsters reach Sorak (a warp next to
+  one if no `dbg-hurt` line has the reference self after 30 s, then 30 s
+  more), with no `statask`, no `vitals` and no hover inside the window
+  (`vitals` asks 36 and 37 with the player's own self, as `statask` does, so
+  it runs once before and once after each window); a screenshot every 10 s
+  for safety only, never as a reading (if the life globe looks below a
+  third, the waypoint to town, recorded). Then the `dbg-hurt`,
+  `dbg-defense` and `dbg-pdr` counts and selves, `bonusread` and
+  `bonusothers`. The boots and the gloves worn (C, right clicks in the Extra
+  tab, C); `mark1set bonus 0`, `statask 92,97` (the reference again),
+  `bonusread`, `mark1set bonus 1`. S3b, four pieces: the same 30 s window,
+  then the counts, `bonusread` and `bonusothers`. The waypoint to town;
+  `menulayout` reads `room=Town_01_rm`.
+- D2: the counts and selves recorded, then detach.
+- S4, the sheet, in town, the full set worn. Switch off: `bonusothers
+  reset`; T, 3 s, screenshot, T; `bonusothers`. Switch on: `bonusothers
+  reset`; T, 3 s, screenshot (Base Stats); the Defensive values tried
+  (clicks on the tab labels, Down, Page Down; what worked recorded),
+  screenshot; T; `bonusothers`; `statask 36,92,97`.
+- S5 (research), switch on: `bonusothers reset`; the mercenary's page
+  opened if the talent screen's tabs or the HUD offer one (`menulayout`
+  lists the HUD's buttons; `UI_Button_Open_Mercenary_obj` is the game's
+  object for such a button); screenshot; closed; `bonusothers`.
+- S6, the full set (`drain-default`): one command file `mark1set bonus 0`,
+  `statask 37,42` (M, R); the next `mark1set bonus 1`; a third `statask
+  37,42` and `mark1set stat` (Stats live 2's S13: an ask in the same file as
+  the switch read the old value). n is the proc columns `free=` shows (E
+  and Y: 2).
+- S7, switch off (`regen-units`): spend first (`manaregen 0`, Y held 10 s);
+  then one command file `mark1probe manaregen off`, `statask 42`,
+  `mark1probe vitals 180`.
+- S8 (`drain-rate`): spend first as in S7 with the switch off (the
+  replenish stays forced to 0); then `mark1set bonus 1` in its own command
+  file; then one command file `mark1probe manaregen off`, `statask 42`,
+  `mark1probe vitals 180`.
+- S9 (`drain-below`): spend first; then one command file `mark1probe
+  manaregen -<R>` (R from S7, rounded) and `mark1probe vitals 600`; then
+  `manaregen off`.
+- S10, switch off (`stat-read`): one command file `statask 106`, `statadd
+  castrate 100`, `statask 106`, `statadd castrate 0`, `statask 106`.
+- S11, teardown: `hs_stop_game` (the debugger already detached),
+  `hs_saves_inspect`, `hs_saves_restore`, inspect clean,
+  `hs_lease_release`.
+
+**Checks** (expected, then pass rule):
+
+- `dll-hash`, `control`, `marker`: as S0.
+- `dbg-control`: logs about once a frame over a 10 s idle.
+- `vitals-control`: S1's two parts.
+- `others-control`: S4's switch-off `bonusothers` lists at least one entry
+  (the sheet asks with selves that are not the player, Stats live 2).
+- `no-leak`: every `bonusothers` entry of S3a, S3b and S4 whose object is
+  not one of the four talent-screen objects reads answer = original, and at
+  least one such entry exists (not-observed otherwise); fail on any that
+  differs.
+- `sheet-life`: S4 switch on, a talent-screen object's 36 entry reads answer
+  = original + 750; switch off, answer = original.
+- `sheet-defense`: S4 switch on, talent-screen entries for 92 reading
+  original + 500 and for 97 reading original + 20.
+- `drain-default`: S6, 37 equal with the switch off and on, 42 on = R − n ×
+  0.01 × M within 0.5, the second line `cost=drain drain=1.00` with
+  `drained=` above S0's.
+- `dbg-getters`: the two reference selves read (validity for the hit
+  checks, not required).
+- `hit-control`: at least one `dbg-hurt` line with the room's reference self
+  in S3a or S3b (validity for the hit checks, not required; without it they
+  are not-observed).
+- `bonus-def-hit` (research): a `dbg-defense` line with the reference self
+  in S3a or S3b while `bonusread` reads 92 X->X+500 passes; such a line with
+  X->X fails; no such line, not-observed.
+- `bonus-pdr-hit` (research): a `dbg-pdr` line with the reference self in
+  S3b with 97 X->X+20 passes (and S3a's, at two pieces, reads X->X); S3b's
+  X->X fails; no such line, not-observed.
+- `other-object` (research): the object `bonusothers` names for S3's
+  periodic non-player askers of 36, 64, 92 or 97, and their argument 0,
+  recorded (the static reading expects `Mercenary_obj`).
+- `merc-page` (research): S5 shows no talent-screen entry with answer ≠
+  original (pass) or one (fail: the bonus reaches the mercenary's page); no
+  page found, not-observed.
+- `sheet-view` (research): S4's screenshot Life equals `statask 36`; the
+  Defensive values, where reached, equal `statask 92` and `97`; how they
+  were reached recorded.
+- `regen-units` (research): S7's `mana-per-s` / R, recorded.
+- `drain-rate` (research): S8's `mana-per-s` within 15% of S7's × (R − D) /
+  R, D = n × 0.01 × M.
+- `drain-below` (research): S9's mana falls by at least 1% of the maximum (a
+  replenish below zero drains) or holds within 0.5% (it stops at zero);
+  recorded as which.
+- `stat-read` (research): S10's second answer is the first + 100 ± 2, the
+  third the first ± 2.
+
+Required: `dll-hash`, `control`, `marker`, `dbg-control`, `vitals-control`,
+`others-control`, `no-leak`, `sheet-life`, `sheet-defense` and
+`drain-default`. Never required: `dbg-getters`, `hit-control` and every
+research check.
+
+### Stats live 1 results
+
+Stats live procedure 1 ran once on 2026-10-22 (12:43 to 14:52 UTC), on save
+slot 14, "Sorak" (White Mage), in town, and restored its saves clean at the
+end. It ran the research build from ForgePact `13c9c1b` (DLL SHA-256
+`c5f3376b9e5d42f939d300d7cdd5a33a1017f06901b20692a134806be57eefe1`), with
+the hub's x64dbg MCP attached from D1, after S2, until its detach after D3.
+The capture is the playtest workorder's
+`forgepact-166-mark1-set-playtest2-live-1.md`, kept with the hub's workorder
+files and not tracked. The steps ran in this order: S1, S2, D1, S3 to S7,
+D2, D3, the detach, S8 to S10, P1 to P9, S11 to S13.
+
+`tools/live_checks.py` reads 61 checks: 40 pass, 8 fail, 9 not-observed
+and 4 not-run. All five session-validity checks passed. Of the 17
+acceptance checks, 9 passed, 5 failed (`bonus-3`, `ms-applies`,
+`prio-order`, `lock-key` and `icon-grey`) and 3 were not observed
+(`tip-lit`, `bonus-2` and `bonus-4`). Of the 39 research checks, 26
+passed, 3 failed, 6 were not observed and 4 were not run. Each verdict that
+is not a pass names its class: an implementation defect, a wrong model of
+the game, or a procedure or instrument defect. A negative here is "not
+observed" unless a control in the same window backs it.
+
+**The bar as read** (`skillstate`, D3): row 0 held Dark Oath (242) at 0,0,
+Chain of Holy Light (250, the right button's skill in S10) at 0,2, Mana Orb
+(253) at 0,3 (Q), Healing Zone (252) at 0,4 (E) and Soul Spurn (240, a
+toggle) at 0,5 (R). Shadow Bolt (239) was learned but not on the drawn bar.
+After `hs_skill_bind` refused and the operator's input was blocked by the
+permission classifier, the owner bound Shadow Bolt to 0,6 (Y) by hand
+through the bar editor, a manual step; from then the automated columns read
+`talents=253/252/240/239 free=0/0/-/1`. `tgprobe talents`, at game speed
+144: Mana Orb `abilityCooldown` 6, Healing Zone 14, Soul Spurn and Shadow
+Bolt 0.25 (no cooldown).
+
+| Check | Verdict | What it showed |
+|---|---|---|
+| `dll-hash` | pass | The lease hashed the installed DLL as `c5f3376b…eefe1`, the Live 1 build. |
+| `control` | pass | `pong (YYTK 4.0.1)`. |
+| `marker` | pass | `mark1probe: research build`; the first `mark1set stat` second line read `hold=4 yield=56 rest=24 mask=0,1,2,7,8,9,10,11 route=press procs=0 proc-fail=0 locked=0 cost=drain drain=1.00 drained=0 cast-base=1.00` and `grey=0 grey-box=0`, with `dressed=0 legacy=0` (Sorak's save held no piece). |
+| `dbg-control` | pass | The logpoint on `PlayerMovement` logged from `pm #698` at arming to `pm #452325` at D3's end, about 73 a second; the attach tool proved the instrument by the game's frame counter (9004 to 9148 before arming, no answer at the control's hold, 9311 after). |
+| `roll-spawn` | pass | Four `dressed=yes tier=5 roll=top` lines, `a=1000107603` (helmet), `1001763963` (body), `1002117248` (boots) and `1003001195` (gloves); `dressed=` 0 to 4. |
+| `roll-lines` | pass | In the bag, none worn: the helmet `+180% Enhanced Defense`, `+3 to All Skills`, `+35 to Vitality`, `+30% to All Resistances` and `Sockets (2)`; the body `+280% Enhanced Defense`, `+4 to All Skills`, `+400 to Life`, `+125% Faster Hit Recovery` and `Sockets (4)`; the boots `+200% Enhanced Defense`, `+25 Life After each Kill` and `+30% to All Resistances`; the gloves `+100% Enhanced Defense`, `+3 to All Skills` and `+20 to All Attributes`; each under a `Defense:` header. |
+| `tip-order` | pass | On all four: the piece's own lines, the set block in the table's order with the description under `+1 to Automation`, `Mark 1` and the four names, `Sockets (N)` where the piece has one, then the footer. |
+| `tip-layout` | pass | Every row inside the box, none cut or over another (the cursor sprite covers some text in the shots). |
+| `tip-lit` | not-observed | Procedure. S5 (two pieces: `+500 Defense` lit, the rest grey, two names green) and S7 (every line lit, four names green) read as designed; no hover was taken at S6. |
+| `desc-font` | pass | `desc-font=small`; the description's capitals about 17 px high against the bonus lines' 22 px, at 2560 × 1440. |
+| `ms-line` | pass | `-50% Movement Speed` a row of its own; the description no longer says "half speed". |
+| `bonus-2` | not-observed | Instrument. `pieces=2 lit=1/0/0` and every id read at its original, but id 92 (Defense) had no local dispatcher call in the whole session, so its answer was never read (`92=-`). |
+| `bonus-3` | fail | Instrument. `pieces=3 lit=1/1/0` and 161 266 to 301, up 35, but 38 read `46->46` in two reads. `bonusread` shows each id's last local dispatcher call, and 38's consumer count stayed 0 at S6 (`answered=0/4/0/0/0/0`) while 161's rose: the game made no id-38 call after the boots went on, so `46->46` predates the third piece. At S7, with the automation casting Healing Zone, 38 was asked again and read `159->184`, up 25, the core's three-piece answer. 38's original moving from 46 to 159 and 242 is plausibly Healing Zone's own replenish while it runs (not established). |
+| `bonus-4` | not-observed | Instrument. `pieces=4 lit=1/1/1 bonus=on active=yes`; 2 read 28 to 33, 36 read 4901 to 5651, and the HUD life maximum moved between 4901 and 5651 with `mark1set bonus 0` and `1`; id 97 (Physical Damage Taken Reduced) was never asked (`97=-`). |
+| `bonus-off` | pass | With `mark1set bonus 0` every answer equalled its original, and `answered=0/185/457/455/50/0` read the same in two reads 5 s apart. |
+| `ms-applies` | fail | Procedure. `playerEffect[199]` read 0.65 (briefly 0.67) on every watched frame of the switch-on walk: Shadow Bolt, automated and cast continuously, slows the walk (the cast's slowdown). No frame read 1, so the check had nothing to measure. The modes were 0.775 against 2.385 px a frame (means 0.788 and 2.393, 295 and 298 moving samples), a ratio of 0.325, which is 0.50 × 0.65: the half walk applies exactly and compounds with the cast's slowdown. |
+| `prio-order` | fail | Wrong model of the game, on the press route. In the 30 s window Q's Mana Orb took 74 presses and landed none, E landed 2 (its 10.94 s cooldown at Skill Haste 56) and Y 72; R's Soul Spurn was already on and was not pressed. `free=0/0/-/1` was right, and the probe's `casts=239:72,252:2` equalled the landings. The game refuses Mana Orb by key for a reason beyond its 6 s cooldown, plausibly while its orb lives (not established); the core pressed Q first, as designed. |
+| `roll-save` | pass | After `hs_exit_to_menu`, a restart and `hs_select_character 14`: `dressed=8`, and each worn piece showed its S4 lines, the helmet with S11's gem lines merged in. |
+| `lock-key` | fail | Procedure. The lock-off control held Q, whose key casts the game refused (above): Mana Orb cast 0 times and landed 0, so the window could not show key casts landing in the yield. The lock-on half read as designed: 253 cast once and landed once, `locked=` 0 to 576. |
+| `icon-grey` | fail | Implementation. `grey=4 grey-box=0` with four automated columns, and the slot boxes' mean luminance with the switch on, against 18 s after it went off, read Q 44.9 against 46.2, E 17.8 against 46.1, R 54.4 against 54.4 and Y 14.8 against 40.6. E's and Y's darkness was the game's own (E still dark 2.5 s after the switch went off, during its cooldown; Y cast continuously): the redraw from `DrawHudBuffs` darkened nothing. The red outline drawn from the same hook shows, because it lies around the icon. |
+| `icon-clear` | pass | `mark1set bonus 0`: `grey=0 grey-box=0`, and every icon at its normal look 18 s later (E dark at 2.5 s, in its cooldown). |
+| `dbg-maxlife` | pass | Research. `StatMaxLife` about once a second idle (10 in 10.26 s), 4 in the 3.6 s around taking the gloves off and 16 in the 15 s around wearing them again. |
+| `dbg-allres` | pass | Research. `StatAllResistances` about twice a second idle (20 in 10.26 s), 10 in the same 3.6 s and 48 in the same 15 s. |
+| `dbg-fireres` | not-observed | Instrument. `StatFireResist`'s own address logged no hit over D1 to D2 while the control logged more than 25,000. The game asks it on events the town did not produce (plausibly a hit taken or the character sheet; not established). |
+| `def-header` | pass | Research. The helmet's header read `Defense: 224 [80] [26-38]`: 224 is 80 × 2.8, and the grey ` [26-38]` is the stand-in Satanic Set piece's range, not ours. |
+| `desc-match` | pass | Research. Our description and Zealot's Book of Prophecy's grant description have the same letter height and line pitch. |
+| `desc-view` | pass | Research. The Book read the same in both ALT states, its ranges (` [31-36]`, ` [7-12]`, ` [10-20]`) and its grant description in both; Options › Gameplay showed `Show Item Information` on, so both were the information view. |
+| `piece-sheet` | fail | Procedure. Against S2: 2 25 to 25, 161 240 to 236, 36 4374 to 4718. The pieces replaced worn items, so the baseline held the old helmet's and body's stats. |
+| `allres-route` | not-observed | Instrument. 162 had no local dispatcher call with the switch on or off. Beside it, 167's original read 339 with the switch off and 374 with it on, up 35. |
+| `bonus-equip` | fail | Procedure. Taking the gloves off with the switch on: 0.4 s later the HUD read 5188 / 5651, the maximum not yet down, with `pieces=3`; about 7 s later 4520 / 4718, down 933, the bonus's 750 plus plausibly the gloves' own All Attributes' life (an inferred split). The screenshot came before the game's next maximum-life read (about one a second idle, `dbg-maxlife`). The maximum was back at 5651 once they were worn again. |
+| `hold-cadence` | pass | Research. Switch off, Y held 10 s: 24 Shadow Bolt casts; at 149 gate calls a second, about 62 frames between casts. |
+| `free-cadence` | pass | Research. Switch on, 10 s with no key: 26 Shadow Bolt casts with the press held 4 frames, 25 with 3. |
+| `held-entry` | pass | Research. The right button held: `inputState` entries 2, 27 and 40 read 4 for one frame, then 3 for the hold. |
+| `held-blocks` | pass | Research. Mask off, the right button held 8 s: automated landings Q 0, E 1, R 0 and Y 20; the right button's skill (Chain of Holy Light, 250) cast 18 times. |
+| `held-mask` | pass | Research. The default mask (`0,1,2,7,8,9,10,11`, which holds 2 but not 27 or 40) and the same hold: landings Q 0, E 1, R 0 and Y 21; 250 cast once. |
+| `held-continues` | not-observed | Procedure. 250 cast once in the masked window; the 3 s after, switch off, ran without the button held (`casts=none`). |
+| `proc-control` | pass | Switch off, Y then E pressed once each: a `TalentUseClass` line with self `Player_obj`, argc 10, a0 239 (and 252), a1 a ref (kind 15) to the player's instance, a2 1, a3 false, a4 true, a5 0, a6 and a7 -1; inside it a nested call with a0 243 (an integer), a4 false and a5 55; `casts=239:1,252:1`. A third line was the double-cast proc: self `Universal_Double_Cast_obj`, a0 239, a4 false, a6 109.17 and a7 3.15. |
+| `proc-cast` | pass | Research. Through `skillprobe call TalentUseClass Player_obj 0 … confirm`, argc 8: shape A (P1's arguments) and shape B (a4 false, a6 and a7 Sorak's x 912 and y 960) both cast Shadow Bolt (`effect=` 0 to 1) and Healing Zone (the zone in the screenshot) with no throw and the `TalentUse` row at 0. Shape A made the nested 243 call (and for Healing Zone a double-cast proc); shape B made neither. Shape B is the passing shape. |
+| `proc-cooldown` | pass | Research. The control: E pressed twice 0.5 s apart cast once. After a proc of Healing Zone, E pressed within 1 s landed (`casts=252:1`): the proc set no cooldown the key respects. |
+| `proc-mana` | not-run | Instrument. Five key casts of Y 2 s apart left the HUD at 2352 / 2352 before and after: the control did not fall, so the proc calls were not run. |
+| `proc-level` | pass | Research. `White_Mage_Healing_Zone_obj` after a key cast and after a proc: `heal` 17, `augmentLevel` 0, `deadly` 1, `skillId` 252, `isProc` false and `tick_frequency` 144 in both, and every member equal but `deltaTimer`, `destroyTimer`, `inviewCheck`, `trail_x` and `trail_y`. |
+| `proc-cd` | pass | Research. Switch off, E held 30 s: 3 casts over 31.25 s, 10.42 s each; `abilityCooldown` 14, `fcr=106 haste=56`. The model's cooldown 14 / 1.28 = 10.94 s plus its cast time 1 / 2.06 = 0.49 s is 11.42 s, within 15%; the longer of the two, 10.94 s, is closer. |
+| `proc-auto` | not-observed | Procedure. With `autoproc id,261723,1,false,false,0,x,y` and `autoroute proc`: `route=proc`, `procs=` 0 to 57 in 30 s, `proc-fail=0`, Y 48 landings against the 37 needed (0.8 × 30 s over 0.649 s at `fcr=54`), Healing Zone 3 calls, and the `TalentUse` row moved only for one press of R, the toggle. Healing Zone's per-call spacing was never printed. |
+| `proc-held` | pass | Research. Proc route, the right button held 8 s: `procs=` 90 to 106, and 250 cast 16 times. |
+| `socket-fill` | pass | Research. A green gem clicked onto the helmet: the gem drawn in its icon, the gem's lines (Attack Rating, Life and Mana stolen per Hit, Mana) merged into the piece's own with no separate socket line, and the required level 26 to 67. |
+| `dbg-manaregen` | pass | Research. `StatManaReplenish`: none in a 10.26 s idle; 20 over five key casts of Y in 14.7 s. |
+| `dbg-maxmana` | pass | Research. `StatMaxMana`: 11 in the idle; 14 over the casts. |
+| `dbg-manaupdate` | pass | Research. `PlayerManaUpdate`: none in the idle; 25 over the five casts. |
+| `proc-interval` | pass | Research. The mean spacing over P5's 30.05 s against the computed interval: Q 5.0 s against 4.69 s, E 10.0 s against 10.94 s, Y 0.63 s against 0.649 s. |
+| `lock-click` | not-observed | Procedure. A left click on a bar icon opens the game's skill-bar editor and casts nothing, with the lock off too, so there is no click-cast path to lock and the lock-on window was not run. A left click on open ground closes the editor; Escape does not. |
+| `lock-proc` | pass | Research. Proc route, lock on, Q held 5 s: `procs=` 106 to 119, and Mana Orb's `TalentUse` casts 0. |
+| `grey-enabled` | pass | Research. `autogrey enabled`: Q, E, R and Y drawn dark in the game's own look; Shadow Bolt's tooltip showed on hover, and a left click opened the bar editor as without it. `autogrey box` drew red boxes and darkened no icon. |
+| `grey-game` | not-run | Procedure. No skill on the bar failed its requirement. |
+| `cast-interval` | pass | Research. Switch off, `fcr=106`, Y held 10 s: 24 casts, 417 ms apart. |
+| `cast-interval-fcr` | pass | Research. With `statadd castrate 100`: 30 casts, 333 ms apart. |
+| `stat-read` | fail | Instrument. `fcr=` read 106 then 192, up 86, the second read with the switch on. `fcr=` is the adapter's cached read, refreshed only while the bonus is active, and it moved between 54 and 106 across the session (plausibly a skill effect; not established), so one read either side cannot isolate the 100. |
+| `interval-model` | pass | Research. Base = interval × (1 + fcr / 100): 0.858 s and 0.973 s, 13.4% apart with `fcr=` as read (18.9% with 206). |
+| `regen-units` | not-observed | Instrument. Mana stayed at 2352 / 2352 before and after the 10 s; id 42's original read 415. |
+| `drain-applies` | not-run | Instrument. The one window that started below the maximum reached it, 983 to 2352 within 10 s, at least 137 a second; key casts moved no HUD mana, so no window could be held below the maximum. |
+| `maxmana-applies` | pass | Research. `autocost maxmana` with n = 3 proc columns (Q, E and Y; R a toggle): the HUD read 941 / 940.80 and id 37's answer 940.8, which is 2352 × (1 − 0.2 × 3). |
+| `drain-zero` | not-run | `drain-applies` did not pass. |
+
+**What else the session showed.**
+
+- **The proc template has no player token** (implementation). `mark1probe
+  autoproc` takes only `id`, `x`, `y`, `true`, `false`, `undefined` and
+  numbers, so P5 passed a1 as the number 261723, a real, where the game's
+  own call and `skillprobe call`'s `id:` pass a ref (kind 15). Whether those
+  procs cast is not established, because on the proc route `landed=` counts
+  calls that returned, not casts.
+- **A proc column's clock is forgotten on every room change** (implementation,
+  the round-0 reviewer), so a cooldown skill procs again on entering a room.
+- **Ids not asked in town.** 92, 97, 162, 163, 164 and 165 had no local
+  dispatcher call in the whole session, and 21 none either. `bonusread`
+  records only calls whose self is the local player, so a game call with
+  another self would not show there either. Stats live 2 asks the
+  dispatcher itself (`mark1probe statask`) for the arithmetic only, since
+  the consumer answers that self by construction, and reads 92 and 97
+  game-side from the character sheet and from hits taken outside town,
+  with logpoints on their getters and on the dispatcher.
+- **The cached `fcr=` drifted**: it read 55, 106, 54, 68, 106, 56, 57, 70,
+  102, 106, 192 (with castrate 100), 55 and 54 across the session.
+- **The pieces' rolled lines draw no roll range**, the owner's note after
+  the session, confirmed from the session's Item Truth journal: the header's
+  grey range and the sockets row's range are the stand-ins' (headers
+  ` [26-38]`, ` [10-18]`, ` [2-6]` and ` [1-3]`; sockets ` [1-3]` and
+  ` [1-4]`), and the rolled lines draw value and label only.
+- **The owner's other notes.** The low life with the switch on (as low as
+  531 / 5651 in P6) is Healing Zone's own constant life drain, not Mark 1;
+  the maximum-life reads are unaffected. Mana Orb raises mana regen and
+  passive regen exists as well, so the HUD cannot show a mana cost while
+  regen refills it; Stats live 2 turns every regen source off first.
+- The spawned pieces went to the bag's first Extra tab, not Main.
+- The `watch effect` window hit its 400-line cap, so `playerEffect[199]`
+  was visible for about the first 130 frames of each walk only.
+
+### Stats live 1 decision
+
+Recorded on 2026-10-22 from Stats live 1 (results above) and replan 1's
+reading of them. Each key takes exactly one value, on a line of its own,
+with its reason on the line below.
+
+allres-route: dispatcher
+Id 162 was never asked in town (`allres-route` not observed), so the shipped default stays and Stats live 2's `allres-route` reads it through `statask`.
+
+hold-value: 4
+`free-cadence` counted 26 Shadow Bolt casts in 10 s with the press held 4 frames against 25 with it held 3.
+
+yield-frames: 61
+`hold-cadence` measured about 62 frames between the casts of a held key.
+
+held-route: mask
+`held-mask` counted 22 automated landings during the hold while the right button's skill fell from 18 casts to 1, and with the mask off the hold blocked nothing either (21 landings); on the proc route the mask acts only on a toggle's press.
+
+mask-entries: 0,1,2,7,8,9,10,11,27,40
+`held-entry` saw the held right button set entries 2, 27 and 40, and the default mask lacked 27 and 40.
+
+getter-reads: periodic
+`StatMaxLife` was read about once a second and `StatAllResistances` about twice a second while idle, both faster around an equip change, and `StatFireResist` was not observed.
+
+desc-view: both
+Zealot's Book drew its ranges and its grant description in both ALT states, with Show Item Information on.
+
+auto-route: proc
+`proc-control`, `proc-cast`, `proc-level`, `proc-cd`, `proc-held`, `lock-proc` and `maxmana-applies` passed and `proc-auto`'s only unread part was Healing Zone's per-call spacing, so the proc route is adopted, the default of the open question "Adopting the proc route".
+
+proc-shape: id,player,1,false,false,0,x,y
+Shape B cast both talents with `TalentUse` unmoved, and it is written with a player token in place of the literal instance number P5 passed as a real.
+
+cast-base: 0.86
+`cast-interval`'s 417 ms × (1 + 106 / 100) gives 0.86 s from a `fcr=` read that was stale, so Stats live 2's `cast-base` measures it again with fresh reads.
+
+replenish-unit: 1.00
+Not observed: no mana window stayed below the maximum, so the planned unit stays.
+
+drain-route: not-observed
+An instrument defect, neither `blind` nor `cached`: `drain-applies` was not run because the HUD could not hold a window below the maximum, so Stats live 2 measures it with every regen source off.
+
+cost: maxmana
+`maxmana-applies` read the HUD maximum at 940.80 and id 37's answer at 940.8 with three proc columns, while the drain stayed unmeasured.
+
+grey-look: enabled
+The redraw and the box drew nothing visible on the icons, and `enabled` drew all four in the game's own dark look with the tooltip and the click unchanged.
+
+baseline-regen: not-observed
+No 10 s window stayed below the maximum mana.
+
+These set the workorder's route tokens `auto-route: proc`, `cost: maxmana`,
+`grey-look: enabled`, `hold-value: 4`, `held-route: mask`, `desc-view:
+both` and `allres-route: dispatcher`. Stats live procedure 2, above, runs
+on the build that applies them.
+
+### Stats live 2 results
+
+Stats live procedure 2 ran on 2026-10-22 in two attempts, on save slot 14,
+"Sorak" (White Mage), and restored its saves clean after each. Both ran the
+research build from ForgePact `dd14209` (DLL SHA-256
+`aaca2ac449217760acdff260eccb7ec079327216fae96e3838b262c4b810d0b2`). The
+first attempt stopped at S3: `mark1probe hook` had run before the set's own
+hooks, so `mark1set bonus 1` refused, and its conditional logpoint on the
+dispatcher froze the frame thread for 4141 ms; the procedure was amended
+(above) and nothing of it is counted here. The second attempt (19:06 to
+19:32 UTC) ran the amended procedure through, with the hub's x64dbg MCP
+attached from D1, after S2, to D2, after S5c. The capture is the playtest
+workorder's `forgepact-166-mark1-set-playtest2-live-2.md` (its `# Attempt 2`
+block), kept with the hub's workorder files and not tracked.
+
+`tools/live_checks.py` reads 40 checks in the second attempt: 34 pass, 1
+fail and 5 not-observed. The four required validity checks passed, and so
+did the three validity checks of the logpoints and the game-side reads. Of
+the 18 acceptance checks, 15 passed and 3 were not observed (`bonus-2`,
+`bonus-4` and `proc-casts`), each in one part only, its other parts read as
+designed; the owner's replan then took those three off the required passes.
+Of the 15 research checks, 12 passed, 1 failed (`stat-read`) and 2 were not
+observed (`bonus-equip` and `drain-below`). A negative here is "not
+observed" unless a control in the same window backs it.
+
+**The bar as read** (`skillstate`, S0): Dark Oath (242) at 0,0, Chain of
+Holy Light (250, the right button's skill) at 0,2, Mana Orb (253) at 0,3
+(Q), Healing Zone (252) at 0,4 (E), Soul Spurn (240, a toggle) at 0,5 (R),
+and 0,6 (Y) empty. The operator bound Shadow Bolt (239) to Y through the bar
+editor with its own clicks, so the automated columns read
+`talents=253/252/240/239 free=0/0/-/1`. In S14 the operator unbound Mana Orb
+from Q the same way, after which the proc columns were E and Y.
+
+| Check | Verdict | What it showed |
+|---|---|---|
+| `dll-hash` | pass | The lease hashed the installed DLL as `aaca2ac4…d0b2`, the Live 2 build. |
+| `control` | pass | `pong (YYTK 4.0.1)`. |
+| `marker` | pass | `mark1probe: research build`; the first `mark1set stat` second line read `hold=4 yield=61 rest=24 mask=0,1,2,7,8,9,10,11,27,40 route=proc procs=0 proc-fail=0 locked=0 cost=maxmana drain=1.00 drained=0 cast-base=0.86` and `grey=0 grey-box=0`. S0b, the set's hooks first: `install=installed`, no `refused` line. |
+| `proc-control` | pass | `mark1probe hook`: 15 detoured, 0 failed, 5 held (`CheckTalentUse`, `TalentUseSetSpeed`, `ReturnSpecificStat`, `skillsLeap` and `place_meeting`, by the set and its sharers), `TalentUse` and `PlayerMovement` installed; Y pressed once gave one `TalentUseClass` line with self `Player_obj` and a0 239, and `casts=239:1`. |
+| `dbg-control` | pass | The `PlayerMovement` logpoint, armed over the probe's detour (a jump in its first bytes, as expected), logged 647 times over a 10 s idle, about once a frame at a 15 ms baseline, and through every window; the attach tool proved the instrument by the game's frame counter (24020 to 24164 before arming, no answer at the control's hold, 24383 after). |
+| `dbg-getters` | pass | `statask 92,97` logged one `dbg-defense` and one `dbg-pdr` line with the same self, the town's reference; on arrival in Outskirts the same pair logged a new self, that room's reference. |
+| `game-control` | pass | In S5b and in S5c, 36's record read 4901->5651 after the switch went on: the game asked for the maximum life with the local self inside each window. |
+| `ranges` | pass | From the Item Truth journal: all 13 rolled lines drew their ` [lo-hi]` (helmet 29 ` [120-180]`, 201 ` [2-3]`, 173 ` [10-30]`; body 29 ` [220-280]`, 201 ` [3-4]`, 52 ` [300-400]`; boots 29 ` [150-200]`, 59 ` [15-25]`, 173 ` [20-30]`; gloves 29 ` [75-100]`, 201 ` [2-3]`), each with its stat's id, colour 8421504, on its label's row and right of it; 48, 170 and 51 drew none. |
+| `range-header` | pass | Headers ` [60-80]`, ` [210-240]`, ` [72-90]` and ` [46-68]`; sockets rows ` [1-2]` (helmet) and ` [3-4]` (body); none of the stand-ins' ` [26-38]`, ` [10-18]`, ` [2-6]`, ` [1-3]` or ` [1-4]`. |
+| `roll-lines` | pass | Defense 224, 913, 270 and 136 under the headers; the helmet `+180%` Enhanced Defense, `+3` All Skills, `+35` Vitality, `+30%` All Resistances and `Sockets (2)`; the body `+280%`, `+4`, `+400` Life, `+125%` Faster Hit Recovery and `Sockets (4)`; the boots `+200%`, `+25` Life After each Kill and `+30%`; the gloves `+100%`, `+3` and `+20` All Attributes. |
+| `tip-order` | pass | On all four journal records: the piece's own lines, the set block in the table's order with the description under `+1 to Automation`, `Mark 1` and the four names, `Sockets (N)` where present, then the footer; every row inside the box in the four screenshots. |
+| `tip-lit` | pass | Two pieces: `+500 Defense` lit, the rest grey, two names green; three: the three-piece lines lit, three names green; four: every line lit, four names green. |
+| `bonus-2` | not-observed | The arithmetic passed: 92 read 6436 then 6936 with `pieces=2 lit=1/0/0`. The game-side part was not observed: 92's record read X->X after S3, S5b and S5c, and every `dbg-defense` line in those windows carried a self other than the reference (asked by another instance; two fresh selves each time the sheet opened, and one periodic self outside town). |
+| `bonus-3` | pass | 38 46 to 71 and 161 266 to 301, with `pieces=3 lit=1/1/0`. |
+| `bonus-4` | not-observed | The arithmetic passed: 2 28 to 33, 36 4901 to 5651, 97 21 to 41, `pieces=4 lit=1/1/1 active=yes`, and the HUD life maximum 4901 to 5651. The id-97 game-side part was not observed: 97 read 21->21 after S5b and S5c, and the `dbg-pdr` lines there carried other selves only. |
+| `ms-applies` | pass | The walk held at `playerEffect[199]` 1: mode 2.385 px a frame off and 1.192 on, 0.4998, over 154 and 158 moving samples. |
+| `prio-order` | pass | 30 s with no key: `procgaps` Q 8, E 4, Y 69, R `-`; R pressed only while off (9 presses); `proc-fail=0`. |
+| `proc-casts` | not-observed | The first two parts matched: the three `TalentUseClass` lines read self `Player_obj` and a1 a ref (kind 15) to the player's instance, and the `TalentUse` row stayed at 0 (`casts=none`) for 253, 252 and 239. The third was not caught: Healing Zone's `effect=` read 1 in every read whatever the proc, the nearest 4 to 6 s after an E proc (the operator's polls 7 to 12 s apart). |
+| `free-continuous` | pass | Y held 10 s with the switch off: 21 casts; 10 s on the proc route: 20 Y procs, against 16.8 needed. |
+| `held-procs` | pass | The right button held 8 s: 17 Y procs, against 12.8 needed. |
+| `held-continues` | pass | In the same window the right button's skill, Chain of Holy Light, cast 16 times (`casts=250:16`). |
+| `lock-key` | pass | Lockout off, Y held 4 s: `casts=239:9` (the control); lockout on: `casts=none`, `locked=` 0 to 576 and `procs=` 886 to 908. |
+| `icon-grey` | pass | Slot boxes' mean luminance with the switch on Q 23.0, E 15.7, R 17.0, Y 14.1, against 79.4, 43.0, 45.7 and 36.5 18 s after it went off; `grey=4` with four automated columns; `procs=` 908 to 942 while the look was on. |
+| `icon-clear` | pass | 18 s after `mark1set bonus 0`: `grey=0`, every slot brighter, and Shadow Bolt's tooltip on hover. |
+| `maxmana-applies` | pass | n = 3 proc columns (Q, E, Y): the HUD read `941 / 940.80` and `statask 37` 940.8, 2352 × (1 − 0.2 × 3). |
+| `allres-route` | pass | Research, recorded. 162 read 83 with the switch off and 83 with it on (161 266 to 301), and 164 also read 83. Unchanged, but a cap is not excluded: 83 on two elements against 161 = 266 fits a cap clamping the value, and no read separated the two (no read below a cap, no negative 161 answer), so whether `StatFireResist` adds 161 is not established. |
+| `piece-sheet` | pass | Research. The helmet off: 2 28 to 25, 161 266 to 236, 36 4901 to 4581. |
+| `bonus-equip` | not-observed | Research. The gloves off dropped 36 by 933 with the switch on and 183 with it off, 933 = 183 + 750; the HUD maximum was still the old one at 0.4 s (on) and 0.9 s (off) and the new one by about 5 s and 7 s, and no screenshot came at 1.5 s or 3 s. |
+| `ms-cast` | pass | Research, recorded. With no hold the switch-on mode was 1.278 px, 0.536 of the switch-off hold's 2.385, while `playerEffect[199]` read 0.65 with the switch on (0.5 × 0.65 = 0.325); 42 moving samples, and the effect watch hit its line cap at 135 frames with no `[199]` line. |
+| `proc-interval` | pass | Research. Minimum and mean gaps against the printed interval: Q 5246 and 5250 ms against 5246, E 11497 and 11499 against 11496, Y 558 and 562 against 558. |
+| `proc-stack` | pass | Research, recorded. `skillstate` read Mana Orb's `effect=7` at the window's end: the proc fired a skill the game would have refused by key, and its orbs stacked. |
+| `stat-read` | fail | Research. `statask 106` read 55 three times, then 158 three times after `statadd castrate 100` (`first boosted call 52 -> 152`), +103 against 100 ± 2. The plain 106 itself moved between windows (55, 85, 106), so the reads, seconds apart, did not isolate the 100; Stats live procedure 3 reads them in one command file. |
+| `cast-base` | pass | Research. (10 s / casts) × (1 + F / 100): 0.860 at F 158 (30 casts) and 0.771 at F 85 (24 casts), 10.3% apart. |
+| `mana-control` | pass | Research. Mana Orb unbound and its orbs gone, `manaregen 0` (`statask 42` 0): Y held 10 s took mana from 2352 to 1428, 39.3% of the maximum. |
+| `regen-zero` | pass | Research. 1428 to 1428 over the next 5 s. |
+| `toggle-drain` | pass | Research, recorded. D0 = 0 over a 10 s idle. |
+| `proc-mana` | pass | Research, recorded as free. Proc route with the cost off: Dq 0 over 10 s; the press route, the window's control: Dp 1219 (51.8%). |
+| `regen-units` | pass | Research, recorded. With the replenish at its own value, R = 257: 676 mana in 2.98 s, 0.883 a second per unit, read from HUD crops. |
+| `drain-applies` | pass | Research. `autocost drain` at `autodrain 2.73` (n = 2: E and Y) answered 42 with 128.581, between 0.4 R and 0.6 R; the 3 s gain fell to 338, against 507 allowed. |
+| `drain-below` | not-observed | Research. Instrument: with `manaregen -257` the window began at the maximum (2352 to 2352), so neither outcome was measurable. |
+
+**What else the session showed.**
+
+- **Who asked for 92 and 97.** The town's reference self asked only
+  through our `statask`. Each opening of the sheet (T) made two fresh
+  selves ask, 92 twice and 97 three times, and outside town one self asked
+  92 about every 344 control hits and 97 in pairs; none was the reference.
+  § Static reading after Stats live 2 reads who they are.
+- **The character sheet opens with T** (the talent screen, Player tab:
+  Base Stats, Offensive, Defensive, Summoned, Statistics); a left click on
+  `Defensive` did not switch the tab. With the full set and the switch on
+  it showed Life 4901 while the HUD read 5651. V, B, L, the portrait and
+  the pause menu do not open it, and X swaps the weapon set.
+- **The life falls.** Life fell with the switch on in town and in
+  Outskirts (as low as 953 / 5651) and kept falling for a while after the
+  switch went off. The capture put it down to Healing Zone; the owner
+  corrected it after the session: Soul Spurn's Purgatory upgrade on R drains
+  life. Whether any monster hit the player in S5c was not separated from
+  that drain.
+- **A switch read in the same command file reads the old value**: `statask
+  37` in the file that turned the bonus on read 2352, and 940.8 in the next.
+- **The cached `fcr=`** read 54 and 80 on the stat line, and 106 itself
+  55, 85, 106 and 158 across the session.
+
+### Stats live 2 decision
+
+Recorded on 2026-10-22 from Stats live 2 (results above) and the owner's
+choice after it. Each key takes exactly one value, on a line of its own,
+with its reason on the line below.
+
+cost: drain
+The owner's choice after the session, replacing the 20% maximum-mana cut as the shipped cost: `drain-applies` measured a lowered id-42 answer cutting the game's regen in proportion, and `proc-mana` that the procs themselves are free. The cut stays built.
+
+drain-pct: 1.0
+The owner's number, 1% of maximum mana a second per proc column; Stats live 2's numbers do not argue against it, and Stats live 3's `drain-default` and `drain-rate` read it on the shipped build.
+
+replenish-unit: 1.00
+Kept: `regen-units` read 0.883 mana a second per unit from HUD crops over one 2.98 s window, so the shipped 1% may take about 0.88% a second; Stats live 3 measures it in process with `mark1probe vitals` before the unit changes.
+
+allres-route: elements
+162 read 83 with the switch on and off, and 164 also read 83: 162 did not move with the all-resistance answer. Whether it adds 161 is not established, since 83 on two elements against 161 = 266 fits a resistance cap clamping the value. So nothing here gives the elements an answer of their own: a later change that did, before a read below the cap (or with a negative 161 answer) separates the two, could count the bonus twice once a character's resistances drop below that cap.
+
+proc-stack: several
+Mana Orb's `effect=7` at S8's end: a proc fires a skill the game would refuse by key, and its instances stack.
+
+regen-zero: pass
+Forcing id 42's answer to 0 held mana at 1428 for 5 s after a spend, with `mana-control` passing in the same window, so a forced replenish answer reaches the game's regen.
+
+cast-base: 0.86
+Kept: `cast-base` read 0.860 and 0.771, 10.3% apart, within the 15% the check allows, and 0.86 is the reading with the larger sample.
+
+These set the workorder's route tokens `cost: drain`, `allres-route:
+elements`, `proc-stack: several` and `regen-zero: pass`. Stats live
+procedure 3, above, runs on the build that ships the drain.
+
+### Static reading after Stats live 2
+
+Made on 2026-10-22, after Stats live 2's second attempt, for the owner's
+question: what is the other self that Stats live 2's `dbg-defense` and
+`dbg-pdr` lines showed asking the dispatcher for Defense (id 92) and
+Physical Damage Taken Reduced (id 97), one instance outside town and two
+fresh ones each time the sheet opened in town, and does the game ask for
+the player's own Defense and PDR on it. Answered statically, in our own
+words: names and counts only, no game code. The game facts are folded into
+the toolkit's `docs/RUNTIME_DATA_MODELS.md` § 16.13.
+
+**Sources.** The hub's ghidra MCP (status healthy): it decompiled
+`GetMyPlayer`; `StatDefense` and `StatPhysicalDamageReduction` timed out at
+120 s; `UI_Talent_Screen_Attributes_Container_obj`'s Create method came back
+unannotated and gave nothing usable. Local byte scans of an import copy of
+`Hero_Siege.exe` (build `498d588550d8`) with the code-row table of an
+earlier run: a constant-id scan of direct `call rel32` sites into the
+dispatcher, a name scan, an argument scan and a caller scan. The scans and
+their outputs stay on the owner's machine, outside any repository
+(`%USERPROFILE%\tools\hs-decomp\issue166\`,
+`%USERPROFILE%\tools\hs-decomp\mark1-playtest2-replan2\`), and hold names
+and counts only.
+
+**Positive controls**, through the same scans: the constant-id scan listed
+id 64's askers exactly as the toolkit's § 7.8 lists them (the player's
+Step, `StatTotalDamage`, `StatAttackDamage`, `StatMagicSkillDamage`,
+`TalentsSamurai` and `Mercenary_obj`'s Alarm 5), and the caller scan found
+`CheckTalentUse` called from `PlayerMovement`. Both scans see direct call
+sites and constant ids only. A call through the script table, a global or a
+method value, or with a computed id, is invisible to them, so an asker they
+did not find is **not observed**, not absent.
+
+- **Id 92 with a constant id**: `StatMaxLife` (one site), `StatDefense`
+  itself, and the collision events of `Player_obj` and of `Mercenary_obj`
+  with `Enemy_Damage_Parent_Projectile_obj`. **Id 97**: `sc_hurt` (one
+  site) and `Mercenary_obj`'s collision events with
+  `Enemy_Damage_Parent_obj` and with `Enemy_Damage_Parent_Projectile_obj`
+  (two sites each). Static reading. Open: askers with a computed id, which
+  the scan cannot see.
+- **A hit on the player.** `sc_hurt`'s direct callers are `Player_obj`'s
+  two collision events with enemy damage and `CA_playerHurt`;
+  `PlayerTakeDamage`'s are the same two events. Static reading. A collision
+  event runs on the instance it belongs to and a called script keeps its
+  caller's self (GameMaker's rule, not read in this build), so when an
+  enemy strikes the player its own Defense and PDR are asked with the
+  player as self, which the consumer's local-player test already answers.
+  Inference, **not established** until Stats live 3 measures it with hits
+  taken (`hit-control`, `bonus-def-hit`, `bonus-pdr-hit`). Stats live 2's
+  in-play windows had no hit on the player: the life falls were Soul
+  Spurn's Purgatory drain on R (the owner's correction), not hits.
+- **The mercenary.** `Mercenary_obj`'s Alarm 5 asks 36, 37, 64, 2, 8 and
+  more at 18 sites, `StatMaxLife` asks 92 at one, and the mercenary's melee
+  collision asks 97 at two. That fits Stats live 2's lines outside town: 92
+  about once every 344 control hits (a periodic alarm) and 97 in pairs.
+  Sorak has a mercenary (the toolkit's § 7.6, measured 2026-10-04 in
+  Outskirts of Inoya). Static reading and inference: that the other self
+  outside town is a `Mercenary_obj` is **not established**; Stats live 3's
+  `other-object` names it.
+- **The talent screen.** T opens the character sheet (Stats live 2: the
+  Player tab with Base Stats, Offensive, Defensive, Summoned and
+  Statistics; the owner: it scrolls and has several tabs). Four of its
+  objects call the dispatcher directly: `UI_Button_Talent_Player_obj`'s
+  Alarm 0 at 15 sites with no constant id (plausibly the row's own stat)
+  and its Draw GUI at 27 with constant damage ids;
+  `UI_Talent_Screen_Attribute_obj`'s and `UI_Talent_Screen_Allocate_obj`'s
+  Alarm 0 at about 30 each (127, 68, 69, 155, 32 and 33 as constants, the
+  rest computed); `Player_Talent_Tooltip_obj`'s Create method at 34. Static
+  reading. No `UI_Mercenary_*` object calls the dispatcher directly: **not
+  observed**. Measured in Stats live 2: each opening of the sheet made two
+  fresh instances ask 92 twice and 97 three times, and the sheet showed
+  Life 4901 while the HUD read 5651 with the id-36 answer on. So the sheet
+  asks for the player's stats with selves the consumer filters out. Which
+  of the four objects draws Base Stats' Life is **not established**.
+- `Load_Player_Stats_obj`'s Step calls the dispatcher at 226 sites, all
+  with constant damage ids (2, 3 to 10, 79, 194, 355, 361, 561 to 565),
+  none of them 36, 92 or 97. Static reading.
+- **Argument 0.** The dispatcher hands its first argument to `GetMyPlayer`
+  (seen in id 102's case); `GetMyPlayer` given an undefined argument takes
+  a global value and walks the `Player_obj` instances for the one whose
+  player number matches. `StatDefense`, `StatPhysicalDamageReduction` and
+  `StatMaxLife` read `playerBuff` (63, 181 and 85 references) and test
+  `instance_exists` (9, 28 and 13). So the unit a stat is computed for may
+  be argument 0 rather than self. Static reading; what argument 0 carries
+  on each asker is **not established**, and the `bonusothers` recorder logs
+  it per asker so Stats live 3 can tell.
+- **The HUD's numbers.** `DrawHud` draws text through `draw_text` (32
+  references) after reading values through the protected store
+  (`gDataProtected`'s `GetVariable`, 45) and `pSt` (8). That its life and
+  mana `current / max` texts are among them is plausible, **not
+  established**; Stats live 3's `vitals-control` checks it, and Stats live 3
+  reads mana and life in process (`mark1probe vitals`), never from the HUD.
+- **Debugger targets** for Stats live 3, research findings and never
+  shipped constants: the entries of `PlayerMovement` (the control),
+  `StatDefense`, `StatPhysicalDamageReduction` and `sc_hurt`, named by
+  their ghidra MCP entries in the live procedure, with their first bytes
+  checked against the import copy.
+
+**The answered askers.** The owner chose to answer the other self when it
+is the local player's, identified by what it is, never a mercenary's or a
+monster's, with a negative control. By the reading above the in-play
+askers are the player itself (already answered) and, plausibly, the
+mercenary (never answered), and the local player's other askers are the
+talent screen's objects. So one predicate decides for the set bonus and
+the mana cost alike:
+
+- **Answered**: self is the local player (unchanged), or self is an
+  instance of one of the four talent-screen objects that call the
+  dispatcher directly: `UI_Button_Talent_Player_obj`,
+  `UI_Talent_Screen_Attribute_obj`, `UI_Talent_Screen_Allocate_obj` and
+  `Player_Talent_Tooltip_obj`. Each is resolved at install by its
+  `hs-game-sdk` name through `asset_get_index`, as the toggle guard resolves
+  `Universal_Double_Cast_obj`, never by a typed index. Self's
+  `object_index` is read with `variable_instance_get` on self, a
+  `VALUE_REF` self accepted.
+- **Left as the game answered**: every other self, `Mercenary_obj`,
+  monsters, summons, the player's skill objects and the `UI_Mercenary_*`
+  objects included. An unread object index and an unresolved name never
+  match each other: a sentinel never compares equal.
+- **Cost on the hot path**: the object is read only for a call whose id the
+  bonus or the cost answers (in the research build, also an id the
+  recorder watches) and whose self is not the local player. The dispatcher
+  is the game's hottest stat path.
+- **Counted**: answers given to a talent-screen self show as `sheet=<n>` on
+  the `mark1set bonus:` line, after `stat-fail=`.
+
+Rejected, and why. Do not propose these again without new evidence:
+
+- **Answering the other self outside town.** By the reading it is the
+  mercenary, which the owner ruled out, and Stats live 2's in-play gap is
+  explained without it: the player was not struck in those windows.
+- **Answering by argument 0**, the stat's unit. What it carries is not
+  established, and if the mercenary passes its owner's player number the
+  bonus would leak to the mercenary. The recorder logs it for a later
+  decision.
+- **A deny list** (everything but the mercenary and monsters). It fails
+  open: any object not on it, a summon, a skill object or a future object,
+  would be answered.
+- **Answering the player's skill objects** (Healing Zone's collision with
+  the player, projectiles). The owner did not ask for it, and which of them
+  act for the player is not established; the recorder lists them as other
+  askers.
+
+### Stats live 3 results
+
+Stats live procedure 3 ran on 2026-10-23 (07:11 to 07:27 UTC) on save slot
+14, "Sorak" (White Mage), and restored its saves clean at the end. It ran
+the research build from ForgePact `6545891` (DLL SHA-256
+`d265cb6571c30e1ae4bd4b51b3da6c89376cf51bfb3d1d6e40fa3e9e23472531`), the
+build that ships the mana drain and the answered askers, with the hub's
+x64dbg MCP attached from D1, after S2, to D2, before S4. The capture is the
+playtest workorder's `forgepact-166-mark1-set-playtest2-live-3.md`, kept
+with the hub's workorder files and not tracked.
+
+`tools/live_checks.py` reads 21 checks: 17 pass, 2 fail and 2
+not-observed. The ten required checks all passed, and so did the two
+validity checks that are not required (`dbg-getters`, `hit-control`). Of
+the nine research checks, 5 passed, 2 failed (`merc-page`, `stat-read`)
+and 2 were not observed (`bonus-def-hit`, `bonus-pdr-hit`). A research
+check's fail or not-observed is the finding, recorded as such; a negative
+here is "not observed" unless a control in the same window backs it.
+
+**The bar as read** (`skillstate`, S0): Dark Oath (242) at 0,0, Chain of
+Holy Light (250, the right button's skill) at 0,2, Mana Orb at 0,3 (Q),
+Healing Zone (252) at 0,4 (E), Soul Spurn at 0,5 (R) and 0,6 (Y) empty.
+The operator unbound Mana Orb from Q and Soul Spurn from R and bound Shadow
+Bolt (239) to Y through the bar editor with its own clicks, so the
+automated columns read `talents=-/252/-/239 free=-/0/-/1`: two proc
+columns, E and Y, and neither Mana Orb's regen nor Soul Spurn's life drain
+on the bar for the whole session.
+
+| Check | Verdict | What it showed |
+|---|---|---|
+| `dll-hash` | pass | The lease hashed the installed DLL as `d265cb65…2531`, the Live 3 build. |
+| `control` | pass | `pong (YYTK 4.0.1)`. |
+| `marker` | pass | `mark1probe: research build`; the first `mark1set stat` second line read `route=proc`, `cost=drain drain=1.00 drained=0` and `sheet=0`. S0b: `install=installed`, no `refused` line. |
+| `dbg-control` | pass | The `PlayerMovement` logpoint logged 777 times over a 10 s idle, about once a frame at a 13.0 ms baseline, and through every window; the attach tool proved the instrument by the game's frame counter (29325 to 29434 before arming, no answer at the control's hold, 29671 after). |
+| `vitals-control` | pass | `mark1probe vitals` read life 4374/4374 and mana 3341/3341 against `statask 36,37` 4374 and 3341; with `manaregen 0` (`statask 42` 0) Y held 10 s took mana from 3341 to 1937, 42.0% of the maximum. |
+| `others-control` | pass | With the switch off, the sheet's `bonusothers` listed 25 entries, the talent screen's `UI_Talent_Screen_Attribute_obj` among them. |
+| `no-leak` | pass | Every entry of S3a, S3b and S4 whose object is not one of the four talent-screen objects read answer = original: `Mercenary_obj`, `Companion_obj`, `Controller_obj`, `White_Mage_Healing_Zone_obj`, `Legion_Skeleton_Passive_obj`, `Legion_Skeleton_Archer_Passive_obj`, `Spider_Passive_obj` and `Zombie_Passive_obj`. Only `UI_Talent_Screen_Attribute_obj` and `UI_Button_Talent_Player_obj` (id 2, 28 to 33) differed. |
+| `sheet-life` | pass | With the full set worn, `36:UI_Talent_Screen_Attribute_obj` read 4901->5651 with the switch on and 4901->4901 with it off. |
+| `sheet-defense` | pass | Switch on: `92:UI_Talent_Screen_Attribute_obj` 7056->7556 and `97:UI_Talent_Screen_Attribute_obj` 21->41. |
+| `drain-default` | pass | M = 2352, R = 140, n = 2: id 37 read 2352 with the switch off and on, id 42 92.96 with it on (140 − 2 × 0.01 × 2352 = 92.96, a difference of 0.00), and the second line read `cost=drain drain=1.00 drained=42` against S0's `drained=0`. |
+| `dbg-getters` | pass | `statask 92,97` logged one `df` and one `pd` line with one self in town and, on arrival in Outskirts of Inoya, a new self, that room's reference. |
+| `hit-control` | pass | S3a, two pieces worn, after two warps toward a pack: four `hu` lines (`sc_hurt`) with the room's reference self. S3b had none: the mercenary held the packs off and no monster reached Sorak in the window. |
+| `bonus-def-hit` | not-observed | No `df` line with the reference self inside either window: the four hits of S3a asked no Defense with the player's self, and S3b's 67 `df` lines all carried another self. |
+| `bonus-pdr-hit` | not-observed | Each of S3a's four hits was followed by a `pd` line with the reference self, while 97 read 21->21 at two pieces, as designed (97 is the four-piece line). S3b, four pieces worn, had no hit on the player and no `pd` line with the reference self (14 with another self). |
+| `other-object` | pass | Recorded. Outside town, 92 and 97 were asked by `Mercenary_obj` (`92:Mercenary_obj*69=5114->5114@a0=1`, `97:Mercenary_obj*14=86->86@a0=1`, against S3b's 67 `df` and 14 `pd` lines with the other self); 36 by the passives `Legion_Skeleton_Archer_Passive_obj`, `Legion_Skeleton_Passive_obj`, `Spider_Passive_obj` and `Zombie_Passive_obj`; 64 by `Companion_obj` and `Mercenary_obj`. Every non-player asker recorded read argument 0 as 1 (the player's own calls' argument 0 was not recorded). |
+| `merc-page` | fail | The talent screen's own top tab `Mercenary` opened the mercenary's page. With the switch on, its entries carried the set bonus and the cost on the mercenary's numbers: `36:UI_Talent_Screen_Attribute_obj` 12527->13277, `92` 5114->5614, `97` 86->106, `38` 886->911, `161` 140->175, `42` 31->-16.04 (the drain of two proc columns at the player's maximum mana), and `2:UI_Button_Talent_Player_obj` 0->5. The page showed Life 13277 and Mana Replenish -16.04 in red. The originals equal what `Mercenary_obj` itself was answered (12527, 742, 5114, 86), and the mercenary's own calls stayed X->X: the bonus reaches the mercenary's page on the sheet, not the mercenary. |
+| `sheet-view` | pass | The sheet's Base Stats read Life 5651, equal to `statask 36`; the Defensive tab, reached by a hover then a held left click on its label at (744,544), read Defense 7556 and Physical damage reduction 41%, equal to `statask 92` and `97`. |
+| `regen-units` | pass | Recorded. Switch off, the replenish at its own R = 140 after a spend: 154 mana in 1258 ms, 122.417 a second, 0.874 a second per unit. |
+| `drain-rate` | pass | The switch on (R − D = 92.96): 87.37 mana a second against 122.417 × 92.96 / 140 = 81.29 expected, +7.5%, within 15%. |
+| `drain-below` | pass | Recorded as drains. With `manaregen -140` from 1428/2352, mana fell 518 (22.0% of the maximum) in 4173 ms, −124.131 a second. A first attempt began at the maximum (Y, automated with the switch on, spent nothing) and is not counted. |
+| `stat-read` | fail | In one command file: `statask 106` 54, after `statadd castrate 100` (`first boosted call 52 -> 152`) 158, after `statadd castrate 0` 54. +104 against 100 ± 2 (Stats live 2: +103); the third read returned to the first. |
+
+**What else the session showed.**
+
+- **A hit on the player asks for PDR with the player's self.** Each of
+  S3a's four `sc_hurt` lines with the reference self was followed by a
+  `StatPhysicalDamageReduction` line with the same self; no `StatDefense`
+  line came with them. Life read full before and after the window, so
+  whether those calls dealt damage was not read. Whether those hits were
+  projectiles (the static
+  reading puts the player's id-92 ask in its collision with enemy
+  projectiles) was not read.
+- **The sheet's askers.** On the Player tab the talent screen asked 2,
+  21, 36, 37, 38, 42, 64, 92, 97, 103, 106, 161 to 165 and 167 with
+  `UI_Talent_Screen_Attribute_obj` as self, and id 2 also with
+  `UI_Button_Talent_Player_obj` (18836 calls in one opening with the switch
+  off, 33694 with it on). On the Mercenary tab the same objects asked for
+  the mercenary's stats, and `Load_Mana_Costs_obj` asked id 2 (left as the
+  game answered it). `UI_Talent_Screen_Allocate_obj` and
+  `Player_Talent_Tooltip_obj` were not seen asking.
+- **The HUD's numbers**, read in process from the text `DrawHud` draws,
+  agreed with the dispatcher's 36 and 37 (`vitals-control`).
+- **The drain at its shipped 1%** took 47.04 of a replenish of 140 with two
+  proc columns, and the remaining regen came within 7.5% of its prediction
+  (`drain-rate`: 87.37 a second against 81.29).
+
+### Stats live 3 decision
+
+Recorded on 2026-10-23 from Stats live 3 (results above). Each key takes
+exactly one value, on a line of its own, with its reason on the line below.
+
+other-self: mercenary
+`other-object` named `Mercenary_obj` as the non-player self asking 92 and 97 outside town (69 and 14 asks against the window's 67 `df` and 14 `pd` lines with that self), and it was left as the game answered it (`no-leak`). Answering it stays ruled out by the owner. Every non-player asker recorded read argument 0 as 1, the mercenary's and the sheet's included, so argument 0 cannot tell the sheet's asks from the mercenary's (the player's own calls' argument 0 was not recorded).
+
+drain-below: drains
+`drain-below` from 1428/2352 with the replenish forced to −140: mana fell 518, 22.0% of the maximum, in 4.2 s. A replenish answer below zero takes mana away, so a drain larger than a character's replenish empties the pool rather than stopping at zero.
+
+replenish-unit: 0.87
+`regen-units` read in process (`mark1probe vitals`), not from HUD crops: S7, 122.417 mana a second at R = 140, 0.874 a unit of the answer (Stats live 2's HUD crops read 0.883; S9's below-zero window 124.131 / 140 = 0.887). S8, with the drain on (answer R − D = 92.96, D = 47.04 drained units), read 87.37 mana a second, 0.940 a unit of the answer; S7 minus S8, 35.05 mana a second over 47.04 drained units, reads 0.745 a drained unit, the drain's own conversion (Live 2's halving gave about 0.877). So the shipped 1% takes about 0.87% of the maximum a second by S7's unit, which is inferred; read directly (S7 minus S8) it took about 0.745% a second per column. `kMark1ReplenishUnit` stays 1.0 here; moving it is a code change for the driver to plan (*The replenish unit adopted* below: 0.745).
+
+sheet-askers: UI_Talent_Screen_Attribute_obj
+The sheet asked 36, 92 and 97 with `UI_Talent_Screen_Attribute_obj` as self on the Player tab (`sheet-life`, `sheet-defense`), and id 2 also with `UI_Button_Talent_Player_obj`; the other two answered objects were not seen asking. The same `UI_Talent_Screen_Attribute_obj` asks for the mercenary's stats on the sheet's Mercenary tab and is answered there too (`merc-page` failed): the predicate tells the sheet from the mercenary, not the sheet's two pages apart.
+
+These set the workorder's route tokens `other-self: mercenary` and
+`drain-below: drains`. The mercenary page's answers are a defect for the
+driver to route; nothing here changes the plugin.
+
+### Static reading after Stats live 3
+
+Made on 2026-10-23, after Stats live 3's `merc-page` failed, for one
+question: how can the plugin tell the character sheet's Player tab from its
+Mercenary tab, when both ask the dispatcher with the same talent-screen
+objects? Answered statically, in our own words: names only, no game code.
+The game facts are folded into the toolkit's `docs/RUNTIME_DATA_MODELS.md`
+§ 16.13.
+
+**What Stats live 3 measured** (`merc-page`, above): on the Mercenary tab
+the rows asked with `UI_Talent_Screen_Attribute_obj` and
+`UI_Button_Talent_Player_obj`, as on the Player tab (the other two
+talent-screen objects were not observed asking there); every asker's
+argument 0 read 1 on both pages and in every other entry of that session;
+and the originals were the mercenary's own (36 12527, 37 742, 92 5114, 97
+86, what `Mercenary_obj`'s own asks read; 42 read 31, not the player's 140,
+and no `Mercenary_obj` 42 ask was recorded). The asker rule answered by the
+asker's object, so the mercenary's page got the set bonus and the cost.
+Neither self nor argument 0 tells the pages apart.
+
+**Sources.** The hub's ghidra MCP (status healthy) decompiled
+`UiATalentsPlayer`, `UiATalentsMercenary` and `close_talents`, their
+variable slots named with the hub's `tools/decomp_index.py slot-name`.
+`UiAMercenaryDischarge`'s cross-references through the MCP were one data
+reference: not observed, not a negative.
+
+**The reading.** The screen's top tabs are UI actions, and each page is its
+own screen object. The Player tab's action returns at once when an instance
+of `UI_Talent_Screen_obj` already exists; otherwise it closes the talent
+screens and creates a `UI_Talent_Screen_obj` on the game layer, handing it
+the old screen's local and online player. The Mercenary tab's action is the
+same with `UI_Mercenary_Talents_obj`, and then has the new instance set up
+the mercenary's talent buttons. `close_talents` destroys every instance of
+`UI_Talent_Screen_obj`, `UI_Incarnation_Board_obj` and
+`UI_Mercenary_Talents_obj`. So the page on show is whichever screen object
+has an instance: the player's page is "an instance of `UI_Talent_Screen_obj`
+exists and none of `UI_Mercenary_Talents_obj`". That T opens the screen as a
+`UI_Talent_Screen_obj` is inferred from Stats live 3 (T opened on the Player
+tab), not read. The Hero and Ether tabs (`UiATalentsIncarnation`,
+`UiATalentsEther`) were not read; under the rule below they leave the
+screen's askers unanswered unless they keep a `UI_Talent_Screen_obj` alive.
+
+**The rule it gives** (built after this reading; not yet measured live): a
+self that is one of the talent screen's four asking objects is answered
+only when, read at that call, `instance_number` gives at least 1 for
+`UI_Talent_Screen_obj` and 0 for `UI_Mercenary_Talents_obj`
+(`Mark1Set.hpp`'s `TalentPageOf`). Any other reading leaves the call with
+the game's answer: calls left on the mercenary's page, with both objects
+present or with neither are counted `sheet-left=`, calls left because a
+count did not read or a name did not resolve `sheet-unread=` (both count
+talent-screen calls made while the switch is on for an id the bonus or the
+cost wants). The local player's own calls never depend on the page. Both
+objects are resolved by their `hs-game-sdk` names through
+`asset_get_index`, beside the four askers, never by a typed index.
+
+Rejected, and why:
+
+- *Telling the pages apart by argument 0.* It read 1 for every asker on
+  both pages and for the mercenary (Stats live 3).
+- *Caching the page once a frame.* A tab's action runs inside a step event,
+  so a frame-boundary cache could hand the new page the old answer for the
+  rest of that frame. The page is read at each talent-screen call, and
+  those calls happen only while the screen is open.
+- *A per-row owner* (which container created the row). Where a row keeps
+  its container, if it does, was not read; the screen objects' existence is
+  what the tab actions themselves test.
+- *Answering a talent tooltip outside the screen.* If
+  `Player_Talent_Tooltip_obj` asks while no `UI_Talent_Screen_obj` exists
+  (not observed), it is left with the game's own value.
+
+### Stats live procedure 4
+
+The page rule on both tabs, and the struck-player checks Stats live 3 could
+not observe, with the mercenary sent away if the game offers a way. The
+capture is the playtest workorder's live capture 4,
+`forgepact-166-mark1-set-playtest2-live-4.md`, kept with the hub's workorder
+files and not tracked. Every `mark1set stat` pair of lines read is
+recorded.
+
+**Setup:**
+
+- **Build:** the research build at the ForgePact commit that applies the
+  page rule; its path and SHA-256 are recorded with the workorder, and
+  `dll-hash` compares the installed DLL with it. The owner is asked before
+  it is installed.
+- **Character:** save slot 14, "Sorak" (White Mage), saves backed up first
+  (`hs_saves_backup` and a manual copy) and restored at the end. Each
+  session restores its own backup, so the save starts as before Stats live
+  3: bar 0,3 `manaOrb`, 0,4 `healingZone`, 0,5 `soulSpurn`, 0,6 empty; no
+  Mark 1 piece; the mercenary hired.
+- **Control:** `ping` answers `pong (YYTK 4.0.1)` (`control`). The recorder
+  of other askers has its own control (`others-control`), the logpoints
+  theirs (`dbg-control`).
+- **Cases:** the sheet's Player tab with the switch off and on (the
+  ordinary case); its Mercenary tab with the switch on (the outlier: the
+  same talent-screen objects, two observed in Stats live 3, on another
+  page); the Player tab again after the Mercenary tab (a page created a
+  second time); the player struck by melee (97 through `sc_hurt`) and by a
+  projectile (92 in the player's collision with an enemy projectile, a
+  static reading), all four pieces worn and the switch on. Not every tab or
+  every stat; the drain, `vitals` and the stat reads are not re-run.
+- **Debugger:** the hub's x64dbg MCP, for two questions: is the player
+  struck at all, and does the game ask for the player's 92 and 97 with the
+  player's own self while struck. The same four non-breaking logpoints as
+  Stats live 3, at the function entries of `PlayerMovement`
+  (`dbg-control`), `StatDefense` (`dbg-defense`, logging `df`),
+  `StatPhysicalDamageReduction` (`dbg-pdr`, `pd`) and `sc_hurt`
+  (`dbg-hurt`, `hu`), each logging its hit count and its self, the
+  function's first argument. Their offsets and the bytes each is checked
+  against stay with the workorder, research findings and never shipped
+  constants. Attached in town after S3 (D1), detached back in town after S6
+  (D2), before S7's `hs_stop_game`.
+- **Relies on:** the page and its rule (§ Static reading after Stats live
+  3; hub RDM § 16.13); who asks for 92 and 97 when the player is struck
+  (§ Static reading after Stats live 2; Stats live 3's S3a measured four
+  `hu` and four `pd` lines with the player's self and no `df`, melee only);
+  `mark1probe bonusothers [reset]`, `bonusread` and `statask` (the guide's
+  Command Reference), with `mark1set bonus 1` before any probe hook; the
+  pieces, the bag, the waypoint and the bar editor as in Stats live
+  procedure 3 (the same coordinates); the sheet's tabs as Stats live 3
+  measured them (T opens on the Player tab; the Defensive sub-tab opens
+  with a hover at 744,544 for 300 ms and a left click held 150 ms; the
+  Mercenary top tab with a hover at 1914,96 and a left click held 150 ms;
+  where the Player top tab sits is not recorded, so the operator reads it
+  off the Mercenary page's screenshot, the same top row). Sending the
+  mercenary away is **not found** in the shared references or research
+  docs: the game has a UI action `UiAMercenaryDischarge` with a confirm
+  (`UiAMercenaryDischargeConfirm`), and where its button sits was not read
+  (unverified: a control on the Mercenary tab or in the mercenary's own
+  window). A logpoint's self is the getter's first argument at entry, and a
+  line counts only with `dbg-control` logging in the same window.
+
+**Steps:**
+
+- S0: `dll-hash`; `ping` (`control`); a bare `mark1probe` answers
+  `mark1probe: research build`; the first `mark1set stat` second line
+  reads `cost=drain drain=1.00` and `sheet=0 sheet-left=0 sheet-unread=0`
+  (`marker`). `skillstate` records the bar. Through the bar editor the
+  operator unbinds Mana Orb from Q and Soul Spurn from R and leaves Y empty
+  and Healing Zone on E (in Stats live 3's S3b the automation's Shadow Bolt
+  killed the pack before it struck); `skillstate` shows 0,3, 0,5 and 0,6
+  empty. Every click is the operator's.
+- S0b: `mark1set bonus 1`, then `mark1set bonus 0`: `install=installed`, no
+  `refused` line.
+- S1: the four pieces spawned (`mark1probe spawn set top` at `playerwarp
+  912 960`), picked up (hover the label, F) and all four worn (C, right
+  clicks in the Extra tab, C; each slot checked in a screenshot). `mark1set
+  stat` reads `set=full` and `pieces=4`.
+- S2, the Player tab, in town. Switch off: `bonusothers reset`; T, 3 s,
+  screenshot, T; `bonusothers`. Switch on: `bonusothers reset`; T, 3 s,
+  screenshot; the Defensive sub-tab, screenshot; T; `bonusothers`;
+  `statask 36,92,97`; `mark1set stat`.
+- S3, the Mercenary tab, switch on. S3a: `mark1set stat` (`sheet-left=`
+  recorded); `bonusothers reset`; T; the Mercenary top tab; 3 s;
+  screenshot; T; `bonusothers`; `mark1set stat`. S3b: `bonusothers reset`;
+  T; the Mercenary top tab; 2 s; the Player top tab; 3 s; screenshot; T;
+  `bonusothers`.
+- D1, in town: attach under the session's lease after `control` passed;
+  arm `dbg-control`, which logs about once a frame over a 10 s idle, then
+  the three others. The reference self: `mark1probe statask 92,97` raises
+  `df` and `pd` by one each with the player's self (`dbg-getters`), read
+  here and again on arrival in Outskirts (a room change gives the player a
+  new instance).
+- S4, the mercenary sent away (`merc-away`): T, the Mercenary top tab,
+  screenshot; a discharge control looked for on that page and in the
+  mercenary's own window (a screenshot of each place tried); if one is
+  found, used and confirmed; T. What worked is recorded. If none is found in
+  a few tries, that is recorded and S6 strikes the player away from the
+  mercenary instead. Discharging changes the save; S7's restore puts it
+  back.
+- S5, Outskirts of Inoya: the waypoint there (`playerwarp 912 822`, F, a
+  second F if the map did not open, the Outskirts entry at 452,966). On
+  arrival one command file: `mark1set bonus 0`, `mark1probe statask
+  36,92,97` (the room's reference self from its `df` and `pd` lines),
+  `mark1probe bonusread`, `mark1probe bonusothers reset`, `mark1set bonus
+  1`.
+- S6, the struck window, four pieces, switch on: a warp next to a pack seen
+  in a screenshot, one with archers preferred (a projectile asks 92; Stats
+  live 3 met `Legion_Skeleton_Archer_Passive_obj` in Outskirts); with the
+  mercenary still hired, a warp that puts the pack between the player and
+  the mercenary. 30 s; if no `hu` line has the reference self by then, a
+  second warp beside the pack and 30 s more. No `statask`, `vitals` or
+  hover inside the window; a screenshot every 10 s for safety only (the life
+  globe below a third: the waypoint to town, recorded). Then the `hu`, `df`
+  and `pd` counts and selves, `bonusread`, `bonusothers` and `mark1set
+  stat`. The waypoint to town (F, the Town of Inoya entry at 324,1006);
+  `menulayout` reads `room=Town_01_rm`.
+- D2: the counts and selves recorded, then detach.
+- S7, teardown: `hs_stop_game`, `hs_saves_inspect`, `hs_saves_restore`,
+  inspect clean, `hs_lease_release`.
+
+**Checks** (expected, then pass rule):
+
+- `dll-hash`, `control`, `marker`: as S0.
+- `dbg-control`: logs about once a frame over a 10 s idle.
+- `others-control`: S2's switch-off `bonusothers` lists at least one entry.
+- `no-leak`: every `bonusothers` entry of S2, S3 and S6 whose object is not
+  one of the four talent-screen objects reads answer = original, and at
+  least one such entry exists (not-observed otherwise); fail on any that
+  differs.
+- `sheet-life`: S2 switch on, a talent-screen object's 36 entry reads
+  original + 750; switch off, answer = original.
+- `sheet-defense`: S2 switch on, talent-screen entries for 92 reading
+  original + 500 and for 97 reading original + 20.
+- `merc-page`: S3a shows the Mercenary page (screenshot), its `bonusothers`
+  has a talent-screen 36 entry whose original is not S2's player 36 (the
+  mercenary's; Stats live 3 read 12527), every talent-screen entry reads
+  answer = original, and `sheet-left=` rose over S3a. Pass on all of these;
+  fail on any talent-screen entry with answer ≠ original; not-observed if
+  the page was not reached.
+- `page-back`: S3b's Player-tab screenshot shows the player's page, and a
+  talent-screen 36 entry reads original + 750 with the player's 36 as
+  original.
+- `dbg-getters`: the two reference selves read (validity, not required).
+- `merc-away` (validity, not required): what S4 did; pass when S6's
+  `bonusothers` lists no `Mercenary_obj` entry, fail when it does (the
+  mercenary stayed; recorded with how the player was struck).
+- `hit-control` (validity, not required): at least one `hu` line with the
+  room's reference self in S6; without it the hit checks are not-observed.
+- `bonus-def-hit` (research): a `df` line with the reference self in S6
+  while `bonusread` reads 92 X->X+500 passes; such a line with X->X fails;
+  no such line, not-observed.
+- `bonus-pdr-hit` (research): a `pd` line with the reference self in S6
+  while `bonusread` reads 97 X->X+20 passes; X->X fails; no such line,
+  not-observed.
+
+Required: `dll-hash`, `control`, `marker`, `dbg-control`, `others-control`,
+`no-leak`, `sheet-life`, `sheet-defense`, `merc-page` and `page-back`. Never
+required: `dbg-getters`, `merc-away`, `hit-control`, `bonus-def-hit` and
+`bonus-pdr-hit`.
+
+### Stats live 4 results
+
+Stats live procedure 4 ran on 2026-10-23 (08:04 to 08:16 UTC) on save slot
+14, "Sorak" (White Mage), and restored its saves clean at the end. It ran
+the research build from ForgePact `b44c1e3` (DLL SHA-256
+`56b8739b51a325065606207f3a83b0b4af168347beb77b3659d2c33837df7aa7`), the
+build that carries the page rule (`TalentPageOf`), with the hub's x64dbg
+MCP attached from D1, after S3, to D2, before S7. The capture is the
+playtest workorder's `forgepact-166-mark1-set-playtest2-live-4.md`, kept
+with the hub's workorder files and not tracked.
+
+`tools/live_checks.py` reads 15 checks: 14 pass and 1 fail. The ten
+required checks all passed, and so did the validity checks `dbg-getters`
+and `hit-control` and both research checks (`bonus-def-hit`,
+`bonus-pdr-hit`). The one fail is the validity check `merc-away`, and it is
+not a result about the game: the mercenary was never sent away (below).
+
+**The bar as read** (`skillstate`, S0): Dark Oath at 0,0, Chain of Holy
+Light at 0,2, Mana Orb at 0,3 (Q), Healing Zone (252) at 0,4 (E), Soul
+Spurn at 0,5 (R), 0,6 (Y) empty. The operator unbound Mana Orb from Q and
+Soul Spurn from R through the bar editor with its own clicks and left Y
+empty, so the automation had one proc column, E (`talents=-/252/-/-
+free=-/0/-/-`).
+
+| Check | Verdict | What it showed |
+|---|---|---|
+| `dll-hash` | pass | The lease hashed the installed DLL as `56b8739b…7aa7`, the Live 4 build. |
+| `control` | pass | `pong (YYTK 4.0.1)`. |
+| `marker` | pass | `mark1probe: research build`; the first `mark1set stat` second line read `cost=drain drain=1.00 drained=0` and `sheet=0 sheet-left=0 sheet-unread=0`. S0b: `install=installed`, no `refused` line. |
+| `dbg-control` | pass | The `PlayerMovement` logpoint logged 797 times over a 10 s idle, about once a frame at a 12.6 ms baseline; the attach tool proved the instrument by the game's frame counter (38143 to 38287 before arming, no answer at the control's hold, 38470 after). It went silent once, at its 3399th line, after a single-step exception the debugger reported at that address, and logged again after the operator disabled and re-enabled it; that was before any candidate line was read, and it logged through every later window. |
+| `others-control` | pass | With the switch off, the sheet's `bonusothers` listed 26 entries: `UI_Talent_Screen_Attribute_obj`, `UI_Button_Talent_Player_obj`, `Player_Talent_Tooltip_obj`, `Mercenary_obj` and `Companion_obj`. |
+| `no-leak` | pass | Every S2, S3 and S6 entry whose object is not a talent-screen object read answer = original: `Mercenary_obj`, `Companion_obj`, `White_Mage_Healing_Zone_obj`, `Zombie_Passive_obj`, `Legion_Skeleton_Archer_Passive_obj`, `Legion_Skeleton_Passive_obj` and `Controller_obj` (in S6, `92:Mercenary_obj` 5114->5114 and `36:Legion_Skeleton_Archer_Passive_obj` 4901->4901, among others). |
+| `sheet-life` | pass | `36:UI_Talent_Screen_Attribute_obj` 4901->5651 with the switch on, 4901->4901 with it off. |
+| `sheet-defense` | pass | Switch on: `92:UI_Talent_Screen_Attribute_obj` 7056->7556 and `97:UI_Talent_Screen_Attribute_obj` 21->41; the Defensive sub-tab read Defense 7556 and Physical damage reduction 41%. |
+| `merc-page` | pass | The Mercenary top tab opened the mercenary's page (screenshot: "Mercenary Skills", Life 12527, Mana 742, Life Replenish 886, Mana Replenish 31). Its `bonusothers` had `36:UI_Talent_Screen_Attribute_obj` 12527->12527 (the player's 36 is 4901), and every talent-screen entry read answer = original: `92` 5114->5114, `97` 86->86, `42` 31->31, `2:UI_Button_Talent_Player_obj` 0->0, the `Player_Talent_Tooltip_obj` entries X->X. `sheet-left=` rose from 34 to 14713 over S3a. |
+| `page-back` | pass | After 2 s on the Mercenary tab the Player top tab (648,96, read off the earlier screenshots' top row) brought back the player's page (screenshot: Defense 7556, Physical damage reduction 41%), and `36:UI_Talent_Screen_Attribute_obj` read 4901->5651. |
+| `dbg-getters` | pass | `statask 92,97` logged one `df` and one `pd` line with one self in town and, on arrival in Outskirts of Inoya, with another, that room's reference self. |
+| `merc-away` | fail | Not attempted, for a reason outside the game. The Mercenary page carries a "Discharge Mercenary" button (found on the first place tried, beside Reset Skills, Rename and Close), but the operator's click on it was refused before it was sent by this session's own permission classifier; nothing reached the game and no other route was tried. So S6's `bonusothers` still listed `Mercenary_obj` entries. This says nothing about whether the game lets the mercenary be sent away. The player was struck anyway, after warps into packs away from the mercenary (`hit-control`). |
+| `hit-control` | pass | S6, four pieces worn and the switch on: four `hu` lines (`sc_hurt`) with the room's reference self, after three warps toward packs (the first landed on a pack already dead). |
+| `bonus-def-hit` | pass | One `df` line with the reference self inside S6 (the window's 29th `df`), while `bonusread` read `92=7056->7556`. It did not sit next to any of the four `hu` lines, so which game event asked for it was not read. |
+| `bonus-pdr-hit` | pass | Four `pd` lines with the reference self inside S6, each right after one of the four `hu` lines, while `bonusread` read `97=21->41`. |
+
+**What else the session showed** (recorded as observed, not explained):
+
+- **`pieces=` with the switch off.** S1's `mark1set stat` with all four
+  worn and the switch off read `set=full` on the first line and `pieces=0`
+  on the second; S2's, with the switch on, read `pieces=4`.
+- **`sheet-left=` before any Mercenary tab.** It read 34 already at the
+  end of S2, which had opened only the Player tab (with the Defensive
+  sub-tab); `sheet=` read 28199 there.
+- **`sheet=` during the Mercenary tab.** Over S3a, while `sheet-left=` rose
+  from 34 to 14713, `sheet=` also rose, from 28199 to 31808. Why was not
+  read.
+- **S3b's recorder.** Over S3b (2 s on the Mercenary tab, then the Player
+  tab) `sheet-left=` rose from 14713 to 22746, yet S3b's `bonusothers`
+  listed no talent-screen entry with the mercenary's originals; every
+  talent-screen entry it printed carried the player's originals.
+- **Another self in S6.** The window had 25 `df` and 6 `pd` lines with
+  one other self (the same pattern as Stats live 3's S3b), beside
+  `92:Mercenary_obj` and `97:Mercenary_obj` entries in `bonusothers`
+  (31 and 8 asks), all left as the game answered them.
+- **Id 38's original** read 49 in S5's `bonusread` and 140 in S6's
+  (answered 74 and 165, +25 each time).
+- **Life** read full (5651/5651) in every S6 safety screenshot, so how much
+  damage those hits dealt was not read.
+
+### Stats live 4 decision
+
+Recorded on 2026-10-23 from Stats live 4 (results above). Each key takes
+exactly one value, on a line of its own, with its reason on the line below.
+
+merc-page: left
+`merc-page` passed: on the sheet's Mercenary tab every talent-screen entry read answer = original on the mercenary's numbers (36 12527, 92 5114, 97 86, 42 31) and `sheet-left=` rose, and `page-back` passed with the player's page answered again (36 4901->5651). This measures the effect of the page rule, not its mechanism: that the page on show is whichever screen object has an instance stays a static reading (§ Static reading after Stats live 3), since `sheet-left=` counts the Mercenary page, both objects and neither alike.
+
+merc-away: stayed
+Not attempted: the "Discharge Mercenary" button was found on the Mercenary page, and this session's permission classifier refused the operator's click on it before it was sent; not a result about the game. The player was struck with the mercenary still hired, by warping into packs away from it in Outskirts of Inoya: four `sc_hurt` calls with the player's self.
+
+def-hit: applies
+`bonus-def-hit` passed: with four pieces worn and the switch on, the game asked the dispatcher's Defense (92) with the player's own self once inside the struck window while `bonusread` read 92 7056->7556. The logpoint reads the self, not the answer the game got back. That line sat at window-relative line 3035, not next to any of the four hits (6633 to 6749), so which code asked, and whether that ask was part of a hit, was not read; the value means "asked", not "used in a hit".
+
+pdr-hit: applies
+`bonus-pdr-hit` passed: each of the four hits (`sc_hurt` with the player's self) was followed by a Physical Damage Reduction (97) ask with the player's self, while `bonusread` read 97 21->41. The logpoint reads the self, not the answer the game got back; whether the set's numbers changed the damage the hits dealt was not read (life stayed full).
+
+These set the workorder's route tokens `merc-page: left`, `def-hit:
+applies` and `pdr-hit: applies`. Nothing here changes the plugin.
+
+### The replenish unit adopted
+
+The owner's decisions of 2026-10-23: after Stats live 4, "Scale to 1%/s",
+setting `kMark1ReplenishUnit` to the measured unit so each automated skill
+drains about 1% of maximum mana a second, re-checked by the pure-core tests
+with no live re-check; then, after that change's review, the unit 0.745
+rather than 0.874 (the owner: "if you already accounted for that and 0.745
+is closer to 1% then go with one round").
+
+The measured unit, from Stats live 3, read in process with `mark1probe
+vitals`:
+
+- S7: the replenish at its own answer R = 140 gave 122.417 mana a second,
+  0.874 a unit of the answer (`regen-units`, decision key `replenish-unit:
+  0.87` in *Stats live 3 decision*).
+- S8: with the drain on (answer R − D = 92.96, D = 47.04 drained units) it
+  gave 87.37 mana a second, 0.940 a unit of the answer.
+- S7 minus S8: 35.05 mana a second over 47.04 drained units, 0.745 mana a
+  second per drained unit. This is the drain's own conversion, and the
+  value adopted.
+- Beside them, Live 2's halving gave about 0.877 and S9's below-zero window
+  0.887. The readings disagree, which is why the per-second rate below is
+  stated as not measured in a game session yet.
+
+The build Live 3 measured had the constant at 1.0. Read directly (S7 minus
+S8), it took about 0.745% of the maximum a second per column; the 0.87%
+recorded for it elsewhere is inferred from S7's 0.874 a unit.
+
+The arithmetic: `kMark1ReplenishUnit` is 0.745, and the drain divides by it.
+Id 42 is answered R − n × 1% × M / 0.745 (R the game's own answer, n the
+proc columns, M maximum mana), never below −M. One mana a second takes
+1 / 0.745 drained units, so in mana a second the drain is n × 1% × M
+whatever the unit. Multiplying by the unit, as the code did while it was
+1.0, would have taken about 0.56% a second at 0.745, the opposite of the
+decision. A unit that is not a positive finite number leaves the answer
+alone, as a missing maximum does. The hub model's `REPLENISH_UNIT` is the
+exact fraction 745/1000, the hub's shared cases
+(`hs-game-sdk/curated/mark1_automation_cases.json`) carry cases at 0.745
+that the C++ core and the model must both reproduce, and `mark1set stat`
+prints the unit in force as `unit=` after `drain=`.
+
+So each automated skill takes about 1% of maximum mana a second by the
+arithmetic, checked by `tests/test_mark1_cost_behavior.py` and the hub's
+`tests/test_mark1_automation_model.py`; that rate is not measured in a game
+session yet: no session has run a build with the scaled unit (Stats live 5,
+below, then measured it).
+
+### Regen and the frame rate (static reading)
+
+The owner's question of 2026-10-23: does the game's mana regen, and so the
+Mark 1 drain, which only lowers the answer to id 42, depend on the frame
+rate? Answered statically first, then by a short live round (Live procedure
+5). Labels: **static reading**, **measured**, **inferred**, **not
+established**. In our own words; the shared reference is
+[RUNTIME_DATA_MODELS § 7.10](../../docs/RUNTIME_DATA_MODELS.md#710-the-skill-bars-buttons-mana-and-the-casts-speed).
+
+Sources: the ghidra MCP's decompiles of `SetRoomSpeed`, `PlayerRegenSet`,
+`stepMercenaryTimers` and `playerUpdateTimerMana`; one headless decompile of
+`PlayerUpdateTimers` (the MCP timed out on it) with `Timer_obj`'s Step; local
+byte scans for constant-id askers and direct callers, with positive controls
+(id 64's askers as the shared reference lists them, and `CheckTalentUse`
+called from `PlayerMovement`); and a names-only trace of `Player_obj`'s Step.
+A long decompile of that Step did not finish, so what only it would show is
+not established.
+
+- **Where the player's regen happens (static reading).** In
+  `playerUpdateTimerMana`, called once, directly, from `Player_obj`'s Step;
+  not in `PlayerUpdateTimers`, whose one `PlayerManaUpdate` call is the clamp
+  back to the maximum. For the local player, while current mana is below the
+  maximum, the tick asks the dispatcher for id 42, divides the answer by its
+  second argument, rounds up, and adds that through `PlayerManaUpdate`. Life
+  works the same way in `playerUpdateTimerLife` with id 38. The earlier scan
+  that found only `stepMercenaryTimers` asking 42 missed this one because the
+  tick loads 42 as a plain integer constant: a scan blindness, not an
+  absence.
+- **What the Step passes (not established).** Before each tick call the Step
+  reads a `pSt` entry, asks id 44 (mana) or 41 (life), which have no case in
+  the dispatcher's table, and reads `game_get_speed` twice. How those become
+  the tick's timing and its divisor was not read.
+- **The mercenary's regen (static reading)** counts a timer down by the
+  mercenary's own `deltaFrame` each step and resets it from
+  `game_get_speed`. The local slot scan (RIP-relative references only, the
+  kind that missed id 42 above) and the names-only trace of `Player_obj`'s
+  Step did not show a `deltaFrame` slot; whether the player's timing reads
+  one is not established.
+- **The step rate (static reading).** `SetRoomSpeed` sets `game_set_speed`
+  to 60, 120 or 144 from the video FPS option (60 for any other value).
+  GameMaker runs one step per drawn frame (engine behaviour, not read from
+  this binary; consistent with Live 3's measured rate below), so the step
+  rate is the frame rate, capped at that setting. `Timer_obj`'s Step keeps a real-time factor
+  (the frame's `delta_time` over the target frame time, clamped to 0.9 ..
+  4.0); the player's tick was not seen to read it.
+- **Stats live 3 ran at about 143 frames a second (measured).** The
+  `vitals` lines' `frame=` and `dt=`: S7 180 frames in 1258 ms, S8 180 in
+  1259 ms, S9 600 in 4173 ms; that is the 144 setting. The "about 78" taken
+  from the debugger control's 777 `PlayerMovement` hits in 10 s is not once
+  a frame (or the logpoints slowed the game; not established which).
+- **The tick in Live 3's numbers (inferred from the measured gains).** Each
+  window's gain is a whole number of ticks of the answer over ten, rounded
+  up: S7 (answer 140) gained 154 = 11 × 14, S8 (answer 92.96) gained
+  110 = 11 × 10, S9 (answer −140) lost 518 = 37 × 14. The gains alone also
+  fit a divisor of 20 (154 = 22 × 7, 110 = 22 × 5, 518 = 74 × 7); the mod's
+  own count of id 42 asks it answered (`forced=`) excludes that: it rose
+  133 to 223 and 223 to 323 over the two 10 s switch-off spends, about 9
+  asks a second, one per tick at about 8.8 ticks a second, not the 17.5 a
+  divisor of 20 would need. So at the 144 setting the divisor is 10 and a
+  tick came every 16.2 to 16.4 frames, about 8.7 to 8.9 ticks a second.
+  Whether the divisor (the Step's argument; the Step reads `game_get_speed`
+  just before the call) depends on the FPS setting is not established.
+- **Why 0.874 and 0.745 disagree (inferred).** S7's 0.874 is mana a second
+  per unit of the whole answer, which is ticks a second over ten. The
+  adopted 0.745 (S7 minus S8, *The replenish unit adopted* above) is the
+  drain side: the drain took 14 − 10 = 4 whole mana a tick where 4.70 was
+  asked, and that rounding, not the unit, is the gap. How precise 0.745 is:
+  it comes from two integer gains (154 and 110) over windows of about
+  1.26 s, on one character, S7 starting at 1582 mana and S8 at 1428; one
+  mana more or less in either gain moves it by about 0.017, so it reads
+  0.745 ± 0.035 at best, and a gain counted in whole ticks could move it
+  further. The frame rate in that session was about 143, not 78.
+- **What the shipped unit predicts (inferred).** At 0.745, answer 140,
+  maximum 2352 and two proc columns, the drain asks 63.14; each tick then
+  takes 14 − 8 = 6 mana, about 1.12% of maximum mana a second per skill,
+  not exactly 1%. One mana a tick is about 0.19% of that maximum a second
+  per column, so the drain can only move in steps of that size.
+- **What each frame-rate hypothesis predicts (not established which
+  holds).** (a) *Frame-counted at a fixed count:* about 16 frames a tick at
+  any setting, so at 60 FPS the ticks fall to about 3.7 a second (× 0.42),
+  and the drain's share a second falls with them; no constant fixes that.
+  (b) *Frame-counted against `game_get_speed`:* ticks a second hold while the
+  game reaches its setting and fall in proportion when it runs below it. (c)
+  *Clock-timed:* ticks a second hold at any frame rate. Moving the FPS
+  setting from 144 to 60 separates (a) from (b) and (c); only a window where
+  the game runs below its own setting (an external limiter) separates (b)
+  from (c). Each prediction assumes the divisor stays 10; if the Step
+  scales it with `game_get_speed` (about 4.17 at 60), the mana a tick
+  changes with the setting too, and the tick rate alone does not say which
+  hypothesis holds.
+
+Live procedure 5 measured the tick's rate at the game's frame rate as found
+and at 60, and the drain's share at the shipped unit; its procedure, results
+and decision follow (*Stats live 5 results*).
+
+### Stats live procedure 5
+
+The regen tick's rate at the game's frame rate as found and at 60, the
+drain's measured share at the shipped unit 0.745, and the unit tuned in
+session if it missed the owner's band. The capture is the playtest
+workorder's live capture 5, `forgepact-166-mark1-set-playtest2-live-5.md`,
+kept with the hub's workorder files and not tracked.
+
+**Setup:**
+
+- **Build:** the research build at the ForgePact commit that carries
+  `kMark1ReplenishUnit` 0.745, `unit=` on `mark1set stat` and `mark1probe
+  autounit`; its path and SHA-256 are recorded with the workorder, and
+  `dll-hash` compares the installed DLL with it. The owner is asked before
+  it is installed.
+- **Character:** save slot 14, "Sorak" (White Mage), saves backed up first
+  (`hs_saves_backup` and a manual copy) and restored at the end; the save
+  starts as before Stats live 3 (bar 0,3 `manaOrb`, 0,4 `healingZone`, 0,5
+  `soulSpurn`, 0,6 empty; no Mark 1 piece).
+- **Control:** `ping` answers `pong (YYTK 4.0.1)` (`control`). The regen's
+  zero control is `zero-control` (`mark1probe manaregen 0` holds mana
+  still); the logpoints' is `dbg-control`.
+- **Cases:** the game's own frame rate as found (Stats live 3 ran at about
+  143 a second) and 60 (the outlier: another step rate); the drain at the
+  shipped unit with two proc columns (E Healing Zone, Y Shadow Bolt), and
+  up to two tuned units. Not every skill, setting or column count.
+- **Debugger:** the hub's x64dbg MCP, for "which code, how often": three
+  non-breaking logpoints at the entries of `PlayerMovement` (`dbg-control`,
+  logging `pm`), `playerUpdateTimerMana` (`dbg-tick`, `tk`) and
+  `StatManaReplenish` (`dbg-replenish`, `rp`), each logging its hit count.
+  Their offsets and the bytes each is checked against stay with the
+  workorder, research findings and never shipped constants. D1 at the
+  default rate after S4, D2 at 60 after S8; a count is read only with
+  `dbg-control` logging in the same window, and it passes at 300 or more
+  hits in 10 s (Stats live 3's 777 hits in 10 s at about 143 frames a
+  second say the control is not hit once a frame under the debugger).
+- **Relies on:** the tick (the answer to id 42 over ten, rounded up, once
+  a tick) and the FPS option (60, 120 or 144) as *Regen and the frame rate
+  (static reading)* above reads them, where the option sits in the menus
+  being unverified (a choice under Options, Video); `mark1probe manaregen`,
+  `vitals`, `statask`, `autounit` and `perf` / `perf reset` (the guide's
+  Command Reference), with `mark1set bonus 1` before any probe hook; the
+  pieces, the bag and the bar editor as in Stats live procedures 3 and 4.
+  The drain's percent is computed, not read off one window:
+  100 × T × a / (n × M), T the ticks a second from a tick-rate window, a =
+  ceil(R / 10) − ceil((R − D) / 10) the whole mana a tick the switch takes,
+  n the proc columns and M maximum mana; its uncertainty is T's, one over
+  the ticks counted.
+
+**Steps** (every click and key is the operator's):
+
+- S0: `dll-hash`; `ping`; bare `mark1probe` answers `mark1probe: research
+  build`; the first `mark1set stat` second line reads `cost=drain
+  drain=1.00 unit=0.745` (`marker`). Through the bar editor unbind Mana Orb
+  from Q and Soul Spurn from R and bind Shadow Bolt to Y; `skillstate`
+  shows 0,3 and 0,5 empty, 0,4 `healingZone`, 0,6 `shadowBolt`.
+- S0b: `mark1set bonus 1`, then `mark1set bonus 0`: `install=installed`, no
+  `refused` line.
+- S1: the four pieces spawned, picked up and worn; `mark1set stat` reads
+  `set=full`. The game's FPS setting is read on Options, Video and left
+  unchanged.
+- S2 (`zero-control`, `fps-default`): switch off, mana spent, `manaregen
+  0`, `perf reset`, `vitals 600`, `perf`: no gain; frames a second near the
+  setting.
+- S3 (`tick-rate-default`): `manaregen 1`, `statask 42` (reads 1), `vitals
+  3600`: the gain is the tick count (ceil(1 / d) = 1 for any divisor), T =
+  gain / dt.
+- S4 (`tick-shape`, `drain-pct`): a switch-off window (`manaregen off`,
+  `statask 37,42` for M and R, `vitals 360`), then a switch-on window
+  (`mark1set bonus 1`, `statask 37,42` for R − D, `mark1set stat` for the
+  proc columns and `unit=`, `vitals 360`); each window's gain against the
+  ticks T × dt at ceil(R / 10) and ceil((R − D) / 10) a tick.
+- S5 (`drain-tune`), only if `drain-pct` fell outside 0.95% to 1.15%: up
+  to two units through `mark1probe autounit`, S4's switch-on window each.
+- D1: the three logpoints over a `vitals 1200` window from low mana, the
+  game's own answer in force (`manaregen off`).
+- S6 (`fps-capped`): the FPS setting to 60 (NEEDS-HUMAN if the operator
+  cannot change it); `perf reset`, `vitals 600`, `perf`: 55 to 62 frames a
+  second.
+- S7 (`tick-rate-capped`): S3's window with `vitals 1800`.
+- S8 (`drain-capped`, `regen-fps`'s divisor): S4 whole at 60. The divisor
+  at 60 is the d for which the switch-off gain is within one tick of
+  ceil(R / d) × T × dt.
+- D2: D1's logpoints and window at 60.
+- S9: the setting back to S1's; `vitals 300` shows the old rate.
+- S10: the game stopped, the saves inspected and restored clean, the lease
+  released.
+
+**Checks:** required `dll-hash`, `control`, `marker`, `zero-control`,
+`tick-rate-default` (`statask` reads 1, at least 100 ticks), `drain-pct`
+(0.95% to 1.15% with the uncertainty at most ±2%) and `dbg-control`;
+`fps-default` (frames a second within 10% of the setting S1 read) was
+required when the session ran and was dropped from the required set by
+the owner afterwards (results below). Research: `tick-shape` (each window
+within one tick of its prediction: |gain − k × T × dt| ≤ k × (1 + 0.02 × T
+× dt)), `drain-tune`, `fps-capped` (validity), `tick-rate-capped`,
+`drain-capped` (clock or target timing with the divisor unchanged predicts
+the same percent within 3%; a fixed frame count predicts `drain-pct` × the
+ratio of the two frame rates), `regen-fps` (r = T at 60 over T at the
+default, and the divisor at 60: `divisor` when that is not 10, `time` when
+r is 0.9 to 1.1, `frame` when r ≤ 1.15 × the frame-rate ratio, otherwise
+not observed), `dbg-tick` (hits against the window's frames, "every step",
+or its ticks, "every tick", within 10%) and `dbg-replenish` (hits within
+10% of the window's ticks).
+
+### Stats live 5 results
+
+Stats live procedure 5 ran on 2026-10-23 (10:11 to 10:49 UTC) on save slot
+14, "Sorak" (White Mage), and restored its saves clean at the end. It ran
+the research build from ForgePact `2d3e9dd` (DLL SHA-256
+`f8e36e7701a6aaf1911cc0cb7eae23c1ad6661949155c79bf07cf394da21dc1c`), the
+build with `kMark1ReplenishUnit` at 0.745, with the hub's x64dbg MCP
+attached twice (D1 after S4, D2 after S8). The capture is the playtest
+workorder's `forgepact-166-mark1-set-playtest2-live-5.md`, kept with the
+hub's workorder files and not tracked.
+
+`tools/live_checks.py` reads 16 checks: 11 pass, 3 fail, 1 not observed and
+1 not run. Of the checks the procedure required, all passed but
+`fps-default`, which failed against the setting the Video page displays,
+not against the rate the game ran at (below); the owner kept the data and
+dropped it from the required set (2026-10-23, after the session). Research
+checks: `tick-shape`, `fps-capped`, `tick-rate-capped` and `drain-capped`
+passed (the last two recorded values), `dbg-tick` and `dbg-replenish`
+failed their rule at the default setting, `regen-fps` was not observed, and
+`drain-tune` did not run.
+
+**The bar as read** (`skillstate`, S0): Dark Oath at 0,0, Chain of Holy
+Light at 0,2, Mana Orb at 0,3 (Q), Healing Zone (252) at 0,4 (E), Soul
+Spurn at 0,5 (R), 0,6 (Y) empty. The operator unbound Mana Orb and Soul
+Spurn and bound Shadow Bolt (239) to Y through the bar editor, so the
+automation had two proc columns, E and Y (`talents=-/252/-/239
+free=-/0/-/1`), and no other regen source was on the bar.
+
+**The FPS setting.** The Video page showed `VSync` Off and a `Framerate`
+row reading 60, that row drawn dimmer than the others; `menulayout` read
+both its buttons `enabled=0` (every other Video row `enabled=1`), and
+clicking the value only showed its help text. The game's own frame counter
+in the corner read 143 to 144, and the `vitals` and `perf` windows agree
+(143.7 and 144.1 frames a second). So the game's own counter is the
+reference here; what the disabled row means, and which `game_get_speed`
+value the game runs with while it is disabled, was not read. The operator
+could not set 60 there; the owner capped the game at 60 ("game is capped
+at 60 now", what was changed not stated), after which the page showed
+`VSync` On, `Framerate` still 60 and disabled, and the counter 60. In S9 the
+operator set `VSync` Off again and the game ran at 143.5 frames a second.
+
+| Check | Verdict | What it showed |
+|---|---|---|
+| `dll-hash` | pass | The lease hashed the installed DLL as `f8e36e77…dc1c`, the Live 5 build. |
+| `control` | pass | `pong (YYTK 4.0.1)`. |
+| `marker` | pass | `mark1probe: research build`; the first `mark1set stat` second line read `cost=drain drain=1.00 unit=0.745 drained=0`. S0b: `install=installed`, no `refused` line. |
+| `zero-control` | pass | `manaregen 0` (`statask 42` read 0): 600 frames in 4174 ms with `mana-gain=0`. |
+| `fps-default` | fail | 600 / 4.174 s = 143.7 frames a second (`perf`: 6.94 ms a frame, 144.1), against the `Framerate 60` the Video page displayed on a disabled row; not within 10% of 60. Within 0.2% of 144, which the page did not show. |
+| `tick-rate-default` | pass | `statask 42` read 1; 219 mana in 25.007 s over 3601 frames, so T = 8.7575 ticks a second (±0.46%), a tick every 16.4 frames. |
+| `tick-shape` | pass | R = 140, M = 2352. Switch off: 308 mana in 2.507 s against 14 × T × dt = 307.37 (tolerance 20.15), 14.03 a tick. Switch on (id 42 answered 76.8591, D = 63.1409): 176 in 2.510 s against 8 × T × dt = 175.85 (tolerance 11.52), 8.01 a tick. |
+| `drain-pct` | pass | a = 14 − 8 = 6 (p_off − p_on = 6.02), n = 2, unit 0.745: 100 × 8.7575 × 6 / (2 × 2352) = 1.117% of maximum mana a second per skill, ±0.46% relative (±0.005), inside 0.95% to 1.15%. |
+| `drain-tune` | not-run | `drain-pct` was in the band; S5 and `mark1probe autounit` were not needed. |
+| `fps-capped` | pass | After the owner's cap: 600 / 10.013 s = 59.9 frames a second (`perf`: 16.66 ms, 60.0). |
+| `tick-rate-capped` | pass | `statask 42` read 1; 225 mana in 30.008 s over 1801 frames: T = 7.498 ticks a second at 60, a tick every 8.0 frames. |
+| `drain-capped` | pass | At 60, d = 10 (switch off 630 = 45 × 14 against 631.41, tolerance 26.63); switch on 360 = 45 × 8 against 360.86; a = 6 (p_off − p_on = 13.97 − 7.98 = 5.99): 100 × 7.498 × 6 / 4704 = 0.956% a second per skill, 0.856 of `drain-pct`. Neither prediction met: clock or target timing gave 1.083 to 1.150, a fixed frame count 0.466. |
+| `regen-fps` | not-observed | r = 7.498 / 8.7575 = 0.856 with the divisor 10 at both rates; the time band is 0.9 to 1.1 and the frame band at most 1.15 × 59.92 / 143.75 = 0.479, so neither. Mana a second at R = 140: 122.6 at the default, 105.0 at 60. |
+| `dbg-control` | pass | `pm` 609 hits per 10 s in D1 and 571 in D2; the attach tool proved the instrument at both attaches by the game's frame counter (49830 to 49974, no answer at the hold, 50159; 247905 to 247966, no answer, 248064). |
+| `dbg-tick` | fail | D1 (the logpoints slowed the game to 60.5 frames a second): `tk` 144 to 159 hits against 1201 frames and 173.8 ticks by S3's T (0.83 to 0.91), so neither "every step" nor "every tick" by the rule, but 0.95 to 1.05 of the 152 ticks the gain shows (2128 = 152 × 14). D2 (60): 150 to 166 against 157.8 ticks (0.95 to 1.05), every tick. Mana per hit 13.4 to 14.8 (D1), 13.3 to 14.7 (D2). |
+| `dbg-replenish` | fail | `rp` counted as `tk` did: D1 0.83 to 0.91 of S3's ticks and 0.95 to 1.05 of the gain's; D2 0.95 to 1.05; mana per hit 13.4 to 14.8 (D1), 13.3 to 14.7 (D2). |
+
+**What else the session showed:**
+
+- **The tick under the debugger.** With the three logpoints armed at the
+  default setting the game ran about 60.5 frames a second (about 67 in a
+  first window that was discarded because mana reached its maximum), well
+  below its setting, and ticked 152 times in 19.849 s, 7.66 a second, a
+  tick every 7.9 frames, close to the 60 FPS window's 7.50 and 8.0. So the
+  tick appears to follow the frame rate the game reaches rather than only
+  its setting (inferred, from a window the procedure did not design to
+  separate the hypotheses; no external frame limiter was offered, so
+  `tick-rate-limited` was not run).
+- **Frames a tick are not constant.** 16.4 at about 144 frames a second,
+  8.0 at 60 and 7.9 at 60.5 under the debugger: the ratio of the frame
+  rates is 2.40, of the frames a tick 2.05. Neither a fixed count of
+  frames nor a fixed time accounts for both; the mechanism (what the Step
+  passes the tick) was not read.
+- **A hypothesis, inferred only and not claimed.** A tick period of 0.1 s
+  of clock plus two frames fits every window: it predicts 8.78 ticks a
+  second at 143.75 frames a second (measured 8.7575), 7.497 at 59.92
+  (7.498), 7.41 at 57.1 (D2, 7.51) and 7.52 at 60.5 (D1, 7.66). It would
+  give about 6 ticks a second and a drain of about 0.77% at 30 frames a
+  second. A future `tick-rate-limited` window, the game held below its
+  own setting by an external limiter, is what would test it.
+- **The operator's additions.** `mark1probe manaregen off` opened each
+  switch-on file (S4, S8), because the spend before it left the answer
+  forced to 0; D1's first window was discarded; the owner's cap at 60
+  turned `VSync` on, and the operator turned it off again in S9.
+
+### Stats live 5 decision
+
+Recorded on 2026-10-23 from Stats live 5 (results above). Each key takes
+exactly one value, on a line of its own, with its reason on the line below.
+
+regen-fps: not-observed
+The tick's divisor stayed 10 at 60 frames a second (VSync on; the setting row unchanged; S8's switch-off gain within one tick of ceil(R / 10) × T × dt), and its rate fell to r = 0.856 (8.76 to 7.50 ticks a second) while the frame rate fell to 0.417 (143.75 to 59.92): outside the `time` band (0.9 to 1.1) and above the `frame` band (at most 0.479). For the drain this means its share of maximum mana a second is not the same at every frame rate, but it does not fall in proportion to the frame rate either: at the shipped unit it read 1.117% at about 144 and 0.956% at 60, both inside the owner's band, and a lower frame rate takes a little less. No `time` reading was made: the game was not run below its own setting in a designed window (the 60 FPS window ran with the game capped by `VSync` and the setting row disabled, and which `game_get_speed` value was in force was not read), so whether the tick is counted against the target rate or by the clock stays not established; the debugger-slowed window (7.66 ticks a second at 60.5 frames a second) suggests the tick follows the rate the game reaches (inferred).
+
+drain-pct: 1.117 pass
+100 × T × a / (n × M) = 100 × 8.7575 × 6 / (2 × 2352) = 1.117% of maximum mana a second per automated skill at the shipped unit 0.745, at about 144 frames a second, uncertainty ±0.46% relative (±0.005, from 219 ticks counted), inside 0.95% to 1.15% (`tick-shape` passed, so a = 6 is the whole mana a tick the switch takes; p_off − p_on read 6.02 as a check).
+
+drain-unit: 0.745
+The shipped unit passed the band, so no other unit was tried (`drain-tune` not run). Every unit tried and its measured percent: 0.745 read 1.117% at about 144 frames a second (`drain-pct`) and 0.956% at 60 (`drain-capped`), both in the band. The owner kept 0.745 (2026-10-23, after Stats live 5); a change to `kMark1ReplenishUnit` would be a one-line follow-up planned with the owner, and none is planned.
+
+These set the workorder's route tokens `regen-fps: not-observed`,
+`drain-pct: 1.117 pass` and `drain-unit: 0.745`. Nothing here changes the
+plugin. The shared reference is
+[RUNTIME_DATA_MODELS § 7.10](../../docs/RUNTIME_DATA_MODELS.md#710-the-skill-bars-buttons-mana-and-the-casts-speed).

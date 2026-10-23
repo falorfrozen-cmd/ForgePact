@@ -182,6 +182,18 @@
     <label class="switch"><input type="checkbox" id="mod_flight_broom" aria-label="Witch's Broomstick drops"><span class="sl"></span></label>
     <span class="val" id="mfbval">off</span>
   </div>
+  <!-- The Mark 1 set (#166): one switch for the full-set bonus; the plugin acts only while all four pieces are worn. -->
+  <div class="row" style="border:none">
+    <span class="lbl" style="width:auto;flex:1">Mark 1 set<br><span class="feature-description">Mark 1, a ForgePact item set: helmet, body armor, boots and gloves. While you wear all four, the skills on your Q, E, R and Y slots cast themselves when ready, draining your mana as they do, and your jump goes three times as far, over scenery; in exchange you walk at half speed. Off by default.</span></span>
+    <label class="switch"><input type="checkbox" id="mod_mark1_set" aria-label="Mark 1 set"><span class="sl"></span></label>
+    <span class="val" id="mk1val">off</span>
+  </div>
+  <!-- Mark 1 drops (#166): the kill route is DropItem's unique draw (kills measured in Hell only), the vault route the game's Heroic roll (built by name-called rolls; a vault's own call not observed). -->
+  <div class="row" style="border:none">
+    <span class="lbl" style="width:auto;flex:1">Mark 1 drops<br><span class="feature-description">Lets the four pieces of Mark 1, a ForgePact item set (helmet, body armor, boots and gloves), drop from the monsters you kill, among the game's own items, and join the roll a vault makes for its loot. The set's bonus is the Mark 1 set switch above. Off by default.</span></span>
+    <label class="switch"><input type="checkbox" id="mod_mark1_drops" aria-label="Mark 1 drops"><span class="sl"></span></label>
+    <span class="val" id="mk1dval">off</span>
+  </div>
 </div>
 
 <div class="card tab-card" data-tab="mods" id="gameplayCard" role="tabpanel" aria-labelledby="subtab-gameplay">

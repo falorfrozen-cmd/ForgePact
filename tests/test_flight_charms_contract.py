@@ -127,10 +127,12 @@ class FlightCharmsForgeContract(unittest.TestCase):
         self.assertEqual(forge.count("FlightCharmForgeEntry("), 1)
         # The ranges are tried only once every entry missed: the extra pass
         # after the last entry, and the entries' own test skipped for it.
-        self.assertIn("for (size_t i = 0; i <= entryCount; ++i)", forge)
+        # (ForgePact #166's Mark 1 pieces take one more pass after it, which
+        # tests/test_mark1_set_contract.py pins.)
+        self.assertIn("for (size_t i = 0; i <= entryCount + 1; ++i)", forge)
         self.assertIn("const bool flightMatched = i == entryCount;", forge)
         self.assertIn("if (flightMatched && !FlightCharmForgeEntry(", forge)
-        self.assertIn("if (!flightMatched && !CustomForgeMatches(entry, *candidate, definition)) continue;", forge)
+        self.assertIn("if (!flightMatched && !mark1Matched && !CustomForgeMatches(entry, *candidate, definition)) continue;", forge)
 
     def test_the_selector_index_lets_the_ranges_through(self):
         could = self.body("could_match")
@@ -974,12 +976,20 @@ class FlightCharmsDropContract(unittest.TestCase):
         self.assertNotIn("HookOneScriptTable", self.code)
         # A table-only hook is passed by the game's compiled calls: the elf stays off.
         self.assertIn("d.uniqueNative = ok && native;", install)
-        self.assertIn("if (!d.uniqueNative)", install)
+        # (Said whenever the elf's switch comes on, since the Mark 1 drops may have tried it first.)
+        self.assertIn("if (elf && !d.uniqueNative)", install)
         self.assertIn("FcNs::RefusedLine(", install)
-        # One HookOneScript in the whole adapter, and one caller of the installer:
-        # the elf's switch-on.
+        # One HookOneScript in the whole adapter, and three callers of the installer: the elf's
+        # switch-on, the Mark 1 drops' install (#166), which share the one detour, and the
+        # research build's `mark1probe draws` install (#166 uniques), in no player build.
         self.assertEqual(self.code.count("HookOneScript("), 1)
-        self.assertEqual(self.all_code.count("FlightDropInstallUnique()"), 2, "the definition and the switch-on")
+        self.assertEqual(self.all_code.count("FlightDropInstallUnique()"), 4,
+                         "the definition, the switch-on, the Mark 1 drops' install and the draws watch's install")
+        self.assertIn("FlightDropInstallUnique();", strip_comments(function_body(self.plugin, "static std::string Mark1DropInstall()")))
+        self.assertIn("FlightDropInstallUnique();", strip_comments(function_body(self.plugin, "static void M1pDrawsInstall()")))
+        self.assertNotIn("static void M1pDrawsInstall()", strip_research_blocks(self.plugin))
+        self.assertEqual(self.shipped.count("FlightDropInstallUnique()"), 3,
+                         "the player build keeps the definition, the switch-on and the Mark 1 drops' install")
         switch = self.body("switch")
         self.assertIn("if (on) {", switch)
         self.assertLess(switch.index("if (on) {"), switch.index("FlightDropInstallUnique();"))
@@ -1038,9 +1048,15 @@ class FlightCharmsDropContract(unittest.TestCase):
         hook = self.body("unique_hook")
         lines = [line.strip() for line in hook.split("\n") if line.strip()]
         self.assertEqual(lines[0], "if (!g_Orig_FlightDropUnique) return R;")
-        passthrough = "if (g_SigRollDepth > 0 || g_FlightDrop.rollUnique || !g_FlightDrop.switches[(int)FcNs::Charm::Elf])"
+        # Pocket Elf's part of the shared detour (#166): its switch on and no roll in progress, the
+        # Angelic roll's or a unique roll either feature took; with neither feature's part, the
+        # game's own call.
+        self.assertIn("const bool elf = g_SigRollDepth <= 0 && g_FlightDrop.uniqueDepth <= 0 && "
+                      "g_FlightDrop.switches[(int)FcNs::Charm::Elf];", hook)
+        passthrough = "if (!elf && !mark1) return g_Orig_FlightDropUnique(S, O, R, argc, A);"
         self.assertIn(passthrough, hook)
-        inject = hook.index("FlightUniqueInjectGuard inject;")
+        self.assertLess(hook.index("FlightUniqueDepthScope depth;"), hook.index("FlightUniqueInjectGuard inject(elf);"))
+        inject = hook.index("FlightUniqueInjectGuard inject(elf);")
         roll = hook.index("SignatureRollScope roll;")
         counters = hook.index("FlightUniqueCounterScope counters;")
         reset = hook.index("SignatureHitReset();")
@@ -1053,7 +1069,7 @@ class FlightCharmsDropContract(unittest.TestCase):
         self.assertLess(reset, original)
         self.assertLess(original, hook.index("FlightDropAfterHit();"))
         guard = strip_comments(function_body(self.plugin, "struct FlightUniqueInjectGuard {"))
-        self.assertRegex(guard, r"FlightUniqueInjectGuard\(\)\s*\{[^}]*FlightDropUniquePush\(\);")
+        self.assertRegex(guard, r"FlightUniqueInjectGuard\(bool on\)[^{]*\{[^}]*FlightDropUniquePush\(\);")
         self.assertRegex(guard, r"~FlightUniqueInjectGuard\(\)\s*\{[^}]*FlightDropRemove\(\);")
 
     def test_the_unique_roll_leaves_74s_counters_as_they_were(self):
@@ -1199,6 +1215,73 @@ class FlightCharmsDropContract(unittest.TestCase):
         self.assertIsNone(re.search(r"0x[0-9A-Fa-f]{5,}", self.code))
         self.assertNotIn("GetModuleHandle", self.code)
         self.assertNotIn("MmCreateHook", self.code)
+
+    # ---- Pocket Elf's kill route on DropItem's own draw (#166) ------------------------------
+    # The adapter is the kill draw's, shared with the Mark 1 drops (test_mark1_drops_contract.py's
+    # test_draw_hook_* pin its hooks); these pin Pocket Elf's part of it.
+
+    def test_elf_kill_draw_switch_installs_the_shared_draw_and_refuses_whole(self):
+        switch = self.body("switch")
+        self.assertLess(switch.index("FlightDropInstallUnique();"), switch.index("const std::string drawWhy = KillDrawInstall();"))
+        refusal = switch[switch.index("if (!drawWhy.empty()) {"):]
+        refusal = refusal[:refusal.index("return;")]
+        self.assertIn("g_FlightDrop.switches[i] = false;", refusal)
+        self.assertIn('Out(FcNs::RefusedLine("elf: " + drawWhy + " - Pocket Elf stays off"));', refusal)
+        self.assertLess(switch.index("KillDrawInstall()"), switch.index("FlightDropResolveElf();"))
+        # Only Pocket Elf's switch installs the draw; Gabriel Wings and Witch's Broomstick do not.
+        elf_branch = switch[switch.index("if (c == FcNs::Charm::Elf) {"):switch.index("} else {")]
+        self.assertIn("KillDrawInstall()", elf_branch)
+        self.assertEqual(switch.count("KillDrawInstall()"), 1)
+
+    def test_elf_kill_draw_part_is_its_switch_gate_and_the_cores_decisions(self):
+        elf_on = strip_comments(function_body(self.plugin, "static bool KillDrawElfOn()"))
+        for term in ("g_FlightDrop.switches[elf]", "!g_FlightDrop.refused[elf]", "g_SigDetectNative", "g_KillDraw.orig != nullptr"):
+            self.assertIn(term, elf_on)
+        begin = strip_comments(function_body(self.plugin, "static void KillDrawBeginCall()"))
+        self.assertIn("g_ElfDraw.BeginCall(KillDrawElfOn(), g_SigRollDepth + g_FlightDrop.uniqueDepth) == FcNs::DrawAction::Push", begin)
+        push = strip_comments(function_body(self.plugin, "static void KillDrawPush(bool mark1, bool elf)"))
+        self.assertIn("if (g_ElfDrawCache.Stale(elfKeys)) {", push)
+        self.assertIn("FcNs::ResolveElfDrawStandIn(elfLists, KillDrawElfVerdict)", push)
+        self.assertIn("elfCopies = FcNs::ElfDrawCopies(elfStandIn, g_FlightDropCopies);", push)
+        self.assertIn("g_ElfDraw.NotePushed(elfStandIn, elfCopies);", push)
+        # Pocket Elf's row goes on first, before the pieces'.
+        self.assertLess(push.index("if (elfCopies > 0)"), push.index("for (const M1dNs::DrawPushEntry& e : plan.entries)"))
+        tier = strip_comments(function_body(self.plugin, "static void KillDrawNoteTier(const RValue& result)"))
+        self.assertIn("g_ElfDraw.NoteTier(", tier)
+        settle = strip_comments(function_body(self.plugin, "static void KillDrawSettleHit()"))
+        self.assertIn("g_ElfDraw.Hit(d.pickT, d.pickSub, d.pickB, u) == FcNs::DrawHit::Ours", settle)
+        # The hit line's k is Pocket Elf's own recorded tier, the one its coin read.
+        self.assertIn("const int ek = g_ElfDraw.Tier();", settle)
+        self.assertIn("g_ElfDraw.EnterRoll();", strip_comments(function_body(self.plugin, "static void KillDrawEnterRoll()")))
+        self.assertIn("g_ElfDraw.LeaveRoll();", strip_comments(function_body(self.plugin, "static void KillDrawLeaveRoll()")))
+
+    def test_elf_kill_draw_rewrite_built_and_line_are_the_flight_charms_own(self):
+        rewrite = strip_comments(function_body(self.plugin, "static bool KillDrawBeforeCreate(int argc, RValue** A)"))
+        self.assertIn("if (!isPiece && !g_ElfDraw.HitPending()) return false;", rewrite)
+        self.assertIn("FcNs::SeedFromUniform(FcNs::Charm::Elf, u)", rewrite)
+        self.assertIn("(double)FcNs::kCharmBaseB", rewrite)
+        self.assertIn("FlightDropRefuse(static_cast<int>(FcNs::Charm::Elf), shown);", rewrite)
+        self.assertIn("g_ElfDraw.Settle(ok);", rewrite)
+        note = self.body("note_built")
+        self.assertEqual([l.strip() for l in note.split("\n") if l.strip()][0],
+                         "if (charm == FcNs::Charm::Elf && KillDrawNoteBuiltElf()) return;")
+        built = strip_comments(function_body(self.plugin, "static bool KillDrawNoteBuiltElf()"))
+        self.assertIn("g_ElfDraw.NoteBuilt();", built)
+        self.assertIn("g_SigRollDepth > 0 || d.aside > 0", built)
+        self.assertNotIn("g_FlightDrop.tally", built)   # the DropUniqueItems route's tally is its own
+        close = strip_comments(function_body(self.plugin, "static void KillDrawCloseHit()"))
+        self.assertIn('"flightcharm hit: "', close)
+        self.assertIn("g_ElfDraw.Settle(false);", close)
+
+    def test_elf_kill_draw_stat_fields(self):
+        fields = strip_comments(function_body(self.plugin, SIGNATURES["stat_fields"]))
+        self.assertLess(fields.index("FlightDropFillStat(s);"), fields.index("KillDrawElfFillStat(s);"))
+        fill = strip_comments(function_body(self.plugin, "static void KillDrawElfFillStat(FcNs::StatFields& s)"))
+        self.assertIn("g_ElfDraw.FillStat(s, g_FlightDrop.switches[static_cast<int>(FcNs::Charm::Elf)]);", fill)
+        self.assertIn("s.elfDrawHook = g_KillDraw.route;", fill)
+        self.assertIn("s.elfDrawTyped = g_KillDraw.elfTyped;", fill)
+        self.assertIn("static FcNs::ElfDraw g_ElfDraw;", self.shipped)
+        self.assertIn("static FcNs::ElfDrawCache g_ElfDrawCache;", self.shipped)
 
 
 # ---- the probe: the research build's `flightprobe` -------------------------------------------
@@ -1566,12 +1649,20 @@ class FlightCharmsTooltipContract(unittest.TestCase):
     def test_the_stats_hook_decides_through_the_headers_rule(self):
         stat = function_body(self.release, "static RValue& Hook_DrawInventoryStatsNew(")
         read = stat.index("ForgePact::ForgedTooltipRows::NeedsStatRead(g_TipRowsPending, fmt, g_TipItemNoStats)")
-        present = stat.index("&& TipStatPresent(A, argc);")
+        present = stat.index("&& TipStatPresent(A, argc);", read)
         anchor = stat.index(
-            "if (ForgePact::ForgedTooltipRows::AnchorsHere(g_TipRowsPending, fmt, present, g_TipItemNoStats)) {")
+            "anchors = ForgePact::ForgedTooltipRows::AnchorsHere(g_TipRowsPending, fmt, present, g_TipItemNoStats);")
         self.assertLess(read, present, "the stat is read only when the rule asks")
         self.assertLess(present, anchor)
-        self.assertLess(anchor, stat.index("g_TipRowsPending = false;"), "an anchor ends the pending rows")
+        self.assertLess(anchor, stat.index("if (anchors) {"))
+        self.assertLess(stat.index("if (anchors) {"), stat.index("g_TipRowsPending = false;"), "an anchor ends the pending rows")
+        # A Mark 1 piece alone asks its own core (Mark1Set.hpp's BlockAnchor,
+        # after the piece's own stat lines, the 2026-10-22 playtest); every
+        # other forged item takes the header's rule in the `else`.
+        piece = stat.index("if (g_TipM1AnchorOn) {")
+        self.assertLess(piece, stat.index("} else {"))
+        self.assertLess(stat.index("} else {"), read)
+        self.assertIn("anchors = g_TipM1Anchor.AnchorsHere(statId, has, fmt);", stat[piece:read])
         self.assertNotIn("fmt == 2.0 || fmt == 3.0) && TipStatPresent", stat, "no second copy of the rule")
         self.assertEqual(2, stat.count("TipNoteStat("))
         self.assertEqual(2, stat.count("g_Tip.statId = outerStat;"))
@@ -1589,6 +1680,29 @@ class FlightCharmsTooltipContract(unittest.TestCase):
         self.assertIn('RValue("itemStatStruct")', reader)
         self.assertIn('"variable_struct_names_count"', reader)
         self.assertIn("catch (...) { return false; }", reader, "a failed read keeps the old anchor")
+
+    def test_a_charms_rows_stay_gold_beside_mark_1s_set_block(self):
+        # Both arming sites hand an item that is not a Mark 1 piece its
+        # ForgedTooltipRows, as gold rows; the anchor draws a gold row through
+        # HhDrawTooltipLine, unchanged (ForgePact #166 drew Mark 1's block
+        # beside them, in its own colours).
+        for name, item in (("static RValue& Hook_DrawInventoryItemV2(", "*A[3]"), ("static bool TipDrawOne(", "item")):
+            body = function_body(self.release, name)
+            self.assertIn(f"else g_TipRows = TipGoldRows(ForgedTooltipRows({item}));", body, name)
+        gold = function_body(self.release, "static std::vector<TipRow> TipGoldRows(")
+        self.assertIn("TipRow{ text, kTipGold, false }", gold)
+        self.assertIn("static constexpr double kTipGold = 6472946.0;", self.release)
+        draw = function_body(self.release, "static double TipDrawRow(double x, double y, const TipRow& row)")
+        # A gold row is never wrapped nor in the small font (Mark 1's
+        # description alone is), so it draws through HhDrawTooltipLine.
+        self.assertIn("if (!row.wrapped && !row.smallFont && row.colour == kTipGold) {", draw)
+        self.assertIn("HhDrawTooltipLine(x, y, row.text);", draw)
+        self.assertLess(draw.index("HhDrawTooltipLine(x, y, row.text);"), draw.index("const TipSmallFont font(row.smallFont);"))
+        line = function_body(self.release, "static void HhDrawTooltipLine(double x, double y, const std::string& text)")
+        self.assertIn('"make_colour_rgb", { RValue(242.0), RValue(196.0), RValue(98.0) }', line)
+        # At most three rows of a forged item's own text, as before.
+        rows = function_body(self.release, "static std::vector<std::string> ForgedTooltipRows(const RValue& item)")
+        self.assertIn("rows.size() < 3", rows)
 
 
 if __name__ == "__main__":

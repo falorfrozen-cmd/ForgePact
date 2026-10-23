@@ -24,7 +24,7 @@ export const BOOLEAN_MODS = [
   'mod_toggle_indicator', 'mod_toggle_guard', 'mod_restart_anytime', 'mod_craft_mats',
   'mod_far_sleep', 'mod_stash_move_all', 'density_rolling', 'mod_hidden_loot', 'mod_jump_scenery', 'mod_loot_announce', 'mod_pillar_tips',
   'mod_tracker',
-  'mod_flight_elf', 'mod_flight_wings', 'mod_flight_broom',
+  'mod_flight_elf', 'mod_flight_wings', 'mod_flight_broom', 'mod_mark1_set', 'mod_mark1_drops',
   'mod_gem_mythic', 'mod_gem_maxroll', 'mod_boss_soul_pieces',
   'satanic_everywhere',
 ];

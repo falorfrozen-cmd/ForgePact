@@ -879,6 +879,9 @@ class ToggleIndicatorReadContractTests(unittest.TestCase):
             # HS Offline Tracker's sensor (ForgePact #185;
             # test_tracker_mod_contract.py).
             "tracker",
+            # The Mark 1 set's switch and `mark1set stat` (ForgePact #166;
+            # test_mark1_set_contract.py).
+            "mark1set",
             # The number display guard's `numguard stat` (ForgePact #230;
             # test_number_guard_contract.py).
             "numguard",
@@ -2556,6 +2559,13 @@ DUNGEON_CHEST_DRAW_CALL_LINE = "    DungeonChestDraw();"
 # callback, on the line straight after the dungeon chest's; removed the same
 # way (test_chaos_pillar_tips_contract.py pins the rest of it).
 PILLAR_TIPS_TICK_CALL_LINE = "    PillarTipsTick();"
+# The Mark 1 set (ForgePact #166) draws its automated columns' border from the
+# same callback, on the line straight after the toggle border's; removed first
+# (test_mark1_set_contract.py's border_line pins the rest of it).
+MARK1_BORDER_DRAW_CALL_LINE = "    Mark1BorderDraw();"
+# Its grey icon (playtest 2) is drawn on the line straight after the border's;
+# removed with it (test_mark1_set_contract.py's grey-icon test pins the rest).
+MARK1_GREY_DRAW_CALL_LINE = "    Mark1GreyDraw();"
 INCIDENT_HUD_SCOPE_LINE = "    IncidentScope incidentScope(IncidentMod::hudlabels);"
 # ForgePact #76, amendment 5: the call into the game's original runs inside the
 # incident monitor's guard, so `hudlabels` counts only our own code.
@@ -2583,8 +2593,25 @@ def assert_hook_draw_hud_buffs_unchanged_plus_skilltimer(testcase, new_body, old
 
     NARROWED again for ForgePact #7: Always show Chaos Pillar mods' tick is one
     more call, on its own line directly after the dungeon chest's, and is
-    removed with the other three."""
+    removed with the other three.
+
+    NARROWED again for ForgePact #166: the Mark 1 set's border is one more
+    call, `Mark1BorderDraw();`, on its own line directly after
+    `ToggleIndicatorDraw();` (it cannot ride inside it: that draw returns at
+    once while the toggle border's own switch is off). Exactly that one line,
+    present once, is removed first, before the compare below.
+
+    NARROWED again for ForgePact #166 (playtest 2): the automated columns'
+    grey icon is one more call, `Mark1GreyDraw();`, on its own line directly
+    after `Mark1BorderDraw();`. Exactly that one line, present once, is
+    removed with the border's."""
     lines = new_body.split("\n")
+    testcase.assertEqual(lines.count(MARK1_BORDER_DRAW_CALL_LINE), 1, new_body)
+    border_at = lines.index(MARK1_BORDER_DRAW_CALL_LINE)
+    testcase.assertEqual(lines[border_at - 1].strip(), "ToggleIndicatorDraw();", new_body)
+    testcase.assertEqual(lines.count(MARK1_GREY_DRAW_CALL_LINE), 1, new_body)
+    testcase.assertEqual(lines[border_at + 1], MARK1_GREY_DRAW_CALL_LINE, new_body)
+    del lines[border_at:border_at + 2]
     testcase.assertEqual(lines.count(INCIDENT_HUD_SCOPE_LINE), 1, new_body)
     lines.remove(INCIDENT_HUD_SCOPE_LINE)
     testcase.assertEqual(lines.count(INCIDENT_HUD_ORIGINAL_LINE), 1, new_body)
@@ -3102,9 +3129,10 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         # test_flight_charms_contract.py), `soulpiece` is Boss soul
         # pieces (ForgePact #197, test_soul_piece_contract.py), `tracker`
         # is HS Offline Tracker's sensor (ForgePact #185,
-        # test_tracker_mod_contract.py), and `numguard` is the number display
-        # guard's `numguard stat` (ForgePact #230,
-        # test_number_guard_contract.py).
+        # test_tracker_mod_contract.py), `mark1set` is the Mark 1 set's
+        # switch and stat (ForgePact #166, test_mark1_set_contract.py), and
+        # `numguard` is the number display guard's `numguard stat` (ForgePact
+        # #230, test_number_guard_contract.py).
         self.assertEqual(now - before, {"autoprospect", "skilltimer", "menulayout", "restartanytime",
                                         "miningore", "miningrolls", "minerhelm", "packmarks", "craftmats",
                                         "gemmythic", "gemmaxroll", "gemfilter",
@@ -3113,7 +3141,7 @@ class ToggleTableProbeContractTests(unittest.TestCase):
                                         "petunstick", "petrelic", "frameprof", "farsleep", "stashmoveall", "stashmove",
                                         "densityroll", "hiddenloot", "bossrarity", "incident", "dungeonchest",
                                         "jumpscenery", "satzone", "skillslider", "gambapity", "lootann",
-                                        "pillartips", "flightcharm", "soulpiece", "tracker",
+                                        "pillartips", "flightcharm", "soulpiece", "tracker", "mark1set",
                                         "numguard"})
         self.assertEqual(before - now, set())
 
@@ -3180,7 +3208,14 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         # One call site: TgProbeSpriteDrawOne's whole-sprite draw.
         # TgProbeSpriteDrawQuad draws via draw_sprite_part_ext instead
         # (round 10's corrected per-quadrant crop, not a whole-sprite copy).
-        self.assertEqual(self.plugin.count('"draw_sprite_ext"'), 1)
+        # NARROWED for ForgePact #166 (playtest 2), not deleted: the Mark 1
+        # set's grey icon redraws each automated button's own sprite with the
+        # game's "cannot use" blend, the one other call site. Once there, once
+        # here, nowhere else.
+        grey = function_body(self.plugin, "static void Mark1GreyDraw(")
+        self.assertEqual(one.count('"draw_sprite_ext"'), 1)
+        self.assertEqual(grey.count('"draw_sprite_ext"'), 1)
+        self.assertEqual(self.plugin.count('"draw_sprite_ext"'), 2)
         self.assertEqual(self.plugin.count('"draw_sprite_part_ext"'), 1)
         # Hung off the existing research after-draw path (buffs) and the new
         # hud-layer hook - never Hook_DrawHudBuffs or FrameCallback directly,

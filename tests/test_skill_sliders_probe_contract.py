@@ -201,6 +201,11 @@ class ProjProbeContractTests(unittest.TestCase):
         sliders = (FORGEPACT_DIR / "plugin" / "include" / "ForgePact" / "SkillSlidersMod.hpp").read_text(encoding="utf-8-sig")
         PLAYER_HOOKED = set(re.findall(r"SdkShortScriptName\(HeroSiege::Scripts::gml_Script_(\w+)\)", strip_comments(sliders)))
         self.assertEqual(len(PLAYER_HOOKED), 5, "the skill sliders' script table was not found")
+        # TalentUseSetSpeed's player-build holder: the Mark 1 set's landing
+        # detour (ForgePact #166, the turns), installed in Mark1SetInstall.
+        mark1_install = function_body(self.player_build, "static std::string Mark1SetInstall()")
+        self.assertIn("HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_TalentUseSetSpeed),", mark1_install)
+        PLAYER_HOOKED.add("TalentUseSetSpeed")
         guard_at = k_names.index("#ifndef FORGEPACT_RELEASE")
         guarded = k_names[guard_at:k_names.index("#endif", guard_at)]
         for name in HOOKED + ENEMY_ROWS + ("ReturnSpecificStat",):

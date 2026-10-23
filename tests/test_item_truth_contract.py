@@ -258,6 +258,20 @@ class ItemTruthContractTests(unittest.TestCase):
         hook = hook[:hook.index("\n}\n") + 2]
         self.assertIn("TipNoteText(kTipBuiltinText[N], argc, Args);", hook)
         self.assertIn("if (g_Orig_TipBuiltinText[N]) g_Orig_TipBuiltinText[N](Result, S, O, argc, Args);", hook)
+        # The one exception (ForgePact #166): draw_text, inside a Mark 1 piece's
+        # armed pass, draws that piece's type line as `Satanic Set <type>` from
+        # a copy of the arguments, recorded as drawn; every other call is
+        # recorded and passed on untouched.
+        self.assertIn("if constexpr (N == 0) {", hook)
+        self.assertIn("if (g_TipTypeLinePiece >= 0 && TipTypeLineDraw(Result, S, O, argc, Args)) return;", hook)
+        line = function_body(self.release, "static bool TipTypeLineDraw(")
+        self.assertIn("std::vector<RValue> args(Args, Args + argc);", line)
+        self.assertIn("TipNoteText(kTipBuiltinText[0], argc, args.data());", line)
+        self.assertIn("if (g_Orig_TipBuiltinText[0]) g_Orig_TipBuiltinText[0](Result, S, O, argc, args.data());", line)
+        self.assertNotRegex(line, r"Args\[\d\]\s*=(?!=)", "the game's own arguments are never written")
+        # Each builtin is hooked once, whichever install comes first.
+        once = function_body(self.release, "static void InstallTipBuiltinTextHook()")
+        self.assertIn("if (!g_Orig_TipBuiltinText[I])", once)
         ids = self.release[self.release.index("kTipBuiltinTextIds[kTipBuiltinTextCount] = {"):]
         ids = ids[:ids.index("};")]
         self.assertEqual(8, len(re.findall(r'"fp_truth_\w+"', ids)), "hook ids are literals that outlive the hooks")

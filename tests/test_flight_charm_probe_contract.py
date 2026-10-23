@@ -258,11 +258,16 @@ class CharmProbeContract(unittest.TestCase):
     def test_sprite_add_and_the_icon_bytes_stay_in_the_research_block(self):
         self.assertIn("sprite_add", self.code)                                # positive control
         # Phase 2's forge loads the six charm icons in both builds (ForgePact
-        # #158, test_flight_charms_contract.py), from FlightIconsLoad alone; no
-        # other player-build code calls sprite_add.
+        # #158, test_flight_charms_contract.py), from FlightIconsLoad, and the
+        # Mark 1 set loads its pieces' icons the same way, from Mark1IconsLoad
+        # (ForgePact #166, test_mark1_set_contract.py); no other player-build
+        # code calls sprite_add.
         forge_load = function_body(self.plugin, "static void FlightIconsLoad()")
-        self.assertIn("sprite_add", forge_load)                               # the one shipped call is that one
-        self.assertNotIn("sprite_add", strip_comments(strip_research_blocks(self.plugin).replace(forge_load, "")))
+        self.assertIn("sprite_add", forge_load)                               # the flight charms' shipped call
+        mark1_load = function_body(self.plugin, "static void Mark1IconsLoad()")
+        self.assertIn("sprite_add", mark1_load)                               # the Mark 1 pieces' shipped call
+        self.assertNotIn("sprite_add", strip_comments(strip_research_blocks(self.plugin)
+                                                      .replace(forge_load, "").replace(mark1_load, "")))
         for probe_only in ("charmprobe", "FlightCharmProbeIcon", "kPng", "Fcp"):
             self.assertNotIn(probe_only, forge_load)
         self.assertNotIn("FlightCharmProbeIcon", self.shipped)

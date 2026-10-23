@@ -281,7 +281,10 @@ export default async function (t) {
     const start = (await settled(t, page)).snapshot;
     assert(!start.paused, 'the session starts paused');
     for (const on of [true, false]) {
-      const [req] = await Promise.all([page.waitForRequest(isPost('/api/tracker/pause')), page.click('#trkPause')]);
+      // Wait for the answer, not the send: the API is read next, and under load a
+      // request seen leaving has not yet been applied.
+      const [res] = await Promise.all([page.waitForResponse((r) => isPost('/api/tracker/pause')(r.request())), page.click('#trkPause')]);
+      const req = res.request();
       const posted = JSON.parse(req.postData());
       assert(posted.on === on, `pause posted ${req.postData()}`);
       const body = await t.api('/api/tracker');

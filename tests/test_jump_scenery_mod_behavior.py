@@ -216,6 +216,22 @@ class JumpSceneryModBehaviorTests(unittest.TestCase):
     def test_an_unresolved_family_answers_for_nothing(self):
         self.assertScenario("failclosed/unresolved_family_or_exclusion")
 
+    # ---- the public Learn (ForgePact #166) -----------------------------------
+    # The rule that turns a clean jump into a reach and a cap, moved unchanged
+    # out of CloseJump so the Mark 1 set's clean jumps teach the same learner.
+
+    def test_learn_entry_teaches_what_a_clean_jump_teaches(self):
+        # A reach; a cap from a jump well short of its cursor; that cap cleared
+        # by a longer jump; a hop under 32 px, a non-finite length and a
+        # non-finite cursor teaching nothing of what they would not.
+        self.assertScenario("learn_entry/same_as_a_clean_jump")
+
+    def test_learn_entry_teaches_with_the_switch_never_on(self):
+        self.assertScenario("learn_entry/switch_never_on")
+
+    def test_learn_entry_during_a_jump_changes_only_the_reach_and_the_cap(self):
+        self.assertScenarios("learn_entry/during_a_clean_jump", "learn_entry/during_a_granted_jump")
+
 
 if __name__ == "__main__":
     unittest.main()
