@@ -151,6 +151,25 @@ pieces" below.
   Taken Reduced make a hit do less damage (your life stayed full), whether
   every fired skill casts and a piece dropping from a vault.
 
+- **Loot announcements show the item in its rarity's colour (#228).** With
+  Loot announcements on, the chat line for a Heroic, Angelic or Unholy item
+  used to be all red, `SERVER: <your character> found <item>`. Now it reads
+  like the game's own chat, for example `[21:58] Sorak found: Cavebat Heavy
+  Belt`: your character's name and "found" in the game's ordinary grey chat
+  text, and the item's name in the colour the game's online announcement
+  uses for its rarity, green for Heroic, pale yellow for Angelic and crimson
+  for Unholy. If the game ever refuses the coloured line, you get the old
+  red line instead. Which items are announced is unchanged. Tested in a
+  game session on 2026-10-23 with a development build of the plugin: a
+  Heroic, an Angelic and an Unholy item placed with a development command
+  each got a line whose item name was drawn in exactly that colour, with
+  the rest of the line grey; a Satanic item got no line, and with the
+  switch off neither did a Heroic one. The red fallback line was not seen
+  in play (it shows only if the coloured line is refused, which did not
+  happen), and neither was a coloured line for an item dropped by a kill.
+  As before, the line goes to the chat's general channel, so with the
+  game's general chat switched off it may not appear (not tried in play).
+
 ## Fixed
 
 - **Pocket Elf did not drop from kills (#166).** Since 2.3.0, switching
@@ -212,8 +231,8 @@ pieces" below.
   floor is cleared and then puts them all down at once, and ForgePact took
   that late landing for an item you had dropped from your bag, which it never
   announces. Now an item held back on a tower floor is announced when the
-  floor's loot lands at its end, with the usual red `SERVER: <your character>
-  found <item>` line. Tested in a game session on 2026-10-23 with a
+  floor's loot lands at its end, with the usual loot announcement line (now
+  in the item's rarity colour, see #228 above). Tested in a game session on 2026-10-23 with a
   development build of the plugin, on the first floor of the tower: a Heroic
   item put on the floor with a development command was announced when the
   floor was cleared, and with the fix switched off another one got no line,

@@ -1238,6 +1238,9 @@ measured or inference.
 - So a line carries exactly two colours of the caller's choosing, the
   sender's and the text's, beside the fixed stamp and separator. Colouring
   the item name alone means putting everything before it in the sender part.
+  Measured 2026-10-23 (§ Session results, below): three `ChatAddMessage`
+  lines each drew their sender part in exactly the sender colour passed and
+  their text part in exactly the text colour passed.
 - `ChatAddServerMessage` takes only the text and a channel (0 by default).
   It passes the sender (measured: `SERVER`), red 255 (#FF0000) as both
   colours, and message type 1. No colour can be passed through it, which is
@@ -1296,14 +1299,20 @@ measured or inference.
 - **The split.** The sender part is `<character> found` (the character's
   name, or `You` when it cannot be read) and the text part is the item name
   (`itemInfoStruct["28"]`). The line reads `[hh:mm] Sorak found : <item
-  name>`, the stamp and the separator in the game's own colours.
+  name>`, the stamp and the separator in the game's own colours. Measured
+  2026-10-23: the feed showed `[21:58] Sorak found: Cavebat Heavy Belt`, with
+  no `SERVER:` (§ Session results; the spacing around the colon is as the
+  operator transcribed it from the screenshot).
 - **The colours.** The sender part in 11974842 (#BAB8B6, the game's grey
   chat text). The item name in the online announcement's colour: 9764608
   (#00FF94) for Heroic, 10681599 (#FFFCA2) for Angelic, 7224024 (#D83A6E)
   for Unholy, and the grey for any other code. Neither colour is ever 0 or
   6776816 (the value that turns the text grey). The mod's pure core decides
   the parts and the colours, so the harness tests them; the game adapter
-  holds no colour value.
+  holds no colour value. Measured 2026-10-23 for Heroic, Angelic and Unholy:
+  the screenshot pixels of the sender part and of the item name equal these
+  values exactly (§ Session results). The grey for other codes is not
+  observed live, since only the three announced rarities reach the sink.
 - **The red fallback.** When the `chatcolour` call refuses (its resolution
   is refused, or `script_execute` fails), the mod logs one line with the
   existing `lootann: no line (sink chatcolour) - <field>` prefix (the first
@@ -1311,8 +1320,18 @@ measured or inference.
   `sink-refused=` counts every announcement the shipped sink refused,
   whether the red line then showed or not. An item name that is not text
   refuses before any call, as before, with no fallback, since the red line
-  needs the name too. `server` now takes its `<character> found <item name>`
-  text from the core.
+  needs the name too; so does a missing local player (the `chatcolour` call
+  needs `self`, and the red line would need it as well). `server` now takes
+  its `<character> found <item name>` text from the core. A call that
+  dispatches but adds no line to the feed is not a refusal: by the static
+  reading above, a channel-0 line reaches the bottom-left feed only while
+  the game's `enableGeneralChat` option is on, so with general chat off the
+  call dispatches, `announced=` counts it, and nothing shows, with no
+  fallback and nothing in `sink-refused=`. The `server` route before this
+  change had the same channel-0 gate, so this is not new; `route=chatcolour`
+  and a zero `sink-refused=` do not by themselves show that a line was
+  seen. Not observed live: the fallback itself (harness and contract tests
+  only) and the general-chat-off case.
 - **Research build only** (`#ifndef FORGEPACT_RELEASE`): after each
   `chatcolour` call, one `out.txt` line, `lootann line: sink=chatcolour
   sender="<sender>" body="<text>" sender-colour=<n> body-colour=<n>
@@ -1352,11 +1371,78 @@ follows the issue's wording; the owner judges from the live session's
 screenshots, and a switch is a change to the one core function that decides
 the parts and colours.
 
+### Live session
+
+The #228 session: one research build (`plugin_build\build.bat dev`) of the
+change above, slot 14 Sorak, the Town of Inoya. The procedure is the toolkit
+hub's workorder `forgepact-228-loot-colors`, its context file's `### Live
+procedure 1` (a local working file in the hub), and the session's capture is
+`.claude/workorders/forgepact-228-loot-colors-live-1.md` in the hub, on the
+owner's machine. In order: the control and the build's marker at load;
+`lootann 1`; a feed control, a red line through `lootannprobe say control`
+(`ChatAddServerMessage`, channel 0, the same feed gate as the new line)
+caught on a screenshot, so that a missing coloured line could not be taken
+for a faded or gated feed; a Heroic, an Angelic and an Unholy item placed
+with `lootannprobe place`, each followed at once by a screenshot and
+`lootann stat`; the colours of the two parts of each line, and of each
+item's ground label, compared on the screenshots; a Satanic item placed
+(held); the switch off and a Heroic item placed. No debugger was attached:
+every check reads the plugin's own `lootann line:` and `lootann stat`
+output, or a screenshot.
+
+### Session results
+
+Session 2026-10-23, about 19:57-19:59 UTC, research build sha256
+`e053249d326ed1cabd88ea373314e97ed92dcad7190f750da2aac83cc0d77151` (the
+built file's and the installed plugin's, equal; ForgePact commit
+`9fcb9fd`), slot 14 Sorak, the Town of Inoya. Screenshots were taken at
+2560x1440 and the colours read from their pixels as red, green, blue; the
+GameMaker integer each equals is beside it. The saves were backed up first
+and restored afterwards (`hs_saves_inspect` after the restore: 0 changed,
+added or missing).
+
+| Check | Supplied | Seen | Result |
+|---|---|---|---|
+| `dll-hash` | the installed plugin's sha256 against the build's | equal | pass |
+| `control` | `ping` | `pong (YYTK 4.0.1)` | pass |
+| `marker` | `lootann stat` at load | `lootann: off route=chatcolour seen=0 ...` | pass |
+| `installed` | `lootann 1` | `init-hook=both create-hook=both install=installed` | pass |
+| `feed-control` | `lootannprobe say control` (`ChatAddServerMessage`, `self` the local `Player_obj`), screenshot at once | `dispatched=1`; red `[21:58] SERVER: control`, pixels (255,0,0), first try | pass |
+| `on-heroic` | `lootannprobe place heroic` (`"27"`=9, Cavebat Heavy Belt, `"32"`=5) | `lootann line: sink=chatcolour sender="Sorak found" body="Cavebat Heavy Belt" sender-colour=11974842 body-colour=9764608 dispatched=1`; `announced` 0 → 1, `sink-refused` 0 | pass |
+| `seen-heroic` | the screenshot taken at once | `[21:58] Sorak found: Cavebat Heavy Belt`, no `SERVER:`; `Sorak found` (186,184,182) = 11974842, the item name green (0,255,148) = 9764608 | pass |
+| `on-angelic` | `lootannprobe place angelic` (`"27"`=7, Headhunter) | `body-colour=10681599 dispatched=1`; `announced` 1 → 2, `sink-refused` 0 | pass |
+| `seen-angelic` | the screenshot taken at once | `Sorak found` (186,184,182); `Headhunter` pale yellow (255,252,162) = 10681599, plainly apart from the grey | pass |
+| `on-unholy` | `lootannprobe place unholy` (`"27"`=10, Cobra Heavy Belt) | `body-colour=7224024 dispatched=1`; `announced` 2 → 3, `sink-refused` 0 | pass |
+| `seen-unholy` | the screenshot taken at once | `Sorak found` (186,184,182); `Cobra Heavy Belt` crimson (216,58,110) = 7224024 | pass |
+| `segments-distinct` | the three lines above | the sender part grey and the item name in its rarity's colour on every line: two colours per line | pass |
+| `label-colour` | each placed item's ground label on the same screenshots | the same hue as the chat item name, about 0.85 times as bright: Heroic (0,217,126), Angelic (216,217,130), Unholy (184,49,94) | pass |
+| `held-satanic` | `lootannprobe place satanic` (`"27"`=6, Armorer's Heavy Belt) | no `lootann decide` or `lootann line`; no chat line on a screenshot taken at once; `held-rarity` 0 → 1, `announced` stays 3 | pass |
+| `off-no-line` | `lootann 0`, then `lootannprobe place heroic` (Accursed Heavy Belt) | `lootann: off`; no line in `out.txt` or on the screenshot; every count unchanged | pass |
+| `restored` | `hs_stop_game`, `hs_saves_restore` | exit 0; 105 files restored; inspect after the restore clean | pass |
+
+Route token: `segment-route: two-colours`. The line is drawn as designed:
+the sender part in the colour passed as the sender colour, the text part in
+the colour passed as the text colour, so `found` stays grey beside the
+character's name and only the item name is coloured.
+
+What it settled: the colours `chatcolour` passes are the ones the game
+draws, to the pixel, for all three announced rarities; the Angelic pale
+yellow reads apart from the grey; a Satanic item and a switched-off mod
+still give no line. Not observed live: the red fallback (it runs only when
+the `chatcolour` call refuses, which this session never saw; harness and
+contract tests cover it), a natural drop from a kill under this build, the
+line with general chat off, co-op, and the separator's colour (its pixels
+were not sampled). Why the ground labels read darker than the chat text is
+not established.
+
 ### Not established (#228)
 
 - That the bottom-left feed draws through `DrawChatMessage` (inference: the
-  measured lines show a stamp and a sender, as it draws them).
-- The separator's exact characters on a type-0 line.
+  measured lines show a stamp, a sender and a text in exactly the colours
+  passed, as it draws them; the session did not show which code drew them).
+- The separator's exact characters and colour on a type-0 line (the
+  screenshot shows a colon after the sender; neither its spacing nor its
+  pixels were recorded).
 - What a click on the sender name does in the opened chat window offline:
   the draw code has a menu over the name, and the sender part now carries
   `<character> found`.
@@ -1364,5 +1450,3 @@ the parts and colours.
   grey), and which items codes 4, 8 and 11 belong to: no item with those
   codes has been observed.
 - Which value the online sender name is read from.
-- The new line's colours as the game draws them: not observed live until
-  the #228 session; the shape-8 line's colour was never recorded.
