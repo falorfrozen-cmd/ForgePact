@@ -565,6 +565,16 @@ not part of this change. The header's `kShippedSink` and
 `tests/test_loot_announce_contract.py`'s `EXPECTED_ROUTE` name the same
 route.
 
+2026-10-23 (#228): the shipped route is now `chatcolour`, the plain
+`ChatAddMessage` line the paragraph above names as a follow-up, with the item
+name drawn in the online announcement's colour for its rarity and the rest of
+the line in the game's grey chat text (§ Rarity colours (#228)). `server`
+stays in both builds as its fallback: when the `chatcolour` call refuses, the
+mod logs why and shows the red line instead. `kShippedSink` and
+`EXPECTED_ROUTE` now name `chatcolour`.
+
+announce-route: chatcolour
+
 ## The switch on at launch
 
 2026-10-08. The owner reported that "loot announcement doesnt work", with no
@@ -1171,3 +1181,188 @@ Practical findings for the next tower session:
     collected at all;
   - that the call after the append destroys the ground instance (inferred
     from the same runtime routine destroying a dialog's instance elsewhere).
+
+## Rarity colours (#228)
+
+### The request
+
+ForgePact #228 (QoL): with Loot announcements on, the line the mod shows is
+all red, `SERVER: <character> found <item name>`, because the shipped
+`server` sink goes through `ChatAddServerMessage` (§ Route). Players asked
+for the online look: the item name coloured by its rarity, the rest of the
+line neutral. The issue asked two questions: can one chat line carry more
+than one colour, and which colour belongs to each rarity.
+
+Both are answered below from a static reading made 2026-10-23 with the
+`ghidra` MCP's read tools and a local scan of the executable for constants
+and string literals. No decompiled text, address or offset from those reads
+is kept here; what follows is the mechanism in our own words, each point
+labelled. Colours are GameMaker colour integers (blue, green and red packed
+from the low byte up), written in decimal with the `#RRGGBB` they draw as
+beside them.
+
+### Static reading
+
+Everything in this subsection is a static reading unless a point says
+measured or inference.
+
+**The chat line.**
+
+- `ChatAddMessage` takes fifteen arguments, in this order: the sender name,
+  the text, the sender colour, the text colour, the message type, the
+  channel, an account id, a language, a time stamp, a character slot, a DLC
+  bitmap, a platform, a platform id, a platform name and a region. A text
+  colour left out defaults to 11974842 (#BAB8B6), the game's grey chat text.
+- Each call builds one `s_ChatMessageData`, whose fields include `name`,
+  `msgNameColor`, `messageColor`, `messageType`, `channelType`, `timestamp`,
+  `language`, `commandList` and `msgItemData`. The message goes into every
+  `UI_Chat_List_obj` list of its channel, except that a message of type 3 is
+  left out while the player's `chatShowItemDropMessages` option is off. It
+  reaches the in-game feed (`IngameChatFeedAddLatest`) only when the channel
+  is -1 or the `enableGeneralChat` option is on.
+- When the message updates, emoji codes in the text (`chatEmojiMap`) become
+  image commands, and a text that begins with an item link (item data
+  encoded in the text) becomes `msgItemData`: that item's `GetItemColor`
+  then becomes the text colour, and hovering the line shows the item's
+  tooltip.
+- `DrawChatMessage`, a method of `s_ChatMessageData` (SDK name
+  `gml_Script_DrawChatMessage@anon@13887@s_ChatMessageData@DefineChatMessageData`;
+  the anon number moves with each game patch, RDM § 5.3), draws the line
+  with a black shadow under each part: the time stamp in 8421504 (#808080),
+  the sender in `msgNameColor`, the platform badges, a separator in 7844807
+  (#C7B377), and then the text one character at a time in `messageColor`,
+  with emoji images the only thing placed between characters. Nothing in the
+  text can change its colour. One special case: when `msgNameColor` is
+  exactly 6776816 (#F06767), the text is drawn in the default grey instead
+  of `messageColor`.
+- So a line carries exactly two colours of the caller's choosing, the
+  sender's and the text's, beside the fixed stamp and separator. Colouring
+  the item name alone means putting everything before it in the sender part.
+- `ChatAddServerMessage` takes only the text and a channel (0 by default).
+  It passes the sender (measured: `SERVER`), red 255 (#FF0000) as both
+  colours, and message type 1. No colour can be passed through it, which is
+  why the line the mod shipped with is all red.
+- Measured earlier: `ChatAddMessage` called by name with sender `ForgePact`,
+  both colours 0, type and channel as int64 0, two reals 0, a `[hh:mm]`
+  stamp and six `undefined` showed `[00:49] ForgePact : ForgePact chat test
+  8` (`docs/dungeon-chest-research.md` § Chat route, shape 8, Live 1b). The
+  colour of that line was not recorded.
+
+**The online announcement's colours.**
+
+- The ground item's announcement closure (`anon@1138`) hands its line to
+  `NetworkSendChatMessageIngame` with 18687 and a colour. That script passes
+  18687 (#FF4800, orange) as the sender colour, the closure's colour as the
+  text colour, message type 3, and a sender name read from the game's
+  protected store (which value it reads: not established).
+- The text colour by rarity (info `"27"`): Heroic (9) gets the table's
+  Heroic entry, `GetRarityColor(9)`, 9764608 (#00FF94, green). Angelic (7,
+  or tier `"32"` 6) gets a fixed 10681599 (#FFFCA2, pale yellow), which is
+  not the table's Angelic entry (10092542). Unholy (10) gets a fixed 7224024
+  (#D83A6E, crimson), the same value as the table's Unholy entry. A Satanic
+  item (6) of tier `"32"` 5 (SS) takes the Heroic branch with its own code,
+  so the table's Satanic entry, 1447638 (#D61616).
+- With type 3 the text comes from `GetItemDropMessage`: a `[Softcore] ` or
+  `[Hardcore] ` tag, the finder's name, the localized phrase under the key
+  `just_found`, and the item's loot name in square brackets, all in the one
+  text colour. Online, then, the whole text is coloured, not only the item
+  name; this change follows the issue's wording instead (§ The line
+  ForgePact shows).
+- Inference: `GetItemDropMessage` splits its argument as a delimited text,
+  not as an item struct. That fits Live procedure 1, where it refused the
+  item struct (§ Not established, above).
+
+**The rarity colour table.**
+
+- `GetRarityColor` takes a rarity code and two further arguments and
+  returns: 1 Common 16777215 (#FFFFFF), or 10982553 (#9994A7) when its
+  second argument is non-zero; 2 Superior 12745262 (#2E7AC2); 3 Rare 698851
+  (#E3A90A); 4 215270 (#E64803); 5 Mythic 15406513 (#B115EB); 6 Satanic
+  1447638 (#D61616); 7 Angelic 10092542 (#FEFF99); 8 1892620 (#0CE11C); 9
+  Heroic 9764608 (#00FF94); 10 Unholy 7224024 (#D83A6E); 11 7844807
+  (#C7B377); any other code white.
+- `GetItemColor` gives an ordinary equipment item's name the table's colour
+  for its info `"27"`; other item kinds have branches of their own.
+
+### The line ForgePact shows
+
+- **A new sink, `chatcolour`, is the shipped route** (`route=chatcolour` in
+  `lootann stat`, and the modstate's `route`). It calls `ChatAddMessage` by
+  its SDK name through the same by-name route the other sinks use, with
+  `self` the local `Player_obj` and the fifteen arguments in the kinds shape
+  8 measured: the sender part and the text part as text, the two colours as
+  reals, the type and the channel as int64 0, two reals 0, the mod's own
+  `[hh:mm]` clock stamp and six `undefined`.
+- **The split.** The sender part is `<character> found` (the character's
+  name, or `You` when it cannot be read) and the text part is the item name
+  (`itemInfoStruct["28"]`). The line reads `[hh:mm] Sorak found : <item
+  name>`, the stamp and the separator in the game's own colours.
+- **The colours.** The sender part in 11974842 (#BAB8B6, the game's grey
+  chat text). The item name in the online announcement's colour: 9764608
+  (#00FF94) for Heroic, 10681599 (#FFFCA2) for Angelic, 7224024 (#D83A6E)
+  for Unholy, and the grey for any other code. Neither colour is ever 0 or
+  6776816 (the value that turns the text grey). The mod's pure core decides
+  the parts and the colours, so the harness tests them; the game adapter
+  holds no colour value.
+- **The red fallback.** When the `chatcolour` call refuses (its resolution
+  is refused, or `script_execute` fails), the mod logs one line with the
+  existing `lootann: no line (sink chatcolour) - <field>` prefix (the first
+  20) saying the red line is shown instead, and then runs the `server` body.
+  `sink-refused=` counts every announcement the shipped sink refused,
+  whether the red line then showed or not. An item name that is not text
+  refuses before any call, as before, with no fallback, since the red line
+  needs the name too. `server` now takes its `<character> found <item name>`
+  text from the core.
+- **Research build only** (`#ifndef FORGEPACT_RELEASE`): after each
+  `chatcolour` call, one `out.txt` line, `lootann line: sink=chatcolour
+  sender="<sender>" body="<text>" sender-colour=<n> body-colour=<n>
+  dispatched=<0|1>`, at most 100 per session. The live session reads the
+  colours it sent there, beside its screenshots.
+- **Placed items are SS.** `lootannprobe place` sets the placed item's tier
+  (info `"32"`, RDM § 16.3) to 5 after the rarity and ends its reply with
+  ` "32"=<tier>`, so the owner's loot filter, which hides lower tiers, shows
+  it. #227 added that write (§ Chaos Tower (#227), Instrument additions);
+  this change keeps its one copy.
+- **Unchanged:** which rarities are announced (Heroic 9, Angelic 7, Unholy
+  10), the creation guard, the install, the stat and modstate field lists,
+  the other four sink bodies, `lootannprobe try 1..5` and the panel.
+
+### Rejected routes
+
+1. **Ask `GetRarityColor` by name for each line.** A by-name call per
+   announcement, with its own failure path, and the online Angelic colour is
+   not in its table. A table in the core is harness-tested, and a game patch
+   that recolours a rarity is the kind of change the module guide's
+   Maintenance Triggers cover.
+2. **Draw our own overlay to colour single words.** It needs a draw hook
+   instead of the game's chat, and per-event hooks are disabled on this
+   build (AGENTS.md § Don't Suspend the Game's Own Runtime).
+3. **Put an item link in the text.** The game's update pass would parse the
+   encoding and colour the whole text anyway. A clickable link or tooltip is
+   follow-up material (#17 left links out of scope).
+4. **Message type 3, or channel -1.** Neither is measured. Type 3 ties the
+   line to the player's drop-messages chat option, and what the channel
+   table holds for -1 was not read.
+5. **Keep `ChatAddServerMessage`.** It hardcodes red for both colours; it
+   stays only as the fallback.
+
+Not rejected, but not the default: the online layout, the character's name
+in orange 18687 and `found <item>` all in the rarity colour. The default
+follows the issue's wording; the owner judges from the live session's
+screenshots, and a switch is a change to the one core function that decides
+the parts and colours.
+
+### Not established (#228)
+
+- That the bottom-left feed draws through `DrawChatMessage` (inference: the
+  measured lines show a stamp and a sender, as it draws them).
+- The separator's exact characters on a type-0 line.
+- What a click on the sender name does in the opened chat window offline:
+  the draw code has a menu over the name, and the sender part now carries
+  `<character> found`.
+- What the second argument of `GetRarityColor` means (non-zero turns Common
+  grey), and which items codes 4, 8 and 11 belong to: no item with those
+  codes has been observed.
+- Which value the online sender name is read from.
+- The new line's colours as the game draws them: not observed live until
+  the #228 session; the shape-8 line's colour was never recorded.
