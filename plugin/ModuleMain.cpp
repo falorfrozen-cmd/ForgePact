@@ -5062,7 +5062,7 @@ static bool TryApplyCustomForge(RValue* candidate, bool finalPass = false)
                 if (entry.mechanic == "beacon") g_BeItemTagged = true;
                 if (entry.mechanic == "miner") ForgePact::MinerHelmet::pending = true;
                 // Arming only sets a flag: the frame tick installs flight's
-                // hooks once a character exists, never CreateItemNew.
+                // hooks once a character wears a flight charm, never CreateItemNew.
                 if (entry.mechanic == "flight") g_Flight.Arm();
                 if (entry.mechanic == ForgePact::SoulPieces::kMechanicTag) g_SoulPieceSeen = true;
             }
@@ -55356,9 +55356,12 @@ static void JumpSceneryCommand(const std::string& rest)
 //
 // The install: dressing arms flight the first time it recognises a charm.
 // Before that, nothing runs per frame. While armed, FlightCharmTick looks for
-// the local player every 60 frames (HhResolveLocalPlayer, VALUE_REF-safe) and
-// installs once: hidden loot's shared LootGroundInit detour (the ground icon
-// rides it), InstancePlaceTallest, UpdateDepth and the five builtins. A
+// the local player every 60 frames (HhResolveLocalPlayer, VALUE_REF-safe);
+// each look that finds one installs hidden loot's shared LootGroundInit
+// detour if not yet tried (the ground icon rides it, worn or not), then reads
+// the worn charms, and installs flight's own hooks once, only when a flight
+// charm is worn (#216 b2): InstancePlaceTallest, UpdateDepth and the five
+// builtins. A charm carried in the bag or stash costs one look a second. A
 // table-only script hook, a builtin that did not go in, or (research build) a
 // citrace or jumpprobe hook on one of the six refuses, with one line.
 // No address, no struct read.
@@ -56023,16 +56026,23 @@ static const char* FlightPlayerCheck()
     return now == g_FlightPlayer ? "match" : "differs";
 }
 
-// Installs when the core says so (Flight::ShouldInstall): armed, not yet
-// installed or refused, setup done and the local player resolved. Hidden
-// loot's LootGroundInit detour goes in first, whatever flight's own install
-// answers, since the ground icon rides it. A refusal prints its one line and
-// is final for the session.
+// One look, while armed and not installed or refused: with setup done and the
+// local player resolved, hidden loot's LootGroundInit detour goes in first if
+// not yet tried, whatever is worn (a charm never worn can still be dropped,
+// and its ground icon rides that detour). Then the worn charms are read
+// (FlightEquipped), and flight's own hooks install only when the core says so
+// (Flight::ShouldInstall): a flight charm worn (#216 b2). A charm only in the
+// bag or stash leaves `install=waiting-for-worn-charm` and costs this look,
+// once a second. A refusal prints its one line and is final for the session.
 static void FlightInstallIfReady()
 {
-    const bool havePlayer = g_Flight.ShouldInstall(g_Setup, true) && FlightPlayerResolves();
-    if (!g_Flight.ShouldInstall(g_Setup, havePlayer)) return;
-    if (!g_HiddenLootInstallTried) HiddenLootInstall();
+    const bool havePlayer = g_Flight.ShouldInstall(g_Setup, true, true) && FlightPlayerResolves();
+    if (!g_Flight.ShouldInstall(g_Setup, havePlayer, true)) { g_Flight.NoteLook(havePlayer, false); return; }
+    FlightGroundIconInstall();
+    unsigned worn = 0;
+    const bool charmWorn = FlightEquipped(worn) && worn != 0;
+    g_Flight.NoteLook(havePlayer, charmWorn);
+    if (!g_Flight.ShouldInstall(g_Setup, havePlayer, charmWorn)) return;
     const std::string why = FlightInstall();
     g_Flight.NoteInstall(why.empty());
     if (!why.empty()) { Out(FcNs::RefusedLine(why)); return; }
@@ -56040,8 +56050,9 @@ static void FlightInstallIfReady()
 }
 
 // The per-frame tick. Returns at once until dressing arms flight; while armed
-// and not installed, looks for the local player every kInstallPollFrames
-// frames; once installed, does nothing: the local player is confirmed by the
+// and not installed, looks for the local player and a worn flight charm every
+// kInstallPollFrames frames (FlightInstallIfReady); once installed, does
+// nothing: the local player is confirmed by the
 // hooks themselves, at the first hooked call of each frame (FlightConfirmPlayer),
 // not here at its end. The decisions happen inside the hooked calls.
 static void FlightCharmTick()
@@ -71855,9 +71866,9 @@ void FrameCallback(FWFrame& FrameContext)
     if (g_Setup) JumpSceneryTick();
 
     // Flight charms (ForgePact #158): returns at once until dressing first
-    // recognises a charm; then the install once a character exists, and the
-    // local player refreshed. The decisions happen inside the hooked calls, at
-    // the point of use.
+    // recognises a charm; then the ground icon's detour once a character
+    // exists, and flight's hooks once it wears a flight charm. The player and
+    // the decisions are confirmed inside the hooked calls, at the point of use.
     if (g_Setup) FlightCharmTick();
 
     // Mark 1 set (ForgePact #166): returns at once while its switch is off;

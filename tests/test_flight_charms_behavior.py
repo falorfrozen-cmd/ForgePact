@@ -400,6 +400,8 @@ class FlightCharmsCoreBehaviorTests(unittest.TestCase):
 
     def test_install_states(self):
         self.assertScenarios("install/armed_by_a_charm_installed_once_a_character_exists",
+                             "install/a_charm_not_worn_waits_for_a_worn_charm",
+                             "install/a_worn_charm_installs_at_the_next_look",
                              "install/a_refusal_is_final_for_the_session",
                              "install/looks_for_the_player_every_60_frames")
 

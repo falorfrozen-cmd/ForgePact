@@ -2368,14 +2368,48 @@ int main()
     // ======================= install =======================================
     {
         Flight f;
-        const bool notArmed = f.InstallStateName() == "not-armed" && !f.ShouldInstall(true, true) && !f.Armed();
+        // The baseline, with a flight charm worn: armed by a charm, installed
+        // once a character exists.
+        const bool notArmed = f.InstallStateName() == "not-armed" && !f.ShouldInstall(true, true, true) && !f.Armed();
         f.Arm();
-        const bool waiting = f.InstallStateName() == "waiting-for-character" && !f.ShouldInstall(false, true)
-            && !f.ShouldInstall(true, false) && f.ShouldInstall(true, true);
+        const bool waiting = f.InstallStateName() == "waiting-for-character" && !f.ShouldInstall(false, true, true)
+            && !f.ShouldInstall(true, false, true) && f.ShouldInstall(true, true, true);
+        f.NoteLook(true, true);
         f.NoteInstall(true);
         f.Arm();
-        const bool installed = f.InstallStateName() == "installed" && f.Installed() && !f.ShouldInstall(true, true);
+        const bool installed = f.InstallStateName() == "installed" && f.Installed() && !f.ShouldInstall(true, true, true);
         check("install/armed_by_a_charm_installed_once_a_character_exists", notArmed && waiting && installed);
+    }
+    {
+        // #216 b2: a charm carried in the bag or stash arms flight, but the
+        // hooks wait for one to be worn; the look reports what it waits for.
+        Flight f;
+        f.Arm();
+        f.NoteLook(true, false);
+        const bool waits = f.InstallStateName() == "waiting-for-worn-charm" && !f.ShouldInstall(true, true, false)
+            && !f.Installed() && f.Armed();
+        // Back at character select: waiting for a character again, not for a charm.
+        f.NoteLook(false, false);
+        const bool noCharacter = f.InstallStateName() == "waiting-for-character" && !f.ShouldInstall(true, false, false);
+        f.NoteLook(true, false);
+        const bool waitsAgain = f.InstallStateName() == "waiting-for-worn-charm";
+        check("install/a_charm_not_worn_waits_for_a_worn_charm", waits && noCharacter && waitsAgain,
+            std::string(f.InstallStateName()));
+    }
+    {
+        Flight f;
+        f.Arm();
+        f.NoteLook(true, false);
+        const bool waits = f.InstallStateName() == "waiting-for-worn-charm" && !f.ShouldInstall(true, true, false);
+        // The next look finds one worn: that look installs.
+        f.NoteLook(true, true);
+        const bool ready = f.ShouldInstall(true, true, true) && !f.ShouldInstall(false, true, true);
+        f.NoteInstall(true);
+        // Installed, nothing changes when it is taken off again.
+        f.NoteLook(true, false);
+        const bool installed = f.InstallStateName() == "installed" && f.Installed() && !f.ShouldInstall(true, true, true);
+        check("install/a_worn_charm_installs_at_the_next_look", waits && ready && installed,
+            std::string(f.InstallStateName()));
     }
     {
         Flight f;
@@ -2383,7 +2417,7 @@ int main()
         f.NoteInstall(false);
         f.Arm();
         check("install/a_refusal_is_final_for_the_session",
-            f.InstallStateName() == "refused" && !f.ShouldInstall(true, true) && !f.Installed()
+            f.InstallStateName() == "refused" && !f.ShouldInstall(true, true, true) && !f.Installed()
                 && RefusedLine("InstancePlaceTallest came back table-only")
                     == "flightcharm: refused - InstancePlaceTallest came back table-only");
     }

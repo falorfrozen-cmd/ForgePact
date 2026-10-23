@@ -897,13 +897,50 @@ class FlightCharmsLeverContract(unittest.TestCase):
         self.assertLess(ready.index("FlightInstall();"), ready.index("g_Flight.NoteInstall(why.empty());"))
         self.assertIn("Out(FcNs::RefusedLine(why));", ready)
         self.assertEqual(self.shipped.count("FcNs::RefusedLine(why)"), 1)
-        # The ground icon rides hidden loot's one LootGroundInit detour.
-        self.assertIn("if (!g_HiddenLootInstallTried) HiddenLootInstall();", ready)
         resolves = strip_comments(function_body(self.plugin, "static bool FlightPlayerResolves()"))
         self.assertIn("HhResolveLocalPlayer(p)", resolves)
         self.assertIn("HhResolveInstance(p)", resolves)
         player = self.body("player")
         self.assertIn("HhResolveLocalPlayer(p)", player)
+
+    def test_the_hooks_install_only_for_a_worn_charm_and_the_ground_detour_first(self):
+        # #216 b2: armed by any dressed charm, but flight's own hooks go in
+        # only at a look that finds a flight charm worn; the ground icon's
+        # detour goes in at every look before the worn read, whatever is worn,
+        # since a charm never worn can still be dropped.
+        ready = self.body("install_if_ready")
+        lines = self.lines("install_if_ready")
+        self.assertEqual(lines[0], "const bool havePlayer = g_Flight.ShouldInstall(g_Setup, true, true) && FlightPlayerResolves();")
+        self.assertEqual(lines[1], "if (!g_Flight.ShouldInstall(g_Setup, havePlayer, true)) { g_Flight.NoteLook(havePlayer, false); return; }")
+        ground = ready.index("FlightGroundIconInstall();")
+        worn = ready.index("FlightEquipped(worn)")
+        note = ready.index("g_Flight.NoteLook(havePlayer, charmWorn);")
+        gate = ready.index("if (!g_Flight.ShouldInstall(g_Setup, havePlayer, charmWorn)) return;")
+        self.assertLess(ready.index("FlightPlayerResolves()"), ground)
+        self.assertLess(ground, worn)
+        self.assertLess(worn, note)
+        self.assertLess(note, gate)
+        self.assertLess(gate, ready.index("FlightInstall();"))
+        self.assertIn("const bool charmWorn = FlightEquipped(worn) && worn != 0;", ready)
+        self.assertEqual(ready.count("FlightGroundIconInstall();"), 1)
+        # The ground detour is hidden loot's one LootGroundInit hook, tried once.
+        ground_body = strip_comments(function_body(self.plugin, "static void FlightGroundIconInstall()"))
+        self.assertIn("if (!g_HiddenLootInstallTried) HiddenLootInstall();", ground_body)
+        # Negative control: no unconditional install path skips the worn gate.
+        self.assertNotIn("g_Flight.ShouldInstall(g_Setup, havePlayer)", ready)
+        self.assertEqual(self.code.count("g_Flight.ShouldInstall("), 3)
+        # The core: the decision takes the worn charm, and the state names it.
+        should = strip_comments(function_body(self.core(), "bool ShouldInstall(bool setupDone, bool playerResolved, bool charmWorn) const"))
+        self.assertIn("&& charmWorn", should)
+        name = strip_comments(function_body(self.core(), "std::string_view InstallStateName() const"))
+        self.assertIn('"waiting-for-worn-charm"', name)
+        for state in ('"installed"', '"refused"', '"not-armed"', '"waiting-for-character"'):
+            self.assertIn(state, name)
+        self.assertLess(name.index('"not-armed"'), name.index('"waiting-for-worn-charm"'))
+        # The tick is unchanged: the look stays once every kInstallPollFrames.
+        tick = self.body("tick")
+        self.assertNotIn("FlightEquipped(", tick)
+        self.assertNotIn("FlightGroundIconInstall(", tick)
 
     def test_the_player_is_confirmed_at_the_first_hooked_call_of_a_frame(self):
         # #216 c3: the core decides which call is the frame's first, keyed on

@@ -805,15 +805,19 @@ public:
         return true;
     }
 
-    // ---- the install: armed by a charm, hooked once a character exists ----
+    // ---- the install: armed by a charm, hooked once a character wears one ----
     // Dressing arms flight the first time it recognises a flight charm; a
     // hook is never installed from inside CreateItemNew. While armed, the
     // adapter's frame tick looks for the local player on the frames
     // LooksForPlayer picks (HhResolveLocalPlayer, which accepts the runner's
-    // VALUE_REF) and installs the builtins, InstancePlaceTallest and
-    // UpdateDepth once. A refusal (a table-only hook, a research hook holding
-    // one of them) is final for the session; the adapter prints RefusedLine
-    // once. Nothing runs per frame before arming.
+    // VALUE_REF); each look that finds one reads the worn charms and reports
+    // both through NoteLook. The builtins, InstancePlaceTallest and
+    // UpdateDepth install once, at the first look that finds a flight charm
+    // worn (#216 b2): a charm carried in the bag or stash arms flight but
+    // costs nothing per frame beyond that look, once a second. A refusal (a
+    // table-only hook, a research hook holding one of them) is final for the
+    // session; the adapter prints RefusedLine once. Nothing runs per frame
+    // before arming, and once installed the hooks stay.
     static constexpr unsigned long long kInstallPollFrames = 60;
     static constexpr bool LooksForPlayer(unsigned long long armedFrames)
     {
@@ -821,9 +825,16 @@ public:
     }
     void Arm() { armed_ = true; }
     bool Armed() const { return armed_; }
-    bool ShouldInstall(bool setupDone, bool playerResolved) const
+    bool ShouldInstall(bool setupDone, bool playerResolved, bool charmWorn) const
     {
-        return armed_ && !installed_ && !refused_ && setupDone && playerResolved;
+        return armed_ && !installed_ && !refused_ && setupDone && playerResolved && charmWorn;
+    }
+    // What the latest look found: whether the local player resolved and, if
+    // so, whether a flight charm is worn. Only InstallStateName reads it.
+    void NoteLook(bool playerResolved, bool charmWorn)
+    {
+        lookFoundPlayer_ = playerResolved;
+        lookFoundWorn_ = playerResolved && charmWorn;
     }
     void NoteInstall(bool ok)
     {
@@ -831,13 +842,15 @@ public:
         else refused_ = true;
     }
     bool Installed() const { return installed_; }
-    // ` install=`: installed, refused, waiting-for-character while armed,
-    // not-armed otherwise.
+    // ` install=`: installed, refused; while armed, waiting-for-worn-charm when
+    // the latest look found the player wearing no flight charm, and
+    // waiting-for-character otherwise; not-armed before arming.
     std::string_view InstallStateName() const
     {
         if (installed_) return "installed";
         if (refused_) return "refused";
-        return armed_ ? "waiting-for-character" : "not-armed";
+        if (!armed_) return "not-armed";
+        return lookFoundPlayer_ && !lookFoundWorn_ ? "waiting-for-worn-charm" : "waiting-for-character";
     }
 
     // ---- the state, refreshed at the point of use ----------------------------
@@ -1301,6 +1314,8 @@ private:
     bool armed_ = false;
     bool installed_ = false;
     bool refused_ = false;
+    bool lookFoundPlayer_ = false;   // NoteLook: the latest look resolved the local player
+    bool lookFoundWorn_ = false;     // NoteLook: ... and found a flight charm worn
     bool haveFrame_ = false;
     int64_t frame_ = 0;
     bool havePlayerFrame_ = false;
