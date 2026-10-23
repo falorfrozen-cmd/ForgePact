@@ -160,10 +160,18 @@ counts such a note `sold=` instead of `unidentified=`. Everything else in
 hidden loot is unchanged: what autosell could not sell is still put to sleep.
 
 **Chaos Tower floors.** A tower floor holds its drops back and places them all
-at "Floor Cleared" (RDM § 16.14), and whether a held drop also passes the
-detour when it first falls is an inference, not a reading. So the mod
+at "Floor Cleared" (RDM § 16.14). The tower branch sits inside
+`LootGroundInit` itself (static reading), so every tower drop passes the
+detour twice: when it falls, where the branch collects it, and again at the
+burst, when the game places it and calls `LootGroundInit` on it a second
+time. What is not established is whether the ground instance from the fall
+is still alive at the end of that frame, when the mod decides: that the
+branch destroys it is an inference. If it is gone, the fall counts `gone=`
+and the item is sold at the burst; if it is alive, it is sold at the fall,
+and the struct the burst places is the one already credited. So the mod
 remembers every item struct it credited in the room and never credits one
-twice (`repeat-held=`). Live 1's optional tower step says which happens.
+twice (`repeat-held=`). Live 1's optional tower step says which of the two
+the counters show.
 
 **What it never does:** a game address, a struct layout read, a write to the
 verdict, a walk of what is already on the ground, a per-frame or periodic
@@ -226,7 +234,12 @@ hub (`forgepact-196-autosell-filtered-live-1`). Check names are in brackets.
 - **Character**: slot 14 "Sorak", with the owner's own loot filter (strict: it
   hides most drops below S tier), never changed.
 - **Debugger**: none. Every check reads the plugin's own counters, the game's
-  balance through `GetGoldAmount`, `lootcensus`, or a screenshot.
+  balance through `GetGoldAmount`, `lootcensus`, or a screenshot. A
+  `LootGroundInit` logpoint over a tower floor's burst would be the direct
+  check for step 8, but it is left out: during #227's tower fight x64dbg
+  paused the game on its own first-chance C++ exceptions and had to be
+  detached (RDM § 16.14), so step 8 reads the counters around the burst
+  instead and says only what they can show.
 - **Control and marker**: `ping` answers a line starting `pong (YYTK`
   [control]; `autosell stat` answers a line starting `autosell stat: on=0`
   [marker].
@@ -276,11 +289,21 @@ Steps:
    `unsellable=` [supersedes]. `hiddenloot 0`.
 7. `autosell 0` (record the OFF line); kill about 30 s; `autosell stat`:
    `sold=` unchanged, and `lootcensus` `hidden=` rose [off-stays].
-8. Optional, at most 10 minutes: `autosell 1`, a Chaos Tower floor of this
-   zone (walk up the stairs, then F), fought to "Floor Cleared": `autosell
-   stat` shows `repeat-held=0` and a `sold=` rise after the burst
-   [tower-once] (research; not observed if no tower is reached).
-   `autosell 0`.
+8. Optional, at most 10 minutes: `autosell 1`, then a Chaos Tower floor of
+   this zone (walk up the stairs, then F). Three `autosell stat` readings:
+   on entering the floor (T0), just before the floor's last enemy is killed
+   (T1; if the last one cannot be told, the last reading before "Floor
+   Cleared", with how long before it was taken), and after "Floor Cleared"
+   once the items have landed (T2). Record `notes=`, `gone=`, `sold=` and
+   `repeat-held=` for the fight window (T0 to T1) and the burst window (T1 to
+   T2). `notes=` is not a drop count: #227 saw each landed item pass the
+   detour twice at the burst. [tower-sold-at] (research):
+   `held-drop-sold-at: burst` when `sold=` does not rise in the fight window
+   while `gone=` does, and `sold=` rises in the burst window with
+   `repeat-held=` unchanged; `held-drop-sold-at: fall` when `sold=` rises in
+   the fight window and `repeat-held=` rises in the burst window;
+   `held-drop-sold-at: not-observed` when no tower is reached, no hidden drop
+   fell on the floor, or the readings fit neither. `autosell 0`.
 9. Back in town, open the merchant: a screenshot of its buyback view shows
    the step-2 item and no item the mod sold [no-buyback] (research; not
    observed if no such view is found).
@@ -292,9 +315,12 @@ passing record `price-route: merchant-parity`; either failing records
 `price-route: differs`, which means the formula or the count is wrong and the
 mod does not ship as it is; no hand sale records `price-route: not-observed`,
 and the price then ships as this static reading, labelled unmeasured, in the
-notes and the guide. The tower step records `tower-route: once`,
-`tower-route: repeat` (the guard held a second credit; the guard is the fix)
-or `tower-route: not-observed`. A failure of any other check is a defect in
+notes and the guide. The tower step records `held-drop-sold-at: burst`,
+`held-drop-sold-at: fall` (the guard held the burst's second credit; the
+guard is the fix) or `held-drop-sold-at: not-observed`. Either measured
+value says only where the counters saw the sale: the drop passes the detour
+at both times either way, and neither value is a finding about how many
+times the game calls `LootGroundInit`. A failure of any other check is a defect in
 the build, and nothing is recorded as measured from it.
 
 ## Not established
@@ -312,9 +338,14 @@ the build, and nothing is recorded as measured from it.
   [gold-read].
 - **The price against a real hand sale.** Never measured until Live 1's
   [merchant-parity].
-- **A Chaos Tower floor's held drops.** Whether a hidden tower drop passes the
-  detour once (at the burst) or twice is an inference until Live 1's
-  [tower-once]; the `repeat-held=` guard covers the second case either way.
+- **A Chaos Tower floor's held drops.** By the static reading in RDM § 16.14
+  a hidden tower drop passes the detour both when it falls and at the burst.
+  What is not established is whether its ground instance is still alive at
+  the end of the frame after the first pass (that the tower branch destroys
+  it is an inference), and so whether the mod sells it at the fall or at the
+  burst. Live 1's [tower-sold-at] reads which from the counters; the
+  `repeat-held=` guard keeps a second credit out either way. The burst-window
+  `LootGroundInit` logpoint that would show it directly has never run.
 - **The unidentified call after the credit**, which looks like a sound.
 - **A player's own bag drop, co-op, the gold cap and the table-only route**
   were not run live.
