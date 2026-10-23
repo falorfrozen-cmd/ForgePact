@@ -1785,7 +1785,7 @@ any item's, and the set gives more for every piece you wear.
   talent screen, T) shows the set's Life, Defense and its other lines too,
   as your HUD does; your mercenary and monsters never get the set bonus.
   The character sheet's Mercenary tab shows your mercenary's own numbers,
-  without the set bonus or the mana drain (not yet checked in play).
+  without the set bonus or the mana drain.
 - **The tooltip.** Each piece's tooltip reads `Satanic Set <type>` under its
   name, shows the piece's own stats, then the set's bonus lines, each lit
   while you wear enough pieces for it and grey otherwise, with what
@@ -1956,12 +1956,17 @@ Defense and Physical Damage Taken Reduced, the same numbers the game's own
 stat calls return for you, while your mercenary and summons got none of
 the set bonus and no monster asked for it. It also found the sheet's Mercenary tab showing the
 bonus and the drain on your mercenary's numbers; this version leaves that
-tab with the mercenary's own numbers, not yet checked in play. Not
-checked in play yet: whether the game uses the set's Defense and Physical
-Damage Taken Reduced when a monster hits you (in that session monsters hit
-you only while two pieces were worn, before those lines count), how soon
-the HUD shows a lower maximum after you take a piece off, and whether every
-fired skill casts.
+tab with the mercenary's own numbers.
+
+A fourth session (2026-10-23), on the build with that change, checked it:
+the Mercenary tab showed your mercenary's own numbers with nothing of the
+set added, and going back to your own tab showed the set's Life again.
+With all four worn and the switch on, each time a monster hit you the game
+asked for your Physical Damage Taken Reduced with the set's 20% in it, and
+during the same fight it asked for your Defense with the set's 500 in it.
+Not checked in play yet: how much less damage those hits did (your life
+stayed full), how soon the HUD shows a lower maximum after you take a
+piece off, and whether every fired skill casts.
 
 ## Goburin's Head pity
 

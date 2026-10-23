@@ -5782,3 +5782,89 @@ Required: `dll-hash`, `control`, `marker`, `dbg-control`, `others-control`,
 `no-leak`, `sheet-life`, `sheet-defense`, `merc-page` and `page-back`. Never
 required: `dbg-getters`, `merc-away`, `hit-control`, `bonus-def-hit` and
 `bonus-pdr-hit`.
+
+### Stats live 4 results
+
+Stats live procedure 4 ran on 2026-10-23 (08:04 to 08:16 UTC) on save slot
+14, "Sorak" (White Mage), and restored its saves clean at the end. It ran
+the research build from ForgePact `b44c1e3` (DLL SHA-256
+`56b8739b51a325065606207f3a83b0b4af168347beb77b3659d2c33837df7aa7`), the
+build that carries the page rule (`TalentPageOf`), with the hub's x64dbg
+MCP attached from D1, after S3, to D2, before S7. The capture is the
+playtest workorder's `forgepact-166-mark1-set-playtest2-live-4.md`, kept
+with the hub's workorder files and not tracked.
+
+`tools/live_checks.py` reads 15 checks: 14 pass and 1 fail. The ten
+required checks all passed, and so did the validity checks `dbg-getters`
+and `hit-control` and both research checks (`bonus-def-hit`,
+`bonus-pdr-hit`). The one fail is the validity check `merc-away`, and it is
+not a result about the game: the mercenary was never sent away (below).
+
+**The bar as read** (`skillstate`, S0): Dark Oath at 0,0, Chain of Holy
+Light at 0,2, Mana Orb at 0,3 (Q), Healing Zone (252) at 0,4 (E), Soul
+Spurn at 0,5 (R), 0,6 (Y) empty. The operator unbound Mana Orb from Q and
+Soul Spurn from R through the bar editor with its own clicks and left Y
+empty, so the automation had one proc column, E (`talents=-/252/-/-
+free=-/0/-/-`).
+
+| Check | Verdict | What it showed |
+|---|---|---|
+| `dll-hash` | pass | The lease hashed the installed DLL as `56b8739b…7aa7`, the Live 4 build. |
+| `control` | pass | `pong (YYTK 4.0.1)`. |
+| `marker` | pass | `mark1probe: research build`; the first `mark1set stat` second line read `cost=drain drain=1.00 drained=0` and `sheet=0 sheet-left=0 sheet-unread=0`. S0b: `install=installed`, no `refused` line. |
+| `dbg-control` | pass | The `PlayerMovement` logpoint logged 797 times over a 10 s idle, about once a frame at a 12.6 ms baseline; the attach tool proved the instrument by the game's frame counter (38143 to 38287 before arming, no answer at the control's hold, 38470 after). It went silent once, at its 3399th line, after a single-step exception the debugger reported at that address, and logged again after the operator disabled and re-enabled it; that was before any candidate line was read, and it logged through every later window. |
+| `others-control` | pass | With the switch off, the sheet's `bonusothers` listed 26 entries: `UI_Talent_Screen_Attribute_obj`, `UI_Button_Talent_Player_obj`, `Player_Talent_Tooltip_obj`, `Mercenary_obj` and `Companion_obj`. |
+| `no-leak` | pass | Every S2, S3 and S6 entry whose object is not a talent-screen object read answer = original: `Mercenary_obj`, `Companion_obj`, `White_Mage_Healing_Zone_obj`, `Zombie_Passive_obj`, `Legion_Skeleton_Archer_Passive_obj`, `Legion_Skeleton_Passive_obj` and `Controller_obj` (in S6, `92:Mercenary_obj` 5114->5114 and `36:Legion_Skeleton_Archer_Passive_obj` 4901->4901, among others). |
+| `sheet-life` | pass | `36:UI_Talent_Screen_Attribute_obj` 4901->5651 with the switch on, 4901->4901 with it off. |
+| `sheet-defense` | pass | Switch on: `92:UI_Talent_Screen_Attribute_obj` 7056->7556 and `97:UI_Talent_Screen_Attribute_obj` 21->41; the Defensive sub-tab read Defense 7556 and Physical damage reduction 41%. |
+| `merc-page` | pass | The Mercenary top tab opened the mercenary's page (screenshot: "Mercenary Skills", Life 12527, Mana 742, Life Replenish 886, Mana Replenish 31). Its `bonusothers` had `36:UI_Talent_Screen_Attribute_obj` 12527->12527 (the player's 36 is 4901), and every talent-screen entry read answer = original: `92` 5114->5114, `97` 86->86, `42` 31->31, `2:UI_Button_Talent_Player_obj` 0->0, the `Player_Talent_Tooltip_obj` entries X->X. `sheet-left=` rose from 34 to 14713 over S3a. |
+| `page-back` | pass | After 2 s on the Mercenary tab the Player top tab (648,96, read off the earlier screenshots' top row) brought back the player's page (screenshot: Defense 7556, Physical damage reduction 41%), and `36:UI_Talent_Screen_Attribute_obj` read 4901->5651. |
+| `dbg-getters` | pass | `statask 92,97` logged one `df` and one `pd` line with one self in town and, on arrival in Outskirts of Inoya, with another, that room's reference self. |
+| `merc-away` | fail | Not attempted, for a reason outside the game. The Mercenary page carries a "Discharge Mercenary" button (found on the first place tried, beside Reset Skills, Rename and Close), but the operator's click on it was refused before it was sent by this session's own permission classifier; nothing reached the game and no other route was tried. So S6's `bonusothers` still listed `Mercenary_obj` entries. This says nothing about whether the game lets the mercenary be sent away. The player was struck anyway, after warps into packs away from the mercenary (`hit-control`). |
+| `hit-control` | pass | S6, four pieces worn and the switch on: four `hu` lines (`sc_hurt`) with the room's reference self, after three warps toward packs (the first landed on a pack already dead). |
+| `bonus-def-hit` | pass | One `df` line with the reference self inside S6 (the window's 29th `df`), while `bonusread` read `92=7056->7556`. It did not sit next to any of the four `hu` lines, so which game event asked for it was not read. |
+| `bonus-pdr-hit` | pass | Four `pd` lines with the reference self inside S6, each right after one of the four `hu` lines, while `bonusread` read `97=21->41`. |
+
+**What else the session showed** (recorded as observed, not explained):
+
+- **`pieces=` with the switch off.** S1's `mark1set stat` with all four
+  worn and the switch off read `set=full` on the first line and `pieces=0`
+  on the second; S2's, with the switch on, read `pieces=4`.
+- **`sheet-left=` before any Mercenary tab.** It read 34 already at the
+  end of S2, which had opened only the Player tab (with the Defensive
+  sub-tab); `sheet=` read 28199 there.
+- **`sheet=` during the Mercenary tab.** Over S3a, while `sheet-left=` rose
+  from 34 to 14713, `sheet=` also rose, from 28199 to 31808. Why was not
+  read.
+- **S3b's recorder.** Over S3b (2 s on the Mercenary tab, then the Player
+  tab) `sheet-left=` rose from 14713 to 22746, yet S3b's `bonusothers`
+  listed no talent-screen entry with the mercenary's originals; every
+  talent-screen entry it printed carried the player's originals.
+- **Another self in S6.** The window had 25 `df` and 6 `pd` lines with
+  one other self (the same pattern as Stats live 3's S3b), beside
+  `92:Mercenary_obj` and `97:Mercenary_obj` entries in `bonusothers`
+  (31 and 8 asks), all left as the game answered them.
+- **Id 38's original** read 49 in S5's `bonusread` and 140 in S6's
+  (answered 74 and 165, +25 each time).
+- **Life** read full (5651/5651) in every S6 safety screenshot, so how much
+  damage those hits dealt was not read.
+
+### Stats live 4 decision
+
+Recorded on 2026-10-23 from Stats live 4 (results above). Each key takes
+exactly one value, on a line of its own, with its reason on the line below.
+
+merc-page: left
+`merc-page` passed: on the sheet's Mercenary tab every talent-screen entry read answer = original on the mercenary's numbers (36 12527, 92 5114, 97 86, 42 31) and `sheet-left=` rose, and `page-back` passed with the player's page answered again (36 4901->5651). This measures the effect of the page rule, not its mechanism: that the page on show is whichever screen object has an instance stays a static reading (§ Static reading after Stats live 3), since `sheet-left=` counts the Mercenary page, both objects and neither alike.
+
+merc-away: stayed
+Not attempted: the "Discharge Mercenary" button was found on the Mercenary page, and this session's permission classifier refused the operator's click on it before it was sent; not a result about the game. The player was struck with the mercenary still hired, by warping into packs away from it in Outskirts of Inoya: four `sc_hurt` calls with the player's self.
+
+def-hit: applies
+`bonus-def-hit` passed: with four pieces worn and the switch on, the game asked the dispatcher's Defense (92) with the player's own self once inside the struck window while `bonusread` read 92 7056->7556. The logpoint reads the self, not the answer; the answer follows the bonus's rule for the player's own calls and the same window's `bonusread`. That line was not next to a hit, so whether that ask was part of a hit was not read.
+
+pdr-hit: applies
+`bonus-pdr-hit` passed: each of the four hits (`sc_hurt` with the player's self) was followed by a Physical Damage Reduction (97) ask with the player's self, while `bonusread` read 97 21->41. The logpoint reads the self, not the answer; how much damage the hits dealt was not read (life stayed full).
+
+These set the workorder's route tokens `merc-page: left`, `def-hit:
+applies` and `pdr-hit: applies`. Nothing here changes the plugin.

@@ -38,7 +38,7 @@ pieces" below.
     sheet (the talent screen, T) shows the set's Life, Defense and its other
     lines too; your mercenary and monsters never get the set bonus, and this
     version keeps the set's numbers off the sheet's Mercenary tab, which
-    shows your mercenary's own numbers (not yet checked in play).
+    shows your mercenary's own numbers.
   - **Your skills cast themselves.** With all four worn, the skills on your
     Q, E, R and Y slots are cast for you. A skill that is not a toggle fires
     the way an item's proc fires a skill: at once, with no cast time, so a
@@ -129,9 +129,15 @@ pieces" below.
   larger than your regeneration empties your mana; and the character sheet
   showing the set's Life, Defense and Physical Damage Taken Reduced with
   all four worn, the same numbers the game's own stat calls return for
-  you, while your mercenary and summons got none of the bonus. Not checked in play yet: whether the sheet's Mercenary tab now shows your mercenary's own numbers (the third session found it showing the set bonus and the drain on them), whether the game uses the
-  set's Defense and Physical Damage Taken Reduced when a monster hits you,
-  whether every fired skill casts and a piece dropping from a vault.
+  you, while your mercenary and summons got none of the bonus; it also
+  found the sheet's Mercenary tab showing the set bonus and the drain on
+  your mercenary's numbers. A fourth session checked the fix: the
+  Mercenary tab now shows your mercenary's own numbers and your own tab
+  still shows the set's; and with all four worn, each time a monster hit
+  you the game asked for your Physical Damage Taken Reduced with the set's
+  20% in it, and in the same fight for your Defense with the set's 500.
+  Not checked in play yet: how much less damage those hits did, whether
+  every fired skill casts and a piece dropping from a vault.
 
 ## Fixed
 
