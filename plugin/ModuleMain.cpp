@@ -56979,8 +56979,9 @@ static void LaCall(LaSinkRun& run, const char* script, CInstance* self, const st
 //                `<character> found <item name>`: the proven red `SERVER:`
 //                line, and chatcolour's fallback.
 //   chatcolour - ChatAddMessage, the measured fifteen-argument shape, with the
-//                core's Line(): "<character> found" as the sender part and the
-//                item name as the text part, each in the core's colour (the
+//                core's Line(): the character's name as the sender part and
+//                "found <item name>" as the text part, the online
+//                announcement's layout, each in the core's colour (the
 //                shipped sink, ForgePact #228). The adapter holds no colour.
 static LaSinkRun LaRunSink(ForgePact::LootAnnounceMod::Sink sink, bool netSendA0IsPlayer, const RValue& item,
                            CInstance* lootInst, LaBeforeCall before)

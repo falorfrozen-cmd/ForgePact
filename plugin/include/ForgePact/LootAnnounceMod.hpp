@@ -56,10 +56,11 @@ namespace ForgePact {
 //     real stamp with no itemType, or no real stamp and no ground id) is not
 //     Identifiable: the adapter counts it (no-identity) and does not decide
 //     it, so one unread item never stands for another.
-//   - the line (ForgePact #228): an announced item's chat line is
-//     "<character> found" as the sender part, in the game's grey chat text,
-//     and the item's name as the text part, in the colour the game's online
-//     announcement gives its rarity (Line(), AnnouncementColour()). When that
+//   - the line (ForgePact #228): an announced item's chat line takes the
+//     game's online announcement's layout - the character's name as the
+//     sender part, in that announcement's orange sender colour, and
+//     "found <item name>" as the text part, in the colour that announcement
+//     gives its rarity (Line(), AnnouncementColour()). When that
 //     line cannot be shown, the adapter shows the red ServerText() line
 //     instead; the announcement still counts in sink-refused.
 //
@@ -103,9 +104,10 @@ public:
 
     // How the adapter shows the line (docs/loot-announcement-research.md,
     // "Route"). kShippedSink is the one the mod runs: `chatcolour` (ForgePact
-    // #228), ChatAddMessage with the line split in two - "<character> found"
-    // as the sender part, the item's name as the text part - so the item name
-    // alone takes its rarity's colour (Line() below). `server`
+    // #228), ChatAddMessage with the line split in two as the online
+    // announcement splits it - the character's name as the sender part,
+    // "found <item name>" as the text part - so the text takes its rarity's
+    // colour (Line() below). `server`
     // (ChatAddServerMessage, measured to show a line offline) shipped before
     // it and stays its fallback: it hardcodes red for the whole line (a static
     // reading), so it cannot carry a colour. Live procedure 1 (2026-10-04)
@@ -127,17 +129,19 @@ public:
     // its time stamp and separator in colours of its own, the sender part in
     // one colour and the whole text part in another, with no colour markup
     // inside the text (a static reading, RUNTIME_DATA_MODELS.md), so the item
-    // name's colour is the text part's. The text colours are the ones the
-    // game's online announcement passes per rarity (a static reading): Heroic
-    // is its rarity table's colour for 9, Angelic a fixed pale yellow (not
-    // the table's 7), Unholy the table's 10. The sender part, and any rarity
-    // that is not announced, take the game's grey chat text, which is also
-    // ChatAddMessage's default text colour. None of these is 0 (black) or
-    // 6776816 (#F06767), the sender colour for which the draw greys the text.
-    static constexpr int kNeutralColour = 11974842; // #BAB8B6, the game's grey chat text
-    static constexpr int kHeroicColour = 9764608;   // #00FF94
-    static constexpr int kAngelicColour = 10681599; // #FFFCA2
-    static constexpr int kUnholyColour = 7224024;   // #D83A6E
+    // name's colour is the text part's. Both colours are the ones the game's
+    // online announcement passes (a static reading): its sender colour, an
+    // orange, for the character's name, and per rarity for the text - Heroic
+    // its rarity table's colour for 9, Angelic a fixed pale yellow (not the
+    // table's 7), Unholy the table's 10. A rarity that is not announced takes
+    // the game's grey chat text, which is also ChatAddMessage's default text
+    // colour. None of these is 0 (black) or 6776816 (#F06767), the sender
+    // colour for which the draw greys the text.
+    static constexpr int kOnlineSenderColour = 18687; // #FF4800, the online announcement's sender colour
+    static constexpr int kNeutralColour = 11974842;   // #BAB8B6, the game's grey chat text
+    static constexpr int kHeroicColour = 9764608;     // #00FF94
+    static constexpr int kAngelicColour = 10681599;   // #FFFCA2
+    static constexpr int kUnholyColour = 7224024;     // #D83A6E
 
     // The text colour for a rarity code: its announcement colour, else the
     // neutral grey (kRarityUnread included).
@@ -152,7 +156,8 @@ public:
     }
 
     // The chat line `chatcolour` shows, in ChatAddMessage's terms: the sender
-    // part and its colour, the text part and its colour.
+    // part and its colour, the text part and its colour. The game draws its
+    // own separator between the two parts.
     struct ChatLine {
         std::string sender;
         std::string text;
@@ -160,10 +165,12 @@ public:
         int textColour;
     };
     // `character` is the adapter's read of the player's name ("You" when it
-    // could not read one), `itemName` the item's itemInfoStruct["28"].
+    // could not read one), `itemName` the item's itemInfoStruct["28"]. The
+    // online layout (the owner, 2026-10-23): sender `<character>` in the
+    // online sender colour, text `found <item name>` in the rarity's colour.
     static ChatLine Line(const std::string& character, const std::string& itemName, int rarityCode)
     {
-        return { character + " found", itemName, kNeutralColour, AnnouncementColour(rarityCode) };
+        return { character, "found " + itemName, kOnlineSenderColour, AnnouncementColour(rarityCode) };
     }
     // The `server` body's one text (the red fallback line, and the route
     // shipped before #228): `<character> found <item name>`.

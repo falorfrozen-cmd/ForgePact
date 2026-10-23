@@ -18,16 +18,22 @@ is the one the research doc's `announce-route:` names (`chatcolour` since
 ForgePact #228; Live procedure 1 picked `server`); and the modstate object and
 the line formats the live operator reads.
 
-The line's colours (ForgePact #228): the core holds the four colours, the
-rarity-to-colour rule and both the line's parts and the red line's text; the
-`chatcolour` body calls ChatAddMessage by SDK name with the player as self and
-the fifteen arguments in shape 8's kinds, the colours the core's, and the
-adapter holds no colour value; a refused `chatcolour` call logs, then runs the
-`server` body, which takes its text from the core; the `lootann line:`
-line and `lootannprobe place`'s tier write are research-build only; and, in
-the hub checkout, the header's Heroic, Angelic and Unholy colours equal the
-hub's curated record (hs-game-sdk/curated/loot_announcement_measurements.json,
-announcement_colours codes 9, 7 and 10; skipped in a standalone clone).
+The line's colours (ForgePact #228): the core holds the five colours (the
+online announcement's orange sender colour, the grey chat text and the three
+rarity colours), the rarity-to-colour rule and both the line's parts, in the
+online announcement's layout (the owner, 2026-10-23: the character's name as
+the sender part, "found <item name>" as the text part), and the red line's
+text; the `chatcolour` body calls ChatAddMessage by SDK name with the player
+as self and the fifteen arguments in shape 8's kinds, the colours the core's,
+and the adapter holds no colour value but netsend's own pre-#228 constant,
+exempted by name; a refused `chatcolour` call logs, then runs the `server`
+body, which takes its text from the core; the `lootann line:` line and
+`lootannprobe place`'s tier write are research-build only; and, in the hub
+checkout, the header's Heroic, Angelic and Unholy colours and its sender
+colour equal the hub's curated record
+(hs-game-sdk/curated/loot_announcement_measurements.json, announcement_colours
+codes 9, 7 and 10, and announcement_sender_colour; skipped in a standalone
+clone).
 
 The Chaos Tower's loot burst (ForgePact #227): the tick reads
 Controller_obj.lootExplosionList by name (FindControllerInstance,
@@ -66,8 +72,15 @@ EXPECTED_ROUTE = "chatcolour"
 SINK_NAMES = {"method", "netsend", "chatadd", "server", "chatcolour"}
 
 # The chat line's colours the core holds (ForgePact #228), GameMaker's
-# blue-green-red integers: the grey chat text, Heroic, Angelic, Unholy.
-LINE_COLOURS = ("11974842", "9764608", "10681599", "7224024")
+# blue-green-red integers: the grey chat text, Heroic, Angelic, Unholy, and
+# the online announcement's sender colour (orange, the owner's layout of
+# 2026-10-23).
+LINE_COLOURS = ("11974842", "9764608", "10681599", "7224024", "18687")
+
+# netsend's own copy of the online sender colour (its second argument, as the
+# closure supplies it). It predates #228 and is that body's, so the adapter's
+# no-colour scan exempts exactly this declaration by name.
+NETSEND_SENDER_CONSTANT = "static constexpr double kLaNetSendA1 = 18687.0;"
 
 # The research instrument's names, none of which the player build may carry.
 RESEARCH_ONLY_NAMES = ("lootannprobe", "LootAnnProbeCommand", "g_LaProbeRows", "LaProbeDetour", "LaProbeNoteInit",
@@ -146,6 +159,18 @@ def _header_announcement_colours(code: str) -> dict:
     colour = _body(code, "static constexpr int AnnouncementColour(int rarityCode)")
     return {constants[rarity]: constants[value]
             for rarity, value in re.findall(r"case (k\w+): return (k\w+);", colour)}
+
+
+def _header_sender_colour(code: str) -> int:
+    """The sender colour Line() returns (its third member), resolved through
+    the header's own constants."""
+    constants = dict((name, int(value)) for name, value in
+                     re.findall(r"static constexpr int (k\w+) = (-?\d+);", code))
+    line = _body(code, "static ChatLine Line(const std::string& character, const std::string& itemName, int rarityCode)")
+    match = re.search(r"return \{[^,]+,[^,]+,\s*(k\w+),", line)
+    if not match:
+        raise AssertionError(f"Line() returns no named sender colour: {line.strip()}")
+    return constants[match.group(1)]
 
 
 def _curated_colour_mismatches(header: dict, record: dict) -> list:
@@ -244,7 +269,12 @@ class LootAnnounceHeaderTests(unittest.TestCase):
                      "case kUnholy: return kUnholyColour;", "default: return kNeutralColour;"):
             self.assertIn(case, colour)
         line = _body(self.code, "static ChatLine Line(const std::string& character, const std::string& itemName, int rarityCode)")
-        self.assertIn('return { character + " found", itemName, kNeutralColour, AnnouncementColour(rarityCode) };', line)
+        # The online layout (the owner, 2026-10-23): the character's name as the
+        # sender part in the online sender colour, "found <item name>" as the
+        # text part in the rarity's colour.
+        self.assertIn('return { character, "found " + itemName, kOnlineSenderColour, AnnouncementColour(rarityCode) };',
+                      line)
+        self.assertRegex(self.code, r"static constexpr int kOnlineSenderColour = 18687;")
         server = _body(self.code, "static std::string ServerText(const std::string& character, const std::string& itemName)")
         self.assertIn('return character + " found " + itemName;', server)
         # Never 0 or 6776816 (the sender colour that greys the text) in code.
@@ -269,6 +299,11 @@ class LootAnnounceHeaderTests(unittest.TestCase):
         no_unholy = copy.deepcopy(record)
         no_unholy["announcement_colours"] = [e for e in record["announcement_colours"] if e["code"] != 10]
         self.assertEqual(len(_curated_colour_mismatches(header, no_unholy)), 1)
+        # The line's sender colour (the online layout) is the record's
+        # announcement_sender_colour; a record one off is caught.
+        sender = _header_sender_colour(self.code)
+        self.assertEqual(sender, record["announcement_sender_colour"]["bgr"])
+        self.assertNotEqual(sender, record["announcement_sender_colour"]["bgr"] + 1)
 
     def test_the_line_formats(self):
         self.assertIn('"lootann: on"', self.code)
@@ -478,10 +513,17 @@ class LootAnnouncePluginWiringTests(unittest.TestCase):
 
     def test_the_adapter_holds_no_colour_value(self):
         # The colours are the core's; the adapter passes line.senderColour and
-        # line.textColour. (netsend's own colour constant predates #228 and is
-        # that body's, unchanged.)
+        # line.textColour. netsend's own constants predate #228 and are that
+        # body's, unchanged; kLaNetSendA1 holds the online sender colour, so
+        # that one declaration, and only it, is exempted by name.
+        self.assertEqual(self.adapter.count(NETSEND_SENDER_CONSTANT), 1, NETSEND_SENDER_CONSTANT)
+        scanned = self.adapter.replace(NETSEND_SENDER_CONSTANT, "")
         for value in LINE_COLOURS + ("6776816",):
-            self.assertNotIn(value, self.adapter, value)
+            self.assertNotIn(value, scanned, value)
+        # Negative control: the exemption hides only netsend's declaration;
+        # 18687 anywhere else in the adapter is still found.
+        planted = (self.adapter + "\nRValue(18687.0);\n").replace(NETSEND_SENDER_CONSTANT, "")
+        self.assertIn("18687", planted)
         body = self._chatcolour_body()
         self.assertIsNone(re.search(r"\b\d{4,}\b|0x[0-9A-Fa-f]+", body), body)
         # Negative control: the same scan finds a colour literal in a body.

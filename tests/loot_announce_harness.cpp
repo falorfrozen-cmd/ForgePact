@@ -157,10 +157,12 @@ int main()
 
     // ---- the line: its two parts and their colours (ForgePact #228) ----------
     // The game's chat line carries two text colours, the sender's and the
-    // text's (a static reading), so the character's name and "found" go in the
-    // sender part, in the game's grey chat text, and the item's name alone in
-    // the text part, in the colour the online announcement gives its rarity.
-    // Colours are GameMaker's blue-green-red integers.
+    // text's (a static reading). The line takes the online announcement's
+    // layout (the owner, 2026-10-23): the character's name alone is the sender
+    // part, in the online announcement's sender colour (orange), and
+    // "found <item name>" is the text part, in the colour the online
+    // announcement gives its rarity. Colours are GameMaker's blue-green-red
+    // integers.
     {
         // Baseline: the red `SERVER:` line's text as the mod shipped it before
         // #228 (ChatAddServerMessage, both colours red), written out here.
@@ -178,12 +180,16 @@ int main()
         check("colour/unholy", LootAnnounceMod::AnnouncementColour(Unholy) == 7224024,   // #D83A6E
               std::to_string(LootAnnounceMod::AnnouncementColour(Unholy)));
 
-        // The sender part is the game's grey chat text (#BAB8B6) whatever the
-        // rarity.
-        bool neutralSender = LootAnnounceMod::kNeutralColour == 11974842;
-        for (int code : { (int)Heroic, (int)Angelic, (int)Unholy, (int)Satanic, LootAnnounceMod::kRarityUnread })
-            if (LootAnnounceMod::Line("Sorak", "Headhunter", code).senderColour != 11974842) neutralSender = false;
-        check("colour/neutral_sender", neutralSender, std::to_string(LootAnnounceMod::kNeutralColour));
+        // The sender part is the online announcement's sender colour, 18687
+        // (#FF4800, orange), whatever the rarity.
+        bool onlineSender = true;
+        std::string senderDetail;
+        for (int code : { (int)Heroic, (int)Angelic, (int)Unholy, (int)Satanic, LootAnnounceMod::kRarityUnread }) {
+            const int c = LootAnnounceMod::Line("Sorak", "Headhunter", code).senderColour;
+            senderDetail += std::to_string(code) + "->" + std::to_string(c) + " ";
+            if (c != 18687) onlineSender = false;
+        }
+        check("colour/online_sender", onlineSender, senderDetail);
 
         // A rarity that is not announced (the adapter never asks, but the
         // table answers) gets the neutral grey, never the line's own colour.
@@ -209,12 +215,12 @@ int main()
 
         const LootAnnounceMod::ChatLine heroic = LootAnnounceMod::Line("Sorak", "Headhunter", Heroic);
         const LootAnnounceMod::ChatLine nameless = LootAnnounceMod::Line("You", "Headhunter", Heroic);
-        check("line/sender_is_character_found", heroic.sender == "Sorak found" && nameless.sender == "You found",
+        check("line/sender_is_character_name", heroic.sender == "Sorak" && nameless.sender == "You",
               heroic.sender + " | " + nameless.sender);
         const LootAnnounceMod::ChatLine angelic = LootAnnounceMod::Line("Sorak", "Wings of the Seraph", Angelic);
-        check("line/body_is_item_name",
-              heroic.text == "Headhunter" && heroic.textColour == 9764608
-                  && angelic.text == "Wings of the Seraph" && angelic.textColour == 10681599,
+        check("line/body_is_found_item_name",
+              heroic.text == "found Headhunter" && heroic.textColour == 9764608
+                  && angelic.text == "found Wings of the Seraph" && angelic.textColour == 10681599,
               heroic.text + " | " + angelic.text);
     }
 
