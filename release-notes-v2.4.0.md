@@ -153,18 +153,18 @@ pieces" below.
 
 - **Loot announcements show the item in its rarity's colour (#228).** With
   Loot announcements on, the chat line for a Heroic, Angelic or Unholy item
-  used to be all red, `SERVER: <your character> found <item>`. Now it reads
-  like the game's own chat, for example `[21:58] Sorak found: Cavebat Heavy
-  Belt`: your character's name and "found" in the game's ordinary grey chat
-  text, and the item's name in the colour the game's online announcement
-  uses for its rarity, green for Heroic, pale yellow for Angelic and crimson
-  for Unholy. If the game ever refuses the coloured line, you get the old
-  red line instead. Which items are announced is unchanged. Tested in a
-  game session on 2026-10-23 with a development build of the plugin: a
-  Heroic, an Angelic and an Unholy item placed with a development command
-  each got a line whose item name was drawn in exactly that colour, with
-  the rest of the line grey; a Satanic item got no line, and with the
-  switch off neither did a Heroic one. The red fallback line was not seen
+  used to be all red, `SERVER: <your character> found <item>`. Now it looks
+  like the game's online loot announcement, for example `[22:51] Sorak:
+  found Headhunter`: your character's name in orange, and "found" with the
+  item's name in the colour the online announcement uses for its rarity,
+  green for Heroic, pale yellow for Angelic and crimson for Unholy. If the
+  game ever refuses the coloured line, you get the old red line instead.
+  Which items are announced is unchanged. Tested in game sessions on
+  2026-10-23 with a development build of the plugin: a Heroic, an Angelic
+  and an Unholy item placed with a development command each got a line with
+  the name in orange and "found" and the item's name drawn in exactly its
+  rarity's colour; a Satanic item got no line, and with the switch off
+  neither did a Heroic one. The red fallback line was not seen
   in play (it shows only if the coloured line is refused, which did not
   happen), and neither was a coloured line for an item dropped by a kill.
   As before, the line goes to the chat's general channel, so with the

@@ -1240,7 +1240,10 @@ measured or inference.
   the item name alone means putting everything before it in the sender part.
   Measured 2026-10-23 (§ Session results, below): three `ChatAddMessage`
   lines each drew their sender part in exactly the sender colour passed and
-  their text part in exactly the text colour passed.
+  their text part in exactly the text colour passed; Live session 2 repeated
+  that with the orange sender colour 18687 and measured the separator, a
+  colon and a space, drawn in (199,179,119) = 7844807 on every line (§
+  Session results 2).
 - `ChatAddServerMessage` takes only the text and a channel (0 by default).
   It passes the sender (measured: `SERVER`), red 255 (#FF0000) as both
   colours, and message type 1. No colour can be passed through it, which is
@@ -1269,8 +1272,8 @@ measured or inference.
   `[Hardcore] ` tag, the finder's name, the localized phrase under the key
   `just_found`, and the item's loot name in square brackets, all in the one
   text colour. Online, then, the whole text is coloured, not only the item
-  name; this change follows the issue's wording instead (§ The line
-  ForgePact shows).
+  name; the shipped line does the same, `found <item name>` in the one
+  colour (§ The line ForgePact shows).
 - Inference: `GetItemDropMessage` splits its argument as a delimited text,
   not as an item struct. That fits Live procedure 1, where it refused the
   item struct (§ Not established, above).
@@ -1296,23 +1299,38 @@ measured or inference.
   8 measured: the sender part and the text part as text, the two colours as
   reals, the type and the channel as int64 0, two reals 0, the mod's own
   `[hh:mm]` clock stamp and six `undefined`.
-- **The split.** The sender part is `<character> found` (the character's
-  name, or `You` when it cannot be read) and the text part is the item name
-  (`itemInfoStruct["28"]`). The line reads `[hh:mm] Sorak found : <item
-  name>`, the stamp and the separator in the game's own colours. Measured
-  2026-10-23: the feed showed `[21:58] Sorak found: Cavebat Heavy Belt`, with
-  no `SERVER:` (§ Session results; the spacing around the colon is as the
-  operator transcribed it from the screenshot).
-- **The colours.** The sender part in 11974842 (#BAB8B6, the game's grey
-  chat text). The item name in the online announcement's colour: 9764608
-  (#00FF94) for Heroic, 10681599 (#FFFCA2) for Angelic, 7224024 (#D83A6E)
-  for Unholy, and the grey for any other code. Neither colour is ever 0 or
+- **The layout: the online announcement's.** The owner's choice of
+  2026-10-23, after Live session 1's screenshots: take the online
+  announcement's layout if the game can draw it, else keep the layout Live
+  session 1 measured. Live session 2 showed it draws (§ Session results 2),
+  so this layout ships. The sender part is the character's name alone (or
+  `You` when it cannot be read) and the text part is `found <item name>`
+  (`itemInfoStruct["28"]`), with no square brackets. The line reads
+  `[hh:mm] Sorak: found <item name>`, the stamp and the separator in the
+  game's own colours. Measured 2026-10-23 (Live session 2): the feed showed
+  `[22:51] Sorak: found Cobra Heavy Belt`, with no `SERVER:`, the separator
+  a colon and a space straight after the name.
+- **The colours.** The sender part in 18687 (#FF4800, orange), the online
+  announcement's sender colour. The text part in the online announcement's
+  colour for the rarity: 9764608 (#00FF94) for Heroic, 10681599 (#FFFCA2)
+  for Angelic, 7224024 (#D83A6E) for Unholy, and 11974842 (#BAB8B6, the
+  game's grey chat text) for any other code. Neither colour is ever 0 or
   6776816 (the value that turns the text grey). The mod's pure core decides
   the parts and the colours, so the harness tests them; the game adapter
-  holds no colour value. Measured 2026-10-23 for Heroic, Angelic and Unholy:
-  the screenshot pixels of the sender part and of the item name equal these
-  values exactly (§ Session results). The grey for other codes is not
-  observed live, since only the three announced rarities reach the sink.
+  holds no colour value of its own for this line. Measured 2026-10-23 for
+  Heroic, Angelic and Unholy (Live session 2): the screenshot pixels of the
+  name and of `found <item name>` equal these values exactly. The grey for
+  other codes is not observed live, since only the three announced rarities
+  reach the sink.
+- **Why `found` is coloured with the item.** A line has two colour slots
+  (§ Static reading), so the online layout's orange name leaves `found` in
+  the text's colour; an orange name, a grey `found` and a coloured item
+  would need three. During Live session 2 the owner was offered this layout,
+  a `Sorak found` sender part in orange, or Live session 1's layout, and
+  kept this one. Live session 1's layout (`<character> found` as the sender
+  part in the grey, the item name alone in the rarity colour) was built and
+  measured first (§ Live session, § Session results); it is what the
+  `layout: kept-live1` outcome would have kept.
 - **The red fallback.** When the `chatcolour` call refuses (its resolution
   is refused, or `script_execute` fails), the mod logs one line with the
   existing `lootann: no line (sink chatcolour) - <field>` prefix (the first
@@ -1365,15 +1383,18 @@ measured or inference.
 5. **Keep `ChatAddServerMessage`.** It hardcodes red for both colours; it
    stays only as the fallback.
 
-Not rejected, but not the default: the online layout, the character's name
-in orange 18687 and `found <item>` all in the rarity colour. The default
-follows the issue's wording; the owner judges from the live session's
-screenshots, and a switch is a change to the one core function that decides
-the parts and colours.
+The first build followed the issue's wording (only the item name coloured,
+the rest grey). After Live session 1's screenshots the owner chose the
+online layout, the character's name in orange 18687 and `found <item>` in
+the rarity colour, which is the shipped line (§ The line ForgePact shows);
+the switch was a change to the one core function that decides the parts and
+colours.
 
 ### Live session
 
-The #228 session: one research build (`plugin_build\build.bat dev`) of the
+The first #228 session (the first build's layout, `<character> found` grey
+and the item name coloured; the shipped layout is Live session 2's): one
+research build (`plugin_build\build.bat dev`) of the
 change above, slot 14 Sorak, the Town of Inoya. The procedure is the toolkit
 hub's workorder `forgepact-228-loot-colors`, its context file's `### Live
 procedure 1` (a local working file in the hub), and the session's capture is
@@ -1432,20 +1453,88 @@ still give no line. Not observed live: the red fallback (it runs only when
 the `chatcolour` call refuses, which this session never saw; harness and
 contract tests cover it), a natural drop from a kill under this build, the
 line with general chat off, co-op, and the separator's colour (its pixels
-were not sampled). Why the ground labels read darker than the chat text is
-not established.
+were not sampled; Live session 2 measured it). Why the ground labels read
+darker than the chat text is not established.
+
+### Live session 2
+
+The second #228 session, for the online layout (§ The line ForgePact shows):
+does the game draw the character's name in the orange sender colour and
+`found <item name>` in the rarity's colour? One research build
+(`plugin_build\build.bat dev`) at ForgePact commit `8bbeaa0`, the branch
+head after the online layout landed in the core, sha256
+`f87496ed290c20303f0f364c016944fc341c6bfaac62551591f092a5aaf14d28`; slot 14
+Sorak, the Town of Inoya, from the saves as they were before Live session 1
+(that session restored its backup). The procedure is the hub workorder
+`forgepact-228-loot-colors`'s context file, `### Live procedure 2` (a local
+working file in the hub), and the session's capture is
+`.claude/workorders/forgepact-228-loot-colors-live-2.md` in the hub, on the
+owner's machine. As run, in order: the lease, the self-check (7 of 7 pass),
+a manual copy and an `hs_saves_backup` of the saves with the game closed,
+the dll-hash check, the launch and slot 14; `ping` and `lootann stat` at
+load; `lootann 1`; the feed control, `lootannprobe say control` and a
+screenshot in the same turn; a Heroic, an Angelic and an Unholy item placed
+with `lootannprobe place`, each followed at once by a screenshot and
+`lootann stat`, the line transcribed with its separator and its parts'
+pixels read; the layout judged from those three lines; a Satanic item
+placed (held); `lootann 0` and a Heroic item placed; then the game stopped,
+the saves inspected, restored and inspected again, and the lease released.
+No debugger was attached: every check reads the plugin's own `lootann
+line:` and `lootann stat` output, or a screenshot's pixels.
+
+### Session results 2
+
+Session 2026-10-23, about 20:50-20:53 UTC, research build sha256
+`f87496ed290c20303f0f364c016944fc341c6bfaac62551591f092a5aaf14d28` (the
+built file's, the installed plugin's and the lease's record, all equal;
+ForgePact commit `8bbeaa0`; banner `v2.3.1`). Screenshots at 2560x1440, the
+colours read from their pixels as red, green, blue, with the GameMaker
+integer each equals beside it. The saves were backed up first and restored
+afterwards (`hs_saves_inspect` after the restore: 0 changed, added or
+missing).
+
+| Check | Supplied | Seen | Result |
+|---|---|---|---|
+| `dll-hash` | the installed plugin's sha256 against the build's | equal, and equal to the lease's `dll_sha256` | pass |
+| `control` | `ping` | `pong (YYTK 4.0.1)` | pass |
+| `marker` | `lootann stat` at load | `lootann: off route=chatcolour seen=0 ...` | pass |
+| `installed` | `lootann 1` | `lootann: on route=chatcolour init-hook=both create-hook=both install=installed` | pass |
+| `feed-control` | `lootannprobe say control` (`ChatAddServerMessage`, `self` the local `Player_obj`), screenshot in the same turn | `dispatched=1`; red `[22:51] SERVER: control`, `SERVER`, `: control` and the separator all (255,0,0), the stamp (128,128,128), first try | pass |
+| `on-heroic` | `lootannprobe place heroic` (`"27"`=9, Cobra Heavy Belt, `"32"`=5) | `lootann line: sink=chatcolour sender="Sorak" body="found Cobra Heavy Belt" sender-colour=18687 body-colour=9764608 dispatched=1`; `announced` 0 → 1, `sink-refused` 0 | pass |
+| `seen-heroic` | the screenshot taken at once | `[22:51] Sorak: found Cobra Heavy Belt`, no `SERVER:`; `Sorak` (255,72,0) = 18687; the separator `: ` (199,179,119) = 7844807; `found Cobra Heavy Belt` green (0,255,148) = 9764608 | pass |
+| `on-angelic` | `lootannprobe place angelic` (`"27"`=7, Headhunter) | `sender="Sorak" body="found Headhunter" sender-colour=18687 body-colour=10681599 dispatched=1`; `announced` 1 → 2, `sink-refused` 0 | pass |
+| `seen-angelic` | the screenshot taken at once | `[22:51] Sorak: found Headhunter`; `Sorak` (255,72,0); the separator (199,179,119); `found Headhunter` pale yellow (255,252,162) = 10681599 | pass |
+| `on-unholy` | `lootannprobe place unholy` (`"27"`=10, Heavy Belt of Vial) | `sender="Sorak" body="found Heavy Belt of Vial" sender-colour=18687 body-colour=7224024 dispatched=1`; `announced` 2 → 3, `sink-refused` 0 | pass |
+| `seen-unholy` | the screenshot taken at once | `[22:51] Sorak: found Heavy Belt of Vial`; `Sorak` (255,72,0); the separator (199,179,119); `found Heavy Belt of Vial` crimson (216,58,110) = 7224024 | pass |
+| `layout-drawn` | the three lines above | the name orange and `found <item>` in the rarity's colour on all three, drawn `[hh:mm] Sorak: found <item>` | pass |
+| `held-satanic` | `lootannprobe place satanic` (`"27"`=6, Apex Bear Heavy Belt of Balance) | no `lootann decide` or `lootann line`; no chat line on a screenshot taken at once; `held-rarity` 0 → 1, `announced` stays 3 | pass |
+| `off-no-line` | `lootann 0`, then `lootannprobe place heroic` (Heavy Belt of Armor) | `lootann: off`; no line in `out.txt` or on the screenshot; every count unchanged | pass |
+| `restored` | `hs_stop_game`, `hs_saves_inspect`, `hs_saves_restore`, `hs_lease_release` | exit 0, not forced; 105 files restored; inspect after the restore clean; lease released, no restore pending | pass |
+
+Route token: `layout: online`. The game draws the online layout as built:
+the character's name in the orange sender colour, the game's own separator
+(a colon and a space, in 7844807) straight after it, and `found <item
+name>` in the rarity's colour, so this is the layout that ships.
+
+What it settled: the orange sender colour is drawn to the pixel, the
+separator's characters and colour on a type-0 line are as above, and the
+three rarity colours read the same in the text part with `found` in front
+of the name. The satanic screenshot, taken about 4 s after the Unholy line,
+no longer showed that line either (inference: it had faded, as the red lines
+were seen to within a few seconds in earlier sessions), which is why the
+positive shots were taken about 1 s after each placement. Not observed live: the red
+fallback (the `chatcolour` call never refused), a natural drop from a kill
+under this build, the line with general chat off, and co-op.
 
 ### Not established (#228)
 
 - That the bottom-left feed draws through `DrawChatMessage` (inference: the
-  measured lines show a stamp, a sender and a text in exactly the colours
-  passed, as it draws them; the session did not show which code drew them).
-- The separator's exact characters and colour on a type-0 line (the
-  screenshot shows a colon after the sender; neither its spacing nor its
-  pixels were recorded).
+  measured lines show a stamp, a sender, a separator and a text in exactly
+  the colours passed and the colour the static reading gives the separator,
+  as it draws them; neither session showed which code drew them).
 - What a click on the sender name does in the opened chat window offline:
-  the draw code has a menu over the name, and the sender part now carries
-  `<character> found`.
+  the draw code has a menu over the name, and the sender part carries the
+  character's name, as online.
 - What the second argument of `GetRarityColor` means (non-zero turns Common
   grey), and which items codes 4, 8 and 11 belong to: no item with those
   codes has been observed.
