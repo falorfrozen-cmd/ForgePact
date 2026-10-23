@@ -5551,3 +5551,233 @@ The sheet asked 36, 92 and 97 with `UI_Talent_Screen_Attribute_obj` as self on t
 These set the workorder's route tokens `other-self: mercenary` and
 `drain-below: drains`. The mercenary page's answers are a defect for the
 driver to route; nothing here changes the plugin.
+
+### Static reading after Stats live 3
+
+Made on 2026-10-23, after Stats live 3's `merc-page` failed, for one
+question: how can the plugin tell the character sheet's Player tab from its
+Mercenary tab, when both ask the dispatcher with the same talent-screen
+objects? Answered statically, in our own words: names only, no game code.
+The game facts are folded into the toolkit's `docs/RUNTIME_DATA_MODELS.md`
+§ 16.13.
+
+**What Stats live 3 measured** (`merc-page`, above): on the Mercenary tab
+the rows asked with `UI_Talent_Screen_Attribute_obj` and
+`UI_Button_Talent_Player_obj`, as on the Player tab (the other two
+talent-screen objects were not observed asking there); every asker's
+argument 0 read 1 on both pages and in every other entry of that session;
+and the originals were the mercenary's own (36 12527, 92 5114, 97 86, 42
+31, what `Mercenary_obj`'s own asks read). The asker rule answered by the
+asker's object, so the mercenary's page got the set bonus and the cost.
+Neither self nor argument 0 tells the pages apart.
+
+**Sources.** The hub's ghidra MCP (status healthy) decompiled
+`UiATalentsPlayer`, `UiATalentsMercenary` and `close_talents`, their
+variable slots named with the hub's `tools/decomp_index.py slot-name`.
+`UiAMercenaryDischarge`'s cross-references through the MCP were one data
+reference: not observed, not a negative.
+
+**The reading.** The screen's top tabs are UI actions, and each page is its
+own screen object. The Player tab's action returns at once when an instance
+of `UI_Talent_Screen_obj` already exists; otherwise it closes the talent
+screens and creates a `UI_Talent_Screen_obj` on the game layer, handing it
+the old screen's local and online player. The Mercenary tab's action is the
+same with `UI_Mercenary_Talents_obj`, and then has the new instance set up
+the mercenary's talent buttons. `close_talents` destroys every instance of
+`UI_Talent_Screen_obj`, `UI_Incarnation_Board_obj` and
+`UI_Mercenary_Talents_obj`. So the page on show is whichever screen object
+has an instance: the player's page is "an instance of `UI_Talent_Screen_obj`
+exists and none of `UI_Mercenary_Talents_obj`". That T opens the screen as a
+`UI_Talent_Screen_obj` is inferred from Stats live 3 (T opened on the Player
+tab), not read. The Hero and Ether tabs (`UiATalentsIncarnation`,
+`UiATalentsEther`) were not read; under the rule below they leave the
+screen's askers unanswered unless they keep a `UI_Talent_Screen_obj` alive.
+
+**The rule it gives** (built after this reading; not yet measured live): a
+self that is one of the talent screen's four asking objects is answered
+only when, read at that call, `instance_number` gives at least 1 for
+`UI_Talent_Screen_obj` and 0 for `UI_Mercenary_Talents_obj`
+(`Mark1Set.hpp`'s `TalentPageOf`). Any other reading leaves the call with
+the game's answer: calls left on the mercenary's page, with both objects
+present or with neither are counted `sheet-left=`, calls left because a
+count did not read or a name did not resolve `sheet-unread=` (both count
+talent-screen calls made while the switch is on for an id the bonus or the
+cost wants). The local player's own calls never depend on the page. Both
+objects are resolved by their `hs-game-sdk` names through
+`asset_get_index`, beside the four askers, never by a typed index.
+
+Rejected, and why:
+
+- *Telling the pages apart by argument 0.* It read 1 for every asker on
+  both pages and for the mercenary (Stats live 3).
+- *Caching the page once a frame.* A tab's action runs inside a step event,
+  so a frame-boundary cache could hand the new page the old answer for the
+  rest of that frame. The page is read at each talent-screen call, and
+  those calls happen only while the screen is open.
+- *A per-row owner* (which container created the row). Where a row keeps
+  its container, if it does, was not read; the screen objects' existence is
+  what the tab actions themselves test.
+- *Answering a talent tooltip outside the screen.* If
+  `Player_Talent_Tooltip_obj` asks while no `UI_Talent_Screen_obj` exists
+  (not observed), it is left with the game's own value.
+
+### Stats live procedure 4
+
+The page rule on both tabs, and the struck-player checks Stats live 3 could
+not observe, with the mercenary sent away if the game offers a way. The
+capture is the playtest workorder's live capture 4,
+`forgepact-166-mark1-set-playtest2-live-4.md`, kept with the hub's workorder
+files and not tracked. Every `mark1set stat` pair of lines read is
+recorded.
+
+**Setup:**
+
+- **Build:** the research build at the ForgePact commit that applies the
+  page rule; its path and SHA-256 are recorded with the workorder, and
+  `dll-hash` compares the installed DLL with it. The owner is asked before
+  it is installed.
+- **Character:** save slot 14, "Sorak" (White Mage), saves backed up first
+  (`hs_saves_backup` and a manual copy) and restored at the end. Each
+  session restores its own backup, so the save starts as before Stats live
+  3: bar 0,3 `manaOrb`, 0,4 `healingZone`, 0,5 `soulSpurn`, 0,6 empty; no
+  Mark 1 piece; the mercenary hired.
+- **Control:** `ping` answers `pong (YYTK 4.0.1)` (`control`). The recorder
+  of other askers has its own control (`others-control`), the logpoints
+  theirs (`dbg-control`).
+- **Cases:** the sheet's Player tab with the switch off and on (the
+  ordinary case); its Mercenary tab with the switch on (the outlier: the
+  same talent-screen objects, two observed in Stats live 3, on another
+  page); the Player tab again after the Mercenary tab (a page created a
+  second time); the player struck by melee (97 through `sc_hurt`) and by a
+  projectile (92 in the player's collision with an enemy projectile, a
+  static reading), all four pieces worn and the switch on. Not every tab or
+  every stat; the drain, `vitals` and the stat reads are not re-run.
+- **Debugger:** the hub's x64dbg MCP, for two questions: is the player
+  struck at all, and does the game ask for the player's 92 and 97 with the
+  player's own self while struck. The same four non-breaking logpoints as
+  Stats live 3, at the function entries of `PlayerMovement`
+  (`dbg-control`), `StatDefense` (`dbg-defense`, logging `df`),
+  `StatPhysicalDamageReduction` (`dbg-pdr`, `pd`) and `sc_hurt`
+  (`dbg-hurt`, `hu`), each logging its hit count and its self, the
+  function's first argument. Their offsets and the bytes each is checked
+  against stay with the workorder, research findings and never shipped
+  constants. Attached in town after S3 (D1), detached back in town after S6
+  (D2), before S7's `hs_stop_game`.
+- **Relies on:** the page and its rule (§ Static reading after Stats live
+  3; hub RDM § 16.13); who asks for 92 and 97 when the player is struck
+  (§ Static reading after Stats live 2; Stats live 3's S3a measured four
+  `hu` and four `pd` lines with the player's self and no `df`, melee only);
+  `mark1probe bonusothers [reset]`, `bonusread` and `statask` (the guide's
+  Command Reference), with `mark1set bonus 1` before any probe hook; the
+  pieces, the bag, the waypoint and the bar editor as in Stats live
+  procedure 3 (the same coordinates); the sheet's tabs as Stats live 3
+  measured them (T opens on the Player tab; the Defensive sub-tab opens
+  with a hover at 744,544 for 300 ms and a left click held 150 ms; the
+  Mercenary top tab with a hover at 1914,96 and a left click held 150 ms;
+  where the Player top tab sits is not recorded, so the operator reads it
+  off the Mercenary page's screenshot, the same top row). Sending the
+  mercenary away is **not found** in the shared references or research
+  docs: the game has a UI action `UiAMercenaryDischarge` with a confirm
+  (`UiAMercenaryDischargeConfirm`), and where its button sits was not read
+  (unverified: a control on the Mercenary tab or in the mercenary's own
+  window). A logpoint's self is the getter's first argument at entry, and a
+  line counts only with `dbg-control` logging in the same window.
+
+**Steps:**
+
+- S0: `dll-hash`; `ping` (`control`); a bare `mark1probe` answers
+  `mark1probe: research build`; the first `mark1set stat` second line
+  reads `cost=drain drain=1.00` and `sheet=0 sheet-left=0 sheet-unread=0`
+  (`marker`). `skillstate` records the bar. Through the bar editor the
+  operator unbinds Mana Orb from Q and Soul Spurn from R and leaves Y empty
+  and Healing Zone on E (in Stats live 3's S3b the automation's Shadow Bolt
+  killed the pack before it struck); `skillstate` shows 0,3, 0,5 and 0,6
+  empty. Every click is the operator's.
+- S0b: `mark1set bonus 1`, then `mark1set bonus 0`: `install=installed`, no
+  `refused` line.
+- S1: the four pieces spawned (`mark1probe spawn set top` at `playerwarp
+  912 960`), picked up (hover the label, F) and all four worn (C, right
+  clicks in the Extra tab, C; each slot checked in a screenshot). `mark1set
+  stat` reads `set=full` and `pieces=4`.
+- S2, the Player tab, in town. Switch off: `bonusothers reset`; T, 3 s,
+  screenshot, T; `bonusothers`. Switch on: `bonusothers reset`; T, 3 s,
+  screenshot; the Defensive sub-tab, screenshot; T; `bonusothers`;
+  `statask 36,92,97`; `mark1set stat`.
+- S3, the Mercenary tab, switch on. S3a: `mark1set stat` (`sheet-left=`
+  recorded); `bonusothers reset`; T; the Mercenary top tab; 3 s;
+  screenshot; T; `bonusothers`; `mark1set stat`. S3b: `bonusothers reset`;
+  T; the Mercenary top tab; 2 s; the Player top tab; 3 s; screenshot; T;
+  `bonusothers`.
+- D1, in town: attach under the session's lease after `control` passed;
+  arm `dbg-control`, which logs about once a frame over a 10 s idle, then
+  the three others. The reference self: `mark1probe statask 92,97` raises
+  `df` and `pd` by one each with the player's self (`dbg-getters`), read
+  here and again on arrival in Outskirts (a room change gives the player a
+  new instance).
+- S4, the mercenary sent away (`merc-away`): T, the Mercenary top tab,
+  screenshot; a discharge control looked for on that page and in the
+  mercenary's own window (a screenshot of each place tried); if one is
+  found, used and confirmed; T. What worked is recorded. If none is found in
+  a few tries, that is recorded and S6 strikes the player away from the
+  mercenary instead. Discharging changes the save; S7's restore puts it
+  back.
+- S5, Outskirts of Inoya: the waypoint there (`playerwarp 912 822`, F, a
+  second F if the map did not open, the Outskirts entry at 452,966). On
+  arrival one command file: `mark1set bonus 0`, `mark1probe statask
+  36,92,97` (the room's reference self from its `df` and `pd` lines),
+  `mark1probe bonusread`, `mark1probe bonusothers reset`, `mark1set bonus
+  1`.
+- S6, the struck window, four pieces, switch on: a warp next to a pack seen
+  in a screenshot, one with archers preferred (a projectile asks 92; Stats
+  live 3 met `Legion_Skeleton_Archer_Passive_obj` in Outskirts); with the
+  mercenary still hired, a warp that puts the pack between the player and
+  the mercenary. 30 s; if no `hu` line has the reference self by then, a
+  second warp beside the pack and 30 s more. No `statask`, `vitals` or
+  hover inside the window; a screenshot every 10 s for safety only (the life
+  globe below a third: the waypoint to town, recorded). Then the `hu`, `df`
+  and `pd` counts and selves, `bonusread`, `bonusothers` and `mark1set
+  stat`. The waypoint to town (F, the Town of Inoya entry at 324,1006);
+  `menulayout` reads `room=Town_01_rm`.
+- D2: the counts and selves recorded, then detach.
+- S7, teardown: `hs_stop_game`, `hs_saves_inspect`, `hs_saves_restore`,
+  inspect clean, `hs_lease_release`.
+
+**Checks** (expected, then pass rule):
+
+- `dll-hash`, `control`, `marker`: as S0.
+- `dbg-control`: logs about once a frame over a 10 s idle.
+- `others-control`: S2's switch-off `bonusothers` lists at least one entry.
+- `no-leak`: every `bonusothers` entry of S2, S3 and S6 whose object is not
+  one of the four talent-screen objects reads answer = original, and at
+  least one such entry exists (not-observed otherwise); fail on any that
+  differs.
+- `sheet-life`: S2 switch on, a talent-screen object's 36 entry reads
+  original + 750; switch off, answer = original.
+- `sheet-defense`: S2 switch on, talent-screen entries for 92 reading
+  original + 500 and for 97 reading original + 20.
+- `merc-page`: S3a shows the Mercenary page (screenshot), its `bonusothers`
+  has a talent-screen 36 entry whose original is not S2's player 36 (the
+  mercenary's; Stats live 3 read 12527), every talent-screen entry reads
+  answer = original, and `sheet-left=` rose over S3a. Pass on all of these;
+  fail on any talent-screen entry with answer ≠ original; not-observed if
+  the page was not reached.
+- `page-back`: S3b's Player-tab screenshot shows the player's page, and a
+  talent-screen 36 entry reads original + 750 with the player's 36 as
+  original.
+- `dbg-getters`: the two reference selves read (validity, not required).
+- `merc-away` (validity, not required): what S4 did; pass when S6's
+  `bonusothers` lists no `Mercenary_obj` entry, fail when it does (the
+  mercenary stayed; recorded with how the player was struck).
+- `hit-control` (validity, not required): at least one `hu` line with the
+  room's reference self in S6; without it the hit checks are not-observed.
+- `bonus-def-hit` (research): a `df` line with the reference self in S6
+  while `bonusread` reads 92 X->X+500 passes; such a line with X->X fails;
+  no such line, not-observed.
+- `bonus-pdr-hit` (research): a `pd` line with the reference self in S6
+  while `bonusread` reads 97 X->X+20 passes; X->X fails; no such line,
+  not-observed.
+
+Required: `dll-hash`, `control`, `marker`, `dbg-control`, `others-control`,
+`no-leak`, `sheet-life`, `sheet-defense`, `merc-page` and `page-back`. Never
+required: `dbg-getters`, `merc-away`, `hit-control`, `bonus-def-hit` and
+`bonus-pdr-hit`.

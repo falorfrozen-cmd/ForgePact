@@ -1784,9 +1784,8 @@ any item's, and the set gives more for every piece you wear.
   only while the **Mark 1 set** switch is on. Your character sheet (the
   talent screen, T) shows the set's Life, Defense and its other lines too,
   as your HUD does; your mercenary and monsters never get the set bonus.
-  One known flaw: the character sheet's Mercenary tab shows your
-  mercenary's numbers with the set bonus and the mana drain added (for
-  example 750 more Life), though the mercenary itself does not get them.
+  The character sheet's Mercenary tab shows your mercenary's own numbers,
+  without the set bonus or the mana drain.
 - **The tooltip.** Each piece's tooltip reads `Satanic Set <type>` under its
   name, shows the piece's own stats, then the set's bonus lines, each lit
   while you wear enough pieces for it and grey otherwise, with what
@@ -1955,8 +1954,9 @@ regeneration does empty your mana rather than stopping at zero. It checked
 the character sheet too: with all four worn it showed the set's Life,
 Defense and Physical Damage Taken Reduced, the same numbers the game's own
 stat calls return for you, while your mercenary and summons got none of
-the set bonus and no monster asked for it. It also found the flaw above, the sheet's Mercenary
-tab showing the bonus and the drain on your mercenary's numbers. Not
+the set bonus and no monster asked for it. It also found the sheet's Mercenary tab showing the
+bonus and the drain on your mercenary's numbers; this version leaves that
+tab with the mercenary's own numbers, not yet checked in play. Not
 checked in play yet: whether the game uses the set's Defense and Physical
 Damage Taken Reduced when a monster hits you (in that session monsters hit
 you only while two pieces were worn, before those lines count), how soon
