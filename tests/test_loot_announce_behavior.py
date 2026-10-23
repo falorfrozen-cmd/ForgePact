@@ -19,6 +19,19 @@ the memory are capped; the stat line counts what happened; an identity the
 adapter could not read is not identifiable; and Live procedure 2's steps
 replay with the bag drop held.
 
+The Chaos Tower's loot burst (ForgePact #227): a tower floor takes its fresh
+drops off the ground into a list and puts the same structs down again at the
+floor's end, with no `CreateItemNew`. Baseline: an item built long before it
+lands is held as a bag drop, and while off a listed entry is neither counted
+nor kept. Target: a listed entry built in that frame or the last is kept, and
+its landing at the floor's end announces once (`burst-landed`); an entry not
+recently built (a bag drop the floor collected) is not kept; a second sighting
+in the burst frame is a duplicate; the memory is forgotten when the list
+shrinks and when the switch goes off, and capped at `kBurstCap`; rarity and
+identity still decide; an entry built, listed and landing in one frame passes
+as recent; and the stat line gains `burst-listed`, `burst-fresh`,
+`burst-landed` and `burst-overflow` after `create-overflow`.
+
 The install: the switch arms at launch and the hooks go in once setup is done
 and the local player resolves, once per session (`install=` on the stat
 line). Baseline: the rule before, setup alone. Target: no player, no install.
@@ -161,6 +174,32 @@ class LootAnnounceBehaviorTests(unittest.TestCase):
     def test_an_item_not_built_this_frame_or_the_last_does_not(self):
         self.assertScenarios(*self.CREATION_GUARD_SCENARIOS)
         self.assertScenarios("target/creation_window_cap_is_per_window", "target/key_kind_is_part_of_the_key")
+
+    # The Chaos Tower's loot burst (ForgePact #227): a floor takes its fresh
+    # drops back as they land and puts the same structs down at its end.
+    # Every label the plan's criterion lists must print PASS.
+    BURST_BASELINE_SCENARIOS = (
+        "baseline/collected_item_landing_later_is_held",
+        "baseline/off_remembers_no_burst_entry",
+    )
+    BURST_TARGET_SCENARIOS = (
+        "target/fresh_burst_entry_lands_as_new",
+        "target/stale_burst_entry_stays_held",
+        "target/burst_landing_twice_in_one_frame_one_line",
+        "target/burst_memory_forgotten_when_list_shrinks",
+        "target/burst_rarity_and_identity_rules_still_apply",
+        "target/burst_memory_capped",
+        "target/burst_memory_cap_frees_on_forget",
+        "target/off_forgets_burst_memory",
+        "target/collected_and_burst_in_one_frame_counts_as_recent",
+        "target/stat_line_burst_fields",
+    )
+
+    def test_baseline_a_collected_item_landing_later_is_held(self):
+        self.assertScenarios(*self.BURST_BASELINE_SCENARIOS)
+
+    def test_a_chaos_tower_burst_entry_announces_once_when_it_lands(self):
+        self.assertScenarios(*self.BURST_TARGET_SCENARIOS)
 
     def test_the_memory_is_capped_oldest_first(self):
         self.assertScenarios("memory/capped", "memory/oldest_forgotten_first")

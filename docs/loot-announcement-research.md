@@ -739,6 +739,359 @@ panel's own launch commands rather than `lootann 1` sent at the same moment.
 The game's close by `hs_stop_game` without force ended with exit code
 `0xC0000409`, after play had ended; it was not investigated.
 
+## Chaos Tower (#227)
+
+### The report
+
+ForgePact #227 (a player report, no capture): with Loot announcements on, a
+Heroic, Angelic or Unholy item found in the Chaos Tower gets no chat line,
+while the same rarities announce everywhere else. The issue asked whether the
+announcement path sees tower drops at all, to be answered with a positive
+control outside the tower in the same session.
+
+The answer below is a static reading, made 2026-10-23 on the build the
+decompile index labels `498d588550d8`: the path does see the drops, and the
+creation guard (§ The mod) rejects them. Live procedure 5 (2026-10-23)
+measured its main points on a first floor: items dropped there go into the
+floor's list instead of being decided, they land when the floor is cleared,
+the rule before this fix holds them as `held-bag-drop` there, and the burst
+memory announces them. Each point below says whether it was measured; what
+the session did not reach stays in § Not established.
+
+### How it was found
+
+- **The `ghidra` MCP's read tools** answered what each script does:
+  `LootGroundInit`, `LootExplosion`, `LootGroundDrop`, `IsChaosTower`,
+  `EnemyDestroyChaosTower`, `WormholeGiveReward`, `Controller_obj`'s tower
+  reset closure and `Spawn_Next_obj`'s floor-end closure. On this
+  `-noanalysis` import the MCP's callers and xrefs come back empty, which is
+  "not observed", never "has none" (AGENTS.md § Check for a Named Ghidra
+  Project).
+- **Direct callers by a byte scan** of the executable's code section for
+  `E8`/`E9 rel32` sites aimed at a script's entry. Two positive controls ran
+  in the same scan: `DropItemHeroic` gave its two known callers (`VaultUse`
+  and the Chaos Tower reward function, the same pair `FindCallers.java` gave
+  on 2026-10-20) and `LoadDrops` its one (`DropItem`). The scan cannot see a
+  call through a method value, a global pointer or the script table, so a
+  caller reached only that way is not observed.
+- **Variable and builtin names** in the bodies the decompiler left unnamed
+  came from `py -3 tools/decomp_index.py slot-name`, not from guessing.
+
+No decompiled text, address or offset from any of these reads is kept here;
+what follows is the mechanism in our own words.
+
+### The loot burst (static reading)
+
+- **A tower floor keeps its drops.** `LootGroundInit`, which every ground
+  item passes through, has a branch for the Chaos Tower. It applies when the
+  room's name starts with the tower's prefix (the same test `IsChaosTower`
+  makes) or a protected value at `gDataProtected[12]` reads true, the room is
+  neither `Chaos_Tower_Boss_1` (137) nor `Chaos_Tower_xLobby` (148), and the
+  protected flag behind `Controller_obj.lootExplosionGiven` is false. Then the
+  new ground item does not stay: the game wraps the ground item's
+  `itemInstance` (the item struct itself, not a copy) and its `isPlayerDrop`
+  in an `s_LootExplosionData` struct, appends that to
+  `Controller_obj.lootExplosionList` (a plain ds_list, read directly), and
+  the call that follows is read as destroying the ground instance (an
+  inference: the same runtime routine destroys a dialog's instance
+  elsewhere). One item-kind test, not read further, can exempt an item.
+  Nothing tests `isPlayerDrop` before the append, so a player's own bag drop
+  on a floor is collected too.
+  **Measured** (Live procedure 5) on `Chaos_Tower_Floor_01_rm`:
+  `IsChaosTower` read true, `lootExplosionList` read as a live list (a
+  reference), and each Heroic item placed there raised the list's size by 1
+  and the mod's `unidentified` by 1 with no decision, which fits the ground
+  instance being gone by the frame's end; the floor's own drops from kills
+  raised it the same way. That the call after the append is what destroys
+  the instance is still the inference above, and the bag drop on a floor
+  was not tried (not observed live).
+- **The protected keys.** `lootExplosionGiven` and `lootExplosionGold` each
+  hold a protected-store key, not the value (the `GPV` pattern,
+  `docs/RUNTIME_DATA_MODELS.md` § 13.7 in the hub).
+- **The burst.** `LootExplosion` sets `lootExplosionGiven` true, drops the
+  held gold, then for every list entry puts the entry's struct back on the
+  ground around a given point with `LootGroundDrop` (a new `Loot_Ground_obj`
+  whose `itemInstance` is that struct, so no `CreateItemNew` runs for the
+  item) and calls `LootGroundInit` on the new ground item with a second
+  argument `true`, and finally clears the list. `LootGroundDrop`'s own body
+  also calls `LootGroundInit`; whether both calls run for one item is not
+  established. **Measured** (Live procedure 5): when the floor was cleared
+  the list emptied (`size=0`), `lootExplosionGiven` read true, the held
+  items lay on the ground, and the mod decided each placed item twice in
+  that burst, which fits two `LootGroundInit` sightings per item; which two
+  calls they were was not separated, because the debugger logpoints on
+  `LootExplosion` and `LootGroundInit` could not run through the floor.
+- **When it comes.** `LootExplosion` has two direct callers by the scan:
+  `Spawn_Next_obj`'s closure `anon@1312@gml_Object_Spawn_Next_obj_Create_0`,
+  which reads the floor's state (`chaosTowerFloorFinished`,
+  `chaosTowerIsLastFloor`, `chaosTowerFloor`, `chaosTowerFloorList`,
+  `nextFloorType`, `nextFloorNumber`), and `WormholeGiveReward`. So the
+  floor's loot lands when the floor is finished; whether a Wormhole reward
+  uses the same list is not established. **Measured** (Live procedure 5):
+  the loot landed when the floor was cleared ("Floor Cleared" on screen);
+  that `LootExplosion` was the call that put it there is the static reading,
+  not observed live.
+- **The reset.** `Controller_obj`'s closure `anon@16838` clears
+  `lootExplosionList` and resets `lootExplosionGold`, `chaosTowerFloor`,
+  `chaosTowerSpawnZone`, `chaosTowerStarted`, `chaosTowerBossState`,
+  `lootExplosionGiven` (to false) and `chaosTowerRift`. That it is what
+  `m_ChaosTowerReset` holds is plausible, not established (the S10 notes
+  named an earlier build's `anon@16294`).
+- **Not the cause.** `EnemyDestroyChaosTower` only applies the tower's death
+  effects and makes no item call. The tower's reward function (unnamed in the
+  import, beside `Chaos_Tower_NPC_obj`'s code) gives its reward through
+  `DropItemHeroic` and a drop table, in a room not established.
+
+### What the mod did with it
+
+Measured in Live procedure 5 with the burst memory switched off
+(`lootannprobe burst off`, which reproduces the rule before this fix): a
+Heroic item placed on the floor got no decide line and raised
+`unidentified`, and at the floor's end it was decided `held-bag-drop`
+(`via=none`); the owner, watching the game, saw no line for it. The account
+of why is the reading and the guard: on a tower floor the item is built through `CreateItemNew` at the
+kill, and the noted `LootGroundInit` call's ground instance is gone by the
+frame's end, so the mod finds no live `Loot_Ground_obj` among the call's
+handles: `unidentified` +1, nothing decided. At the floor's end the same
+struct lands again through `LootExplosion`, minutes after it was built and
+with no `CreateItemNew` in that frame or the one before, so the creation
+guard holds it as `held-bag-drop`. No line either time. The announcement path
+sees the drops; the guard rejects them, by its own rule, because the burst
+looks exactly like a bag drop.
+
+### The burst memory
+
+The fix teaches the guard about the list, not about the room. The core
+(`plugin/include/ForgePact/LootAnnounceMod.hpp`, which knows only keys,
+counts and text) keeps a burst memory beside its creation window:
+
+1. **Noting an entry.** Noting a list entry's item key counts `burst-listed`.
+   If that key is recently created at that moment (noted by `CreateItemNew`
+   this frame or the last), it is kept and counts `burst-fresh`; otherwise it
+   is not kept. While the switch is off, noting does nothing. The memory
+   holds at most 4096 keys; a note past that is not kept and counts
+   `burst-overflow`.
+2. **Forgetting.** When the adapter reports that the list shrank or changed,
+   the memory forgets every key, after that frame's decisions.
+3. **Deciding.** The creation guard passes a ground item when its key is
+   recently created or kept in the burst memory. A pass that came only from
+   the burst memory counts `burst-landed`. A sighting does not consume the
+   key: the burst may initialise one ground item twice in a frame, and the
+   identity memory keeps that to one line (the second sighting
+   `held-duplicate`). The rarity set and the identity rule are unchanged.
+4. **Off.** Switching off forgets the burst memory, as it clears the
+   creation window; the counters persist like the others.
+5. **The stat line** gains, right after `create-overflow=<n>`,
+   ` burst-listed=<n> burst-fresh=<n> burst-landed=<n> burst-overflow=<n>`.
+
+A bag drop on a floor still stays unannounced: its struct was built long
+before it was listed, so it is never kept (`burst-fresh` 0) and lands as
+`held-bag-drop`. That is the intended rule, pinned by the harness; a bag
+drop on a tower floor is not observed live (Live procedure 5 did not reach
+it). The adapter in `plugin/ModuleMain.cpp` feeds the memory:
+
+- While the switch is on and the hooks are installed, `LootAnnounceTick`
+  reads the list after deciding the frame's noted calls and before ageing the
+  creation window, so the burst frame's landings find the memory filled in
+  earlier frames, and an entry collected this frame still finds this frame's
+  `CreateItemNew` notes.
+- Everything by name: the Controller through `FindControllerInstance`,
+  `lootExplosionList` through `variable_instance_get`, `ds_exists` with the
+  list type, `ds_list_size`, and only the entries past those already read
+  through `ds_list_find_value`; each entry's `itemInstance` through the
+  adapter's field reader and its key the same way as at a `CreateItemNew`
+  note. A list id or Controller handle may be a number or a reference: the
+  kind decides how it is read, never whether.
+- A list shorter than the count already read, a different list value, or no
+  Controller or list makes the core forget, and the count restarts at the
+  list's current length. The first read after the switch comes on starts at
+  the list's length at that moment.
+- No new hook, no address, no struct layout and no write to a game value.
+  While off it costs nothing (the tick already returns at once); while on,
+  one Controller lookup and one list length per frame, with entries read only
+  when the list grew. A read that throws skips that frame's read and says so
+  once in `out.txt` (`lootann: burst list unreadable - <what>`).
+- The burst reader ships in the player build, since it is the fix. Only the
+  instrument below is research-build only.
+
+`tests/loot_announce_harness.cpp` pins the rules against the real header:
+the baseline cases (a struct landing long after it was built, with no burst
+note, is held; an entry noted while off is not kept) and the target cases
+(a fresh entry lands as new with `burst-landed` 1, a stale one stays held, two
+sightings in the burst frame give one line, a shrink forgets, the rarity and
+identity rules still apply, the cap, off forgets, and the stat fields in
+order).
+
+### Instrument additions
+
+Under `#ifndef FORGEPACT_RELEASE`, in `lootannprobe`, for the #227 live
+session:
+
+- **`lootannprobe burst`** prints `lootannprobe burst: memory=<on|off>
+  tower=<1|0|unread> list=<value|none(<why>)> size=<n|unread>
+  given=<value|unread>`, with ` threw=<stage>` appended when a read threw
+  (`list`, `ds_list_size` or `given`, the read that was running). `list` is
+  `real:<id>`, or `ref:<id>` for a handle that came back a reference (Live
+  procedure 5 read `ref:291`); `none(<why>)` says why there is no list:
+  `no Controller_obj` when the instrument found nothing to read, or the
+  value's kind and the step that refused it when the variable holds no live
+  ds_list. `tower` is `gml_Script_IsChaosTower` by name (the
+  existing `InChaosTowerCached`); `given` is `gml_Script_GPV` of
+  `Controller_obj.lootExplosionGiven`, the route `gatestats` uses.
+- **`lootannprobe burst on|off`** sets whether newly listed entries are kept
+  (`on` at startup) and answers with the same line. While `off`, entries are
+  still read and count `burst-listed` but are not kept, which reproduces the
+  rule shipped before #227 for the items listed meanwhile: the negative
+  control inside the tower.
+- **A decide line** for every decided ground item whose rarity is one the
+  mod announces: `lootann decide: "<itemInfoStruct 28>" rarity=<code>
+  stamp=<itemTimeStamp> verdict=<VerdictName> via=<recent|burst|none>`,
+  where `via` names what passed the guard, `none` when nothing did.
+- **`lootannprobe place`** sets `itemInfoStruct["32"]` (the loot filter's
+  tier, `docs/RUNTIME_DATA_MODELS.md` § 16.3 in the hub) to 5, SS, before it
+  places the item, since the owner's filter hides lower tiers, and its reply
+  adds ` "32"=<n> stamp=<itemTimeStamp>`. Measured (Live procedure 5): items
+  placed this way showed their labels on the ground under the owner's
+  filter, in town and after the tower floor's burst.
+- The usage line names `burst [on|off]`.
+- **Two stat fields, in the player build** (not behind `#ifndef
+  FORGEPACT_RELEASE`, added after Live procedure 5's review): `lootann stat`
+  ends with ` burst-list=<state> burst-nokey=<n>`, after `queue-full=`.
+  `burst-list` is the last list lookup's answer: `ok`, or `none(<why>)`
+  carrying the reason the lookup gave (`no Controller_obj`, or the value's
+  kind and the step that refused it), `none(lookup threw)` when the lookup
+  threw, and `unread` before the first read. `burst-nokey` counts the list
+  entries read whose `itemInstance` gave no key. With `burst-listed=0` alone,
+  a renamed `lootExplosionList`, a renamed `itemInstance` and a session that
+  never finished a floor read the same; a renamed list shows as a
+  `none(...)` state while in the tower, and a renamed entry field as
+  `burst-nokey` climbing while `burst-listed` stays 0.
+
+### Rejected routes
+
+1. **Treat every item landing in a `Chaos_Tower_` room as new.** The tower
+   collects bag drops too, so a bag drop on a floor would be announced; it
+   also misses the `gDataProtected[12]` trigger.
+2. **Hook `LootExplosion` or `LootGroundDrop` and open a window.** A new
+   hook, reached by a direct call from a closure, and every listed item lands
+   inside the window, bag drops included. § The mod records the
+   `LootGroundDrop` window the creation guard replaced, which counted 0.
+3. **Trust `isPlayerDrop`.** What it holds on a bag drop is not established;
+   the creation keys are measured (Live procedure 3).
+4. **Widen the creation window.** A floor lasts minutes, and a window that
+   long admits an item picked up and dropped again inside it.
+5. **Read the item inside the `LootGroundInit` detour before the original.**
+   The detour's consumers run after the original by contract
+   (`test_the_shared_detour_hands_the_call_on_after_the_original`), and the
+   detour is shared with hidden loot sleep.
+6. **Announce at the kill instead of at the burst.** Possible from the list,
+   but the line would come minutes before the item can be picked up; the
+   default kept is the line when the item lands.
+
+## Live procedure 5
+
+The #227 session: one research build (`plugin_build\build.bat dev`) with the
+burst memory and the instrument above, slot 14 Sorak. The procedure is the
+toolkit hub's workorder `forgepact-227-chaos-tower-announce`, its context
+file's `### Live procedure 1` (a local working file in the hub), and the
+session's capture is `.claude/workorders/forgepact-227-chaos-tower-announce-live-1.md`
+in the hub, on the owner's machine. In order: the control and the build's
+marker at load; `lootann 1` outside the tower; a positive control, a Heroic
+item placed in town (P); with the switch off, a Heroic item placed in town,
+picked up and kept in the bag for a later drop on a floor (C);
+`specialrate chaostower 100`, the tower reached in an Act 1 zone and its
+first floor entered; a test line through `lootannprobe say`; on the floor a
+Heroic item placed with the burst memory off (A, the rule before this fix)
+and one with it on (B); C dropped from the bag on the floor; the floor
+cleared; at its end, the decide lines for A, B and C and the red line for B.
+Two non-breaking debugger logpoints (`docs/tools/x64dbg-mcp.md` in the hub)
+were to show `LootGroundInit` as the debugger's control and `LootExplosion`
+at the floor's end.
+
+### Results
+
+Session 2026-10-23, about 14:14-14:31 UTC, research build sha256
+`a21409cb7320811b8f337cf165f5ec3540cba8ec6a1bc147af68e8f1113a9fa3` (the
+built file's and the installed plugin's, equal; ForgePact commit
+`ba5e4c8`), slot 14 Sorak, the Town of Inoya, then the Outskirts of Inoya
+(Hell) for the tower and `Chaos_Tower_Floor_01_rm`. The session was
+aborted at the floor's end (below), so A, B and the burst were read from
+`out.txt` and the stat lines; the red line for B and the absence of one for
+A were seen by the owner, who was watching the game, and not by the
+capture's screenshots. The saves were backed up first and restored
+afterwards (`hs_saves_inspect` after the restore: 0 changed, added or
+missing).
+
+| Check | Supplied | Seen | Result |
+|---|---|---|---|
+| `dll-hash` | the installed plugin's sha256 against the build's | equal | pass |
+| `control` | `ping` | `pong (YYTK 4.0.1)` | pass |
+| `marker` | `lootann stat` at load | `lootann: off route=server ... burst-listed=0 ...` | pass |
+| `armed` | `lootann 1` in town | `init-hook=both create-hook=both install=installed` | pass |
+| `positive-control` | P: `lootannprobe place heroic` in town (Cobra Heavy Belt, `"27"`=9, `"32"`=5) | `verdict=announce via=recent`; red `SERVER: Sorak found Cobra Heavy Belt` on a screenshot about 2 s later (a first placement's screenshot was missed) | pass |
+| `bag-item-ready` | C: `lootann 0`, a Heroic item placed in town (Cold Cloaking Heavy Belt of Glimmer), picked up, `lootann 1` | no decide line; the item in the bag's first Extra tab on a screenshot | pass |
+| `in-tower` | `menulayout`, `lootannprobe burst` on the first floor | `room=Chaos_Tower_Floor_01_rm`; `tower=1 list=ref:291 size=0 given=real:0` | pass |
+| `tower-chat-visible` | `lootannprobe say tower chat test` on the floor | red `SERVER: tower chat test` on a screenshot taken at once | pass |
+| `baseline-collected` | A: `lootannprobe burst off`, a Heroic item placed (Cobra Heavy Belt) | no decide line; `size` 4 → 5 in A's own frame; on the next read `unidentified` and `burst-listed` +2, `burst-fresh` unchanged, `size` +1 more | pass; the second +1 fits one natural drop listed between the reads, not isolated |
+| `target-collected` | B: `lootannprobe burst on`, a Heroic item placed (Armorer's Heavy Belt) | no decide line, no red line; `unidentified`, `burst-listed`, `burst-fresh` and `size` each +1 | pass |
+| `natural-collected-fresh` | the floor's own kills (the character's own, below) | `burst-listed`/`burst-fresh` 0/0 → 4/4 before A, 7/5 → 8/6 after B | pass |
+| `bagdrop-collected` | C dropped from the bag on the floor | not run: the floor ended during the debugger's freeze, before C was dropped | not observed live |
+| `burst-announced` | the floor's end | `lootann decide: "Armorer's Heavy Belt" ... verdict=announce via=burst`, `sink-refused` 0; the owner saw the red line for it | pass, owner-observed (no screenshot of the line) |
+| `baseline-held` | the floor's end | `lootann decide: "Cobra Heavy Belt" ... verdict=held-bag-drop via=none` (A's stamp, twice); the owner saw no line for it | pass, owner-observed |
+| `bagdrop-held` | C at the floor's end | not run (C never dropped) | not observed live |
+| `burst-landed` | `lootann stat`, `lootannprobe burst` after the floor | `burst-landed=12`; `size=0 given=real:1` | pass |
+| `dbg-control` | a logpoint on `LootGroundInit`, P's placements | one hit per placement; a hold at a placement froze the game and it ran again after release | pass |
+| `dbg-lootexplosion` | a logpoint on `LootExplosion` | refused before it was armed (below) | not observed live |
+| `dbg-burst-groundinit` | `LootGroundInit` hits right after `LootExplosion`'s | no logpoint armed after the refusal | not observed live |
+| `restored` | stop, saves restore and inspect | the operator held them on the unconfirmed detach; the driver then stopped the game cleanly and restored the backup, inspect 0 changed | pass (driver's teardown, not in the capture) |
+
+What the session established, measured:
+
+- **A tower floor collects its drops.** On the first floor, `IsChaosTower`
+  read true and `Controller_obj.lootExplosionList` was a live list. Each
+  placed Heroic item, and the floor's own drops from kills, raised its size
+  and the mod's `unidentified`, and no decide line came at the placement.
+- **The collected items land when the floor is cleared.** At "Floor
+  Cleared" the list was empty (`size=0`), `lootExplosionGiven` read true,
+  and A and B lay on the ground near the character.
+- **The rule before this fix holds a tower drop.** A, listed while the
+  burst memory was off, was decided `held-bag-drop` (`via=none`) at the
+  burst, with no line. That is #227's report, reproduced.
+- **The burst memory announces it.** B, listed while it was on, was decided
+  `announce` (`via=burst`) at the burst and the owner saw its red line;
+  `sink-refused` stayed 0, and `announced` rose by 1 across the burst (B
+  only).
+- **Each item was decided twice at the burst.** A twice `held-bag-drop`, B
+  once `announce` and once `held-duplicate`, so the second sighting gave no
+  second line. `burst-landed=12` fits the six kept keys each seen twice.
+- **The red line is visible on a tower floor** (`lootannprobe say`).
+
+Not observed live: a bag drop on a floor (C), so the rule that keeps it
+unannounced rests on the harness; that `LootExplosion` is the call that
+lands the loot, and which two calls give the two sightings (the logpoints
+did not run); Angelic and Unholy items in the tower (the same core path,
+harness only); the boss room, the lobby, a Wormhole, a floor left
+unfinished and co-op.
+
+Practical findings for the next tower session:
+
+- **Entering the tower.** `specialrate chaostower 100` raised the tower in
+  the Outskirts of Inoya; `oget Chaos_Tower_obj x`/`y` and `playerwarp` put
+  the character at its foot. The F prompt appears only after walking up the
+  tower's outside stairs, not at the foot. F enters the Tower Lobby; the run
+  starts at the Tower Master ("Let me in!"); the lobby's north stairs lead
+  to Floor 1, which opens with a "Choose Your Personal Hell" pick.
+- **Sorak kills tower monsters without casting**, so a step that waits for
+  "no kills yet" cannot hold with that character: the floor's count fell
+  from 125 on entry to 39 by the time B was placed.
+- **x64dbg paused on the floor fight's exceptions in this session.** With
+  its default exception settings, x64dbg paused on each first-chance C++
+  exception (0xE06D7363) the game raised during the floor fight; the game
+  froze for 42 s, the `LootExplosion` logpoint was refused as a break storm,
+  and the detach was not confirmed. Passing those exceptions through to the
+  game was not tried, so whether x64dbg can stay attached through tower
+  combat is not established.
+
 ## Not established
 
 - Who invokes the announcement closure online, and what binds it on a
@@ -798,3 +1151,23 @@ The game's close by `hs_stop_game` without force ended with exit code
 - The `method` sink calls through `InvokeMethodValue`, which also updates the
   Pet Quest Collector's route note (`petquest 0`'s "route used"); a session
   that uses both reads that note with that in mind.
+- Parts of the Chaos Tower's loot burst (§ Chaos Tower (#227)). Live
+  procedure 5 measured the collection on a first floor, the landing at the
+  floor's end, and the old and new rules' verdicts there; still open:
+  - a bag drop on a tower floor: collected and held by the static reading
+    and the harness, not observed live;
+  - that `LootExplosion` is the call that lands the loot, and which two
+    calls give the two sightings per item measured at the burst (the one
+    `LootGroundDrop` makes and the one `LootExplosion` makes after it, by
+    the reading); the debugger could not stay attached through the floor;
+  - what the protected value at `gDataProtected[12]` means, which also sends
+    a new ground item to `lootExplosionList` outside a `Chaos_Tower_` room;
+  - which items the one item-kind test exempts from the list, and whether an
+    exempt item stays on the floor as an ordinary drop;
+  - whether a Wormhole reward (`WormholeGiveReward`, the other direct caller
+    of `LootExplosion`) bursts the same list, and what reaches it there;
+  - which room the tower's reward (`DropItemHeroic` from the reward function
+    beside `Chaos_Tower_NPC_obj`) drops in, and so whether the reward is
+    collected at all;
+  - that the call after the append destroys the ground instance (inferred
+    from the same runtime routine destroying a dialog's instance elsewhere).
