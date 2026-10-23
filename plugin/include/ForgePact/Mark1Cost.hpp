@@ -20,9 +20,10 @@ namespace ForgePact {
 // § 7.8), so the cost goes through the stat dispatcher (ReturnSpecificStat)
 // alone, as one more answer the set bonus's consumer gives the local player:
 //   - Drain (shipped): id 42, the mana replenish, is answered with its original
-//     minus columns x kMark1DrainPctPerSecond % of maximum mana x
-//     kMark1ReplenishUnit, never below minus the maximum, so mana falls
-//     through the game's own update.
+//     minus columns x kMark1DrainPctPerSecond % of maximum mana divided by
+//     kMark1ReplenishUnit (the mana a second one unit of the answer is), never
+//     below minus the maximum, so mana falls through the game's own update by
+//     a true 1% of the maximum a second per column.
 //   - MaxMana (the documented alternative, still built): id 37, maximum mana,
 //     is answered with its original less kMark1MaxManaCutPct % per column,
 //     never below 0.
@@ -58,12 +59,14 @@ inline constexpr double kMark1DrainPctPerSecond = 1.0;
 // The alternative's cut per automated skill, in % of maximum mana: the owner's
 // own figure (2026-10-22, "20% per each automated skill"); 20% left at four.
 inline constexpr double kMark1MaxManaCutPct = 20.0;
-// What one mana a second is in id 42's answer. Provisional: 1.0 reads the
-// answer as mana per second. Stats live 2's `regen-units` read about 0.883 mana
-// a second per unit from HUD crops (one 2.98 s window), so the shipped 1%
-// takes about 0.88% a second; Stats live 3 measures it in process, and a
-// change is this constant plus the hub model's REPLENISH_UNIT.
-inline constexpr double kMark1ReplenishUnit = 1.0;
+// The mana a second one unit of id 42's answer is: 0.874, measured in process
+// by Stats live 3's `regen-units` (122.417 mana a second at an answer of 140;
+// Stats live 2's HUD crops had read about 0.883). The drain divides by it, so
+// each column takes a true kMark1DrainPctPerSecond % of maximum mana a second
+// (the owner's choice, 2026-10-23, "Scale to 1%/s"). That per-second rate is
+// the arithmetic's, not re-measured live: Live 3 measured the build before it,
+// which took about 0.87% a second. The hub model's REPLENISH_UNIT is the same.
+inline constexpr double kMark1ReplenishUnit = 0.874;
 
 // The dispatcher ids the cost answers (rss_cases.json, static reading).
 inline constexpr double kMark1MaxManaStatId = 37.0;    // StatMaxMana
@@ -74,24 +77,30 @@ inline constexpr double kMark1DrainPctMax = 10.0;
 // More columns than the bar has never count beyond it.
 inline constexpr int kMark1CostMaxColumns = 4;
 
-// How much the drain takes off id 42's answer: `columns` automated skills,
-// each `percent` % of `maxMana` a second, times `unit`. The product is taken
-// before the division by 100, so whole-percent cases are exact.
+// Whether `unit` can scale the drain: a positive finite number.
+inline bool Mark1ReplenishUnitUsable(double unit) { return std::isfinite(unit) && unit > 0; }
+
+// How much the drain takes off id 42's answer, in units of that answer:
+// `columns` automated skills, each `percent` % of `maxMana` a second, divided
+// by `unit` (the mana a second one unit is). The product is taken before the
+// division, so whole-percent cases at unit 1.0 are exact. No column, or a unit
+// that is not a positive finite number, drains nothing.
 inline double Mark1DrainPerSecond(int columns, double percent, double maxMana,
                                   double unit = kMark1ReplenishUnit)
 {
-    if (columns <= 0) return 0.0;
-    return static_cast<double>(columns) * percent * maxMana * unit / 100.0;
+    if (columns <= 0 || !Mark1ReplenishUnitUsable(unit)) return 0.0;
+    return static_cast<double>(columns) * percent * maxMana / (100.0 * unit);
 }
 
 // The drain's answer for id 42: `original` less Mark1DrainPerSecond, never
-// below -maxMana. No column, or a maximum that is not a positive finite
-// number, leaves the original alone.
+// below -maxMana. No column, a maximum that is not a positive finite number,
+// or a unit that is not one, leaves the original alone.
 inline double Mark1DrainAnswer(double original, int columns, double maxMana,
                                double percent = kMark1DrainPctPerSecond,
                                double unit = kMark1ReplenishUnit)
 {
-    if (columns <= 0 || !std::isfinite(maxMana) || maxMana <= 0) return original;
+    if (columns <= 0 || !std::isfinite(maxMana) || maxMana <= 0 || !Mark1ReplenishUnitUsable(unit))
+        return original;
     const double lowered = original - Mark1DrainPerSecond(columns, percent, maxMana, unit);
     return lowered < -maxMana ? -maxMana : lowered;
 }

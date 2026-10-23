@@ -5868,3 +5868,34 @@ pdr-hit: applies
 
 These set the workorder's route tokens `merc-page: left`, `def-hit:
 applies` and `pdr-hit: applies`. Nothing here changes the plugin.
+
+### The replenish unit adopted
+
+The owner's decision of 2026-10-23, after Stats live 4: "Scale to 1%/s",
+the option that set `kMark1ReplenishUnit` to the measured unit so each
+automated skill drains a true 1% of maximum mana a second, re-checked by
+the pure-core tests and not re-measured live.
+
+The measured unit: Stats live 3's `regen-units`, read in process with
+`mark1probe vitals`, found one unit of the mana replenish answer (id 42)
+worth 0.874 mana a second (122.417 mana a second at an answer of 140;
+decision key `replenish-unit: 0.87` in *Stats live 3 decision*). Stats
+live 2's HUD crops had read 0.883. With the constant at 1.0, the build
+Live 3 measured, the shipped 1% took about 0.87% of the maximum a second.
+
+The new arithmetic: `kMark1ReplenishUnit` is 0.874, and the drain divides
+by it. Id 42 is answered R − n × 1% × M / 0.874 (R the game's own answer,
+n the proc columns, M maximum mana), never below −M. One mana a second
+takes 1 / 0.874 units of the answer, so in mana a second the drain is
+n × 1% × M whatever the unit. Multiplying by the unit, as the code did while
+it was 1.0, would have taken about 0.76% a second at 0.874, the opposite of
+the decision. A unit that is not a positive finite number leaves the answer
+alone, as a missing maximum does. The hub model's `REPLENISH_UNIT` is
+`Fraction(874, 1000)`, and the hub's shared cases
+(`hs-game-sdk/curated/mark1_automation_cases.json`) carry cases at 0.874
+that the C++ core and the model must both reproduce.
+
+The per-second rate at 0.874 is the arithmetic's, checked by
+`tests/test_mark1_cost_behavior.py` and the hub's
+`tests/test_mark1_automation_model.py`, and is not re-measured live: no
+session has run a build with the scaled unit.

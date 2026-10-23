@@ -5,7 +5,9 @@ fires an item proc, which costs no mana, so the owner asked for a price on it
 (2026-10-22). Mana itself is never written: the set bonus's consumer answers
 the local player's ReturnSpecificStat calls for id 42 (the mana replenish)
 with a drain of kMark1DrainPctPerSecond % of maximum mana a second per proc
-column, never below minus the maximum, the cost that ships (the owner's
+column, divided by kMark1ReplenishUnit (0.874 mana a second per unit of the
+answer, measured by Stats live 3), never below minus the maximum, the cost
+that ships (the owner's
 choice after Stats live 2, whose `drain-applies` saw the lowered answer reach
 the regen), or, the alternative still built behind `mark1probe autocost
 maxmana`, id 37 (maximum mana) cut by kMark1MaxManaCutPct % per proc column,
@@ -13,8 +15,9 @@ the cost Stats live 1 measured.
 
 Baseline: no proc column, the cost off, another self, another stat id, no
 readable id: the answer reaches the caller as the game gave it and nothing is
-counted. Target: the drain scales with the proc columns and stops at minus the
-maximum, the cut takes 20% a column, and every `drain` and `maxmana` case of
+counted; at unit 1.0 the drain is R - n x 1% x M. Target: at the shipped unit
+the drain is R - n x 1% x M / 0.874, scales with the proc columns and stops at
+minus the maximum, the cut takes 20% a column, and every `drain` and `maxmana` case of
 the hub's hs-game-sdk/curated/mark1_automation_cases.json (computed by
 hs_game_sdk.mark1_automation_model) comes out of the C++ core unchanged. The
 consumer in ModuleMain.cpp (the shared ReturnSpecificStat detour, the local
@@ -111,6 +114,12 @@ class Mark1CostBehaviorTests(unittest.TestCase):
         self.assertScenario("baseline/scope_control")
         self.assertScenario("baseline/one_cost_at_a_time")
 
+    def test_cost_baseline_unit_one_is_mana_a_second(self):
+        # At unit 1.0 id 42 is answered R - n x 1% x M; a unit that is not a
+        # positive finite number leaves the answer alone.
+        self.assertScenario("baseline/unit_one_is_mana_a_second")
+        self.assertScenario("baseline/bad_unit_answers_original")
+
     # ---- target -----------------------------------------------------------------
     def test_cost_target_drain_scales_with_proc_columns(self):
         self.assertScenario("target/drain_scales_with_proc_columns")
@@ -118,6 +127,16 @@ class Mark1CostBehaviorTests(unittest.TestCase):
         self.assertScenario("target/repeated_calls_never_compound")
         self.assertScenario("target/columns_capped_at_four")
         self.assertScenario("target/not_a_number_untouched_and_counted")
+
+    def test_cost_target_unit_divides_the_drain(self):
+        # The owner's choice (2026-10-23): Stats live 3 measured one unit of
+        # id 42's answer as 0.874 mana a second, so the drain divides by it and
+        # each automated skill takes a true 1% of maximum mana a second.
+        self.assertIn("inline constexpr double kMark1ReplenishUnit = 0.874;", self.header)
+        self.assertScenario("target/unit_divides_the_drain")
+        cases = json.loads(CASES.read_text(encoding="utf-8"))
+        scaled = [c for c in cases["drain"] if c["unit"] == 0.874]
+        self.assertTrue({1, 4} <= {c["columns"] for c in scaled}, "no shared case at the shipped unit")
 
     def test_cost_target_drain_never_below_minus_max_mana(self):
         self.assertScenario("target/drain_never_below_minus_max_mana")
