@@ -32,6 +32,20 @@ namespace ForgePact {
 //     Live procedure 2's bag drop reached LootGroundInit and was announced.
 //     Live procedure 3 measured the guard holding a bag drop (held-bag-drop)
 //     while the game's own drops passed it (created rose with seen).
+//   - the burst memory (ForgePact #227): a Chaos Tower floor takes its fresh
+//     drops off the ground as they land, holds their item structs in a list on
+//     the Controller, and puts the same structs on the ground again at the
+//     floor's end with no CreateItemNew (RUNTIME_DATA_MODELS.md, static
+//     reading), so the creation guard alone held every tower drop as a bag
+//     drop. The adapter reads that list once per tick, after its decisions and
+//     before the window ages, and notes each new entry's key (burst-listed);
+//     the entry is kept only when its struct was recently created
+//     (burst-fresh), so a bag drop the floor collects stays a bag drop. The
+//     guard passes on a recent creation or a kept key; a pass only the memory
+//     gave counts burst-landed. A sighting does not consume the key (the
+//     identity memory keeps a second sighting quiet). When the list shrinks,
+//     changes or goes away the adapter tells the core, which forgets every
+//     kept key; switching off forgets them too. Capped at kBurstCap keys.
 //   - the rarity is itemInfoStruct["27"] (RUNTIME_DATA_MODELS.md section
 //     16.4). Only kAnnouncedRarities announce; anything else, and a rarity
 //     that could not be read as a number (kRarityUnread), does not.
@@ -48,8 +62,9 @@ namespace ForgePact {
 // - so tests/loot_announce_harness.cpp compiles it whole. The adapter in
 // ModuleMain.cpp derives an item's key (a struct by its object pointer, a
 // reference by the value it holds; compared, never followed), reads the item
-// off the ground instance by name, ages the creation window once per frame
-// after its batch, and runs the sink the verdict asks for.
+// off the ground instance by name, notes the burst list's new entries and
+// ages the creation window once per frame after its batch, and runs the sink
+// the verdict asks for.
 class LootAnnounceMod {
 public:
     // itemInfoStruct["27"]: 9 Heroic, 7 Angelic, 10 Unholy. Heroic sits above
@@ -66,6 +81,9 @@ public:
     // Item keys one creation window holds at most (one frame's notes); a note
     // past it is counted in create-overflow and not kept.
     static constexpr std::size_t kCreationCap = 4096;
+    // Item keys the burst memory keeps at most; a fresh entry past it is
+    // counted in burst-overflow and not kept.
+    static constexpr std::size_t kBurstCap = 4096;
 
     // An item struct's key, as the adapter derives it at both ends: the kind
     // of value (a struct or a reference) and the pointer or reference value.
@@ -105,6 +123,10 @@ public:
         long long sinkRefused = 0;   // a line asked for that the sink could not show
         long long created = 0;       // item keys noted into the creation window
         long long createOverflow = 0; // notes past kCreationCap, not kept
+        long long burstListed = 0;   // burst list entries noted while on
+        long long burstFresh = 0;    // of those, recently created and kept
+        long long burstLanded = 0;   // guard passes that only the burst memory gave
+        long long burstOverflow = 0; // fresh entries past kBurstCap, not kept
     };
 
     static constexpr bool IsAnnouncedRarity(int code)
@@ -170,13 +192,15 @@ public:
     bool Enabled() const { return m_Enabled; }
     // Switching off keeps the memory and the counters, so an item still lying
     // there is not announced again when the switch comes back on; it clears
-    // the creation window, so nothing built while off counts as new.
+    // the creation window and the burst memory, so nothing built or listed
+    // while off counts as new.
     void SetEnabled(bool on)
     {
         m_Enabled = on;
         if (!on) {
             m_CreatedNow.clear();
             m_CreatedBefore.clear();
+            m_Burst.clear();
         }
     }
 
@@ -207,6 +231,33 @@ public:
         m_CreatedNow.clear();
     }
 
+    // A new entry of the burst list, noted while on, after this tick's
+    // decisions and before the window ages. It is kept only when its struct
+    // was recently created, so a bag drop the floor collects stays a bag drop.
+    // `keep` false (the research build's `lootannprobe burst off`) counts the
+    // entry and keeps nothing. A key already kept is counted, not kept twice.
+    void NoteListed(const ItemKey& key, bool keep = true)
+    {
+        if (!m_Enabled) return;
+        ++m_Stats.burstListed;
+        if (!keep || m_Burst.count(key) || !RecentlyCreated(key)) return;
+        if (m_Burst.size() >= kBurstCap) {
+            ++m_Stats.burstOverflow;
+            return;
+        }
+        m_Burst.insert(key);
+        ++m_Stats.burstFresh;
+    }
+
+    // Kept from the burst list since it last shrank or changed. A sighting
+    // does not consume the key: the identity memory keeps a second one quiet.
+    bool InBurstMemory(const ItemKey& key) const { return m_Burst.count(key) != 0; }
+    std::size_t BurstKept() const { return m_Burst.size(); }
+
+    // The adapter saw the list shrink, change or go away (after that frame's
+    // decisions): every kept key is forgotten.
+    void ForgetBurst() { m_Burst.clear(); }
+
     // The memory's identity of an item: its itemType and a real itemTimeStamp,
     // else the ground instance id with whatever stamp it carries.
     static bool IsRealStamp(const std::string& timeStamp)
@@ -227,18 +278,21 @@ public:
         return IsRealStamp(timeStamp) ? !itemType.empty() : groundIdRead;
     }
 
-    // One ground item. `recentlyCreated` is RecentlyCreated() for the key of
-    // the item struct it holds (false when it gave no key); the rest is read
-    // off the ground instance, and is Identifiable (the adapter asks first).
+    // One ground item. `recentlyCreated` is RecentlyCreated() and `burstKept`
+    // InBurstMemory() for the key of the item struct it holds (both false when
+    // it gave no key); the rest is read off the ground instance, and is
+    // Identifiable (the adapter asks first). Either passes the creation guard;
+    // a pass only the burst memory gave counts burst-landed.
     Verdict Decide(int rarityCode, bool recentlyCreated, int64_t instanceId, const std::string& itemType,
-                   const std::string& timeStamp)
+                   const std::string& timeStamp, bool burstKept = false)
     {
         if (!m_Enabled) return Verdict::Off;
         ++m_Stats.seen;
-        if (!recentlyCreated) {
+        if (!recentlyCreated && !burstKept) {
             ++m_Stats.heldBagDrop;
             return Verdict::HeldBagDrop;
         }
+        if (!recentlyCreated) ++m_Stats.burstLanded;
         if (rarityCode == kRarityUnread) {
             ++m_Stats.heldNoRarity;
             return Verdict::HeldNoRarity;
@@ -285,6 +339,10 @@ public:
         s += " remembered=" + std::to_string(m_Order.size());
         s += " created=" + std::to_string(m_Stats.created);
         s += " create-overflow=" + std::to_string(m_Stats.createOverflow);
+        s += " burst-listed=" + std::to_string(m_Stats.burstListed);
+        s += " burst-fresh=" + std::to_string(m_Stats.burstFresh);
+        s += " burst-landed=" + std::to_string(m_Stats.burstLanded);
+        s += " burst-overflow=" + std::to_string(m_Stats.burstOverflow);
         return s;
     }
 
@@ -295,6 +353,7 @@ private:
     std::deque<std::string> m_Order;
     std::set<ItemKey> m_CreatedNow;    // noted since the last tick
     std::set<ItemKey> m_CreatedBefore; // noted in the frame before
+    std::set<ItemKey> m_Burst;         // fresh burst list entries, until the list shrinks or changes
 };
 
 } // namespace ForgePact

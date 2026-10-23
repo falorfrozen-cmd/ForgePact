@@ -56528,6 +56528,28 @@ static void FlpCommand(const std::string& rest)
 // of a value decides how it is read, never whether. No address, no struct
 // layout.
 //
+// The burst reader (ForgePact #227, in the player build: it is the fix). A
+// Chaos Tower floor takes each new ground item off the floor as it lands and
+// keeps its item struct in Controller_obj.lootExplosionList, then puts the
+// same structs on the ground again at the floor's end with no CreateItemNew
+// (RUNTIME_DATA_MODELS.md, static reading), so the creation guard alone held
+// every tower drop as a bag drop. Once per tick, after the batch's decisions
+// and before the window ages, LaReadBurstList reads that list, all by name:
+// the Controller through FindControllerInstance, the list through
+// variable_instance_get and SigListHandle (ds_exists of the value as read, a
+// number or a reference alike), its length through ds_list_size, and only the
+// entries past those already read through ds_list_find_value; each entry's
+// itemInstance gives a key through LaItemKey, which the core notes
+// (NoteListed: kept only when that struct was created this frame or the last,
+// so a bag drop the floor collects stays a bag drop). LaProcess then passes
+// the guard on a recent creation or a kept key. A shorter list, a different
+// list value, or no Controller or list makes the core forget its kept keys,
+// and the count restarts at the list's length; the first read after the
+// switch comes on starts at the list's length then. Cost while off: none;
+// while on: one Controller lookup and one list length per frame, entries read
+// only when the list grew. No hook, no address, no write to a game value. A
+// read that throws skips that frame's read and says so once.
+//
 // The sink: one function, LootAnnounceSink, runs the body
 // ForgePact::LootAnnounceMod::kShippedSink names. All four bodies are here so
 // the research build's `lootannprobe try <n>` runs exactly the code the mod
@@ -56542,6 +56564,24 @@ static long long g_LaNoIdentity = 0;     // a ground item whose identity could n
 static long long g_LaPendingDropped = 0; // calls not noted because a frame's queue was full
 static int g_LaLootIndex = -2;           // asset_get_index of Loot_Ground_obj; -2 until resolved
 static long g_LaRefusalLogs = 0;
+// The burst reader's place in Controller_obj.lootExplosionList: whether a
+// list was read last tick, its handle value, and how many entries were read.
+static bool g_LaBurstHave = false;
+static double g_LaBurstListId = -1.0;
+static int g_LaBurstCount = 0;
+static bool g_LaBurstUnreadableSaid = false;
+// The stat line's `burst-list=` and `burst-nokey=`: the last list lookup's
+// answer (`ok`, or `none(<why>)` with LaBurstList's reason, `none(lookup
+// threw)` when the lookup threw; `unread` until the first read) and the list
+// entries whose itemInstance gave no key. They tell a renamed variable apart
+// from a session that never listed anything.
+static std::string g_LaBurstListState = "unread";
+static long long g_LaBurstNoKey = 0;
+#ifndef FORGEPACT_RELEASE
+// `lootannprobe burst on|off`: whether newly listed entries are kept (the
+// research build's way to reproduce the rule before the fix).
+static bool g_LaBurstKeep = true;
+#endif
 
 // netsend's first argument (the closure passes a runtime-filled value whose
 // meaning is not established): undefined, or the local player's id. Only
@@ -57040,20 +57080,109 @@ static void LaProcess(const LaPending& p)
     const std::string stamp = LaTimeStamp(item);
     if (!ForgePact::LootAnnounceMod::Identifiable(idRead, type, stamp)) { ++g_LaNoIdentity; return; }
     // The creation guard: was this item struct built (noted from CreateItemNew)
-    // in this frame or the one before? An item that gives no key is not.
+    // in this frame or the one before, or kept from the Chaos Tower's burst
+    // list (LaReadBurstList)? An item that gives no key is neither.
     ForgePact::LootAnnounceMod::ItemKey key{};
     const bool hasKey = LaItemKey(item, key);
     if (!hasKey) ++g_LaNoKey;
     const bool recent = hasKey && g_LootAnnounce.RecentlyCreated(key);
-    const auto verdict = g_LootAnnounce.Decide(LaRarity(item), recent, (int64_t)id, type, stamp);
+    const bool burst = hasKey && g_LootAnnounce.InBurstMemory(key);
+    const int rarity = LaRarity(item);
+    const auto verdict = g_LootAnnounce.Decide(rarity, recent, (int64_t)id, type, stamp, burst);
+#ifndef FORGEPACT_RELEASE
+    // Research build: every decided item of an announced rarity, and what
+    // passed the guard (the live procedure matches items by their stamp).
+    if (ForgePact::LootAnnounceMod::IsAnnouncedRarity(rarity))
+        Out("lootann decide: \"" + LaItemName(item) + "\" rarity=" + std::to_string(rarity) + " stamp=" + stamp
+            + " verdict=" + ForgePact::LootAnnounceMod::VerdictName(verdict)
+            + " via=" + (recent ? "recent" : burst ? "burst" : "none"));
+#endif
     if (verdict == ForgePact::LootAnnounceMod::Verdict::Announce && !LootAnnounceSink(item, loot))
         g_LootAnnounce.NoteSinkRefused();
+}
+
+// Controller_obj.lootExplosionList, by name: the Controller through
+// FindControllerInstance, the variable through variable_instance_get, then
+// SigListHandle's gate (ds_exists of the value as read, a number or a
+// reference alike). `why` names what refused. Shared with `lootannprobe
+// burst`; a builtin that throws is the caller's to catch.
+static bool LaBurstList(RValue& ctrl, RValue& list, double& id, std::string& why)
+{
+    id = -1.0;
+    list = RValue();
+    if (!FindControllerInstance(ctrl)) { why = "no Controller_obj"; return false; }
+    list = g_Yytk->CallBuiltin("variable_instance_get", { ctrl, RValue("lootExplosionList") });
+    return SigListHandle(list, id, why);
+}
+
+// Once per tick while on and installed, after the batch's decisions and
+// before the creation window ages: the burst list's new entries are noted in
+// the core (kept only when their struct is recently created). A shorter list,
+// a different list value, or no Controller or list: the core forgets, and the
+// count restarts at the list's length (the first read after the switch comes
+// on starts there too). A throw skips this frame's read and is said once.
+static void LaReadBurstList()
+{
+    const char* stage = "the Controller or lootExplosionList";
+    bool looked = false;
+    try {
+        RValue ctrl, list;
+        double id = -1.0;
+        std::string why;
+        const bool found = LaBurstList(ctrl, list, id, why);
+        looked = true;
+        g_LaBurstListState = found ? std::string("ok") : "none(" + why + ")";
+        if (!found) {
+            g_LootAnnounce.ForgetBurst();
+            g_LaBurstHave = false;
+            g_LaBurstCount = 0;
+            return;
+        }
+        stage = "ds_list_size";
+        const RValue sizeV = g_Yytk->CallBuiltin("ds_list_size", { list });
+        if (sizeV.m_Kind != VALUE_REAL && sizeV.m_Kind != VALUE_INT32 && sizeV.m_Kind != VALUE_INT64) {
+            if (!g_LaBurstUnreadableSaid) {
+                g_LaBurstUnreadableSaid = true;
+                Out("lootann: burst list unreadable - ds_list_size gave " + LaArgText(sizeV));
+            }
+            return;
+        }
+        const double sized = sizeV.ToDouble();
+        const int size = std::isfinite(sized) && sized > 0.0 ? (int)sized : 0;
+        if (!g_LaBurstHave || id != g_LaBurstListId || size < g_LaBurstCount) {
+            g_LootAnnounce.ForgetBurst();
+            g_LaBurstHave = true;
+            g_LaBurstListId = id;
+            g_LaBurstCount = size;
+            return;
+        }
+        bool keep = true;
+#ifndef FORGEPACT_RELEASE
+        keep = g_LaBurstKeep;
+#endif
+        stage = "ds_list_find_value";
+        for (int i = g_LaBurstCount; i < size; ++i) {
+            const RValue entry = g_Yytk->CallBuiltin("ds_list_find_value", { list, RValue((double)i) });
+            RValue item;
+            ForgePact::LootAnnounceMod::ItemKey key{};
+            if (LaField(entry, "itemInstance", item) && LaItemKey(item, key)) g_LootAnnounce.NoteListed(key, keep);
+            else ++g_LaBurstNoKey;
+            g_LaBurstCount = i + 1;
+        }
+    } catch (...) {
+        if (!looked) g_LaBurstListState = "none(lookup threw)";
+        if (!g_LaBurstUnreadableSaid) {
+            g_LaBurstUnreadableSaid = true;
+            Out(std::string("lootann: burst list unreadable - ") + stage + " threw");
+        }
+    }
 }
 
 // The per-frame tick. Returns at once while the switch is off; while armed
 // and not installed, looks for the local player every kInstallPollFrames
 // frames and installs the hooks once one exists; then decides the calls this
-// frame noted, and ages the creation window once, after the batch.
+// frame noted, reads the Chaos Tower's burst list, and ages the creation
+// window once, after both.
 static void LootAnnounceTick()
 {
     if (!g_LootAnnounce.Enabled()) return;
@@ -57065,6 +57194,7 @@ static void LootAnnounceTick()
             try { LaProcess(p); } catch (...) {}
         }
     }
+    if (g_LaInstallTried) LaReadBurstList();
     g_LootAnnounce.AgeCreationWindow();
 }
 
@@ -57078,7 +57208,9 @@ static std::string LootAnnounceStatLine()
         + " no-item=" + std::to_string(g_LaNoItem)
         + " no-key=" + std::to_string(g_LaNoKey)
         + " no-identity=" + std::to_string(g_LaNoIdentity)
-        + " queue-full=" + std::to_string(g_LaPendingDropped);
+        + " queue-full=" + std::to_string(g_LaPendingDropped)
+        + " burst-list=" + g_LaBurstListState
+        + " burst-nokey=" + std::to_string(g_LaBurstNoKey);
 }
 
 // `lootann 1|0` (the panel's switch); bare `lootann` or `stat` prints the
@@ -57099,6 +57231,7 @@ static void LootAnnounceCommand(const std::string& rest)
     if (arg == "0" || arg == "off") {
         g_LootAnnounce.SetEnabled(false);
         g_LaPending.clear();
+        g_LaBurstHave = false;   // the next read starts at the list's length then
         Out(g_LootAnnounce.StatusLine());
         return;
     }
@@ -62561,7 +62694,17 @@ static void DungeonProbeCommand(const std::string& rest)
 //   place <r>     - heroic|angelic|unholy|satanic|mythic|common: one ground item
 //                   beside the player through the game's own
 //                   LootGroundCreateFromItem, built the way `sigdrop` builds
-//                   one (InitItemFromJson, then itemInfoStruct["27"] written).
+//                   one (InitItemFromJson, then itemInfoStruct["27"] written,
+//                   and "32", the loot filter's tier, set to 5 (SS)); the
+//                   reply adds `"32"=<n> stamp=<itemTimeStamp>`.
+//   burst [on|off] - the Chaos Tower burst reader (ForgePact #227):
+//                   `lootannprobe burst: memory=<on|off> tower=<1|0|unread>
+//                   list=<value|none> size=<n|unread> given=<value|unread>`;
+//                   on|off sets whether newly listed entries are kept. The
+//                   adapter's LaProcess also prints, in this build only, a
+//                   `lootann decide: "<name>" rarity=<code> stamp=<stamp>
+//                   verdict=<verdict> via=<recent|burst|none>` line for each
+//                   decided item of an announced rarity.
 //   methods       - the newest ground item's method variables, by name,
 //                   then `anon rows resolved: <k> of <n>`, the anon control
 //                   (LaProbeAnonControl): k = 0 means the listing is blind;
@@ -62872,6 +63015,11 @@ static void LaProbePlace(const std::string& which)
         const RValue info = g_Yytk->CallBuiltin("variable_struct_get", { item, RValue("itemInfoStruct") });
         if (info.m_Kind != VALUE_OBJECT) { Out("lootannprobe place " + which + ": the item has no itemInfoStruct"); return; }
         g_Yytk->CallBuiltin("variable_struct_set", { info, RValue("27"), RValue((double)code) });
+        // The loot filter's tier (RUNTIME_DATA_MODELS.md section 16.3) set to
+        // 5 (SS), so an owner's filter that hides lower tiers still shows it.
+        // UNVERIFIED that the ground filter reads "32" set this way.
+        stage = "tier";
+        g_Yytk->CallBuiltin("variable_struct_set", { info, RValue("32"), RValue(5.0) });
         stage = "LootGroundCreateFromItem";
         RValue res;
         const AurieStatus st2 = g_Yytk->CallGameScriptEx(res, HeroSiege::Scripts::gml_Script_LootGroundCreateFromItem.data(), g, g,
@@ -62879,12 +63027,14 @@ static void LaProbePlace(const std::string& which)
         if (!AurieSuccess(st2)) { Out("lootannprobe place " + which + ": LootGroundCreateFromItem st=" + std::to_string((int)st2)); return; }
         if (res.m_Kind == VALUE_REF || res.m_Kind == VALUE_REAL || res.m_Kind == VALUE_INT32 || res.m_Kind == VALUE_INT64) g_LaNewest = res;
         stage = "read back";
-        double rarity = -1, type = -1;
+        double rarity = -1, type = -1, tier = -1;
         TryStructNumber(info, "27", rarity);
         TryStructNumber(item, "itemType", type);
+        TryStructNumber(info, "32", tier);
         Out("lootannprobe place " + which + ": \"27\"=" + std::to_string((int)rarity) + " \"28\"=" + LaItemName(item)
             + " itemType=" + std::to_string((int)type) + " instance=" + DpArgText(res) + " id=" + std::to_string((long long)InstanceIdOf(res))
-            + " at " + std::to_string((int)x) + "," + std::to_string((int)y));
+            + " at " + std::to_string((int)x) + "," + std::to_string((int)y)
+            + " \"32\"=" + std::to_string((int)tier) + " stamp=" + LaTimeStamp(item));
     } catch (...) { Out(std::string("lootannprobe place ") + which + ": EXCEPTION at " + stage); }
 }
 
@@ -63034,6 +63184,55 @@ static void LaProbeSay(const std::string& text)
         + (run.failed.empty() ? std::string() : " refused: " + run.failed));
 }
 
+// `burst [on|off]` (ForgePact #227): the burst reader's view of the Chaos
+// Tower. `on|off` sets whether newly listed entries are kept (startup on; off
+// reads and counts them but keeps nothing, the rule before the fix). Prints
+// whether the memory keeps, IsChaosTower by name (InChaosTowerCached), the
+// list the reader would read and its length, and the GPV of
+// Controller_obj.lootExplosionGiven (the route `gatestats` reads protected
+// Controller values through).
+static void LaProbeBurst(const std::string& arg)
+{
+    if (arg == "on") g_LaBurstKeep = true;
+    else if (arg == "off") g_LaBurstKeep = false;
+    else if (!arg.empty()) { Out("lootannprobe burst: usage lootannprobe burst [on|off]; nothing changed"); return; }
+    std::string tower = "unread", listText = "none", size = "unread", given = "unread", threw;
+    if (g_Setup) tower = InChaosTowerCached() ? "1" : "0";
+    // Which read threw, so a failed collection names the instrument's stage
+    // rather than reading as a missing list.
+    const char* stage = "list";
+    try {
+        RValue ctrl, list;
+        double id = -1.0;
+        std::string why;
+        if (LaBurstList(ctrl, list, id, why)) {
+            // "real:<id>", or "ref:<id>" for a handle that came back a reference.
+            listText = LaArgText(list);
+            if (list.m_Kind == VALUE_REF) listText += ":" + std::to_string((long long)id);
+            stage = "ds_list_size";
+            const RValue sizeV = g_Yytk->CallBuiltin("ds_list_size", { list });
+            if (sizeV.m_Kind == VALUE_REAL || sizeV.m_Kind == VALUE_INT32 || sizeV.m_Kind == VALUE_INT64)
+                size = std::to_string((long long)sizeV.ToDouble());
+        } else {
+            // Why there is no list: no Controller_obj (the instrument found
+            // nothing to read) versus the variable's kind or a dead ds_list
+            // (the static reading's list is not there).
+            listText = "none(" + why + ")";
+        }
+        stage = "given";
+        if (FindControllerInstance(ctrl)) {
+            // The variable holds a protected-store key, not the value.
+            const RValue handle = g_Yytk->CallBuiltin("variable_instance_get", { ctrl, RValue("lootExplosionGiven") });
+            if (IsNumericInstanceRead(handle)) {
+                const RValue v = g_Yytk->CallGameScript(HeroSiege::Scripts::gml_Script_GPV.data(), { handle });
+                if (v.m_Kind != VALUE_UNDEFINED) given = LaProbeValue(v);
+            }
+        }
+    } catch (...) { threw = std::string(" threw=") + stage; }
+    Out(std::string("lootannprobe burst: memory=") + (g_LaBurstKeep ? "on" : "off") + " tower=" + tower + " list=" + listText
+        + " size=" + size + " given=" + given + threw);
+}
+
 static void LootAnnProbeCommand(const std::string& rest)
 {
     std::string tail;
@@ -63052,6 +63251,7 @@ static void LootAnnProbeCommand(const std::string& rest)
     if (sub.empty() || sub == "status") { LaProbeStatus(); return; }
     if (sub == "place") { LaProbePlace(Lower(TrimCopy(tail))); return; }
     if (sub == "methods") { LaProbeMethods(); return; }
+    if (sub == "burst") { LaProbeBurst(Lower(TrimCopy(tail))); return; }
     if (sub == "try") {
         int n = 0;
         try { size_t k = 0; const std::string a = TrimCopy(tail); n = std::stoi(a, &k); if (k != a.size()) n = 0; } catch (...) { n = 0; }
@@ -63064,7 +63264,7 @@ static void LootAnnProbeCommand(const std::string& rest)
         LaProbeSay(text);
         return;
     }
-    Out("lootannprobe: usage lootannprobe on | status | place heroic|angelic|unholy|satanic|mythic|common | methods | try <1-5> | say <text>");
+    Out("lootannprobe: usage lootannprobe on | status | place heroic|angelic|unholy|satanic|mythic|common | methods | burst [on|off] | try <1-5> | say <text>");
 }
 #endif // FORGEPACT_RELEASE (lootannprobe)
 
