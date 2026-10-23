@@ -62249,8 +62249,11 @@ static void LaProbeBurst(const std::string& arg)
     if (arg == "on") g_LaBurstKeep = true;
     else if (arg == "off") g_LaBurstKeep = false;
     else if (!arg.empty()) { Out("lootannprobe burst: usage lootannprobe burst [on|off]; nothing changed"); return; }
-    std::string tower = "unread", listText = "none", size = "unread", given = "unread";
+    std::string tower = "unread", listText = "none", size = "unread", given = "unread", threw;
     if (g_Setup) tower = InChaosTowerCached() ? "1" : "0";
+    // Which read threw, so a failed collection names the instrument's stage
+    // rather than reading as a missing list.
+    const char* stage = "list";
     try {
         RValue ctrl, list;
         double id = -1.0;
@@ -62259,10 +62262,17 @@ static void LaProbeBurst(const std::string& arg)
             // "real:<id>", or "ref:<id>" for a handle that came back a reference.
             listText = LaArgText(list);
             if (list.m_Kind == VALUE_REF) listText += ":" + std::to_string((long long)id);
+            stage = "ds_list_size";
             const RValue sizeV = g_Yytk->CallBuiltin("ds_list_size", { list });
             if (sizeV.m_Kind == VALUE_REAL || sizeV.m_Kind == VALUE_INT32 || sizeV.m_Kind == VALUE_INT64)
                 size = std::to_string((long long)sizeV.ToDouble());
+        } else {
+            // Why there is no list: no Controller_obj (the instrument found
+            // nothing to read) versus the variable's kind or a dead ds_list
+            // (the static reading's list is not there).
+            listText = "none(" + why + ")";
         }
+        stage = "given";
         if (FindControllerInstance(ctrl)) {
             // The variable holds a protected-store key, not the value.
             const RValue handle = g_Yytk->CallBuiltin("variable_instance_get", { ctrl, RValue("lootExplosionGiven") });
@@ -62271,9 +62281,9 @@ static void LaProbeBurst(const std::string& arg)
                 if (v.m_Kind != VALUE_UNDEFINED) given = LaProbeValue(v);
             }
         }
-    } catch (...) {}
+    } catch (...) { threw = std::string(" threw=") + stage; }
     Out(std::string("lootannprobe burst: memory=") + (g_LaBurstKeep ? "on" : "off") + " tower=" + tower + " list=" + listText
-        + " size=" + size + " given=" + given);
+        + " size=" + size + " given=" + given + threw);
 }
 
 static void LootAnnProbeCommand(const std::string& rest)
