@@ -125,10 +125,11 @@ pieces" below.
   icons; those counts are the times the set fired a skill, not casts seen
   landing. A third session checked the mana drain, 1% of your maximum mana
   per automated skill taken off your mana replenish, which the game turned
-  into a little less than 1% a second (about 1.5% of your maximum a second
-  with two automated skills in that session; this version scales the drain
-  by the replenish rate that session measured, aiming at about 1% a second
-  per skill, and the new rate is not measured in a game session yet), and that a drain larger than your regeneration empties your mana;
+  into about three-quarters of 1% a second (about 1.5% of your maximum a
+  second with two automated skills in that session; this version scales the
+  drain by the replenish rate that session measured, aiming at about 1% a
+  second per skill), and that a drain larger than your regeneration empties
+  your mana;
   and the character sheet
   showing the set's Life, Defense and Physical Damage Taken Reduced with
   all four worn, the same numbers the game's own stat calls return for
@@ -140,6 +141,9 @@ pieces" below.
   monster hit you the game asked for your Physical Damage Taken Reduced,
   which the set answers with its 20% added (the session read the ask, not
   the number the game got back), and once, not at a hit, for your Defense.
+  A fifth session measured this version's drain: about 1.1% of your
+  maximum mana a second per automated skill at about 144 frames a second,
+  and a little less, about 0.96%, at 60 frames a second.
   Not checked in play yet: whether the set's Defense and Physical Damage
   Taken Reduced make a hit do less damage (your life stayed full), whether
   every fired skill casts and a piece dropping from a vault.

@@ -1949,12 +1949,11 @@ A third session (2026-10-23), on a research build carrying the mana drain,
 checked the drain at 1%: with two automated skills your mana
 regeneration fell by about 1.5% of your maximum mana a second (each
 skill's 1% came off the game's mana replenish stat, which the game turned
-into a little less than 1% a second), and a drain larger than your
+into about three-quarters of 1% a second), and a drain larger than your
 regeneration does empty your mana rather than stopping at zero. That
 session also measured how much mana the game takes for each point the drain
 removes, and this version scales the drain by it, aiming at about 1% of your
-maximum mana a second per automated skill; the new rate is
-not measured in a game session yet. It checked
+maximum mana a second per automated skill. It checked
 the character sheet too: with all four worn it showed the set's Life,
 Defense and Physical Damage Taken Reduced, the same numbers the game's own
 stat calls return for you, while your mercenary and summons got none of
@@ -1973,6 +1972,12 @@ play yet: whether the set's Defense and Physical Damage Taken Reduced make
 a hit do less damage (your life stayed full), how soon the HUD shows a
 lower maximum after you take a piece off, and whether every fired skill
 casts.
+
+A fifth session (2026-10-23), on this version's drain, measured it inside
+the game: with two automated skills each one took about 1.1% of your
+maximum mana a second at about 144 frames a second, and a little less,
+about 0.96%, with the game running at 60 frames a second, because the game
+gives mana back in slightly fewer steps a second at the lower frame rate.
 
 ## Goburin's Head pity
 

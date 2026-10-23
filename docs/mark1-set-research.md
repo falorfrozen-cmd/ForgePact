@@ -6006,6 +6006,211 @@ not established.
   changes with the setting too, and the tick rate alone does not say which
   hypothesis holds.
 
-Live procedure 5 measures the tick's rate at the game's setting as found and
-at 60, and the drain's share at the shipped unit; its results are written
-under *Stats live procedure 5* when that session is recorded.
+Live procedure 5 measured the tick's rate at the game's frame rate as found
+and at 60, and the drain's share at the shipped unit; its procedure, results
+and decision follow (*Stats live 5 results*).
+
+### Stats live procedure 5
+
+The regen tick's rate at the game's frame rate as found and at 60, the
+drain's measured share at the shipped unit 0.745, and the unit tuned in
+session if it missed the owner's band. The capture is the playtest
+workorder's live capture 5, `forgepact-166-mark1-set-playtest2-live-5.md`,
+kept with the hub's workorder files and not tracked.
+
+**Setup:**
+
+- **Build:** the research build at the ForgePact commit that carries
+  `kMark1ReplenishUnit` 0.745, `unit=` on `mark1set stat` and `mark1probe
+  autounit`; its path and SHA-256 are recorded with the workorder, and
+  `dll-hash` compares the installed DLL with it. The owner is asked before
+  it is installed.
+- **Character:** save slot 14, "Sorak" (White Mage), saves backed up first
+  (`hs_saves_backup` and a manual copy) and restored at the end; the save
+  starts as before Stats live 3 (bar 0,3 `manaOrb`, 0,4 `healingZone`, 0,5
+  `soulSpurn`, 0,6 empty; no Mark 1 piece).
+- **Control:** `ping` answers `pong (YYTK 4.0.1)` (`control`). The regen's
+  zero control is `zero-control` (`mark1probe manaregen 0` holds mana
+  still); the logpoints' is `dbg-control`.
+- **Cases:** the game's own frame rate as found (Stats live 3 ran at about
+  143 a second) and 60 (the outlier: another step rate); the drain at the
+  shipped unit with two proc columns (E Healing Zone, Y Shadow Bolt), and
+  up to two tuned units. Not every skill, setting or column count.
+- **Debugger:** the hub's x64dbg MCP, for "which code, how often": three
+  non-breaking logpoints at the entries of `PlayerMovement` (`dbg-control`,
+  logging `pm`), `playerUpdateTimerMana` (`dbg-tick`, `tk`) and
+  `StatManaReplenish` (`dbg-replenish`, `rp`), each logging its hit count.
+  Their offsets and the bytes each is checked against stay with the
+  workorder, research findings and never shipped constants. D1 at the
+  default rate after S4, D2 at 60 after S8; a count is read only with
+  `dbg-control` logging in the same window, and it passes at 300 or more
+  hits in 10 s (Stats live 3's 777 hits in 10 s at about 143 frames a
+  second say the control is not hit once a frame under the debugger).
+- **Relies on:** the tick (the answer to id 42 over ten, rounded up, once
+  a tick) and the FPS option (60, 120 or 144) as *Regen and the frame rate
+  (static reading)* above reads them, where the option sits in the menus
+  being unverified (a choice under Options, Video); `mark1probe manaregen`,
+  `vitals`, `statask`, `autounit` and `perf` / `perf reset` (the guide's
+  Command Reference), with `mark1set bonus 1` before any probe hook; the
+  pieces, the bag and the bar editor as in Stats live procedures 3 and 4.
+  The drain's percent is computed, not read off one window:
+  100 × T × a / (n × M), T the ticks a second from a tick-rate window, a =
+  ceil(R / 10) − ceil((R − D) / 10) the whole mana a tick the switch takes,
+  n the proc columns and M maximum mana; its uncertainty is T's, one over
+  the ticks counted.
+
+**Steps** (every click and key is the operator's):
+
+- S0: `dll-hash`; `ping`; bare `mark1probe` answers `mark1probe: research
+  build`; the first `mark1set stat` second line reads `cost=drain
+  drain=1.00 unit=0.745` (`marker`). Through the bar editor unbind Mana Orb
+  from Q and Soul Spurn from R and bind Shadow Bolt to Y; `skillstate`
+  shows 0,3 and 0,5 empty, 0,4 `healingZone`, 0,6 `shadowBolt`.
+- S0b: `mark1set bonus 1`, then `mark1set bonus 0`: `install=installed`, no
+  `refused` line.
+- S1: the four pieces spawned, picked up and worn; `mark1set stat` reads
+  `set=full`. The game's FPS setting is read on Options, Video and left
+  unchanged.
+- S2 (`zero-control`, `fps-default`): switch off, mana spent, `manaregen
+  0`, `perf reset`, `vitals 600`, `perf`: no gain; frames a second near the
+  setting.
+- S3 (`tick-rate-default`): `manaregen 1`, `statask 42` (reads 1), `vitals
+  3600`: the gain is the tick count (ceil(1 / d) = 1 for any divisor), T =
+  gain / dt.
+- S4 (`tick-shape`, `drain-pct`): a switch-off window (`manaregen off`,
+  `statask 37,42` for M and R, `vitals 360`), then a switch-on window
+  (`mark1set bonus 1`, `statask 37,42` for R − D, `mark1set stat` for the
+  proc columns and `unit=`, `vitals 360`); each window's gain against the
+  ticks T × dt at ceil(R / 10) and ceil((R − D) / 10) a tick.
+- S5 (`drain-tune`), only if `drain-pct` fell outside 0.95% to 1.15%: up
+  to two units through `mark1probe autounit`, S4's switch-on window each.
+- D1: the three logpoints over a `vitals 1200` window from low mana, the
+  game's own answer in force (`manaregen off`).
+- S6 (`fps-capped`): the FPS setting to 60 (NEEDS-HUMAN if the operator
+  cannot change it); `perf reset`, `vitals 600`, `perf`: 55 to 62 frames a
+  second.
+- S7 (`tick-rate-capped`): S3's window with `vitals 1800`.
+- S8 (`drain-capped`, `regen-fps`'s divisor): S4 whole at 60. The divisor
+  at 60 is the d for which the switch-off gain is within one tick of
+  ceil(R / d) × T × dt.
+- D2: D1's logpoints and window at 60.
+- S9: the setting back to S1's; `vitals 300` shows the old rate.
+- S10: the game stopped, the saves inspected and restored clean, the lease
+  released.
+
+**Checks:** required `dll-hash`, `control`, `marker`, `zero-control`,
+`tick-rate-default` (`statask` reads 1, at least 100 ticks), `drain-pct`
+(0.95% to 1.15% with the uncertainty at most ±2%) and `dbg-control`;
+`fps-default` (frames a second within 10% of the setting S1 read) was
+required when the session ran and was dropped from the required set by
+the owner afterwards (results below). Research: `tick-shape` (each window
+within one tick of its prediction: |gain − k × T × dt| ≤ k × (1 + 0.02 × T
+× dt)), `drain-tune`, `fps-capped` (validity), `tick-rate-capped`,
+`drain-capped` (clock or target timing with the divisor unchanged predicts
+the same percent within 3%; a fixed frame count predicts `drain-pct` × the
+ratio of the two frame rates), `regen-fps` (r = T at 60 over T at the
+default, and the divisor at 60: `divisor` when that is not 10, `time` when
+r is 0.9 to 1.1, `frame` when r ≤ 1.15 × the frame-rate ratio, otherwise
+not observed), `dbg-tick` (hits against the window's frames, "every step",
+or its ticks, "every tick", within 10%) and `dbg-replenish` (hits within
+10% of the window's ticks).
+
+### Stats live 5 results
+
+Stats live procedure 5 ran on 2026-10-23 (10:11 to 10:49 UTC) on save slot
+14, "Sorak" (White Mage), and restored its saves clean at the end. It ran
+the research build from ForgePact `2d3e9dd` (DLL SHA-256
+`f8e36e7701a6aaf1911cc0cb7eae23c1ad6661949155c79bf07cf394da21dc1c`), the
+build with `kMark1ReplenishUnit` at 0.745, with the hub's x64dbg MCP
+attached twice (D1 after S4, D2 after S8). The capture is the playtest
+workorder's `forgepact-166-mark1-set-playtest2-live-5.md`, kept with the
+hub's workorder files and not tracked.
+
+`tools/live_checks.py` reads 16 checks: 11 pass, 3 fail, 1 not observed and
+1 not run. Of the checks the procedure required, all passed but
+`fps-default`, which failed against the setting the Video page displays,
+not against the rate the game ran at (below); the owner kept the data and
+dropped it from the required set (2026-10-23, after the session). Research
+checks: `tick-shape`, `fps-capped`, `tick-rate-capped` and `drain-capped`
+passed (the last two recorded values), `dbg-tick` and `dbg-replenish`
+failed their rule at the default setting, `regen-fps` was not observed, and
+`drain-tune` did not run.
+
+**The bar as read** (`skillstate`, S0): Dark Oath at 0,0, Chain of Holy
+Light at 0,2, Mana Orb at 0,3 (Q), Healing Zone (252) at 0,4 (E), Soul
+Spurn at 0,5 (R), 0,6 (Y) empty. The operator unbound Mana Orb and Soul
+Spurn and bound Shadow Bolt (239) to Y through the bar editor, so the
+automation had two proc columns, E and Y (`talents=-/252/-/239
+free=-/0/-/1`), and no other regen source was on the bar.
+
+**The FPS setting.** The Video page showed `VSync` Off and a `Framerate`
+row reading 60, that row drawn dimmer than the others; `menulayout` read
+both its buttons `enabled=0` (every other Video row `enabled=1`), and
+clicking the value only showed its help text. The game's own frame counter
+in the corner read 143 to 144, and the `vitals` and `perf` windows agree
+(143.7 and 144.1 frames a second). So the game's own counter is the
+reference here; what the disabled row means, and which `game_get_speed`
+value the game runs with while it is disabled, was not read. The operator
+could not set 60 there; the owner capped the game at 60 ("game is capped
+at 60 now", what was changed not stated), after which the page showed
+`VSync` On, `Framerate` still 60 and disabled, and the counter 60. In S9 the
+operator set `VSync` Off again and the game ran at 143.5 frames a second.
+
+| Check | Verdict | What it showed |
+|---|---|---|
+| `dll-hash` | pass | The lease hashed the installed DLL as `f8e36e77…dc1c`, the Live 5 build. |
+| `control` | pass | `pong (YYTK 4.0.1)`. |
+| `marker` | pass | `mark1probe: research build`; the first `mark1set stat` second line read `cost=drain drain=1.00 unit=0.745 drained=0`. S0b: `install=installed`, no `refused` line. |
+| `zero-control` | pass | `manaregen 0` (`statask 42` read 0): 600 frames in 4174 ms with `mana-gain=0`. |
+| `fps-default` | fail | 600 / 4.174 s = 143.7 frames a second (`perf`: 6.94 ms a frame, 144.1), against the `Framerate 60` the Video page displayed on a disabled row; not within 10% of 60. Within 0.2% of 144, which the page did not show. |
+| `tick-rate-default` | pass | `statask 42` read 1; 219 mana in 25.007 s over 3601 frames, so T = 8.7575 ticks a second (±0.46%), a tick every 16.4 frames. |
+| `tick-shape` | pass | R = 140, M = 2352. Switch off: 308 mana in 2.507 s against 14 × T × dt = 307.37 (tolerance 20.15), 14.03 a tick. Switch on (id 42 answered 76.8591, D = 63.1409): 176 in 2.510 s against 8 × T × dt = 175.85 (tolerance 11.52), 8.01 a tick. |
+| `drain-pct` | pass | a = 14 − 8 = 6 (p_off − p_on = 6.02), n = 2, unit 0.745: 100 × 8.7575 × 6 / (2 × 2352) = 1.117% of maximum mana a second per skill, ±0.46% relative (±0.005), inside 0.95% to 1.15%. |
+| `drain-tune` | not-run | `drain-pct` was in the band; S5 and `mark1probe autounit` were not needed. |
+| `fps-capped` | pass | After the owner's cap: 600 / 10.013 s = 59.9 frames a second (`perf`: 16.66 ms, 60.0). |
+| `tick-rate-capped` | pass | `statask 42` read 1; 225 mana in 30.008 s over 1801 frames: T = 7.498 ticks a second at 60, a tick every 8.0 frames. |
+| `drain-capped` | pass | At 60, d = 10 (switch off 630 = 45 × 14 against 631.41, tolerance 26.63); switch on 360 = 45 × 8 against 360.86; a = 6 (p_off − p_on = 13.97 − 7.98 = 5.99): 100 × 7.498 × 6 / 4704 = 0.956% a second per skill, 0.856 of `drain-pct`. Neither prediction met: clock or target timing gave 1.083 to 1.150, a fixed frame count 0.466. |
+| `regen-fps` | not-observed | r = 7.498 / 8.7575 = 0.856 with the divisor 10 at both rates; the time band is 0.9 to 1.1 and the frame band at most 1.15 × 59.92 / 143.75 = 0.479, so neither. Mana a second at R = 140: 122.6 at the default, 105.0 at 60. |
+| `dbg-control` | pass | `pm` 609 hits per 10 s in D1 and 571 in D2; the attach tool proved the instrument at both attaches by the game's frame counter (49830 to 49974, no answer at the hold, 50159; 247905 to 247966, no answer, 248064). |
+| `dbg-tick` | fail | D1 (the logpoints slowed the game to 60.5 frames a second): `tk` 144 to 159 hits against 1201 frames and 173.8 ticks by S3's T (0.83 to 0.91), so neither "every step" nor "every tick" by the rule, but 0.95 to 1.05 of the 152 ticks the gain shows (2128 = 152 × 14). D2 (60): 150 to 166 against 157.8 ticks (0.95 to 1.05), every tick. Mana per hit 13.4 to 14.8 (D1), 13.3 to 14.7 (D2). |
+| `dbg-replenish` | fail | `rp` counted as `tk` did: D1 0.83 to 0.91 of S3's ticks and 0.95 to 1.05 of the gain's; D2 0.95 to 1.05; mana per hit 13.4 to 14.8 (D1), 13.3 to 14.7 (D2). |
+
+**What else the session showed:**
+
+- **The tick under the debugger.** With the three logpoints armed at the
+  default setting the game ran about 60.5 frames a second (about 67 in a
+  first window that was discarded because mana reached its maximum), well
+  below its setting, and ticked 152 times in 19.849 s, 7.66 a second, a
+  tick every 7.9 frames, close to the 60 FPS window's 7.50 and 8.0. So the
+  tick appears to follow the frame rate the game reaches rather than only
+  its setting (inferred, from a window the procedure did not design to
+  separate the hypotheses; no external frame limiter was offered, so
+  `tick-rate-limited` was not run).
+- **Frames a tick are not constant.** 16.4 at about 144 frames a second,
+  8.0 at 60 and 7.9 at 60.5 under the debugger: the ratio of the frame
+  rates is 2.40, of the frames a tick 2.05. Neither a fixed count of
+  frames nor a fixed time accounts for both; the mechanism (what the Step
+  passes the tick) was not read.
+- **The operator's additions.** `mark1probe manaregen off` opened each
+  switch-on file (S4, S8), because the spend before it left the answer
+  forced to 0; D1's first window was discarded; the owner's cap at 60
+  turned `VSync` on, and the operator turned it off again in S9.
+
+### Stats live 5 decision
+
+Recorded on 2026-10-23 from Stats live 5 (results above). Each key takes
+exactly one value, on a line of its own, with its reason on the line below.
+
+regen-fps: not-observed
+The tick's divisor stayed 10 at 60 (S8's switch-off gain within one tick of ceil(R / 10) × T × dt), and its rate fell to r = 0.856 (8.76 to 7.50 ticks a second) while the frame rate fell to 0.417 (143.75 to 59.92): outside the `time` band (0.9 to 1.1) and above the `frame` band (at most 0.479). For the drain this means its share of maximum mana a second is not the same at every frame rate, but it does not fall in proportion to the frame rate either: at the shipped unit it read 1.117% at about 144 and 0.956% at 60, both inside the owner's band, and a lower frame rate takes a little less. No `time` reading was made: the game was not run below its own setting in a designed window (the 60 FPS window ran with the game capped by `VSync` and the setting row disabled, and which `game_get_speed` value was in force was not read), so whether the tick is counted against the target rate or by the clock stays not established; the debugger-slowed window (7.66 ticks a second at 60.5 frames a second) suggests the tick follows the rate the game reaches (inferred).
+
+drain-pct: 1.117 pass
+100 × T × a / (n × M) = 100 × 8.7575 × 6 / (2 × 2352) = 1.117% of maximum mana a second per automated skill at the shipped unit 0.745, at about 144 frames a second, uncertainty ±0.46% relative (±0.005, from 219 ticks counted), inside 0.95% to 1.15% (`tick-shape` passed, so a = 6 is the whole mana a tick the switch takes; p_off − p_on read 6.02 as a check).
+
+drain-unit: 0.745
+The shipped unit passed the band, so no other unit was tried (`drain-tune` not run). Every unit tried and its measured percent: 0.745 read 1.117% at about 144 frames a second (`drain-pct`) and 0.956% at 60 (`drain-capped`), both in the band. The owner kept 0.745 (2026-10-23, after Stats live 5); a change to `kMark1ReplenishUnit` would be a one-line follow-up planned with the owner, and none is planned.
+
+These set the workorder's route tokens `regen-fps: not-observed`,
+`drain-pct: 1.117 pass` and `drain-unit: 0.745`. Nothing here changes the
+plugin. The shared reference is
+[RUNTIME_DATA_MODELS § 7.10](../../docs/RUNTIME_DATA_MODELS.md#710-the-skill-bars-buttons-mana-and-the-casts-speed).
