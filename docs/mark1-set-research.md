@@ -5566,8 +5566,9 @@ the rows asked with `UI_Talent_Screen_Attribute_obj` and
 `UI_Button_Talent_Player_obj`, as on the Player tab (the other two
 talent-screen objects were not observed asking there); every asker's
 argument 0 read 1 on both pages and in every other entry of that session;
-and the originals were the mercenary's own (36 12527, 92 5114, 97 86, 42
-31, what `Mercenary_obj`'s own asks read). The asker rule answered by the
+and the originals were the mercenary's own (36 12527, 37 742, 92 5114, 97
+86, what `Mercenary_obj`'s own asks read; 42 read 31, not the player's 140,
+and no `Mercenary_obj` 42 ask was recorded). The asker rule answered by the
 asker's object, so the mercenary's page got the set bonus and the cost.
 Neither self nor argument 0 tells the pages apart.
 

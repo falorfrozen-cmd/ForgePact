@@ -1785,7 +1785,7 @@ any item's, and the set gives more for every piece you wear.
   talent screen, T) shows the set's Life, Defense and its other lines too,
   as your HUD does; your mercenary and monsters never get the set bonus.
   The character sheet's Mercenary tab shows your mercenary's own numbers,
-  without the set bonus or the mana drain.
+  without the set bonus or the mana drain (not yet checked in play).
 - **The tooltip.** Each piece's tooltip reads `Satanic Set <type>` under its
   name, shows the piece's own stats, then the set's bonus lines, each lit
   while you wear enough pieces for it and grey otherwise, with what

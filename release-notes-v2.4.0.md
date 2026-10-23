@@ -36,8 +36,9 @@ pieces" below.
     underneath in the game's smaller grey description text, then the set's
     name and its four pieces, the ones you wear in green. Your character
     sheet (the talent screen, T) shows the set's Life, Defense and its other
-    lines too; your mercenary and monsters never get the set bonus, and the
-    sheet's Mercenary tab shows your mercenary's own numbers.
+    lines too; your mercenary and monsters never get the set bonus, and this
+    version keeps the set's numbers off the sheet's Mercenary tab, which
+    shows your mercenary's own numbers (not yet checked in play).
   - **Your skills cast themselves.** With all four worn, the skills on your
     Q, E, R and Y slots are cast for you. A skill that is not a toggle fires
     the way an item's proc fires a skill: at once, with no cast time, so a
@@ -128,7 +129,7 @@ pieces" below.
   larger than your regeneration empties your mana; and the character sheet
   showing the set's Life, Defense and Physical Damage Taken Reduced with
   all four worn, the same numbers the game's own stat calls return for
-  you, while your mercenary and summons got none of the bonus. Not checked in play yet: whether the game uses the
+  you, while your mercenary and summons got none of the bonus. Not checked in play yet: whether the sheet's Mercenary tab now shows your mercenary's own numbers (the third session found it showing the set bonus and the drain on them), whether the game uses the
   set's Defense and Physical Damage Taken Reduced when a monster hits you,
   whether every fired skill casts and a piece dropping from a vault.
 
