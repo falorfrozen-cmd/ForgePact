@@ -17,6 +17,16 @@ and its count-only hook table never reach the player build; the shipped sink
 is the one the research doc's `announce-route:` names (`server`, picked by
 Live procedure 1); and the modstate object and the line formats the live
 operator reads.
+
+The Chaos Tower's loot burst (ForgePact #227): the tick reads
+Controller_obj.lootExplosionList by name (FindControllerInstance,
+variable_instance_get, ds_exists through SigListHandle, ds_list_size, and
+ds_list_find_value for the new entries only) after the batch's decisions and
+before AgeCreationWindow; the guard in LaProcess consults the burst memory; the
+reader adds no HookOneScript, no address and no write; `lootannprobe burst`
+and the `lootann decide:` line are research-build only; `lootannprobe place`
+sets the loot filter's tier and prints the stamp; and the stat line carries
+burst-listed=, burst-fresh=, burst-landed= and burst-overflow=.
 """
 import re
 import unittest
@@ -38,7 +48,13 @@ EXPECTED_ROUTE = "server"
 # The research instrument's names, none of which the player build may carry.
 RESEARCH_ONLY_NAMES = ("lootannprobe", "LootAnnProbeCommand", "g_LaProbeRows", "LaProbeDetour", "LaProbeNoteInit",
                        "LaProbeAttach", "LaProbePlace", "LaProbeTry", "LaProbeSay",
-                       "LaProbeAnonControl", "LaProbeUnresolvedRows")
+                       "LaProbeAnonControl", "LaProbeUnresolvedRows", "LaProbeBurst", "g_LaBurstKeep")
+
+# The burst reader (ForgePact #227): the function the tick calls to read
+# Controller_obj.lootExplosionList, and the lookup it shares with
+# `lootannprobe burst`.
+BURST_READ = "static void LaReadBurstList()"
+BURST_LIST = "static bool LaBurstList(RValue& ctrl, RValue& list, double& id, std::string& why)"
 
 # The lootannprobe research block's own bounds in ModuleMain.cpp.
 PROBE_START = "#ifndef FORGEPACT_RELEASE\n// ===== lootannprobe:"
@@ -174,7 +190,8 @@ class LootAnnounceHeaderTests(unittest.TestCase):
         stat = _body(self.code, "std::string StatLine() const")
         fields = re.findall(r'" ([a-z-]+)="', stat)
         self.assertEqual(fields, ["route", "seen", "announced", "held-rarity", "held-no-rarity", "held-duplicate",
-                                  "held-bag-drop", "sink-refused", "remembered", "created", "create-overflow"])
+                                  "held-bag-drop", "sink-refused", "remembered", "created", "create-overflow",
+                                  "burst-listed", "burst-fresh", "burst-landed", "burst-overflow"])
 
 
 class LootAnnouncePluginWiringTests(unittest.TestCase):
@@ -317,7 +334,8 @@ class LootAnnouncePluginWiringTests(unittest.TestCase):
         self.assertIn("const bool hasKey = LaItemKey(item, key);", process)
         self.assertIn("if (!hasKey) ++g_LaNoKey;", process)
         self.assertIn("const bool recent = hasKey && g_LootAnnounce.RecentlyCreated(key);", process)
-        self.assertIn("g_LootAnnounce.Decide(LaRarity(item), recent, (int64_t)id, type, stamp)", process)
+        self.assertIn("const int rarity = LaRarity(item);", process)
+        self.assertIn("g_LootAnnounce.Decide(rarity, recent, (int64_t)id, type, stamp, burst)", process)
         # An identity that could not be read is counted and left before the
         # core's memory sees it: "unread" must never compare equal to "unread".
         self.assertNotIn("double id = -1.0;", process)
@@ -480,6 +498,119 @@ class LootAnnouncePluginWiringTests(unittest.TestCase):
                           flags=re.S)
         self.assertIsNotNone(reply, "the lootann 1 reply does not continue after create-hook=")
         self.assertEqual(reply.group(1).strip(), install)
+        # The core's line comes first, so the four burst fields the live
+        # procedure reads (burst-listed=, burst-fresh=, burst-landed=,
+        # burst-overflow=, right after create-overflow=) are on it.
+        self.assertTrue(stat.strip().startswith("return g_LootAnnounce.StatLine()"), stat)
+        core_stat = _body(_code(HEADER.read_text(encoding="utf-8")), "std::string StatLine() const")
+        core_fields = re.findall(r'" ([a-z-]+)="', core_stat)
+        self.assertEqual(core_fields[-5:], ["create-overflow", "burst-listed", "burst-fresh", "burst-landed",
+                                            "burst-overflow"])
+
+    def test_the_burst_list_is_read_after_the_decisions_and_before_the_window_ages(self):
+        # ForgePact #227: the burst frame's landings need the memory filled in
+        # earlier frames, and an entry collected this frame needs this frame's
+        # CreateItemNew notes, so the list is read between the two, after the
+        # tick's off check.
+        tick = _code(_body(self.plugin, "static void LootAnnounceTick()"))
+        self.assertEqual(tick.count("LaReadBurstList();"), 1)
+        self.assertLess(tick.index("LaProcess(p);"), tick.index("LaReadBurstList();"))
+        self.assertLess(tick.index("LaReadBurstList();"), tick.index("g_LootAnnounce.AgeCreationWindow();"))
+        self.assertLess(tick.index("if (!g_LootAnnounce.Enabled()) return;"), tick.index("LaReadBurstList();"))
+        # The reader is the fix: it is in the adapter and in the player build.
+        self.assertIn(BURST_READ, self.adapter)
+        self.assertIn(BURST_READ, self.player)
+        self.assertIn(BURST_LIST, self.adapter)
+        # Switching off restarts the count: the first read after the switch
+        # comes on starts at the list's length then.
+        command = _code(_body(self.plugin, "static void LootAnnounceCommand(const std::string& rest)"))
+        off = command[command.index('if (arg == "0" || arg == "off")'):]
+        self.assertIn("g_LaBurstHave = false;", off[:off.index("return;")])
+
+    def test_the_burst_list_is_read_by_name(self):
+        lookup = _code(_body(self.plugin, BURST_LIST))
+        self.assertIn("FindControllerInstance(ctrl)", lookup)
+        self.assertIn('g_Yytk->CallBuiltin("variable_instance_get", { ctrl, RValue("lootExplosionList") })', lookup)
+        # SigListHandle asks ds_exists(list, ds_type_list) of the value as it
+        # was read: a number or a reference alike; the kind decides how the
+        # handle is read, never whether.
+        self.assertIn("SigListHandle(list, id, why)", lookup)
+        handle = _code(_body(self.plugin, "static bool SigListHandle(const RValue& v, double& id, std::string& why)"))
+        self.assertIn('CallBuiltin("ds_exists", { v, RValue(2.0) })', handle)
+        read = _code(_body(self.plugin, BURST_READ))
+        self.assertIn("LaBurstList(ctrl, list, id, why)", read)
+        self.assertIn('g_Yytk->CallBuiltin("ds_list_size", { list })', read)
+        self.assertIn('g_Yytk->CallBuiltin("ds_list_find_value", { list, RValue((double)i) })', read)
+        # Only the entries past those already read.
+        self.assertIn("for (int i = g_LaBurstCount; i < size; ++i)", read)
+        self.assertIn('LaField(entry, "itemInstance", item)', read)
+        self.assertIn("LaItemKey(item, key)", read)
+        self.assertIn("g_LootAnnounce.NoteListed(key, keep)", read)
+        # A shorter list, a different list value, or none: the core forgets
+        # and the count restarts at the list's length.
+        self.assertIn("size < g_LaBurstCount", read)
+        self.assertIn("id != g_LaBurstListId", read)
+        self.assertGreaterEqual(read.count("g_LootAnnounce.ForgetBurst();"), 2)
+        # A throw skips the frame's read and says so once.
+        self.assertIn('"lootann: burst list unreadable - "', read)
+        # The player build keeps every entry; only the research build's
+        # `lootannprobe burst off` turns keeping off.
+        self.assertIn("bool keep = true;", read)
+
+    def test_the_guard_consults_the_burst_memory(self):
+        process = _code(_body(self.plugin, "static void LaProcess(const LaPending& p)"))
+        self.assertIn("const bool recent = hasKey && g_LootAnnounce.RecentlyCreated(key);", process)
+        self.assertIn("const bool burst = hasKey && g_LootAnnounce.InBurstMemory(key);", process)
+        self.assertIn("g_LootAnnounce.Decide(rarity, recent, (int64_t)id, type, stamp, burst)", process)
+
+    def test_the_burst_reader_adds_no_hook_no_address_and_no_write(self):
+        for name in (BURST_READ, BURST_LIST):
+            body = _code(_body(self.plugin, name))
+            for forbidden in ("HookOneScript", "MmCreateHook", "GetModuleHandle", "reinterpret_cast",
+                              "variable_instance_set", "variable_struct_set", "ds_list_set", "ds_list_add",
+                              "ds_list_delete", "ds_list_clear", "ds_list_destroy", "instance_destroy"):
+                self.assertNotIn(forbidden, body, f"{name}: {forbidden}")
+            self.assertIsNone(re.search(r"\bk\w*Rva\w*\b", body), name)
+            self.assertIsNone(re.search(r"0x[0-9A-Fa-f]{6,}", body), name)
+        # Negative control: the same scan finds a hook call.
+        self.assertIn("HookOneScript", _code('static void LaReadBurstList() { HookOneScript("x"); }'))
+
+    def test_the_burst_probe_and_the_decide_line_are_research_only(self):
+        code = _code(self.plugin)
+        for text in ("lootannprobe burst", "lootann decide:", "g_LaBurstKeep", "LaProbeBurst"):
+            self.assertIn(text, code, text)
+            self.assertNotIn(text, self.player, text)
+        # The decide line is LaProcess's, inside a research block of its own.
+        start = self.plugin.index("static void LaProcess(const LaPending& p)")
+        process = self.plugin[start:self.plugin.index("\n}\n", start)]
+        opened = process.index("#ifndef FORGEPACT_RELEASE")
+        block = process[opened:process.index("#endif", opened)]
+        self.assertIn("lootann decide:", block)
+        self.assertIn("IsAnnouncedRarity(rarity)", block)
+        for field in ('" rarity="', '" stamp="', '" verdict="', '" via="'):
+            self.assertIn(field, block, field)
+        # The probe's verb, its usage and its exact line.
+        command = _code(_body(self.plugin, "static void LootAnnProbeCommand(const std::string& rest)"))
+        self.assertIn('if (sub == "burst") { LaProbeBurst(Lower(TrimCopy(tail))); return; }', command)
+        self.assertIn("burst [on|off]", command)
+        burst = _code(_body(self.plugin, "static void LaProbeBurst(const std::string& arg)"))
+        for field in ('"lootannprobe burst: memory="', '" tower="', '" list="', '" size="', '" given="'):
+            self.assertIn(field, burst, field)
+        self.assertIn("InChaosTowerCached()", burst)
+        self.assertIn('RValue("lootExplosionGiven")', burst)
+        self.assertIn("HeroSiege::Scripts::gml_Script_GPV", burst)
+        self.assertIn("LaBurstList(ctrl, list, id, why)", burst)
+        # Negative control: the same check finds a decide line left outside a
+        # research block.
+        self.assertIn("lootann decide:", _player_build('Out("lootann decide: x");\n#ifndef FORGEPACT_RELEASE\n#endif\n'))
+
+    def test_place_sets_the_loot_filter_tier_and_prints_the_stamp(self):
+        place = _code(_body(self.plugin, "static void LaProbePlace(const std::string& which)"))
+        tier = 'g_Yytk->CallBuiltin("variable_struct_set", { info, RValue("32"), RValue(5.0) })'
+        self.assertIn(tier, place)
+        self.assertLess(place.index(tier), place.index("gml_Script_LootGroundCreateFromItem"))
+        self.assertIn('" \\"32\\"="', place)
+        self.assertIn('" stamp=" + LaTimeStamp(item)', place)
 
     def test_the_hooks_go_in_only_when_the_core_says_a_character_exists(self):
         # Known Limitations item 8: a hook installed at character select stalls
