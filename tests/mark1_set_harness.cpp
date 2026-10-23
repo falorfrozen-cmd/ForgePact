@@ -1418,6 +1418,84 @@ int main()
         check("asker_negative/unread_against_unresolved_never_matches", ok);
     }
 
+    // ---- asker page: the talent screen answered only on the player's own page (TalentPageOf) ----
+    // Live 3 (merc-page): the Mercenary tab asks with the same four objects
+    // as the Player tab, so the page is told apart by which screen object has
+    // an instance: UI_Talent_Screen_obj (the player's) or
+    // UI_Mercenary_Talents_obj (the mercenary's). The indices are the SDK
+    // enum's, as asset_get_index would resolve them.
+    {
+        using HeroSiege::Objects::GameObject;
+        const auto known = [](GameObject o) { return ObjectIndex{ true, static_cast<int>(o) }; };
+        const auto count = [](long n) { return InstanceCount{ true, n }; };
+        ObjectIndex screen[kTalentScreenObjectCount];
+        for (int i = 0; i < kTalentScreenObjectCount; ++i) screen[i] = known(kTalentScreenObjects[i]);
+        const ObjectIndex pages[kTalentPageObjectCount] = { known(kTalentPageObjects[0]), known(kTalentPageObjects[1]) };
+        const InstanceCount playerPage[kTalentPageObjectCount] = { count(1), count(0) };
+        const InstanceCount mercenaryPage[kTalentPageObjectCount] = { count(0), count(1) };
+        const InstanceCount bothPages[kTalentPageObjectCount] = { count(1), count(1) };
+        const InstanceCount noPage[kTalentPageObjectCount] = { count(0), count(0) };
+        // Whether a talent-screen object's call is answered under a page reading.
+        const auto screenAnswered = [&](GameObject o, TalentPage page) {
+            return AnswersAsker(AskerOf(false, known(o), screen), page);
+        };
+
+        // The two page objects are the SDK's, the player's first.
+        bool ok = kTalentPageObjects[0] == GameObject::UI_Talent_Screen_obj
+            && kTalentPageObjects[1] == GameObject::UI_Mercenary_Talents_obj;
+        // Baseline: on the player's page (one UI_Talent_Screen_obj, no
+        // mercenary screen) each of the four objects is answered, as before.
+        const InstanceCount twoPlayerScreens[kTalentPageObjectCount] = { count(2), count(0) };
+        ok = ok && TalentPageOf(pages, playerPage) == TalentPage::Player && TalentPageOf(pages, twoPlayerScreens) == TalentPage::Player;
+        for (GameObject o : kTalentScreenObjects) ok = ok && screenAnswered(o, TalentPageOf(pages, playerPage));
+        check("asker_page_baseline/each_talent_screen_object_answered_on_the_players_page", ok);
+        // The local player's own calls never depend on the page.
+        ok = true;
+        for (TalentPage p : { TalentPage::Player, TalentPage::Other, TalentPage::Unread })
+            ok = ok && AnswersAsker(AskerOf(true, known(GameObject::Player_obj), screen), p)
+                && AnswersAsker(AskerOf(true, ObjectIndex{}, screen), p);
+        check("asker_page_baseline/local_player_answered_whatever_the_page", ok);
+
+        // Target: on the mercenary's page (its screen, no player screen) each
+        // of the four is left as the game answered it.
+        ok = TalentPageOf(pages, mercenaryPage) == TalentPage::Other;
+        for (GameObject o : kTalentScreenObjects) ok = ok && !screenAnswered(o, TalentPageOf(pages, mercenaryPage));
+        check("asker_page_target/each_talent_screen_object_left_on_the_mercenarys_page", ok);
+
+        // Negative control: a count that did not read, a name that did not
+        // resolve, both screens at once and neither screen all leave the four;
+        // an object outside the list stays left on the player's page.
+        ok = true;
+        const InstanceCount unreadCounts[][kTalentPageObjectCount] = {
+            { InstanceCount{}, count(0) }, { count(1), InstanceCount{} }, { InstanceCount{}, InstanceCount{} },
+            { InstanceCount{ false, 1 }, count(0) }, { count(1), InstanceCount{ false, 0 } }, { count(-1), count(0) },
+        };
+        for (const auto& counts : unreadCounts) {
+            ok = ok && TalentPageOf(pages, counts) == TalentPage::Unread;
+            for (GameObject o : kTalentScreenObjects) ok = ok && !screenAnswered(o, TalentPageOf(pages, counts));
+        }
+        check("asker_page_negative/count_unread_left", ok);
+        ok = true;
+        const ObjectIndex unresolvedPages[][kTalentPageObjectCount] = {
+            { ObjectIndex{}, known(kTalentPageObjects[1]) }, { known(kTalentPageObjects[0]), ObjectIndex{} },
+            { ObjectIndex{}, ObjectIndex{} },
+            { ObjectIndex{ false, static_cast<int>(kTalentPageObjects[0]) }, known(kTalentPageObjects[1]) },
+            { known(kTalentPageObjects[0]), ObjectIndex{ true, -1 } },
+        };
+        for (const auto& names : unresolvedPages) {
+            ok = ok && TalentPageOf(names, playerPage) == TalentPage::Unread;
+            for (GameObject o : kTalentScreenObjects) ok = ok && !screenAnswered(o, TalentPageOf(names, playerPage));
+        }
+        check("asker_page_negative/name_unresolved_left", ok);
+        ok = TalentPageOf(pages, bothPages) == TalentPage::Other && TalentPageOf(pages, noPage) == TalentPage::Other;
+        for (GameObject o : kTalentScreenObjects)
+            ok = ok && !screenAnswered(o, TalentPageOf(pages, bothPages)) && !screenAnswered(o, TalentPageOf(pages, noPage));
+        ok = ok && !AnswersAsker(AskerOf(false, known(GameObject::Mercenary_obj), screen), TalentPage::Player)
+            && !AnswersAsker(AskerOf(false, known(GameObject::UI_Button_Open_Mercenary_obj), screen), TalentPage::Player)
+            && !AnswersAsker(Asker::Left, TalentPage::Player);
+        check("asker_page_negative/both_pages_or_none_left", ok);
+    }
+
     // ---- stat: the second line -------------------------------------------------------------
     {
         const std::string fresh = BonusStatLine(BonusStatFields{});
@@ -1425,7 +1503,7 @@ int main()
             "mark1set bonus: pieces=0 lit=0/0/0 answered=0/0/0/0/0/0 not-number=0 gear-reads=0 gear-unread=0"
             " | auto talents=-/-/-/- free=-/-/-/- masked=0 held-seen=0 hold=4 yield=61 rest=24 mask=0,1,2,7,8,9,10,11,27,40"
             " route=proc procs=0 proc-fail=0 locked=0 cost=drain drain=1.00 drained=0 cast-base=0.86 fcr=- haste=- stat-fail=0 sheet=0"
-            " | tip desc-font=not-drawn grey=0 grey-box=0 | rolls dressed=0 legacy=0 drop-rolls=0";
+            " sheet-left=0 sheet-unread=0 | tip desc-font=not-drawn grey=0 grey-box=0 | rolls dressed=0 legacy=0 drop-rolls=0";
         check("stat/second_line_fresh_exact", fresh == expected, fresh);
         BonusStatFields f;
         f.pieces = 3;
@@ -1447,10 +1525,12 @@ int main()
         f.grey = 2;
         f.legacy = 4;
         f.sheet = 9;
+        f.sheetLeft = 3;
+        f.sheetUnread = 1;
         const std::string line = BonusStatLine(f);
         const bool ok = has(line, "pieces=3 lit=1/1/0 answered=7/0/0/0/0/2 ") && has(line, " talents=23/-/71/- free=1/-/0/- ")
             && has(line, " route=press ") && has(line, " drain=1.25 ") && has(line, " cast-base=0.50 ") && has(line, " fcr=40 haste=12.5 ")
-            && has(line, " stat-fail=0 sheet=9 | tip ")
+            && has(line, " stat-fail=0 sheet=9 sheet-left=3 sheet-unread=1 | tip ")
             && has(line, " desc-font=small grey=2 ") && has(line, " legacy=4 ") && !has(line, "  ")
             && std::string(DescFontName(DescFont::Unresolved)) == "unresolved" && AnsweredIndex(163) == 1 && AnsweredIndex(64) == -1;
         check("stat/second_line_filled", ok, line);

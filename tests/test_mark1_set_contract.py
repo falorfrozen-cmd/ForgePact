@@ -227,6 +227,8 @@ SIGNATURES = {
     "resolve_screen": "static void Mark1ResolveTalentScreen()",
     "others_arg0": "static void M1bOtherArg0(int argc, RValue** A, M1bOther& rec)",
     "bonus_others": "static void M1pBonusOthers(const M1pNs::Command& c)",
+    # Amendment 8: the talent screen's page, read at each talent-screen call
+    "talent_page": "static M1sNs::TalentPage Mark1TalentPageNow()",
 }
 
 SHIPPED = ("decode", "of", "entry", "final", "icon_index", "icon_path", "icons_load", "ground", "ground_install",
@@ -236,7 +238,7 @@ SHIPPED = ("decode", "of", "entry", "final", "icon_index", "icon_path", "icons_l
            "jump_entry", "jump_exit", "jump_builtin", "jump_install", "jump_tick", "leap", "leap_install", "resolve_objects",
            "walk", "walk_install", "bonus_consumer", "bonus_pieces", "gear_prints", "bonus_fields", "fire_proc", "grey",
            "grey_member", "read_stat", "refresh_stats", "cooldown_of", "player_ref", "instance_id_ref", "character_name",
-           "resolve_screen")
+           "resolve_screen", "talent_page")
 JUMP_HEADER = ROOT / "plugin" / "include" / "ForgePact" / "Mark1Jump.hpp"
 AUTOMATION_HEADER = ROOT / "plugin" / "include" / "ForgePact" / "Mark1Automation.hpp"
 PRIORITY_HEADER = ROOT / "plugin" / "include" / "ForgePact" / "Mark1Priority.hpp"
@@ -2195,6 +2197,75 @@ class Mark1SetContract(unittest.TestCase):
         self.assertNotIn("object_get_name", consumer)
         self.assertNotIn("object_get_name", self.body("others_arg0"))
         self.assertIn("HeroSiege::Player::IsInstanceHandle(a0)", self.body("others_arg0"))
+
+    # ---- Amendment 8: the talent screen's page ----------------------------------------------
+
+    def test_talent_page_objects_resolved_by_name(self):
+        # The two page objects are the SDK enum's in the core, the player's
+        # screen first, and are resolved once per install through
+        # asset_get_index by their hs-game-sdk names, beside the four askers;
+        # no typed index anywhere in the Mark 1 block.
+        header = HEADER.read_text(encoding="utf-8")
+        core = strip_comments(header)
+        listed = re.search(r"kTalentPageObjects\[kTalentPageObjectCount\] = \{(.*?)\};", core, re.S)
+        self.assertIsNotNone(listed)
+        self.assertEqual(re.findall(r"HeroSiege::Objects::GameObject::(\w+)", listed.group(1)),
+                         ["UI_Talent_Screen_obj", "UI_Mercenary_Talents_obj"])
+        self.assertIn("inline constexpr int kTalentPageObjectCount = 2;", core)
+        resolve = self.body("resolve_screen")
+        self.assertIn("HeroSiege::Objects::GetObjectName(M1sNs::kTalentPageObjects[i])", resolve)
+        self.assertEqual(resolve.count('g_Yytk->CallBuiltin("asset_get_index", { RValue(name) })'), 2)
+        self.assertIn("if (N1ObjectIndex(v, index)) g_M1bPage[i] = M1sNs::ObjectIndex{ true, index };", resolve)
+        self.assertLess(resolve.index("g_M1bPage[i] = M1sNs::ObjectIndex{};"),
+                        resolve.index("HeroSiege::Objects::GetObjectName(M1sNs::kTalentPageObjects[i])"))
+        # Counted with the runtime's instance_number, on the resolved index.
+        page = self.body("talent_page")
+        self.assertIn('g_Yytk->CallBuiltin("instance_number", { RValue((double)g_M1bPage[i].index) })', page)
+        self.assertIn("return M1sNs::TalentPageOf(g_M1bPage, counts);", page)
+        for block in (header, self.adapter, self.probe):
+            for typed in ("5278", "5175"):
+                with self.subTest(typed=typed):
+                    self.assertNotRegex(block, r"\b" + typed + r"\b")
+
+    def test_talent_page_read_at_the_point_of_use(self):
+        # In the consumer the page is read only for a self AskerOf names as
+        # the talent screen, after the local-player test, the id test and the
+        # object read, on every such call; the core decides, a left page is
+        # counted `sheet-left=` or `sheet-unread=`, and nothing caches it.
+        consumer = self.body("bonus_consumer")
+        decide = consumer.index("if (M1sNs::AskerOf(false, self, g_M1bScreen) != M1sNs::Asker::TalentScreen) return;")
+        read = consumer.index("const M1sNs::TalentPage page = Mark1TalentPageNow();")
+        answers = consumer.index("if (!M1sNs::AnswersAsker(M1sNs::Asker::TalentScreen, page)) {")
+        self.assertLess(consumer.index("if (!local) {"), decide)
+        self.assertLess(consumer.index('RValue("object_index")'), decide)
+        self.assertLess(decide, read)
+        self.assertLess(read, answers)
+        self.assertLess(answers, consumer.index("sheet = true;"))
+        self.assertIn("if (page == M1sNs::TalentPage::Unread) ++g_M1bSheetUnread;\n"
+                      "            else ++g_M1bSheetLeft;", consumer)
+        self.assertEqual(consumer.count("Mark1TalentPageNow()"), 1)
+        # The local player's calls never reach the read: it sits inside `if (!local)`.
+        local_block = consumer[consumer.index("if (!local) {"):consumer.index("sheet = true;")]
+        self.assertIn("Mark1TalentPageNow()", local_block)
+        # One reader, called from the consumer only: no frame callback, tick
+        # or other function reads the page, and no page is stored.
+        plugin = strip_comments(self.plugin)
+        self.assertEqual(len(re.findall(r"\bMark1TalentPageNow\(\)", plugin)), 2)   # its definition and the consumer's call
+        for which in ("frame", "tick"):
+            with self.subTest(which=which):
+                self.assertNotIn("Mark1TalentPageNow", self.body(which))
+                self.assertNotIn("TalentPage", self.body(which))
+        self.assertNotRegex(plugin, r"static\s+M1sNs::TalentPage\s+g_")
+        self.assertNotRegex(plugin, r"static\s+M1sNs::InstanceCount\s+g_")
+        # The counts reach the stat line after `sheet=`.
+        fields = self.body("bonus_fields")
+        self.assertIn("f.sheetLeft = g_M1bSheetLeft;", fields)
+        self.assertIn("f.sheetUnread = g_M1bSheetUnread;", fields)
+        line = function_body(HEADER.read_text(encoding="utf-8"), "inline std::string BonusStatLine(const BonusStatFields& f)")
+        self.assertLess(line.index('" sheet=" + std::to_string(f.sheet)'), line.index('" sheet-left=" + std::to_string(f.sheetLeft)'))
+        self.assertLess(line.index('" sheet-left=" + std::to_string(f.sheetLeft)'),
+                        line.index('" sheet-unread=" + std::to_string(f.sheetUnread)'))
+        self.assertLess(line.index('" sheet-unread=" + std::to_string(f.sheetUnread)'), line.index('" | tip desc-font="'))
 
 
 if __name__ == "__main__":

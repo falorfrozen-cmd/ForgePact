@@ -65102,8 +65102,10 @@ static std::string Mark1MovementInstall()
 // and the half walk's, registered by the set's install once the half walk's
 // part put the detour in (Mark1SetInstall). For the local player's own calls
 // of the ids the bonus or the cost answers, and the same calls from the talent
-// screen's objects (the sheet, T: Mark1Set.hpp's AskerOf, counted `sheet=`;
-// any other self, the mercenary and monsters included, is left), each from
+// screen's objects while it shows the player's own page (the sheet, T:
+// Mark1Set.hpp's AskerOf and TalentPageOf, counted `sheet=`, the calls left on
+// another page `sheet-left=` and `sheet-unread=`; any other self, the
+// mercenary and monsters included, is left), each from
 // the call's own original (nothing compounds): the original plus every line whose threshold the worn
 // pieces meet, while the switch is on and the bonus installed; and, on the
 // proc route, id 42 (Drain) or id 37 (MaxMana) for the proc columns, with
@@ -65133,6 +65135,14 @@ static uint64_t g_M1rDropRolls = 0;    // `drop-rolls=`: drop rewrites that drew
 // `sheet=` counts the bonus and cost answers given to such a self.
 static M1sNs::ObjectIndex g_M1bScreen[M1sNs::kTalentScreenObjectCount];
 static uint64_t g_M1bSheet = 0;
+// The talent screen's page (Mark1Set.hpp's TalentPageOf): the two screen
+// objects, resolved by name beside the four, whose instances are counted at
+// each talent-screen call (Mark1TalentPageNow). `sheet-left=` and
+// `sheet-unread=` count the talent-screen calls left because the page read as
+// another page or did not read.
+static M1sNs::ObjectIndex g_M1bPage[M1sNs::kTalentPageObjectCount];
+static uint64_t g_M1bSheetLeft = 0;
+static uint64_t g_M1bSheetUnread = 0;
 #ifndef FORGEPACT_RELEASE
 // The research recorder (`mark1probe bonusread`): for a fixed watch list, the
 // last local original and the answer the consumer gave, whatever the switch
@@ -65217,6 +65227,39 @@ static void Mark1ResolveTalentScreen()
         if (!g_M1bScreen[i].known)
             Out("mark1set: " + name + " did not resolve by name; the talent screen's calls from it keep the game's own answers");
     }
+    // The two page objects, the same way: an unresolved one makes every
+    // talent-screen call read as unread, and left.
+    for (int i = 0; i < M1sNs::kTalentPageObjectCount; ++i) {
+        g_M1bPage[i] = M1sNs::ObjectIndex{};
+        const std::string name(HeroSiege::Objects::GetObjectName(M1sNs::kTalentPageObjects[i]));
+        try {
+            RValue v = g_Yytk->CallBuiltin("asset_get_index", { RValue(name) });
+            int index = -1;
+            if (N1ObjectIndex(v, index)) g_M1bPage[i] = M1sNs::ObjectIndex{ true, index };
+        } catch (...) {}
+        if (!g_M1bPage[i].known)
+            Out("mark1set: " + name + " did not resolve by name; the talent screen keeps the game's own answers on every page");
+    }
+}
+
+// The talent screen's page now: each page object's instances counted with
+// instance_number on its resolved index, read at the call that asks (never
+// cached), and the core decides. A count that is not a whole number, or a
+// call that throws, stays unread.
+static M1sNs::TalentPage Mark1TalentPageNow()
+{
+    M1sNs::InstanceCount counts[M1sNs::kTalentPageObjectCount];
+    for (int i = 0; i < M1sNs::kTalentPageObjectCount; ++i) {
+        if (!g_M1bPage[i].known || g_M1bPage[i].index < 0) continue;
+        try {
+            RValue n = g_Yytk->CallBuiltin("instance_number", { RValue((double)g_M1bPage[i].index) });
+            if (!N1Numeric(n)) continue;
+            const double v = n.ToDouble();
+            if (std::isfinite(v) && v >= 0.0 && v <= 2147483647.0 && v == std::floor(v))
+                counts[i] = M1sNs::InstanceCount{ true, (long)v };
+        } catch (...) {}
+    }
+    return M1sNs::TalentPageOf(g_M1bPage, counts);
 }
 
 // The ten worn fingerprints, as strings (an empty or non-string slot reads
@@ -65323,6 +65366,17 @@ static void Mark1SetBonusOnStat(CInstance* S, int argc, RValue** A, RValue& r)
         }
 #endif
         if (M1sNs::AskerOf(false, self, g_M1bScreen) != M1sNs::Asker::TalentScreen) return;
+        // The talent screen's page, read here on every such call that could be
+        // answered (Mark1Set.hpp's TalentPageOf): answered only on the
+        // player's own page; the mercenary's page, both, neither or an unread
+        // count leave the game's answer.
+        if ((!bonusWants && !costWants) || !g_Mark1.Enabled()) return;
+        const M1sNs::TalentPage page = Mark1TalentPageNow();
+        if (!M1sNs::AnswersAsker(M1sNs::Asker::TalentScreen, page)) {
+            if (page == M1sNs::TalentPage::Unread) ++g_M1bSheetUnread;
+            else ++g_M1bSheetLeft;
+            return;
+        }
         sheet = true;
     }
 #ifndef FORGEPACT_RELEASE
@@ -65711,6 +65765,8 @@ static M1sNs::BonusStatFields Mark1BonusStatFields()
     f.haste = g_M1aStats.Value(ForgePact::Mark1Stat::Haste);
     f.statFail = (uint64_t)g_M1aStats.Fails();
     f.sheet = g_M1bSheet;
+    f.sheetLeft = g_M1bSheetLeft;
+    f.sheetUnread = g_M1bSheetUnread;
     f.descFont = g_TipDescFont;
     f.grey = g_M1gGrey;
     f.greyBox = g_M1gGreyBox;

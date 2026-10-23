@@ -492,7 +492,8 @@ class Mark1SetBehaviorTests(unittest.TestCase):
         expected = ("mark1set bonus: pieces=0 lit=0/0/0 answered=0/0/0/0/0/0 not-number=0 gear-reads=0 gear-unread=0"
                     " | auto talents=-/-/-/- free=-/-/-/- masked=0 held-seen=0 hold=4 yield=61 rest=24"
                     " mask=0,1,2,7,8,9,10,11,27,40 route=proc procs=0 proc-fail=0 locked=0 cost=drain drain=1.00 drained=0"
-                    " cast-base=0.86 fcr=- haste=- stat-fail=0 sheet=0 | tip desc-font=not-drawn grey=0 grey-box=0"
+                    " cast-base=0.86 fcr=- haste=- stat-fail=0 sheet=0 sheet-left=0 sheet-unread=0"
+                    " | tip desc-font=not-drawn grey=0 grey-box=0"
                     " | rolls dressed=0 legacy=0 drop-rolls=0")
         # The criterion's prefix, as one string:
         # mark1set bonus: pieces=0 lit=0/0/0 answered=0/0/0/0/0/0 not-number=0 gear-reads=0 gear-unread=0 | auto talents=-/-/-/- free=-/-/-/- masked=0 held-seen=0
@@ -530,6 +531,29 @@ class Mark1SetBehaviorTests(unittest.TestCase):
                              "asker_negative/object_outside_the_list_left",
                              "asker_negative/unread_object_left",
                              "asker_negative/unread_against_unresolved_never_matches")
+
+    # ---- Amendment 8: the talent screen answered only on the player's own page ----
+
+    def test_asker_page_baseline_player_page_answered(self):
+        # On the player's page (a UI_Talent_Screen_obj and no
+        # UI_Mercenary_Talents_obj) each of the four talent-screen objects is
+        # answered, as fix-self shipped; the local player is answered whatever
+        # the page reads.
+        self.assertScenarios("asker_page_baseline/each_talent_screen_object_answered_on_the_players_page",
+                             "asker_page_baseline/local_player_answered_whatever_the_page")
+
+    def test_asker_page_target_mercenary_page_left(self):
+        # Live 3's merc-page fail: the Mercenary tab asks with the same four
+        # objects; on that page each is left as the game answered it.
+        self.assertScenarios("asker_page_target/each_talent_screen_object_left_on_the_mercenarys_page")
+
+    def test_asker_page_negative_unread_left(self):
+        # Negative control: a count that did not read, a name that did not
+        # resolve, both screens at once and neither screen never read as the
+        # player's page.
+        self.assertScenarios("asker_page_negative/count_unread_left",
+                             "asker_page_negative/name_unresolved_left",
+                             "asker_page_negative/both_pages_or_none_left")
 
 
 if __name__ == "__main__":

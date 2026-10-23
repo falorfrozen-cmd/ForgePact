@@ -546,6 +546,8 @@ struct BonusStatFields {
     double   haste = 0;
     uint64_t statFail = 0;
     uint64_t sheet = 0;                        // bonus and cost answers given to a talent-screen self (AskerOf)
+    uint64_t sheetLeft = 0;                    // talent-screen calls left: the page read as another page (TalentPageOf)
+    uint64_t sheetUnread = 0;                  // talent-screen calls left: the page did not read
     // the tooltip
     DescFont descFont = DescFont::NotDrawn;
     uint64_t grey = 0;                         // columns greyed in the last HUD draw: their `enabled` written (the redraw under the research look)
@@ -599,6 +601,8 @@ inline std::string BonusStatLine(const BonusStatFields& f)
     s += " haste=" + (f.haveHaste ? NumberText(f.haste) : std::string("-"));
     s += " stat-fail=" + std::to_string(f.statFail);
     s += " sheet=" + std::to_string(f.sheet);
+    s += " sheet-left=" + std::to_string(f.sheetLeft);
+    s += " sheet-unread=" + std::to_string(f.sheetUnread);
     s += " | tip desc-font=" + std::string(DescFontName(f.descFont));
     s += " grey=" + std::to_string(f.grey);
     s += " grey-box=" + std::to_string(f.greyBox);
@@ -661,6 +665,64 @@ inline Asker AskerOf(bool selfIsLocalPlayer, const ObjectIndex& self, const Obje
     for (const ObjectIndex& s : screen)
         if (s.known && s.index >= 0 && s.index == self.index) return Asker::TalentScreen;
     return Asker::Left;
+}
+
+// ---- the talent screen's page: answered only while it shows the player's own ----
+//
+// The screen's Mercenary tab builds its rows from the same four objects as the
+// Player tab, and every asker's first argument reads the same on both (Live 3,
+// merc-page), so neither self nor that argument tells the pages apart. The
+// screen's tab actions do (a static reading, in our own words): each closes
+// the screen and creates its own screen object, UI_Talent_Screen_obj for the
+// player's page and UI_Mercenary_Talents_obj for the mercenary's. So the page
+// on show is whichever of the two has an instance.
+//
+// The rule (Amendment 8): a talent-screen self is answered only when, read at
+// that call, UI_Talent_Screen_obj counts at least 1 and
+// UI_Mercenary_Talents_obj counts 0. The mercenary's page, both at once and
+// neither read as another page (`sheet-left=`); a count that did not read or
+// a name that did not resolve reads as unread (`sheet-unread=`); both leave the
+// game's answer. The local player's own calls never depend on the page. The
+// adapter resolves the two by their hs-game-sdk names (asset_get_index) once
+// per install and counts them with instance_number on every talent-screen
+// call, never cached across calls or frames: a tab action runs inside a step
+// event, so a frame-boundary reading could hand the new page the old answer
+// (AGENTS.md, "Check a Permission Where It Is Used").
+enum class TalentPage : int { Player, Other, Unread };
+
+// An instance count as read: `known` false for a read that failed, whatever
+// `count` holds.
+struct InstanceCount {
+    bool known = false;
+    long count = -1;
+};
+
+inline constexpr int kTalentPageObjectCount = 2;   // [0] the player's page, [1] the mercenary's
+
+#if __has_include(<hs_game_sdk/objects.hpp>)
+// The two page objects, by their hs-game-sdk names (resolved at install
+// through asset_get_index; never a typed index).
+inline constexpr HeroSiege::Objects::GameObject kTalentPageObjects[kTalentPageObjectCount] = {
+    HeroSiege::Objects::GameObject::UI_Talent_Screen_obj,
+    HeroSiege::Objects::GameObject::UI_Mercenary_Talents_obj,
+};
+#endif
+
+// The page on show from the two objects' resolved indices and their counts.
+inline TalentPage TalentPageOf(const ObjectIndex (&objects)[kTalentPageObjectCount], const InstanceCount (&counts)[kTalentPageObjectCount])
+{
+    for (int i = 0; i < kTalentPageObjectCount; ++i)
+        if (!objects[i].known || objects[i].index < 0 || !counts[i].known || counts[i].count < 0) return TalentPage::Unread;
+    return counts[0].count >= 1 && counts[1].count == 0 ? TalentPage::Player : TalentPage::Other;
+}
+
+// Whether a call is answered: the local player's always, a talent-screen
+// self's only on the player's page, anything else never.
+inline bool AnswersAsker(Asker asker, TalentPage page)
+{
+    if (asker == Asker::LocalPlayer) return true;
+    if (asker == Asker::TalentScreen) return page == TalentPage::Player;
+    return false;
 }
 
 // ---- the pieces' own art: the rule the adapter applies --------------------------
