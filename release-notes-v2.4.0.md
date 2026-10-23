@@ -170,10 +170,11 @@ pieces" below.
   it gave its Endless Wealth buff (275% Magic Find, 26% extra gold from
   kills). A potion picked up from the ground had no charge yet, so it could
   not be drunk until it had one; it had its charge after saving and loading.
-  The game itself can drop the potion too: its own list of Angelic items
-  carries it, and it passes the game's own checks for an Angelic drop. Played
-  offline, though, the game's own Angelic drop practically never happens, and
-  no such drop of the potion has been seen.
+  The game's own Angelic roll can pick the potion too: its list of Angelic
+  items carries it, and the potion passes the two checks that roll applies.
+  Whether the game then drops it like any other Angelic item was not tested,
+  and played offline that roll practically never happens, so no such drop has
+  been seen.
 - **Pocket Elf did not drop from kills (#166).** Since 2.3.0, switching
   on **Pocket Elf drops** added Pocket Elf only to a unique roll that kills
   seldom run, so in practice no kill dropped one: in a 30-minute test of
