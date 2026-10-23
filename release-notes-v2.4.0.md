@@ -247,6 +247,16 @@ pieces" below.
   that case is covered by ForgePact's own tests but was not tried in a game
   session yet.
 
+## Changed
+
+- **A flight charm you only carry no longer switches flight on (#216).**
+  Until now, owning a Pocket Elf, Gabriel Wings or Witch's Broomstick, even
+  one left in your bag or stash, switched on flight's checks for the whole
+  session. Now they start only the first time you wear a flight charm, within
+  about a second of putting it on; until then a charm you carry costs only a
+  quick check once a second. Wearing one works as before. This is covered by ForgePact's own tests
+  and has not been tried in a game session yet.
+
 ## How to update
 
 Download and extract the complete release, then reopen ForgePact and press

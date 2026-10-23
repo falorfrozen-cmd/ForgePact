@@ -1377,10 +1377,11 @@ Everything is resolved by name, and every script hook goes through
 - with the Custom Forge's hooks, at startup: `ParseItemToGrid` and
   `InventoryGridAddItemPos` (the size guard);
 - once flight is armed and a character resolves (looked for every 60 frames
-  through `HhResolveLocalPlayer`): the shared `LootGroundInit` detour,
-  `InstancePlaceTallest`, `UpdateDepth` and the five shared builtins. A
-  refusal prints one `flightcharm: refused - <why>` line and is final for the
-  session;
+  through `HhResolveLocalPlayer`): the shared `LootGroundInit` detour; then,
+  once a flight charm is worn (#216, § "Follow-ups from the #214 review"
+  below), `InstancePlaceTallest`, `UpdateDepth` and the five shared builtins.
+  A refusal prints one `flightcharm: refused - <why>` line and is final for
+  the session;
 - from a drop switch turned on: #74's detection hooks, `DropUniqueItems`
   (Pocket Elf only), the kill draw's two shared detours (Pocket Elf only:
   DropManager's one `DropItem` detour and raredrop's one
@@ -2246,6 +2247,255 @@ in every earlier session. The bag opened with `C` held 150 ms, not 80 ms.
 Nothing moved one of Sorak's own charms: the charm grid had room for Pocket
 Elf.
 
+### Follow-ups from the #214 review (#216)
+
+The reviews of the pull request that shipped the mod (#214) left twelve
+findings that did not block it: eight in the first review and four in the
+second. #216 closes them. Ten change the code; two are decisions, recorded
+here with what was rejected. None changes a default: every switch is still
+off, and none adds a hook to the player build, an address or a write to a
+game value. The code is in `FlightCharms.hpp` and the adapters in
+`ModuleMain.cpp`; the guide's "Flight charms" section has the rules as
+built.
+
+- **Flight's hooks only for a worn charm.** Before, dressing any flight charm
+  armed flight, and armed flight installed `InstancePlaceTallest`,
+  `UpdateDepth` and the five builtins as soon as a character resolved, so a
+  charm in the bag or the stash cost every frame the detours and the worn
+  charms' read. The tick already looked for the player every 60 frames while
+  armed, and that same look now reads the worn charms and installs only when
+  a flight charm is worn. The look first installs hidden loot's shared
+  `LootGroundInit` detour whatever is worn, since a charm never worn can
+  still be dropped and its ground icon rides that detour. A charm carried
+  but not worn costs one look a second; `install=` reads
+  `waiting-for-worn-charm` meanwhile. The price is up to a second before a
+  session's first flight. Once installed, nothing changes. The issue said
+  this narrowing would need an equip-change signal; it does not, since the
+  poll already exists.
+- **The player and the state, at the point of use.** The adapter's frame
+  counter advances at the end of a frame, but the hooks compare `self`
+  during the next frame's Step, so a player refreshed by the frame tick was
+  the previous frame's, and after a room change (a new instance) a stale
+  pointer. Each hook now confirms the player at the first hooked call of a
+  frame (`FlightConfirmPlayer`, the core's `ConfirmsPlayer` deciding), and
+  later calls of the frame cost one compare. The two hooks that refreshed and
+  then read the state make one call, `Flight::StateAt`, which still reads the
+  worn charms at most once a frame. `flightcharm stat` never confirms the
+  player, so its ` player=` reports what the hooks set, and it refreshes the
+  state only while the hooks' pointer is the local player or none yet.
+  Rejected: always reading the queried object and points (the reviewer's
+  first option), which would add reads while flight is off, where nothing
+  more is read now.
+- **Never at the filter's depth.** The flight layer went one below the lowest
+  of the game layers' front end and every drawn layer behind the rearmost
+  filter; when that landed on the filter's own depth (a filter one in front of
+  the game layers with nothing drawn behind it, or a drawn layer one behind the
+  filter), the two layers shared a depth, and layers of equal depth draw in
+  an order that ignores depth, so the player could draw past the filter. Now,
+  with a filter, the depth is the nearest whole depth in front of that lowest
+  one and strictly behind the filter; when none exists nothing is written and
+  `no-front=` counts it, until a re-choice finds one. Rejected: the
+  reviewer's midpoint between the two, because whether the runner keeps a
+  fractional layer depth is not established (every measured depth was
+  whole), and a truncated midpoint could land on the lowest layer. Whether
+  any room has the tie is not established; the harness proves the rule.
+- **The ground icon only where its route can follow.** Our bag sprite under
+  `"11"` draws `Error_spr` on the ground unless the shared `LootGroundInit`
+  detour swaps in the ground copy, and a table-only detour is passed by
+  compiled code's direct calls. Flight now calls Mark 1's rule for it (the
+  route `not-installed` or `both` allows the icon; `table-only` or `none`
+  keeps the Small Charm's own icon in the bag and on the ground), reports the
+  route as ` ground-route=` on the `flightcharm drops:` line and prints one
+  `flightcharm: ground icon off - ...` line a session when the route refuses
+  it. Mark 1's rule stays in `Mark1Set.hpp`; flight keeps no copy.
+- **The cleanup.** One struct-or-reference field reader (`StructOrRefField`)
+  replaces flight's and loot announcements' identical two; one worn-charm
+  array reader replaces flight's and the research `charmprobe charms`' (the
+  probe still prints why a read came back empty); the forge entry builds its
+  selector from the fields recognition already read instead of reading them
+  again; the research `flightprobe pool`'s rarities 7 and 10 are named
+  (`kAngelicRarities`) and the hub's `tests/test_unique_pick_model.py` pins
+  them to the model's `ANGELIC_RARITIES`; and `FlightInstanceObject`'s
+  fallback for a struct answer is gated on the shared `IsInstanceHandle`
+  predicate rather than a bare kind test. It is kept, not removed: the
+  object-index reader before it refuses that kind, so the fallback is that
+  kind's only path, and whether `InstancePlaceTallest` ever returns it is not
+  measured. The panel's three flight switches share one handler, with the
+  same posts and texts.
+- **The README screenshot** of Mods › Items now shows the three switches.
+- **Measuring the worn-charm read.** Whether the per-frame read of the worn
+  charms is worth caching is the owner's call on numbers, so the research
+  build's `perf` gains a `flight worn-charm read` bucket around that read
+  (marker `flp4`), and Mod live procedure 4 below measures it with its own
+  positive controls, plus `frameprof` for the whole frame, which cannot
+  isolate this read because the read is mostly game builtins called from the
+  plugin. Whether the game's `UpdateCharmData` runs on an equip change (hub
+  RDM § 23.1 reads it as rebuilding `localCharmItemArray`, a static reading;
+  the decompiler's cross-references show no caller of it, which is not
+  observed rather than none) goes to a debugger logpoint, since it is a "does
+  it fire, how often" question. A cache is not built here.
+
+Two findings are decisions, each the owner's default and reversible:
+
+- **The size guard stays installed at startup.** The issue asked whether
+  `ParseItemToGrid` and `InventoryGridAddItemPos` could be hooked at the
+  first recognised charm instead of for every player. Recognition happens
+  inside a load: `ParseItemToGrid` rebuilds each item and only then places
+  it through `InventoryGridAddItemPos` (RDM § 23.6, a static reading, with
+  `dbg-parse-place` measured in Mod live 1), and no hook is installed from
+  inside `CreateItemNew`. A guard installed at the first recognition would
+  therefore miss the session's first load, which is exactly where a
+  footprint that no longer fits drops a charm off the grid (`dress-added:
+  item-missing`, phase 1). For a player without flight charms the guard
+  costs one flag test per `InventoryGridAddItemPos` call outside a load. The
+  research build's interaction stays as built: the guard owns both functions
+  from setup, so `prospectprobe hook` refuses those two rows and
+  `craftprobe hook` counts them `held`.
+- **The seed window is documented, not tagged.** Recognition reads the seed
+  alone, so a game-made plain Small Charm whose own seed falls in one of the
+  three windows (777100, 777200..777343 and 777400..777490, 236 values) is
+  dressed as a flight charm: about 1 in 10 million per Small Charm by the
+  issue's estimate, the same rule the signature items use. Tagging what the
+  drop rewrite builds was rejected: the charms already in saves carry no tag
+  and the seed layout is a save format, so recognition must keep accepting an
+  untagged seed, and a tag would remove no false match.
+
+### Mod live procedure 4
+
+The session for #216: it checks that a carried charm no longer installs
+flight's hooks, that a worn one does, that the ground route is reported, and
+that flight survives a room change now that the player is confirmed at the
+first hooked call of a frame; and it measures the worn-charm read's cost and
+whether `UpdateCharmData` runs on an equip change. It runs on the research
+build (`build.bat dev`) at the ForgePact commit where every #216 code change
+is in; the driver records the DLL's SHA-256 and asks the owner before
+installing it. As in the earlier procedures, the debugger's addresses and
+first bytes stay out of this file, in the session's local notes, and the
+operator confirms the installed game is the build they were read from, or
+skips the debugger step and marks its checks not observed.
+
+**Setup.** Save slot 14, "Sorak", in `Town_01_rm`, with no flight charm in
+the save (Mod live 3 had to spawn one); a `flightcharm stat` reading anything
+but `install=not-armed` at load is recorded, and `arm-waiting` is then not
+observed. The saves are backed up with the game closed and restored at
+teardown whatever happened. The operator drives every person-step through
+hs-drive (keys, holds, clicks, `playerwarp`); the one step a tool cannot do,
+the waypoint travel, is recorded with what, why and how long. The bag opens
+with `C`; a right-click equips and unequips; a ground item is picked up by
+hovering its label, then `F`.
+
+**Cases.** Pocket Elf only, the ordinary 1x1 charm; the other two share the
+install path. The outliers: a charm carried but not worn (the new waiting
+state), and a room change (the player instance changes). Not run, and so
+not observed live: a table-only ground route (the contract tests cover it),
+the depth tie (no room is known to have it), the Wings and the Broomstick.
+
+**Steps, in order:**
+
+- V0, setup: the lease, the self-check and the save backup with the game
+  closed; `dll-hash`, the installed DLL's SHA-256 equals the build's; launch
+  and load slot 14.
+- V1 `control`: `ping` answers a line starting `pong (YYTK`. `marker`: a bare
+  `flightprobe` answers `flightprobe: marker=flp4`. Every line of
+  `flightcharm stat` is recorded; the first is expected to be the guide's
+  fresh-session line.
+- V2 `perf-control`: `perf reset`, 10 s, `perf`: the `FrameCallback body`
+  row has `calls=` above 0, and the `flight worn-charm read` row `calls=0`
+  (nothing reads before arming; this zero counts only once V3 and V4 show the
+  same row counting).
+- V3, the carried charm: `playerwarp 884 628`, `flightprobe spawn elf`, and
+  `flightprobe ground` reads Pocket Elf and `ours`; Sorak picks it up and it
+  stays in the bag. Three seconds later `flightcharm stat`'s first line reads
+  `install=waiting-for-worn-charm state=off equipped=none` (`arm-waiting`);
+  its `ground=` is 1 or more, the `flightcharm drops:` line reads
+  `ground-route=both`, and `out.txt` holds no `flightcharm: ground icon off -
+  ` line (`ground-route`). Then `perf reset`, 10 s standing with no
+  `flightcharm stat` in between (the stat reads the worn charms too), and
+  `perf`: the `flight worn-charm read` row's `calls=` is above 0, about one a
+  second, the install look (`perf-bucket-poll`; `calls=` and the header's
+  frame count recorded).
+- V4, worn: Pocket Elf right-clicked into the charm grid (if it is full, one
+  of Sorak's one-cell charms to the bag first, recorded) and the bag closed.
+  Within 3 s `flightcharm stat` reads `install=installed state=on
+  equipped=elf` (`arm-installed`). Then `perf reset`, a 5 s walk back and
+  forth on open ground with no `flightcharm stat`, and `perf`: the row's
+  `calls=` is above 0; installed, the look no longer runs, so every call is
+  a hooked call's per-frame refresh (`perf-bucket-frame`; `calls=` and the
+  frame count recorded).
+- V5 `flight-walk`: `playerwarp 929 1591`, the ravine's north rim, where
+  `flightprobe free 0 8` reads `blocked=yes`; S held 3000 ms moves the player
+  100 px or more south and `answered=` rises (the trace line read before and
+  after; Mod live 1 measured this walk: blocked with flight off, 440 px with
+  a charm worn). `player-room`: travel by the town waypoint to the Outskirts
+  of Inoya and back; after each arrival, before any `flightcharm stat`, the
+  ravine walk is repeated and crosses again with `answered=` rising; only
+  then does the `flightcharm trace:` line read `player=match`.
+- V6 `cost-off`: `playerwarp 884 628` (open ground, so flight ends `off`, not
+  `residual`); Pocket Elf back to the bag; `flightcharm stat` reads
+  `install=installed state=off equipped=none`; `charmprobe charms` records
+  how many charms are worn. `perf reset`, 15 s standing and 10 s walking with
+  no `flightcharm stat`, `perf`: the header and the `flight worn-charm read`
+  row are recorded. `frameprof-off`: `frameprof start 20` while walking back
+  and forth; the summary lines and the report's path are recorded.
+- V7 `cost-on`: Pocket Elf back in the charm grid (`state=on`); the same
+  `perf` window and the same record.
+- V8, the debugger (below), then teardown: the game stopped, the saves
+  inspected and restored, and the lease released (`restored`).
+
+**The debugger.** Attached only at V8, after every timing step, since a held
+logpoint would distort `perf`. Three hardware logpoints, non-breaking:
+`CheckTalentUse` first (`dbg-control`; about 85 hits a second in town in Mod
+live 1 and 2), then `UpdateCharmData` and `RunItemEquipped` (hub RDM § 23.1
+reads `RunItemEquipped` as one caller of `UpdateCharmData`, a static
+reading). This build detours neither candidate with `mark1set` and the
+research traces off. Window A: 10 s standing and 10 s walking with no equip
+change; each logpoint's hits are recorded (`dbg-ucd-still`,
+`UpdateCharmData`'s count and rate, with `RunItemEquipped`'s beside it).
+Window B: the bag opened, Pocket Elf right-clicked to the bag, 2 s, then back
+into the grid, the bag closed; `UpdateCharmData`'s hits (`dbg-ucd-equip`)
+and `RunItemEquipped`'s (`dbg-rie-equip`) are recorded. The control must log
+in both windows, or every `dbg-` candidate check is not observed. The
+debugger is detached before the game is stopped.
+
+**Checks**, the capture's names: `dll-hash`, `control`, `marker`,
+`perf-control`, `arm-waiting`, `ground-route`, `perf-bucket-poll`,
+`arm-installed`, `perf-bucket-frame`, `flight-walk`, `player-room`,
+`cost-off`, `frameprof-off`, `cost-on`, `dbg-control`, `dbg-ucd-still`,
+`dbg-ucd-equip`, `dbg-rie-equip` and `restored`.
+
+- **Validity**, which must pass: `dll-hash`, `control`, `marker`,
+  `perf-control`, `perf-bucket-poll`, `perf-bucket-frame` and `dbg-control`.
+- **Acceptance**: `arm-waiting`, `ground-route`, `arm-installed`,
+  `flight-walk` and `player-room`.
+- **Research**, whose values are the finding and never need to pass:
+  `cost-off`, `frameprof-off`, `cost-on`, `dbg-ucd-still`, `dbg-ucd-equip`
+  and `dbg-rie-equip`. `cost-off` and `cost-on` are recorded not observed,
+  never as the read's cost, unless both `perf-bucket-poll` and
+  `perf-bucket-frame` passed in the same session: a `calls=0` or a near-zero
+  `avg=` without them measures the instrument.
+- **Operational**: `restored`.
+
+**What the outcomes mean.** `arm-waiting` reading `installed` means the
+narrowing did not take. `perf-bucket-poll` or `perf-bucket-frame` at
+`calls=0` means the timer is not on the path that read takes, and no cost
+goes to the owner. `dbg-ucd-equip` above 0 with `dbg-ucd-still` at 0 makes
+`UpdateCharmData` a usable equip-change signal for a later cache; rising in
+window A too means it runs regardless of equips and a cache would need
+another signal; 0 in window B with the control logging is not observed on
+that route. The owner decides on a cache from `cost-off`, `cost-on` and
+these counts.
+
+**What it relies on.** `flightprobe spawn elf`, `ground` and `free` (the
+guide's Command Reference `flightprobe` row; Mod live procedure 3's W2 for
+the spawn and pick-up, its W5 for equipping); the ravine rim at (929, 1591)
+in town (Mod live 1's `walk-baseline` and `flight-prop`); `perf` and `perf
+reset` (the guide's 1.3.20 live verification, item 3); `frameprof start` and
+`charmprobe charms` (their Command Reference rows); `flightcharm stat`'s
+lines (the guide's "Flight charms" › Commands); `UpdateCharmData` and
+`RunItemEquipped` (hub RDM § 23.1, static); the waypoint travel to the
+Outskirts of Inoya (done in Mod live 2, not written as steps in the shared
+references).
+
 ### Status and what is not established
 
 All three sessions are recorded. Every acceptance check of Mod live 2 passed,
@@ -2328,6 +2578,10 @@ negative:
   church's wall walked with flight on (at the church wall spot the blocker is
   in the family but is not a `Wall_Parent_obj`, so flight would cross it),
   grids other than the bag, the charm grid and the stash, co-op.
+- **#216's follow-ups, live.** Not yet in a game session: the worn-charm
+  install, the ground route, flight after a room change, the cost of the
+  worn-charm read and whether `UpdateCharmData` runs on an equip change. Mod
+  live procedure 4 is written for them.
 - **The census's other answers.** What the 50 and 55 non-struct effect reads
   were, and whether passing a layer's name instead of its id changes them.
 - **How the flying player looks.** The operator saw the scene's own tint on
