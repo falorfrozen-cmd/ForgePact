@@ -954,6 +954,18 @@ session:
   placed this way showed their labels on the ground under the owner's
   filter, in town and after the tower floor's burst.
 - The usage line names `burst [on|off]`.
+- **Two stat fields, in the player build** (not behind `#ifndef
+  FORGEPACT_RELEASE`, added after Live procedure 5's review): `lootann stat`
+  ends with ` burst-list=<state> burst-nokey=<n>`, after `queue-full=`.
+  `burst-list` is the last list lookup's answer: `ok`, or `none(<why>)`
+  carrying the reason the lookup gave (`no Controller_obj`, or the value's
+  kind and the step that refused it), `none(lookup threw)` when the lookup
+  threw, and `unread` before the first read. `burst-nokey` counts the list
+  entries read whose `itemInstance` gave no key. With `burst-listed=0` alone,
+  a renamed `lootExplosionList`, a renamed `itemInstance` and a session that
+  never finished a floor read the same; a renamed list shows as a
+  `none(...)` state while in the tower, and a renamed entry field as
+  `burst-nokey` climbing while `burst-listed` stays 0.
 
 ### Rejected routes
 
@@ -1072,11 +1084,13 @@ Practical findings for the next tower session:
 - **Sorak kills tower monsters without casting**, so a step that waits for
   "no kills yet" cannot hold with that character: the floor's count fell
   from 125 on entry to 39 by the time B was placed.
-- **x64dbg cannot stay attached through tower combat.** The game throws
-  first-chance C++ exceptions during the floor fight and x64dbg paused on
-  each one; the game froze for 42 s, the `LootExplosion` logpoint was
-  refused as a break storm, and the detach was not confirmed. A debugger
-  check of the burst needs another route.
+- **x64dbg paused on the floor fight's exceptions in this session.** With
+  its default exception settings, x64dbg paused on each first-chance C++
+  exception (0xE06D7363) the game raised during the floor fight; the game
+  froze for 42 s, the `LootExplosion` logpoint was refused as a break storm,
+  and the detach was not confirmed. Passing those exceptions through to the
+  game was not tried, so whether x64dbg can stay attached through tower
+  combat is not established.
 
 ## Not established
 

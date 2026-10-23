@@ -26,7 +26,9 @@ before AgeCreationWindow; the guard in LaProcess consults the burst memory; the
 reader adds no HookOneScript, no address and no write; `lootannprobe burst`
 and the `lootann decide:` line are research-build only; `lootannprobe place`
 sets the loot filter's tier and prints the stamp; and the stat line carries
-burst-listed=, burst-fresh=, burst-landed= and burst-overflow=.
+burst-listed=, burst-fresh=, burst-landed= and burst-overflow=, then the
+adapter's burst-list= (the last lookup's answer) and burst-nokey= (list
+entries that gave no key), both in the player build.
 """
 import re
 import unittest
@@ -489,7 +491,7 @@ class LootAnnouncePluginWiringTests(unittest.TestCase):
         stat = _code(_body(self.plugin, "static std::string LootAnnounceStatLine()"))
         fields = re.findall(r'" ([a-z-]+)="', stat)
         self.assertEqual(fields, ["init-hook", "create-hook", "install", "unidentified", "no-item", "no-key", "no-identity",
-                                  "queue-full"])
+                                  "queue-full", "burst-list", "burst-nokey"])
         install = '" install=" + g_LootAnnounce.InstallState(g_LaInstallTried)'
         self.assertIn(install, stat)
         # `lootann 1` names both hooks' routes, then whether they are in.
@@ -556,6 +558,35 @@ class LootAnnouncePluginWiringTests(unittest.TestCase):
         # The player build keeps every entry; only the research build's
         # `lootannprobe burst off` turns keeping off.
         self.assertIn("bool keep = true;", read)
+
+    def test_the_stat_line_tells_a_missing_list_and_a_keyless_entry_apart(self):
+        # ForgePact #227, after review: `burst-listed=0` alone reads the same
+        # for a renamed lootExplosionList, a renamed itemInstance and a session
+        # that never cleared a floor. `burst-list=` carries the last lookup's
+        # answer (ok, or none(<why>) from LaBurstList) and `burst-nokey=`
+        # counts the list entries that gave no key. Both ship in the player
+        # build, after every field the line printed before.
+        stat = _body(self.player, "static std::string LootAnnounceStatLine()")
+        fields = re.findall(r'" ([a-z-]+)="', stat)
+        self.assertEqual(fields[-3:], ["queue-full", "burst-list", "burst-nokey"])
+        self.assertIn('" burst-list=" + g_LaBurstListState', stat)
+        self.assertIn('" burst-nokey=" + std::to_string(g_LaBurstNoKey)', stat)
+        read = _body(self.player, BURST_READ)
+        # The state is set from LaBurstList's own result and reason.
+        lookup = "const bool found = LaBurstList(ctrl, list, id, why);"
+        state = 'g_LaBurstListState = found ? std::string("ok") : "none(" + why + ")";'
+        self.assertIn(lookup, read)
+        self.assertIn(state, read)
+        self.assertLess(read.index(lookup), read.index(state))
+        self.assertLess(read.index(state), read.index("if (!found)"))
+        # A keyless entry is counted, on the branch beside NoteListed.
+        noted = 'if (LaField(entry, "itemInstance", item) && LaItemKey(item, key)) g_LootAnnounce.NoteListed(key, keep);'
+        self.assertIn(noted, read)
+        self.assertTrue(read[read.index(noted) + len(noted):].lstrip().startswith("else ++g_LaBurstNoKey;"), read)
+        # Negative control: the same check finds the field missing from a
+        # line that stops at queue-full.
+        short = re.findall(r'" ([a-z-]+)="', '+ " queue-full=" + std::to_string(n);')
+        self.assertNotEqual(short[-3:], ["queue-full", "burst-list", "burst-nokey"])
 
     def test_the_guard_consults_the_burst_memory(self):
         process = _code(_body(self.plugin, "static void LaProcess(const LaPending& p)"))

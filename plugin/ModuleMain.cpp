@@ -55638,6 +55638,13 @@ static bool g_LaBurstHave = false;
 static double g_LaBurstListId = -1.0;
 static int g_LaBurstCount = 0;
 static bool g_LaBurstUnreadableSaid = false;
+// The stat line's `burst-list=` and `burst-nokey=`: the last list lookup's
+// answer (`ok`, or `none(<why>)` with LaBurstList's reason, `none(lookup
+// threw)` when the lookup threw; `unread` until the first read) and the list
+// entries whose itemInstance gave no key. They tell a renamed variable apart
+// from a session that never listed anything.
+static std::string g_LaBurstListState = "unread";
+static long long g_LaBurstNoKey = 0;
 #ifndef FORGEPACT_RELEASE
 // `lootannprobe burst on|off`: whether newly listed entries are kept (the
 // research build's way to reproduce the rule before the fix).
@@ -56185,11 +56192,15 @@ static bool LaBurstList(RValue& ctrl, RValue& list, double& id, std::string& why
 static void LaReadBurstList()
 {
     const char* stage = "the Controller or lootExplosionList";
+    bool looked = false;
     try {
         RValue ctrl, list;
         double id = -1.0;
         std::string why;
-        if (!LaBurstList(ctrl, list, id, why)) {
+        const bool found = LaBurstList(ctrl, list, id, why);
+        looked = true;
+        g_LaBurstListState = found ? std::string("ok") : "none(" + why + ")";
+        if (!found) {
             g_LootAnnounce.ForgetBurst();
             g_LaBurstHave = false;
             g_LaBurstCount = 0;
@@ -56223,9 +56234,11 @@ static void LaReadBurstList()
             RValue item;
             ForgePact::LootAnnounceMod::ItemKey key{};
             if (LaField(entry, "itemInstance", item) && LaItemKey(item, key)) g_LootAnnounce.NoteListed(key, keep);
+            else ++g_LaBurstNoKey;
             g_LaBurstCount = i + 1;
         }
     } catch (...) {
+        if (!looked) g_LaBurstListState = "none(lookup threw)";
         if (!g_LaBurstUnreadableSaid) {
             g_LaBurstUnreadableSaid = true;
             Out(std::string("lootann: burst list unreadable - ") + stage + " threw");
@@ -56263,7 +56276,9 @@ static std::string LootAnnounceStatLine()
         + " no-item=" + std::to_string(g_LaNoItem)
         + " no-key=" + std::to_string(g_LaNoKey)
         + " no-identity=" + std::to_string(g_LaNoIdentity)
-        + " queue-full=" + std::to_string(g_LaPendingDropped);
+        + " queue-full=" + std::to_string(g_LaPendingDropped)
+        + " burst-list=" + g_LaBurstListState
+        + " burst-nokey=" + std::to_string(g_LaBurstNoKey);
 }
 
 // `lootann 1|0` (the panel's switch); bare `lootann` or `stat` prints the
