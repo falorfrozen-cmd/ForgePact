@@ -325,8 +325,8 @@ class LootAnnouncePluginWiringTests(unittest.TestCase):
 
     def test_the_rarity_is_read_by_name_from_key_27(self):
         rarity = _code(_body(self.plugin, "static int LaRarity(const RValue& item)"))
-        self.assertIn('LaField(item, "itemInfoStruct", info)', rarity)
-        self.assertIn('LaField(info, "27", code)', rarity)
+        self.assertIn('StructOrRefField(item, "itemInfoStruct", info)', rarity)
+        self.assertIn('StructOrRefField(info, "27", code)', rarity)
         self.assertIn("kRarityUnread", rarity)
         for forbidden in ('"c"', "level", "relicLevel", '"b"'):
             self.assertNotIn(forbidden, rarity, forbidden)
@@ -346,7 +346,7 @@ class LootAnnouncePluginWiringTests(unittest.TestCase):
         self.assertIn(refuse, process)
         self.assertLess(process.index(refuse), process.index("g_LootAnnounce.Decide("))
         item_type = _code(_body(self.plugin, "static std::string LaItemType(const RValue& item)"))
-        self.assertIn('LaField(item, "itemType", t)', item_type)
+        self.assertIn('StructOrRefField(item, "itemType", t)', item_type)
         # The kind never decides whether the read happens: no instance-kind gate.
         self.assertNotIn("IsInstanceHandle", process)
 
@@ -545,7 +545,7 @@ class LootAnnouncePluginWiringTests(unittest.TestCase):
         self.assertIn('g_Yytk->CallBuiltin("ds_list_find_value", { list, RValue((double)i) })', read)
         # Only the entries past those already read.
         self.assertIn("for (int i = g_LaBurstCount; i < size; ++i)", read)
-        self.assertIn('LaField(entry, "itemInstance", item)', read)
+        self.assertIn('StructOrRefField(entry, "itemInstance", item)', read)
         self.assertIn("LaItemKey(item, key)", read)
         self.assertIn("g_LootAnnounce.NoteListed(key, keep)", read)
         # A shorter list, a different list value, or none: the core forgets
@@ -580,7 +580,7 @@ class LootAnnouncePluginWiringTests(unittest.TestCase):
         self.assertLess(read.index(lookup), read.index(state))
         self.assertLess(read.index(state), read.index("if (!found)"))
         # A keyless entry is counted, on the branch beside NoteListed.
-        noted = 'if (LaField(entry, "itemInstance", item) && LaItemKey(item, key)) g_LootAnnounce.NoteListed(key, keep);'
+        noted = 'if (StructOrRefField(entry, "itemInstance", item) && LaItemKey(item, key)) g_LootAnnounce.NoteListed(key, keep);'
         self.assertIn(noted, read)
         self.assertTrue(read[read.index(noted) + len(noted):].lstrip().startswith("else ++g_LaBurstNoKey;"), read)
         # Negative control: the same check finds the field missing from a

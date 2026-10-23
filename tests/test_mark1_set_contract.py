@@ -890,7 +890,7 @@ class Mark1SetContract(unittest.TestCase):
                                      "if (!g_Mark1.ArtArmed()) return;"])
         final = self.body("final")
         armed = final.index("if (!g_Mark1.ArtArmed()) return;")
-        for later in ("FlightField(", "Mark1IconsLoad();", "g_Yytk->", 'RValue("11")'):
+        for later in ("StructOrRefField(", "Mark1IconsLoad();", "g_Yytk->", 'RValue("11")'):
             with self.subTest(later=later):
                 self.assertLess(armed, final.index(later))
         # The one "11" write is the statement the core's rule governs, with

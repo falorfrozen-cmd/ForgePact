@@ -4705,7 +4705,8 @@ static std::map<std::string, double> TakeForgeAdditions(const RValue& item, cons
 // structs, but a ground item's itemInstance may come back as the reference
 // this runner hands out instead (hs_game_sdk/player.hpp, ReadGroundRelic), so
 // both are read, each through its own builtins; anything else holds nothing.
-static bool FlightField(const RValue& owner, const char* name, RValue& out)
+// The one reader for the forge adapter, Mark 1, flight and loot announcements.
+static bool StructOrRefField(const RValue& owner, const char* name, RValue& out)
 {
     try {
         if (owner.m_Kind == VALUE_OBJECT) {
@@ -4725,28 +4726,34 @@ static bool FlightField(const RValue& owner, const char* name, RValue& out)
 static bool FlightNumber(const RValue& owner, const char* name, double& value)
 {
     RValue v;
-    if (!FlightField(owner, name, v)) return false;
+    if (!StructOrRefField(owner, name, v)) return false;
     if (v.m_Kind != VALUE_REAL && v.m_Kind != VALUE_INT32 && v.m_Kind != VALUE_INT64 && v.m_Kind != VALUE_BOOL) return false;
     value = v.ToDouble();
     return std::isfinite(value);
 }
 
+// The five fields recognition reads: the item's type and its definition's
+// a, b, c and j. FlightCharmDecode hands them back, so the forge entry builds
+// its selector from them without reading the item again.
+struct FlightCharmFields { double t = 0, a = 0, b = 0, c = 0, j = 0; };
+
 // The item's own fields through the core's rule. The type is read first, so
 // every other item the game builds costs one read.
-static bool FlightCharmDecode(const RValue& item, const RValue& definition, FcNs::Rolled& rolled)
+static bool FlightCharmDecode(const RValue& item, const RValue& definition, FcNs::Rolled& rolled, FlightCharmFields& f)
 {
-    double t = 0, a = 0, b = 0, c = 0, j = 0;
-    if (!FlightNumber(item, "itemType", t) || t != FcNs::kCharmTypeT) return false;
-    if (!FlightNumber(definition, "a", a) || !FlightNumber(definition, "b", b)
-        || !FlightNumber(definition, "c", c) || !FlightNumber(definition, "j", j)) return false;
-    return FcNs::IsFlightCharm(t, a, b, c, j, rolled);
+    f = FlightCharmFields{};
+    if (!FlightNumber(item, "itemType", f.t) || f.t != FcNs::kCharmTypeT) return false;
+    if (!FlightNumber(definition, "a", f.a) || !FlightNumber(definition, "b", f.b)
+        || !FlightNumber(definition, "c", f.c) || !FlightNumber(definition, "j", f.j)) return false;
+    return FcNs::IsFlightCharm(f.t, f.a, f.b, f.c, f.j, rolled);
 }
 
 static bool FlightCharmOf(const RValue& item, FcNs::Rolled& rolled)
 {
     RValue definition;
-    if (!FlightField(item, "itemDefinitionStruct", definition)) return false;
-    return FlightCharmDecode(item, definition, rolled);
+    if (!StructOrRefField(item, "itemDefinitionStruct", definition)) return false;
+    FlightCharmFields f;
+    return FlightCharmDecode(item, definition, rolled, f);
 }
 
 // The built-in entry for one charm: its row's name, rarity, tier and lore, the
@@ -4755,16 +4762,11 @@ static bool FlightCharmOf(const RValue& item, FcNs::Rolled& rolled)
 // own lore key.
 static bool FlightCharmForgeEntry(const RValue& item, const RValue& definition, CustomForgeEntry& entry, FcNs::Rolled& rolled)
 {
-    if (!FlightCharmDecode(item, definition, rolled)) return false;
-    double t = 0, a = 0, b = 0, c = 0, j = 0;
-    FlightNumber(item, "itemType", t);
-    FlightNumber(definition, "a", a);
-    FlightNumber(definition, "b", b);
-    FlightNumber(definition, "c", c);
-    FlightNumber(definition, "j", j);
+    FlightCharmFields f;
+    if (!FlightCharmDecode(item, definition, rolled, f)) return false;
     const FcNs::CharmRow& row = FcNs::RowOf(rolled.charm);
     entry = CustomForgeEntry{};
-    entry.selector = { {"t", t}, {"a", a}, {"b", b}, {"c", c}, {"j", j} };
+    entry.selector = { {"t", f.t}, {"a", f.a}, {"b", f.b}, {"c", f.c}, {"j", f.j} };
     for (const auto& [id, value] : FcNs::StatsFor(rolled)) entry.stats[id] = (double)value;
     entry.keepNative = false;
     entry.rarity = row.rarity;
@@ -4822,7 +4824,7 @@ static bool Mark1PieceDecode(const RValue& item, const RValue& definition, M1sNs
 static bool Mark1PieceOf(const RValue& item, M1sNs::Piece& piece)
 {
     RValue definition;
-    if (!FlightField(item, "itemDefinitionStruct", definition)) return false;
+    if (!StructOrRefField(item, "itemDefinitionStruct", definition)) return false;
     return Mark1PieceDecode(item, definition, piece);
 }
 
@@ -13164,6 +13166,10 @@ static bool g_SigStandInsResolved = false;
 static const char* kAngelicListVar = "lootListUnique";
 static std::string g_SigListName = kAngelicListVar;   // the research build's inject lever may name another
 static const int kAngelicListIndex = 5;               // the element the roll reads (static reading)
+// The rarities the Angelic roll keeps (itemBaseInfoStruct "27"; RDM § 13.4, static reading):
+// Angelic and Unholy. Read by the research `flightprobe` pool's droppable test; the hub's
+// tests/test_unique_pick_model.py pins it to unique_pick_model.ANGELIC_RARITIES.
+static constexpr int kAngelicRarities[] = { 7, 10 };
 #ifdef FORGEPACT_RELEASE
 static constexpr int g_SigListIndex = kAngelicListIndex;
 #else
@@ -23443,7 +23449,7 @@ static void FlightCharmDressFinal(RValue& item, const FcNs::Rolled& rolled)
 {
     if (g_TruthDepth != 0) return;
     RValue info;
-    if (!FlightField(item, "itemInfoStruct", info)) return;
+    if (!StructOrRefField(item, "itemInfoStruct", info)) return;
     const FcNs::CharmRow& row = FcNs::RowOf(rolled.charm);
     try {
         if (g_FlightDressFootprint) {
@@ -23483,7 +23489,7 @@ static void FlightCharmOnGroundInit(int argc, RValue** A)
         if (bag >= ForgePact::FlightCharmIcons::kIconCount || k >= ForgePact::FlightCharmIcons::kIconCount) return;
         if (!g_FlightIconOk[bag] || !g_FlightIconOk[k]) return;
         RValue info, shown;
-        if (!FlightField(item, "itemInfoStruct", info) || !FlightField(info, "11", shown)) return;
+        if (!StructOrRefField(item, "itemInfoStruct", info) || !StructOrRefField(info, "11", shown)) return;
         if (shown.ToDouble() != g_FlightIconSprite[bag].ToDouble()) return;
         g_Yytk->CallBuiltin("variable_instance_set", { ground, RValue("sprite_index"), g_FlightIconSprite[k] });
         ++g_FlightGround;
@@ -23521,7 +23527,7 @@ static bool FlightGuardHolds(std::string_view runtimeName)
 static bool FlightItemFootprint(const RValue& item, int& w, int& h)
 {
     RValue info;
-    if (!FlightField(item, "itemInfoStruct", info)) return false;
+    if (!StructOrRefField(item, "itemInfoStruct", info)) return false;
     double dw = 1, dh = 1;
     if (!FlightNumber(info, "2", dw)) dw = 1;
     if (!FlightNumber(info, "3", dh)) dh = 1;
@@ -23546,7 +23552,7 @@ static void FlightGuardClose()
     };
     const auto shrinkAndPlace = [&place](const FlightGuardPending& p) -> bool {
         RValue info;
-        if (!FlightField(p.item, "itemInfoStruct", info)) return false;
+        if (!StructOrRefField(p.item, "itemInfoStruct", info)) return false;
         g_Yytk->CallBuiltin("variable_struct_set", { info, RValue("2"), RValue(1.0) });
         g_Yytk->CallBuiltin("variable_struct_set", { info, RValue("3"), RValue(1.0) });
         RefreshItemHash(p.item);
@@ -50839,46 +50845,11 @@ static void FcpSizeKeys(const std::vector<std::string>& keys)
     Out(tag + g_FcpSize.Line() + " by-hand verified: " + text);
 }
 
-// The equipped charms, offline: Controller_obj.inventoryData[key - 1]
-// .localCharmItemArray, the relic tab's key rule (HeroSiege::Player's
-// ScanRelicTab reads the same entry). Variables only.
-static bool FcpCharmArray(RValue& array, std::string& why)
-{
-    const RValue mplr = HeroSiege::YYTK::GetGlobalVariable(g_Yytk, "mplr");
-    double row = -1;
-    if (!FcpWhole(mplr, row) || row < 0 || row > HeroSiege::Player::kMaxLocalPlayerIndex) { why = "mplr " + Describe(mplr); return false; }
-    const RValue onl = HeroSiege::YYTK::GetGlobalVariable(g_Yytk, HeroSiege::Player::kOnlineFlagGlobal);
-    double online = 0;
-    if ((FcpNumber(onl, online) && online == 1.0) || (onl.m_Kind == VALUE_BOOL && onl.ToBoolean())) {
-        why = "online: the charms live on Client_obj there, this read is the offline route";
-        return false;
-    }
-    const int key = (int)row;
-    if (key - 1 < 0) { why = "key " + std::to_string(key) + " (mplr 0)"; return false; }
-    double idx = -1;
-    const RValue index = g_Yytk->CallBuiltin("asset_get_index", {
-        RValue(std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Controller_obj))) });
-    if (!ApNumber(index, idx) || idx < 0) { why = "Controller_obj not resolved"; return false; }
-    const RValue controller = g_Yytk->CallBuiltin("instance_find", { RValue(idx), RValue(0.0) });
-    if (!HeroSiege::Player::IsInstanceHandle(controller)) { why = "no Controller_obj instance"; return false; }
-    if (!HeroSiege::YYTK::InstanceHasVariable(g_Yytk, controller, HeroSiege::Player::kRelicTabHolderField)) { why = "no inventoryData"; return false; }
-    const RValue profiles = HeroSiege::YYTK::GetInstanceVariable(g_Yytk, controller, HeroSiege::Player::kRelicTabHolderField);
-    RValue profile;
-    if (!HeroSiege::Player::Detail::ArrayAt(g_Yytk, profiles, key - 1, profile)) {
-        why = "inventoryData has no index " + std::to_string(key - 1) + " (" + Describe(profiles) + ")";
-        return false;
-    }
-    static constexpr std::string_view kField = "localCharmItemArray";
-    if (profile.m_Kind == VALUE_OBJECT && HeroSiege::YYTK::StructHasVariable(g_Yytk, profile, kField))
-        array = HeroSiege::YYTK::GetStructVariable(g_Yytk, profile, kField);
-    else if (profile.m_Kind == VALUE_REF && HeroSiege::YYTK::InstanceHasVariable(g_Yytk, profile, kField))
-        array = HeroSiege::YYTK::GetInstanceVariable(g_Yytk, profile, kField);
-    else { why = "inventoryData[" + std::to_string(key - 1) + "] has no localCharmItemArray (" + Describe(profile) + ")"; return false; }
-    if (array.m_Kind != VALUE_ARRAY) { why = "localCharmItemArray is " + Describe(array); return false; }
-    return true;
-}
+// The worn charms' array: flight's own reader, defined with the flight adapter
+// below, which fills `why` for the probe.
+static bool FlightCharmArray(RValue& array, std::string* why);
 
-// `charms`: each worn charm read off FcpCharmArray as variables (its
+// `charms`: each worn charm read off FlightCharmArray as variables (its
 // definition, itemInfoStruct and itemStatStruct, the info= rule for both),
 // its footprint from GetItemSize by name, and that footprint fed to the size
 // keys. It writes nothing to a worn charm. Once the keys are inferred it ends
@@ -50888,7 +50859,7 @@ static void FcpCharms()
 {
     RValue array;
     std::string why;
-    if (!FcpCharmArray(array, why)) { Out("charmprobe charms: count=0 source=missing(" + why + ")"); return; }
+    if (!FlightCharmArray(array, &why)) { Out("charmprobe charms: count=0 source=missing(" + why + ")"); return; }
     const int count = HeroSiege::YYTK::GetArrayLength(g_Yytk, array);
     Out("charmprobe charms: count=" + std::to_string(count) + " source=localCharmItemArray"
         + (count > kFcpMaxCharms ? " (the first " + std::to_string(kFcpMaxCharms) + " read)" : std::string()));
@@ -55460,39 +55431,58 @@ static bool FlightBlocked(FcNs::Answer form, const RValue& r, bool unknown = fal
 }
 
 // The worn charms' array, offline: Controller_obj.inventoryData[mplr - 1]
-// .localCharmItemArray (the relic tab's key rule). Variables only. Online the
-// charms live on Client_obj, so nothing is read and flight stays off.
-static bool FlightCharmArray(RValue& array)
+// .localCharmItemArray (the relic tab's key rule; HeroSiege::Player's
+// ScanRelicTab reads the same entry). Variables only. Online the charms live
+// on Client_obj, so nothing is read and flight stays off. The one reader for
+// FlightEquipped (why = nullptr: no text is built on the per-frame path) and
+// the research build's worn-charm probe, which prints why a read came back empty.
+static bool FlightCharmArray(RValue& array, std::string* why)
 {
     try {
         const RValue onl = HeroSiege::YYTK::GetGlobalVariable(g_Yytk, HeroSiege::Player::kOnlineFlagGlobal);
-        if ((JsNumber(onl) && onl.ToDouble() == 1.0) || (onl.m_Kind == VALUE_BOOL && onl.ToBoolean())) return false;
+        if ((JsNumber(onl) && onl.ToDouble() == 1.0) || (onl.m_Kind == VALUE_BOOL && onl.ToBoolean())) {
+            if (why) *why = "online: the charms live on Client_obj there, this read is the offline route";
+            return false;
+        }
         const RValue mplr = HeroSiege::YYTK::GetGlobalVariable(g_Yytk, "mplr");
-        if (!JsNumber(mplr)) return false;
-        const double row = mplr.ToDouble();
-        if (!std::isfinite(row) || std::floor(row) != row || row < 1.0 || row > HeroSiege::Player::kMaxLocalPlayerIndex) return false;
+        const double row = JsNumber(mplr) ? mplr.ToDouble() : -1.0;
+        if (!std::isfinite(row) || std::floor(row) != row || row < 1.0 || row > HeroSiege::Player::kMaxLocalPlayerIndex) {
+            if (why) *why = "mplr " + Describe(mplr);   // 0 too: key - 1 would be no profile
+            return false;
+        }
+        const int key = (int)row;
         if (g_FlightControllerIdx < 0) {
             int idx = -1;
             const RValue index = g_Yytk->CallBuiltin("asset_get_index", {
                 RValue(std::string(HeroSiege::Objects::GetObjectName(HeroSiege::Objects::GameObject::Controller_obj))) });
-            if (!N1ObjectIndex(index, idx)) return false;
+            if (!N1ObjectIndex(index, idx)) { if (why) *why = "Controller_obj not resolved"; return false; }
             g_FlightControllerIdx = idx;
         }
         const RValue controller = g_Yytk->CallBuiltin("instance_find", { RValue((double)g_FlightControllerIdx), RValue(0.0) });
-        if (!HeroSiege::Player::IsInstanceHandle(controller)) return false;
-        if (!HeroSiege::YYTK::InstanceHasVariable(g_Yytk, controller, HeroSiege::Player::kRelicTabHolderField)) return false;
+        if (!HeroSiege::Player::IsInstanceHandle(controller)) { if (why) *why = "no Controller_obj instance"; return false; }
+        if (!HeroSiege::YYTK::InstanceHasVariable(g_Yytk, controller, HeroSiege::Player::kRelicTabHolderField)) {
+            if (why) *why = "no inventoryData";
+            return false;
+        }
         const RValue profiles = HeroSiege::YYTK::GetInstanceVariable(g_Yytk, controller, HeroSiege::Player::kRelicTabHolderField);
         RValue profile;
-        if (!HeroSiege::Player::Detail::ArrayAt(g_Yytk, profiles, (int)row - 1, profile)) return false;
+        if (!HeroSiege::Player::Detail::ArrayAt(g_Yytk, profiles, key - 1, profile)) {
+            if (why) *why = "inventoryData has no index " + std::to_string(key - 1) + " (" + Describe(profiles) + ")";
+            return false;
+        }
         static constexpr std::string_view kField = "localCharmItemArray";
         if (profile.m_Kind == VALUE_OBJECT && HeroSiege::YYTK::StructHasVariable(g_Yytk, profile, kField))
             array = HeroSiege::YYTK::GetStructVariable(g_Yytk, profile, kField);
         else if (profile.m_Kind == VALUE_REF && HeroSiege::YYTK::InstanceHasVariable(g_Yytk, profile, kField))
             array = HeroSiege::YYTK::GetInstanceVariable(g_Yytk, profile, kField);
-        else
+        else {
+            if (why) *why = "inventoryData[" + std::to_string(key - 1) + "] has no localCharmItemArray (" + Describe(profile) + ")";
             return false;
-        return array.m_Kind == VALUE_ARRAY;
+        }
+        if (array.m_Kind != VALUE_ARRAY) { if (why) *why = "localCharmItemArray is " + Describe(array); return false; }
+        return true;
     } catch (...) {}
+    if (why) *why = "the read threw";
     return false;
 }
 
@@ -55505,7 +55495,7 @@ static bool FlightEquipped(unsigned& mask)
     PERF_SCOPE(g_PerfFlightWorn);   // research build only: `perf`'s "flight worn-charm read"
     mask = 0;
     RValue array;
-    if (!FlightCharmArray(array)) return false;
+    if (!FlightCharmArray(array, nullptr)) return false;
     try {
         const int count = HeroSiege::YYTK::GetArrayLength(g_Yytk, array);
         for (int i = 0; i < count && i < kFlightMaxCharms; ++i) {
@@ -55514,7 +55504,7 @@ static bool FlightEquipped(unsigned& mask)
             FcNs::Rolled rolled;
             if (!FlightCharmOf(item, rolled)) continue;
             RValue mechanic;
-            if (!FlightField(item, "fp_mechanic", mechanic) || mechanic.m_Kind != VALUE_STRING) continue;
+            if (!StructOrRefField(item, "fp_mechanic", mechanic) || mechanic.m_Kind != VALUE_STRING) continue;
             if (mechanic.ToString() != std::string(FcNs::kMechanic)) continue;
             mask |= FcNs::CharmBit(rolled.charm);
         }
@@ -55802,13 +55792,17 @@ static void FlightPoints(int row, int argc, RValue* Args, FcNs::Query& q)
 }
 
 // The object of an instance InstancePlaceTallest answered; -1 when unreadable.
+// JsObjectIndexOf reads ids and references; an instance handle it could not
+// read (an instance struct, which N1ObjectIndex refuses) is read by its own
+// object_index. The kind check is the shared IsInstanceHandle predicate.
 static int FlightInstanceObject(const RValue& v)
 {
     const int obj = JsObjectIndexOf(v);
     if (obj >= 0) return obj;
     try {
         int n = -1;
-        if (v.m_Kind == VALUE_OBJECT && N1ObjectIndex(g_Yytk->CallBuiltin("variable_instance_get", { v, RValue("object_index") }), n))
+        if (HeroSiege::Player::IsInstanceHandle(v)
+            && N1ObjectIndex(g_Yytk->CallBuiltin("variable_instance_get", { v, RValue("object_index") }), n))
             return n;
     } catch (...) {}
     return -1;
@@ -56168,7 +56162,7 @@ static long g_FlpUniqueElf = 0;      // of those, the ones that placed Pocket El
 static std::string FlpText(const RValue& owner, const char* name)
 {
     RValue v;
-    return FlightField(owner, name, v) ? FcpValueText(v) : std::string("missing");
+    return StructOrRefField(owner, name, v) ? FcpValueText(v) : std::string("missing");
 }
 
 // Loot_Ground_obj's index, by its SDK name; -1 when it does not resolve.
@@ -56196,7 +56190,7 @@ static RValue FlpGroundItem(const RValue& ground)
 static std::string FlpItemName(const RValue& item)
 {
     RValue info;
-    return FlightField(item, "itemInfoStruct", info) ? FlpText(info, "28") : std::string("unreadable");
+    return StructOrRefField(item, "itemInfoStruct", info) ? FlpText(info, "28") : std::string("unreadable");
 }
 
 // An object's name as object_get_name reads it.
@@ -56274,7 +56268,7 @@ static void FlpSpawn(const std::vector<std::string>& tail)
         // Dressed: the Custom Forge recognised the seed on CreateItemNew's way
         // out and marked the item as a flight charm.
         RValue mechanic;
-        const bool dressed = FlightField(item, "fp_mechanic", mechanic) && mechanic.m_Kind == VALUE_STRING
+        const bool dressed = StructOrRefField(item, "fp_mechanic", mechanic) && mechanic.m_Kind == VALUE_STRING
             && mechanic.ToString() == std::string(FcNs::kMechanic);
         int w = 0, h = 0;
         const std::string size = FlightItemFootprint(item, w, h) ? std::to_string(w) + "x" + std::to_string(h) : std::string("unreadable");
@@ -56501,7 +56495,7 @@ static void FlpDepth()
 }
 
 // Whether the Angelic roll can drop an entry: its repository definition, by
-// name, has rarity ("27" of itemBaseInfoStruct) 7 or 10 and is not flagged
+// name, has a rarity ("27" of itemBaseInfoStruct) in kAngelicRarities and is not flagged
 // hidden ("40"), the roll's own two filters (RDM § 13.4, static reading). The
 // caller holds FlightDropOutsideRoll, so #74's typing hook records nothing.
 static bool FlpAngelicDroppable(const double t[3])
@@ -56516,7 +56510,10 @@ static bool FlpAngelicDroppable(const double t[3])
         const RValue f40 = g_Yytk->CallBuiltin("variable_struct_get", { info, RValue("40") });
         bool hidden = false;
         try { hidden = f40.m_Kind != VALUE_UNDEFINED && f40.m_Kind != VALUE_UNSET && f40.ToBoolean(); } catch (...) { hidden = false; }
-        return (rarity == 7.0 || rarity == 10.0) && !hidden;
+        if (hidden) return false;
+        for (const int kept : kAngelicRarities)
+            if (rarity == (double)kept) return true;
+        return false;
     } catch (...) { return false; }
 }
 
@@ -56682,7 +56679,7 @@ static void FlpUnique(const std::vector<std::string>& tail)
         ++g_FlpUniquePlaced;
         const RValue item = FlpGroundItem(newest);
         RValue info;
-        const std::string rarity = FlightField(item, "itemInfoStruct", info) ? FlpText(info, "27") : std::string("unreadable");
+        const std::string rarity = StructOrRefField(item, "itemInfoStruct", info) ? FlpText(info, "27") : std::string("unreadable");
         FcNs::Rolled rolled;
         if (FlightCharmOf(item, rolled) && rolled.charm == FcNs::Charm::Elf) {
             ++elf;
@@ -56966,32 +56963,12 @@ static void LaInstallIfReady()
     if (g_LootAnnounce.ShouldInstall(g_Setup, havePlayer, g_LaInstallTried)) LootAnnounceInstall();
 }
 
-// A field of a struct-like value: variable_struct_* for a struct,
-// variable_instance_* for the reference this runner can hand back instead
-// (ReadGroundRelic's split). Anything else holds nothing.
-static bool LaField(const RValue& owner, const char* name, RValue& out)
-{
-    try {
-        if (owner.m_Kind == VALUE_OBJECT && owner.m_Object) {
-            if (!g_Yytk->CallBuiltin("variable_struct_exists", { owner, RValue(name) }).ToBoolean()) return false;
-            out = g_Yytk->CallBuiltin("variable_struct_get", { owner, RValue(name) });
-            return true;
-        }
-        if (owner.m_Kind == VALUE_REF) {
-            if (!g_Yytk->CallBuiltin("variable_instance_exists", { owner, RValue(name) }).ToBoolean()) return false;
-            out = g_Yytk->CallBuiltin("variable_instance_get", { owner, RValue(name) });
-            return true;
-        }
-    } catch (...) {}
-    return false;
-}
-
 // itemInfoStruct["27"], by name (RUNTIME_DATA_MODELS.md section 16.4); a
 // missing or non-numeric value is kRarityUnread.
 static int LaRarity(const RValue& item)
 {
     RValue info, code;
-    if (!LaField(item, "itemInfoStruct", info) || !LaField(info, "27", code)) return ForgePact::LootAnnounceMod::kRarityUnread;
+    if (!StructOrRefField(item, "itemInfoStruct", info) || !StructOrRefField(info, "27", code)) return ForgePact::LootAnnounceMod::kRarityUnread;
     if (code.m_Kind != VALUE_REAL && code.m_Kind != VALUE_INT32 && code.m_Kind != VALUE_INT64)
         return ForgePact::LootAnnounceMod::kRarityUnread;
     const double v = code.ToDouble();
@@ -57003,7 +56980,7 @@ static int LaRarity(const RValue& item)
 static std::string LaItemName(const RValue& item)
 {
     RValue info, name;
-    if (!LaField(item, "itemInfoStruct", info) || !LaField(info, "28", name) || name.m_Kind != VALUE_STRING) return "";
+    if (!StructOrRefField(item, "itemInfoStruct", info) || !StructOrRefField(info, "28", name) || name.m_Kind != VALUE_STRING) return "";
     try { return name.ToString(); } catch (...) { return ""; }
 }
 
@@ -57011,7 +56988,7 @@ static std::string LaItemName(const RValue& item)
 static std::string LaItemType(const RValue& item)
 {
     RValue t;
-    if (!LaField(item, "itemType", t)) return "";
+    if (!StructOrRefField(item, "itemType", t)) return "";
     try {
         if (t.m_Kind != VALUE_REAL && t.m_Kind != VALUE_INT32 && t.m_Kind != VALUE_INT64) return "";
         const double v = t.ToDouble();
@@ -57025,7 +57002,7 @@ static std::string LaItemType(const RValue& item)
 static std::string LaTimeStamp(const RValue& item)
 {
     RValue ts;
-    if (!LaField(item, "itemTimeStamp", ts)) return "";
+    if (!StructOrRefField(item, "itemTimeStamp", ts)) return "";
     try {
         if (ts.m_Kind == VALUE_STRING) return ts.ToString();
         if (ts.m_Kind == VALUE_REAL || ts.m_Kind == VALUE_INT32 || ts.m_Kind == VALUE_INT64) {
@@ -57415,7 +57392,7 @@ static void LaReadBurstList()
             const RValue entry = g_Yytk->CallBuiltin("ds_list_find_value", { list, RValue((double)i) });
             RValue item;
             ForgePact::LootAnnounceMod::ItemKey key{};
-            if (LaField(entry, "itemInstance", item) && LaItemKey(item, key)) g_LootAnnounce.NoteListed(key, keep);
+            if (StructOrRefField(entry, "itemInstance", item) && LaItemKey(item, key)) g_LootAnnounce.NoteListed(key, keep);
             else ++g_LaBurstNoKey;
             g_LaBurstCount = i + 1;
         }
@@ -57675,7 +57652,7 @@ static void TrackerNoteCreated(int argc, RValue** A, const RValue& result)
 static std::int64_t TrWholeField(const RValue& owner, const char* name)
 {
     RValue v;
-    if (!LaField(owner, name, v)) return -1;
+    if (!StructOrRefField(owner, name, v)) return -1;
     if (v.m_Kind != VALUE_REAL && v.m_Kind != VALUE_INT32 && v.m_Kind != VALUE_INT64) return -1;
     try {
         const double d = v.ToDouble();
@@ -57726,7 +57703,7 @@ static void TrProcess(const LaPending& p)
     if (recent && ForgePact::TrackerMod::IsTrackedRarity(drop.rarity)) {
         drop.itemType = TrWholeField(item, "itemType");
         RValue definition;
-        if (LaField(item, "itemDefinitionStruct", definition)) {
+        if (StructOrRefField(item, "itemDefinitionStruct", definition)) {
             drop.itemId = TrWholeField(definition, "b");
             drop.weaponType = TrWholeField(definition, "j");
         }
@@ -64429,7 +64406,7 @@ static void Mark1DressFinal(RValue& item, M1sNs::Piece piece)
     if (ForgePact::Mark1Icons::kIconCount == 0) return;   // nothing embedded: the base item's own art
     if (!g_Mark1.ArtArmed()) return;                      // not armed: the base item's own art, nothing loaded
     RValue info;
-    if (!FlightField(item, "itemInfoStruct", info)) return;
+    if (!StructOrRefField(item, "itemInfoStruct", info)) return;
     try {
         Mark1IconsLoad();
         const size_t k = Mark1IconIndex(piece, false);
@@ -64462,7 +64439,7 @@ static void Mark1OnGroundInit(int argc, RValue** A)
         if (bag >= ForgePact::Mark1Icons::kIconCount || k >= ForgePact::Mark1Icons::kIconCount) return;
         if (!g_M1sIconOk[bag] || !g_M1sIconOk[k]) return;
         RValue info, shown;
-        if (!FlightField(item, "itemInfoStruct", info) || !FlightField(info, "11", shown)) return;
+        if (!StructOrRefField(item, "itemInfoStruct", info) || !StructOrRefField(info, "11", shown)) return;
         if (shown.ToDouble() != g_M1sIconSprite[bag].ToDouble()) return;
         g_Yytk->CallBuiltin("variable_instance_set", { ground, RValue("sprite_index"), g_M1sIconSprite[k] });
         ++g_M1sGround;
@@ -64590,7 +64567,7 @@ static bool Mark1ReadWorn(M1sNs::WornSlots& slots)
                                                         global, global, { fingerprint, owner }))) continue;
             RValue definition;
             double t = 0, a = 0, b = 0, c = 0, j = 0;
-            if (!FlightField(item, HeroSiege::Player::kItemInstanceDefinitionField.data(), definition)
+            if (!StructOrRefField(item, HeroSiege::Player::kItemInstanceDefinitionField.data(), definition)
                 || !FlightNumber(item, HeroSiege::Player::kItemInstanceTypeField.data(), t)) continue;
             // The other gear (weapons, rings, amulet) is read now too: an item
             // whose definition has no numeric `a` or `j` cannot be a piece

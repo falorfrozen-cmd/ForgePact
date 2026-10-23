@@ -51,7 +51,7 @@ FORGE_START = "// ---- Flight charms (FlightCharms.hpp): the forge adapter"
 FORGE_END = "// ---- end of the flight charms forge adapter"
 
 SIGNATURES = {
-    "decode": "static bool FlightCharmDecode(const RValue& item, const RValue& definition, FcNs::Rolled& rolled)",
+    "decode": "static bool FlightCharmDecode(const RValue& item, const RValue& definition, FcNs::Rolled& rolled, FlightCharmFields& f)",
     "of": "static bool FlightCharmOf(const RValue& item, FcNs::Rolled& rolled)",
     "entry": "static bool FlightCharmForgeEntry(const RValue& item, const RValue& definition, CustomForgeEntry& entry, FcNs::Rolled& rolled)",
     "final": "static void FlightCharmDressFinal(RValue& item, const FcNs::Rolled& rolled)",
@@ -100,17 +100,25 @@ class FlightCharmsForgeContract(unittest.TestCase):
 
     def test_recognition_is_the_cores_rule_on_the_items_own_fields(self):
         decode = self.body("decode")
-        self.assertIn('FlightNumber(item, "itemType", t)', decode)
+        self.assertIn('FlightNumber(item, "itemType", f.t)', decode)
         for key in ("a", "b", "c", "j"):
-            self.assertIn(f'FlightNumber(definition, "{key}", {key})', decode)
+            self.assertIn(f'FlightNumber(definition, "{key}", f.{key})', decode)
         # A struct or the reference the runner may hand out instead, each
         # through its own builtins: the kind picks the reader, never whether
-        # the item is read.
-        field = strip_comments(function_body(self.plugin, "static bool FlightField(const RValue& owner, const char* name, RValue& out)"))
+        # the item is read. One reader (#216): the forge adapter, flight,
+        # Mark 1 and loot announcements share it, defined before its first use.
+        signature = "static bool StructOrRefField(const RValue& owner, const char* name, RValue& out)"
+        field = strip_comments(function_body(self.plugin, signature))
         self.assertIn('"variable_struct_get"', field)
         self.assertIn('"variable_instance_get"', field)
         self.assertIn("owner.m_Kind == VALUE_REF", field)
-        self.assertIn("FcNs::IsFlightCharm(t, a, b, c, j, rolled)", decode)
+        self.assertEqual(self.plugin.count(signature), 1)
+        # Its first mention is its own definition: no caller comes before it.
+        self.assertEqual(self.plugin.index("StructOrRefField("), self.plugin.index(signature) + len("static bool "))
+        for gone in ("FlightField(", "LaField("):
+            with self.subTest(gone=gone):
+                self.assertNotIn(gone, self.plugin)
+        self.assertIn("FcNs::IsFlightCharm(f.t, f.a, f.b, f.c, f.j, rolled)", decode)
         # The type is read first and a non-charm stops there: one read for
         # every other item the game builds.
         self.assertLess(decode.index('"itemType"'), decode.index('"a"'))
@@ -146,7 +154,12 @@ class FlightCharmsForgeContract(unittest.TestCase):
 
     def test_the_entry_carries_the_charms_row(self):
         entry = self.body("entry")
-        self.assertIn("FlightCharmDecode(item, definition, rolled)", entry)
+        self.assertIn("if (!FlightCharmDecode(item, definition, rolled, f)) return false;", entry)
+        # The selector is built from the fields the decode read (#216): the
+        # entry reads nothing of the item again.
+        for reread in ("FlightNumber(", "StructOrRefField(", "CallBuiltin("):
+            with self.subTest(reread=reread):
+                self.assertNotIn(reread, entry)
         self.assertIn("FcNs::RowOf(rolled.charm)", entry)
         for field in ("entry.name = std::string(row.name);", "entry.lore = std::string(row.lore);",
                       "entry.rarity = row.rarity;", "entry.tier = row.tier;",
@@ -156,7 +169,7 @@ class FlightCharmsForgeContract(unittest.TestCase):
                 self.assertIn(field, entry)
         self.assertIn("FcNs::StatsFor(rolled)", entry)
         # The selector is the item's own, so the lore key is per seed.
-        for key in ('{"t", t}', '{"a", a}', '{"b", b}', '{"c", c}', '{"j", j}'):
+        for key in ('{"t", f.t}', '{"a", f.a}', '{"b", f.b}', '{"c", f.c}', '{"j", f.j}'):
             self.assertIn(key, entry)
 
     def test_dressing_arms_flight_and_installs_nothing_inside_create_item_new(self):
@@ -438,7 +451,7 @@ JS_END = "// ---- end of the jump through scenery adapter"
 SDK_OBJECTS = ROOT.parent / "hs-game-sdk" / "cpp" / "include" / "hs_game_sdk" / "objects.hpp"
 
 LEVER = {
-    "array": "static bool FlightCharmArray(RValue& array)",
+    "array": "static bool FlightCharmArray(RValue& array, std::string* why)",
     "equipped": "static bool FlightEquipped(unsigned& mask)",
     "overlap": "static bool FlightOverlap(bool& overlapping)",
     "layer_ends": "static bool FlightLayerEnds(int64_t room, FcNs::LayerEnd& first, FcNs::LayerEnd& last)",
@@ -671,6 +684,12 @@ class FlightCharmsLeverContract(unittest.TestCase):
         self.assertLess(hook.index("FlightBlocked(FcNs::Answer::Noone, r)"), hook.index("g_Flight.StateAt("))
         self.assertIn("FcNs::Hooked::InstancePlaceTallest", hook)
         self.assertIn("FlightInstanceObject(r)", hook)
+        # The fallback past JsObjectIndexOf is gated on the shared predicate, never
+        # on one kind (#216): VALUE_REF and an instance struct both reach it.
+        instance = strip_comments(function_body(self.plugin, "static int FlightInstanceObject(const RValue& v)"))
+        self.assertIn("HeroSiege::Player::IsInstanceHandle(v)", instance)
+        self.assertNotIn("m_Kind", instance)
+        self.assertLess(instance.index("JsObjectIndexOf(v)"), instance.index("IsInstanceHandle(v)"))
         # Never re-run: the core's single-argument OnQuery.
         self.assertIn("g_Flight.OnQuery(q)", hook)
         self.assertIn("r = FlightAnswerValue(answer);", hook)
@@ -879,7 +898,11 @@ class FlightCharmsLeverContract(unittest.TestCase):
         # Online refuses before anything else is read.
         self.assertLess(array.index("kOnlineFlagGlobal"), array.index('"instance_find"'))
         equipped = self.body("equipped")
-        self.assertIn("FlightCharmArray(array)", equipped)
+        # The per-frame read builds no text: the probe's `why` is not asked for.
+        self.assertIn("FlightCharmArray(array, nullptr)", equipped)
+        for text in ("if (why) *why = \"online:", "if (why) *why = \"no Controller_obj instance\";"):
+            self.assertIn(text, array)
+        self.assertNotIn("*why =", array.replace("if (why) *why =", ""))
         self.assertIn("FlightCharmOf(item, rolled)", equipped)
         self.assertIn("FcNs::kMechanic", equipped)
         self.assertIn("mask |= FcNs::CharmBit(rolled.charm);", equipped)
@@ -1564,7 +1587,7 @@ class FlightCharmsProbeContract(unittest.TestCase):
         equipped = function_body(self.plugin, "static bool FlightEquipped(unsigned& mask)")
         scope = equipped.index("PERF_SCOPE(g_PerfFlightWorn);")
         # Before the read, so the scope covers FlightCharmArray and the whole walk.
-        self.assertLess(scope, equipped.index("FlightCharmArray(array)"))
+        self.assertLess(scope, equipped.index("FlightCharmArray(array, nullptr)"))
         self.assertIn("#define PERF_SCOPE(bucket)\n#endif", self.plugin)
 
     def test_spawn_uses_charmprobes_loader_route_with_the_charms_own_seed(self):
@@ -1739,7 +1762,14 @@ class FlightCharmsProbeContract(unittest.TestCase):
         self.assertIn('RValue("itemBaseInfoStruct")', droppable)
         self.assertIn('TryStructNumber(info, "27", rarity)', droppable)
         self.assertIn('RValue("40")', droppable)
-        self.assertIn("rarity == 7.0 || rarity == 10.0", droppable)
+        # The two rarities are the named constant beside kAngelicListIndex, which the hub's
+        # tests/test_unique_pick_model.py pins to the model's ANGELIC_RARITIES.
+        self.assertIn("for (const int kept : kAngelicRarities)", droppable)
+        self.assertIn("if (rarity == (double)kept) return true;", droppable)
+        self.assertIn("if (hidden) return false;", droppable)
+        self.assertIsNone(re.search(r"\b(7|10)(\.0)?\b", droppable))
+        self.assertRegex(self.plugin, r"static const int kAngelicListIndex = 5;[^\n]*\n(//[^\n]*\n)*"
+                                      r"static constexpr int kAngelicRarities\[\] = \{ 7, 10 \};")
         # Refused while a roll's entries are on a list, since its sizes would count them.
         self.assertIn("g_SigRollPushed > 0 || g_FlightDrop.rollPushed > 0", pool)
         self.assertLess(pool.index("g_SigRollPushed > 0"), pool.index("SignatureController("))
