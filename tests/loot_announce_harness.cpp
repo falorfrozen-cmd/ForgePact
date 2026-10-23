@@ -31,12 +31,13 @@
 // line names the four burst counters.
 //
 // The line's colours (ForgePact #228): the shipped sink is `chatcolour`, which
-// puts "<character> found" in the chat line's sender part in the game's grey
-// chat text and the item's name alone in its text part, in the online
+// puts the character's name alone in the chat line's sender part, in the online
+// sender colour 18687, and "found <item name>" in its text part, in the online
 // announcement's colour for the rarity. Baseline: the red line's text, as
 // shipped before, is `<character> found <item>`. Target: Heroic 9764608,
-// Angelic 10681599, Unholy 7224024, the sender and every other code 11974842,
-// and no colour the core returns is 0 or the 6776816 that greys the text.
+// Angelic 10681599, Unholy 7224024, the sender 18687, every other code's text
+// 11974842, and no colour the core returns is 0 or the 6776816 that greys the
+// text.
 //
 // The install (Known Limitations item 8: a hook installed at character select
 // stalls the runner): the switch arms at launch, and the hooks go in only once
