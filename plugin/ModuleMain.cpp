@@ -627,6 +627,7 @@ static ForgePact::FlightCharms::Flight g_Flight;
 static bool g_FlightBusy = false;   // game thread only: the flight adapter's own calls inside a detour
 static const char* FlightPlayerCheck();   // the trace line's ` player=`; defined with the flight adapter
 static bool FlightConfirmPlayer();        // the player, once a frame at the point of use; defined with the adapter
+static bool FlightStatPlayerReady();      // whether the stat line may refresh; defined with the adapter
 // Mark 1 set (`mark1set`, ForgePact #166): the set's decision core and the
 // owner's icons for the four pieces. The Custom Forge recognises and dresses
 // the pieces (what it reads sits just after the flight charms', before
@@ -23625,10 +23626,11 @@ static void FlightGuardInstall()
 static FcNs::StatFields FlightCharmStatFields()
 {
     FcNs::StatFields s;
-    // The player first, as the hooks confirm it: the overlap read Refresh may
-    // make runs with g_FlightPlayer as self, so it must be this frame's.
-    const bool player = FlightConfirmPlayer();
-    g_Flight.RefreshForStat((int64_t)g_RuntimeFrame, player);
+    // The stat line never confirms the player (#216 c3): the frame's confirm
+    // mark is the hooks' alone, so the trace line's ` player=` reports what
+    // they set. The overlap read Refresh may make runs with g_FlightPlayer as
+    // self, so it refreshes only while that pointer is not another instance.
+    g_Flight.RefreshForStat((int64_t)g_RuntimeFrame, FlightStatPlayerReady());
     g_Flight.FillStat(s);
     s.icons = !g_FlightIconsTried ? "not-loaded" : (g_FlightIconsFailed ? "failed" : "loaded");
     s.ground = g_FlightGround;
@@ -23654,11 +23656,14 @@ static void FlightCharmCommand(const std::string& rest)
         FlightDropSwitch(c.charm, c.on);
         return;
     }
-    Out(FcNs::StatLine(FlightCharmStatFields()));
     // Flight's own trace line: whether the player its hooks compare against is
     // the local player, and how far the player's queries and UpdateDepth calls
-    // got, so `answered=0` or `depth=0` names where flight stopped.
-    Out(FcNs::TraceLine(FlightPlayerCheck(), g_Flight.Stats()));
+    // got, so `answered=0` or `depth=0` names where flight stopped. The player
+    // is checked before the stat line's refresh, so ` player=` is what the
+    // hooks set, never something the stat path touched.
+    const char* const player = FlightPlayerCheck();
+    Out(FcNs::StatLine(FlightCharmStatFields()));
+    Out(FcNs::TraceLine(player, g_Flight.Stats()));
     // The guard's own line: its route and how far each load got, so a quiet
     // `guard kept=0 failed=0` is told apart from a guard that saw nothing.
     Out(FcNs::GuardStatLine(g_FlightGuardRoute, g_FlightGuard.Stats()));
@@ -55972,20 +55977,41 @@ static void FlightRefreshPlayer()
 // The local player, confirmed at the first hooked call of each frame (#216
 // c3): g_RuntimeFrame advances at the frame's end, and the hooks compare
 // `self` during the next frame's Step, so the player is resolved again (as
-// FlightRefreshPlayer does, under g_FlightBusy) the first time a hook, or the
-// stat line, asks within a frame value. Every later call of that frame costs
-// one compare (the core's ConfirmsPlayer). Whether a player is confirmed.
+// FlightRefreshPlayer does, under g_FlightBusy) the first time a hook asks
+// within a frame value. Every later call of that frame costs one compare (the
+// core's ConfirmsPlayer). Only the three hooks call it: the stat line never
+// does, so it cannot set what its own ` player=` reports. Whether a player
+// is confirmed.
 static bool FlightConfirmPlayer()
 {
     if (g_Flight.ConfirmsPlayer((int64_t)g_RuntimeFrame)) FlightRefreshPlayer();
     return g_FlightPlayer != nullptr;
 }
 
+// Whether `flightcharm stat` may refresh the state: the local player resolves
+// (as FlightRefreshPlayer resolves it, under g_FlightBusy), and the pointer
+// the overlap read uses as self is that player, or none yet (the read then
+// reads nothing). Neither g_FlightPlayer nor the frame's confirm mark is
+// touched. A pointer the hooks have not confirmed since a room change names
+// another instance, so the stat leaves the state as it was rather than read
+// through it.
+static bool FlightStatPlayerReady()
+{
+    CInstance* now = nullptr;
+    g_FlightBusy = true;
+    try {
+        RValue p;
+        if (HhResolveLocalPlayer(p)) now = HhResolveInstance(p);
+    } catch (...) { now = nullptr; }
+    g_FlightBusy = false;
+    return now != nullptr && (g_FlightPlayer == nullptr || g_FlightPlayer == now);
+}
+
 // ` player=` on the trace line: the pointer the hooks compare `self` against,
 // checked against the local player resolved now. `none` when either is
-// missing (before the first hooked call or stat line confirmed one, or at
-// character select); `differs` would mean the hooks are comparing against a
-// stale instance and answer nothing.
+// missing (before the first hooked call confirmed one, or at character
+// select); `differs` would mean the hooks are comparing against a stale
+// instance and answer nothing.
 static const char* FlightPlayerCheck()
 {
     CInstance* now = nullptr;

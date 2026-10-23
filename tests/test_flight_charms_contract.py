@@ -358,14 +358,33 @@ class FlightCharmsForgeContract(unittest.TestCase):
         self.assertIn("Out(FcNs::StatLine(FlightCharmStatFields()));", command)
         # The state is refreshed when the line is printed, with the counter
         # every frame advances, so a charm equipped in place reads `state=on`.
-        # The player is confirmed first, as the hooks confirm it (#216 c3), so
-        # the overlap read runs with this frame's player as self.
+        # The stat path never confirms the player (#216 c3): the confirm mark
+        # is the hooks' alone, so ` player=` reports what they set. It refreshes
+        # only while the pointer the overlap read uses as self is the local
+        # player or none, never through a pointer the hooks have not confirmed.
         fields = self.body("stat_fields")
-        self.assertIn("const bool player = FlightConfirmPlayer();", fields)
-        self.assertIn("g_Flight.RefreshForStat((int64_t)g_RuntimeFrame, player);", fields)
+        self.assertIn("g_Flight.RefreshForStat((int64_t)g_RuntimeFrame, FlightStatPlayerReady());", fields)
+        self.assertNotIn("FlightConfirmPlayer(", fields)
+        self.assertNotIn("ConfirmsPlayer(", fields)
+        self.assertNotIn("FlightRefreshPlayer(", fields)
+        self.assertNotIn("g_FlightPlayer", fields)
         self.assertNotIn("HhResolveLocalPlayer(", fields)
-        self.assertLess(fields.index("FlightConfirmPlayer();"), fields.index("g_Flight.RefreshForStat("))
         self.assertLess(fields.index("g_Flight.RefreshForStat("), fields.index("g_Flight.FillStat(s);"))
+        ready = strip_comments(function_body(self.plugin, "static bool FlightStatPlayerReady()"))
+        self.assertLess(ready.index("g_FlightBusy = true;"), ready.index("HhResolveLocalPlayer(p)"))
+        self.assertLess(ready.index("HhResolveLocalPlayer(p)"), ready.index("g_FlightBusy = false;"))
+        self.assertIn("now = HhResolveInstance(p);", ready)
+        self.assertIn("return now != nullptr && (g_FlightPlayer == nullptr || g_FlightPlayer == now);", ready)
+        self.assertIsNone(re.search(r"g_FlightPlayer\s*=(?!=)", ready), "the stat path never sets the player")
+        for touch in ("ConfirmsPlayer(", "FlightConfirmPlayer(", "FlightRefreshPlayer("):
+            with self.subTest(ready_never=touch):
+                self.assertNotIn(touch, ready)
+        # The trace line's ` player=` is checked before the stat line is built,
+        # so nothing the stat path does can set what it reports.
+        self.assertIn("const char* const player = FlightPlayerCheck();", command)
+        self.assertLess(command.index("FlightPlayerCheck("), command.index("FlightCharmStatFields("))
+        self.assertIn("Out(FcNs::TraceLine(player, g_Flight.Stats()));", command)
+        self.assertEqual(command.count("FlightPlayerCheck("), 1)
 
     # ---- no address -------------------------------------------------------------------
 
@@ -898,15 +917,16 @@ class FlightCharmsLeverContract(unittest.TestCase):
         self.assertIn("g_FlightBusy = true;", player)
         self.assertLess(player.index("g_FlightBusy = true;"), player.index("HhResolveLocalPlayer(p)"))
         self.assertIn("HhResolveInstance(p)", player)
-        # Each of the three hooks confirms once, before its `self` compare; the
-        # stat line once, before its refresh. Nothing else does.
+        # Each of the three hooks confirms once, before its `self` compare.
+        # Nothing else does: not the tick, not the stat line.
         for which in ("on_builtin", "tallest", "depth"):
             with self.subTest(hook=which):
                 body = self.body(which)
                 self.assertEqual(body.count("FlightConfirmPlayer();"), 1)
                 self.assertLess(body.index("FlightConfirmPlayer();"), body.index("if (S != g_FlightPlayer)"))
-        self.assertEqual(len(re.findall(r"\bFlightConfirmPlayer\(\)", self.shipped)), 6,
-                         "the declaration, the definition, three hooks and the stat line")
+        self.assertEqual(len(re.findall(r"\bFlightConfirmPlayer\(\)", self.shipped)), 5,
+                         "the declaration, the definition and the three hooks")
+        self.assertEqual(len(re.findall(r"\bConfirmsPlayer\(", self.shipped)), 1, "FlightConfirmPlayer alone")
 
     # ---- the research build, both directions -------------------------------------------------
 
