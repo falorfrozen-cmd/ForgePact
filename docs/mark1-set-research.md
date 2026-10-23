@@ -5861,10 +5861,10 @@ merc-away: stayed
 Not attempted: the "Discharge Mercenary" button was found on the Mercenary page, and this session's permission classifier refused the operator's click on it before it was sent; not a result about the game. The player was struck with the mercenary still hired, by warping into packs away from it in Outskirts of Inoya: four `sc_hurt` calls with the player's self.
 
 def-hit: applies
-`bonus-def-hit` passed: with four pieces worn and the switch on, the game asked the dispatcher's Defense (92) with the player's own self once inside the struck window while `bonusread` read 92 7056->7556. The logpoint reads the self, not the answer; the answer follows the bonus's rule for the player's own calls and the same window's `bonusread`. That line was not next to a hit, so whether that ask was part of a hit was not read.
+`bonus-def-hit` passed: with four pieces worn and the switch on, the game asked the dispatcher's Defense (92) with the player's own self once inside the struck window while `bonusread` read 92 7056->7556. The logpoint reads the self, not the answer the game got back. That line sat at window-relative line 3035, not next to any of the four hits (6633 to 6749), so which code asked, and whether that ask was part of a hit, was not read; the value means "asked", not "used in a hit".
 
 pdr-hit: applies
-`bonus-pdr-hit` passed: each of the four hits (`sc_hurt` with the player's self) was followed by a Physical Damage Reduction (97) ask with the player's self, while `bonusread` read 97 21->41. The logpoint reads the self, not the answer; how much damage the hits dealt was not read (life stayed full).
+`bonus-pdr-hit` passed: each of the four hits (`sc_hurt` with the player's self) was followed by a Physical Damage Reduction (97) ask with the player's self, while `bonusread` read 97 21->41. The logpoint reads the self, not the answer the game got back; whether the set's numbers changed the damage the hits dealt was not read (life stayed full).
 
 These set the workorder's route tokens `merc-page: left`, `def-hit:
 applies` and `pdr-hit: applies`. Nothing here changes the plugin.

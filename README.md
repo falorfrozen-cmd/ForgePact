@@ -1961,12 +1961,14 @@ tab with the mercenary's own numbers.
 A fourth session (2026-10-23), on the build with that change, checked it:
 the Mercenary tab showed your mercenary's own numbers with nothing of the
 set added, and going back to your own tab showed the set's Life again.
-With all four worn and the switch on, each time a monster hit you the game
-asked for your Physical Damage Taken Reduced with the set's 20% in it, and
-during the same fight it asked for your Defense with the set's 500 in it.
-Not checked in play yet: how much less damage those hits did (your life
-stayed full), how soon the HUD shows a lower maximum after you take a
-piece off, and whether every fired skill casts.
+With all four worn and the switch on, each of four times a monster hit
+you the game asked for your Physical Damage Taken Reduced, which the set
+answers with its 20% added (the session read the ask, not the number the
+game got back), and once, not at a hit, for your Defense. Not checked in
+play yet: whether the set's Defense and Physical Damage Taken Reduced make
+a hit do less damage (your life stayed full), how soon the HUD shows a
+lower maximum after you take a piece off, and whether every fired skill
+casts.
 
 ## Goburin's Head pity
 

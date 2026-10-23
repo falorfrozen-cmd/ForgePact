@@ -133,10 +133,12 @@ pieces" below.
   found the sheet's Mercenary tab showing the set bonus and the drain on
   your mercenary's numbers. A fourth session checked the fix: the
   Mercenary tab now shows your mercenary's own numbers and your own tab
-  still shows the set's; and with all four worn, each time a monster hit
-  you the game asked for your Physical Damage Taken Reduced with the set's
-  20% in it, and in the same fight for your Defense with the set's 500.
-  Not checked in play yet: how much less damage those hits did, whether
+  still shows the set's; and with all four worn, each of four times a
+  monster hit you the game asked for your Physical Damage Taken Reduced,
+  which the set answers with its 20% added (the session read the ask, not
+  the number the game got back), and once, not at a hit, for your Defense.
+  Not checked in play yet: whether the set's Defense and Physical Damage
+  Taken Reduced make a hit do less damage (your life stayed full), whether
   every fired skill casts and a piece dropping from a vault.
 
 ## Fixed
