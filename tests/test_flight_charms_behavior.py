@@ -28,7 +28,10 @@ line's counters add up as FlightCounters says), `front_layer` (the flight
 layer's depth, its census once per room visit and its re-choice at most once
 a second, validated where it is written; no write while off, residual or for
 another self, the baseline), `front_layer_filter` (never past a filter: the
-rearmost filter decides, on the data file's room stacks), `census_outcomes`
+rearmost filter decides, on the data file's room stacks, and the layer lies
+strictly behind it, never at its depth, in whole depths; where none lies
+between them, the census or the re-choice writes no layer and `no-front=`
+counts it), `census_outcomes`
 (every layer the census was handed lands in exactly one outcome: an effect
 read that answered a struct, something else, or failed, or a layer never
 read, with the reason; the core's own text, which `flightprobe depth`
@@ -279,6 +282,15 @@ class FlightCharmsCoreBehaviorTests(unittest.TestCase):
 
     def test_front_layer_filter_several_the_rearmost_decides(self):
         self.assertScenarios("front_layer_filter/several_filters_the_rearmost_decides")
+
+    def test_front_layer_filter_strictly_behind_the_rearmost_filter(self):
+        # Never at a filter's own depth: equal depths draw in an order that
+        # ignores depth. No whole depth between them is no layer, at the census
+        # and at a re-choice alike.
+        self.assertScenarios("front_layer_filter/a_filter_at_the_game_front_minus_one_writes_no_layer",
+                             "front_layer_filter/a_drawn_layer_one_behind_the_filter_writes_no_layer",
+                             "front_layer_filter/a_gap_of_two_puts_the_layer_strictly_between",
+                             "front_layer_filter/a_rechoice_that_yields_no_layer_writes_nothing")
 
     def test_front_layer_filter_hidden_or_behind_the_game_front_is_ignored(self):
         self.assertScenarios("front_layer_filter/a_hidden_filter_and_one_behind_the_game_front_change_nothing")

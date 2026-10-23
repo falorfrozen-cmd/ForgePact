@@ -354,7 +354,7 @@ struct FlightCounters {
     uint64_t depthOther = 0;    // of depthCalls, self was not the local player
     uint64_t depthSeen = 0;     // of depthCalls, the local player's
     uint64_t depthIdle = 0;     // of depthSeen, no write because flight was not on (off or residual)
-    uint64_t noFront = 0;       // of depthSeen while on, no write: the room unreadable, or no flight layer (the census yielded none)
+    uint64_t noFront = 0;       // of depthSeen while on, no write: the room unreadable, or no flight layer (the census yielded none), or no depth strictly behind the rearmost filter
     uint64_t fxStruct = 0;      // effect reads that answered a struct: an effect
     uint64_t fxOther = 0;       // effect reads that answered anything else: no effect
     uint64_t fxFailed = 0;      // effect reads that failed: no effect
@@ -452,6 +452,14 @@ inline bool IsDrawnLayer(const RoomLayer& l)
 // `by` is the index in `layers` of the drawn layer that decided, -1 when the
 // game layers' front end did. Rearmost, not frontmost: a drawn layer between
 // two filters (Act_09_05's Smoke) stays in front of the flying player.
+// With a filter, the depth lies strictly behind it: never at its depth, since
+// layers of equal depth draw in an order that ignores depth, so the player
+// could draw past the filter ("Never past a filter", the owner, 2026-10-13).
+// Whole depths only (every measured depth was whole; whether the runner keeps
+// a fractional one is not established), so when no whole depth lies strictly
+// between the rearmost filter and that lowest depth (a filter at the front end
+// minus one with nothing drawn behind it, or a drawn layer one behind the
+// filter), there is no choice: `ok` is false and nothing is written.
 struct FlightDepthChoice {
     bool   ok = false;
     double depth = 0.0;
@@ -489,8 +497,20 @@ inline FlightDepthChoice ChooseFlightDepth(double gameFront, const std::vector<R
             c.by = static_cast<int>(i);
         }
     }
+    if (!haveFilter) {
+        c.ok = true;
+        c.depth = lowest - 1.0;
+        return c;
+    }
+    // The nearest whole depth in front of `lowest`, and only if it is still
+    // behind the rearmost filter.
+    const double depth = std::ceil(lowest) - 1.0;
+    if (!(depth > rearmost)) {
+        c.by = -1;
+        return c;
+    }
     c.ok = true;
-    c.depth = lowest - 1.0;
+    c.depth = depth;
     return c;
 }
 
@@ -547,6 +567,7 @@ struct FlightLayerVisit {
     CensusTally            tally;                  // what the census did with each of them; the re-choice leaves it
     double                 censusMs = 0.0;
     uint64_t               moves = 0;              // re-choices that moved the layer this visit
+    bool                   noChoice = false;       // the last re-choice found no depth behind the filter: no write until one does
 };
 
 // ---- drops: the gate ------------------------------------------------------------
@@ -989,7 +1010,8 @@ public:
     // the visit lasts, the re-choice runs at most once a second. A negative
     // room is one the adapter could not read: no write, counted in noFront.
     // A census that yields no layer writes nothing (noFront) and is retried no
-    // sooner than a second later.
+    // sooner than a second later; a re-choice that finds no depth strictly
+    // behind the rearmost filter writes nothing (noFront) until a later one does.
     DepthWrite OnUpdateDepth(int64_t frame, bool playerSelf, int64_t room)
     {
         ++counters_.depthCalls;
@@ -1010,6 +1032,10 @@ public:
         const double now = Now(frame);
         if (visit_.have && visit_.room == room && LayerValid(visit_.layer)) {
             Rechoose(now);
+            if (visit_.noChoice) {
+                ++counters_.noFront;
+                return DepthWrite{};
+            }
         } else {
             if (haveCensus_ && !visit_.have && visit_.room == room && now - censusAt_ < kRechoiceMs) {
                 ++counters_.noFront;
@@ -1225,6 +1251,9 @@ private:
             if (l.visible && l.elements == 0 && !l.effectRead) ReadEffect(l);
         }
         const FlightDepthChoice c = ChooseFlightDepth(visit_.gameFront, visit_.layers);
+        // No depth strictly behind the filter: the layer stays where it was,
+        // and nothing is written to it until a re-choice finds one again.
+        visit_.noChoice = !c.ok;
         if (!c.ok) return;
         if (c.depth != visit_.depth) {
             if (!Call(ops_.move, visit_.layer, c.depth)) return;

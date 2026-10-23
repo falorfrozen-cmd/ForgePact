@@ -32,7 +32,9 @@
 // front end and every drawn room layer, a census once per room visit and a
 // re-choice at most once a second, validated where it is written, no write for
 // off, residual or another self; front_layer_filter: never past a filter, the
-// rearmost filter deciding (the room stacks are the data file's), and
+// rearmost filter deciding (the room stacks are the data file's), the layer
+// strictly behind it and never at its depth (no whole depth between them is
+// no write, at the census and at a re-choice alike), and
 // census_outcomes: every listed layer in exactly one of the census's outcomes,
 // rendered by the core's own text. tooltip_rows:
 // a forged item's gold rows anchor at its first present format-2/3 stat call
@@ -1304,6 +1306,70 @@ int main()
         const DepthWrite d = depthAt(f, w, 1, 7, 0.0);
         check("front_layer_filter/several_filters_the_rearmost_decides",
             d.write && f.Visit().depth == -5501.0 && f.Visit().by == -1 && flightDepthIn(w, 7) == -5501.0, visitText(f, w, 7));
+    }
+    // ---- strictly behind the rearmost filter, never at its depth ----
+    {
+        // A filter at the game layers' front end minus one (-5501) with nothing
+        // drawn behind it: one below the front end is the filter's own depth,
+        // which would draw in an order that ignores depth. No whole depth lies
+        // between them, so no layer: nothing placed or written, no-front=.
+        FlightWorld w;
+        Flight f = flightIn(w, { { 1001, -10000.0, "Invisible_walls", true, 40, false }, { 1002, -5501.0, "Effect_1", true, 0, true } });
+        const DepthWrite d = depthAt(f, w, 1, 7, 0.0);
+        check("front_layer_filter/a_filter_at_the_game_front_minus_one_writes_no_layer",
+            !d.write && !f.Visit().have && w.places == 0 && w.creates == 0 && f.Stats().noFront == 1 && f.Stats().depth == 0
+                && sumsHold(f.Stats()),
+            visitText(f, w, 7));
+    }
+    {
+        // A drawn layer one behind the filter (-10099 behind -10100): one below
+        // it is the filter's depth again. No layer.
+        FlightWorld w;
+        Flight f = flightIn(w, { { 1101, -10100.0, "Effect_1", true, 0, true }, { 1102, -10099.0, "Raven_Creators", true, 3, false } });
+        const DepthWrite d = depthAt(f, w, 1, 7, 0.0);
+        check("front_layer_filter/a_drawn_layer_one_behind_the_filter_writes_no_layer",
+            !d.write && !f.Visit().have && w.places == 0 && f.Stats().noFront == 1 && f.Stats().depth == 0 && sumsHold(f.Stats()),
+            visitText(f, w, 7));
+    }
+    {
+        // A gap of two, both ways: a drawn layer two behind the filter
+        // (-10098 behind -10100) gives -10099, and a filter two in front of the
+        // game layers' front end (-5502) with nothing behind it gives -5501.
+        FlightWorld w;
+        Flight f = flightIn(w, { { 1201, -10100.0, "Effect_1", true, 0, true }, { 1202, -10098.0, "Raven_Creators", true, 3, false } });
+        const DepthWrite d = depthAt(f, w, 1, 7, 0.0);
+        const FlightLayerVisit& v = f.Visit();
+        const bool drawn = d.write && v.depth == -10099.0 && v.by >= 0 && v.layers[(size_t)v.by].name == "Raven_Creators"
+            && flightDepthIn(w, 7) == -10099.0;
+        const std::string drawnText = visitText(f, w, 7);
+        FlightWorld e;
+        Flight g = flightIn(e, { { 1301, -10000.0, "Invisible_walls", true, 40, false }, { 1302, -5502.0, "Effect_1", true, 0, true } });
+        const DepthWrite h = depthAt(g, e, 1, 7, 0.0);
+        check("front_layer_filter/a_gap_of_two_puts_the_layer_strictly_between",
+            drawn && h.write && g.Visit().depth == -5501.0 && g.Visit().by == -1 && flightDepthIn(e, 7) == -5501.0,
+            drawnText + " || " + visitText(g, e, 7));
+    }
+    {
+        // A re-choice that yields no layer writes nothing either, and leaves the
+        // layer where it was: Tree_Leaves (-10001) is drawn at the census, so
+        // -10002 behind Effect_1 (-10100); once it empties it is the rearmost
+        // filter, Smoke (-10000) one behind it, and no whole depth lies between.
+        // No write until a re-choice finds one again (Smoke empties: -5501).
+        FlightWorld w;
+        Flight f = flightIn(w, { { 1401, -10100.0, "Effect_1", true, 0, true }, { 1402, -10001.0, "Tree_Leaves", true, 34, true },
+                                 { 1403, -10000.0, "Smoke", true, 6, false } });
+        const bool before = depthAt(f, w, 1, 7, 0.0).write && f.Visit().depth == -10002.0;
+        worldLayer(w, 1402)->elements = 0;
+        const DepthWrite none = depthAt(f, w, 2, 7, 1000.0);
+        const DepthWrite still = depthAt(f, w, 3, 7, 1500.0);
+        const bool held = !none.write && !still.write && f.Visit().have && f.Visit().depth == -10002.0
+            && flightDepthIn(w, 7) == -10002.0 && w.moves == 0 && f.Stats().noFront == 2;
+        worldLayer(w, 1403)->elements = 0;
+        const DepthWrite again = depthAt(f, w, 4, 7, 2000.0);
+        check("front_layer_filter/a_rechoice_that_yields_no_layer_writes_nothing",
+            before && held && again.write && f.Visit().depth == -5501.0 && flightDepthIn(w, 7) == -5501.0 && w.moves == 1
+                && f.Stats().depth == 2 && sumsHold(f.Stats()),
+            visitText(f, w, 7));
     }
     {
         // A hidden filter (which, counted, would put -10000 out of reach and
