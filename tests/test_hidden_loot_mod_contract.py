@@ -111,6 +111,9 @@ class HiddenLootPluginWiringTests(unittest.TestCase):
         self.assertEqual(frame.count("HiddenLootTick();"), 1)
         self.assertIn("if (g_Setup) HiddenLootTick();", frame)
         self.assertLess(frame.index("if (g_Setup) FarSleepTick();"), frame.index("if (g_Setup) HiddenLootTick();"))
+        # Sell supersedes hide (ForgePact #196): auto-sell decides first, and
+        # hands this tick the ids it sold.
+        self.assertLess(frame.index("if (g_Setup) AutoSellTick();"), frame.index("if (g_Setup) HiddenLootTick();"))
 
     def test_the_tick_costs_nothing_while_off(self):
         tick = [l.strip() for l in _code(_body(self.plugin, "static void HiddenLootTick()")).splitlines() if l.strip()]
@@ -141,11 +144,14 @@ class HiddenLootPluginWiringTests(unittest.TestCase):
 
     def test_hidden_loot_still_sees_the_call_first(self):
         # ForgePact #158 made the flight charms' ground icon the detour's third
-        # consumer and ForgePact #185 the tracker its fourth; hidden loot keeps
-        # its place, right after the original.
+        # consumer, ForgePact #185 the tracker its fourth and ForgePact #196
+        # auto-sell its fifth; hidden loot keeps its place, right after the
+        # original.
         hook = _code(_body(self.plugin, "static RValue& HookHiddenLootInit(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)"))
         self.assertEqual(hook.count("FlightCharmOnGroundInit(argc, A);"), 1)
         self.assertEqual(hook.count("TrackerOnInit(S, argc, A);"), 1)
+        self.assertEqual(hook.count("AutoSellOnInit(S, argc, A);"), 1)
+        self.assertLess(hook.index(".OnInit("), hook.index("AutoSellOnInit(S, argc, A);"))
         self.assertLess(hook.index(".OnInit("), hook.index("FlightCharmOnGroundInit(argc, A);"))
         self.assertLess(hook.index("LootAnnounceOnInit(S, argc, A);"), hook.index("FlightCharmOnGroundInit(argc, A);"))
         self.assertLess(hook.index("FlightCharmOnGroundInit(argc, A);"), hook.index("TrackerOnInit(S, argc, A);"))
@@ -212,7 +218,8 @@ class HiddenLootPluginWiringTests(unittest.TestCase):
         # The stat fields, in the documented order, shared by `stat` and `0`.
         stat = _code(_body(self.plugin, "static std::string HiddenLootStatFields()"))
         fields = re.findall(r'"\s?([a-z0-9-]+)="', stat)
-        self.assertEqual(fields, ["on", "route", "key", "held", "inits", "slept", "asleep-now", "shown-now", "visible",
+        # `sold` (ForgePact #196): the drops auto-sell sold in their own frame.
+        self.assertEqual(fields, ["on", "route", "key", "held", "inits", "slept", "sold", "asleep-now", "shown-now", "visible",
                                   "no-filter-var", "unidentified", "gone", "passes", "skipped-persistent", "errors",
                                   "by-arg0", "by-arg1", "by-self", "reduced", "dropped", "kinds"])
         # kinds=<arg0>/<arg1>/<self>, one slash between each.
@@ -283,7 +290,7 @@ class HiddenLootClassRulesTests(unittest.TestCase):
         for kind in ("VALUE_OBJECT", "VALUE_REF", "VALUE_REAL", "IsInstanceHandle"):
             self.assertNotIn(kind, identify, kind)
         # Of argument 0, argument 1 and `self`, each is offered to that test.
-        pending = _body(self.code, "void ProcessPending(RoomProbe& roomInfo)")
+        pending = _body(self.code, "void ProcessPending(RoomProbe& roomInfo, const std::unordered_set<int64_t>& sold)")
         self.assertIn("for (const RValue& candidate : call.candidates)", pending)
 
     def test_the_init_path_reduces_each_candidate_inside_the_call(self):

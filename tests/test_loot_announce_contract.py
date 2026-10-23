@@ -322,6 +322,8 @@ class LootAnnouncePluginWiringTests(unittest.TestCase):
         self.assertEqual(frame.count("LootAnnounceTick();"), 1)
         self.assertIn("if (g_Setup) LootAnnounceTick();", frame)
         self.assertLess(frame.index("if (g_Setup) LootAnnounceTick();"), frame.index("if (g_Setup) HiddenLootTick();"))
+        # Auto-sell (ForgePact #196) removes what it sells: the announcement reads the drop first.
+        self.assertLess(frame.index("if (g_Setup) LootAnnounceTick();"), frame.index("if (g_Setup) AutoSellTick();"))
 
     def test_the_rarity_is_read_by_name_from_key_27(self):
         rarity = _code(_body(self.plugin, "static int LaRarity(const RValue& item)"))

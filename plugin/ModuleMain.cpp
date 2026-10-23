@@ -595,6 +595,10 @@ static bool PopulationCapacityAvailable() { return ForgePact::ProtectedPool::Run
 #include <ForgePact/BossRarityMod.hpp>
 #include <ForgePact/DungeonChestMod.hpp>
 #include <ForgePact/HiddenLootMod.hpp>
+// Auto-sell filtered loot (`autosell`, ForgePact #196): the decision core. Its
+// adapter sits after the tracker's; the mod state reads its switch and route.
+#include <ForgePact/AutoSellMod.hpp>
+static void AutoSellSyncRoute();   // the auto-sell adapter, below
 // Jump through scenery (`jumpscenery`, ForgePact #16): the decision core. Its
 // adapter sits after hidden loot sleep's; the mod state reads the switch.
 #include <ForgePact/JumpScenery.hpp>
@@ -29930,6 +29934,14 @@ static void FlushModState(uint32_t frame)
             body += ",\"held\":"; body += hl.Held() ? "true" : "false";
             body += ",\"errors\":" + std::to_string(hl.StatsRef().errors) + "}";
         }
+        {
+            AutoSellSyncRoute();
+            auto& as = ForgePact::AutoSellMod::Instance();
+            body += ",\"autoSell\":{\"enabled\":"; body += as.Enabled() ? "true" : "false";
+            body += ",\"route\":\""; body += as.RouteName(); body += "\"";
+            body += ",\"sold\":" + std::to_string(as.StatsRef().sold);
+            body += ",\"errors\":" + std::to_string(as.StatsRef().errors) + "}";
+        }
         body += ",\"jumpScenery\":{\"enabled\":"; body += g_JumpScenery.Enabled() ? "true" : "false"; body += "}";
         {
             const auto& la = g_LootAnnounce.Stats();
@@ -54570,12 +54582,14 @@ static void FarSleepCommand(const std::string& rest)
 // flight charm's ground icon has loaded, then (ForgePact #166)
 // Mark1OnGroundInit, which returns at once while no Mark 1 piece's ground icon
 // has loaded, then (ForgePact #185) TrackerOnInit, which returns at once while
-// `tracker` is off.
+// `tracker` is off, then (ForgePact #196) AutoSellOnInit, which returns at
+// once while `autosell` is off.
 static PFUNC_YYGMLScript g_Orig_LootGroundInit = nullptr;
 static bool g_HiddenLootInstallTried = false;
 static bool g_HiddenLootVisibleNoted = false;
 static void LootAnnounceOnInit(CInstance* S, int argc, RValue** A);   // the loot announcement adapter, below
 static void TrackerOnInit(CInstance* S, int argc, RValue** A);        // the tracker adapter, below
+static void AutoSellOnInit(CInstance* S, int argc, RValue** A);       // the auto-sell adapter, below
 static void Mark1OnGroundInit(int argc, RValue** A);                  // the Mark 1 set adapter, below
 static RValue& HookHiddenLootInit(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
@@ -54595,6 +54609,9 @@ static RValue& HookHiddenLootInit(CInstance* S, CInstance* O, RValue& R, int arg
     // The fourth (ForgePact #185): the tracker notes the call's handles, as
     // Loot announcements does, and decides the item at the end of the frame.
     TrackerOnInit(S, argc, A);
+    // The fifth (ForgePact #196): auto-sell notes the call's handles the same
+    // way and sells at the end of the frame; returns at once while off.
+    AutoSellOnInit(S, argc, A);
     return result;
 }
 // The one install attempt, on the first switch-on after setup. Both routes
@@ -54666,6 +54683,7 @@ static std::string HiddenLootStatFields()
         + " held=" + (hl.Held() ? "1" : "0")
         + " inits=" + std::to_string(st.inits)
         + " slept=" + std::to_string(st.slept)
+        + " sold=" + std::to_string(st.sold)
         + " asleep-now=" + std::to_string(hl.AsleepNow())
         + " shown-now=" + std::to_string(hl.ShownNow())
         + " visible=" + std::to_string(st.visible)
@@ -57884,6 +57902,245 @@ static void TrackerCommand(const std::string& rest)
     Out(g_Tracker.StatusLine() + " usage: tracker 1 | 0 | stat");
 }
 // ---- end of the tracker adapter
+
+// ---- Auto-sell filtered loot (AutoSellMod.hpp): the adapter -----------------
+// `autosell 1|0|stat` (ForgePact #196, Mods > Quality of Life's switch): a
+// drop the player's own loot filter hides is sold the frame it drops, for the
+// price a merchant would pay, and never reaches the merchant's buyback list.
+// The decision is the class's; this adapter only hands it the game.
+//
+// When: the shared LootGroundInit detour's fifth consumer, AutoSellOnInit,
+// reduces the call's argument 0 and `self` to durable handles inside the
+// call (LaDurable, as the tracker does) and decides nothing there. The hook
+// goes in through the one shared attempt (HiddenLootInstall), from the first
+// `autosell 1` after setup or from the tick. At the frame's end AutoSellTick
+// hands the class the room key; the class decides each note (see the header
+// for the order and its counters), and the instance ids it sold are then
+// handed to hidden loot, which counts their notes `sold` instead of looking
+// for an instance that is gone.
+//
+// The sale's three effects are made by name, each game script through its
+// hs-game-sdk constant and script_execute (ApCallScript), self and other the
+// local player: GetCounterHash() just before PickUpGoldCheck(hash, price, 1,
+// undefined x3), which credits the gold; GoldLogAdd(18, price), as a hand sale
+// logs it; and GetGoldAmount() either side of the credit, which is how the
+// class tells an exact credit from an inexact one. Which `self` the game's
+// credit wants is not established (a hand sale passes the inventory grid's
+// node); Live 1's exact-gold check settles the player. The sell pool, the
+// ownership change and the online inventory record a hand sale also makes
+// are left out by design (docs/auto-sell-research.md).
+static bool g_AutoSellWired = false;
+static bool g_AutoSellRouteSaid = false;
+
+static void AutoSellOnInit(CInstance* S, int argc, RValue** A)
+{
+    auto& as = ForgePact::AutoSellMod::Instance();
+    if (!as.Enabled()) return;
+    const RValue arg0 = argc > 0 && A && A[0] ? LaDurable(*A[0]) : RValue();
+    const RValue self = S ? LaDurable(RValue(S)) : RValue();
+    as.Note(arg0, self);
+}
+
+// The local player, accepted by what it is (an instance handle of any kind
+// this runner produces), never by a raw kind check; false means no sale.
+static bool AsLocalPlayer(RValue& player)
+{
+    try {
+        RValue found;
+        if (!HhResolveLocalPlayer(found) || !HeroSiege::Player::IsInstanceHandle(found)) return false;
+        player = found;
+        return true;
+    } catch (...) { return false; }
+}
+
+// One game script by name, self = other = the local player's instance. True
+// only when it dispatched without throwing.
+static bool AsCallScript(const char* name, const RValue& player, const std::vector<RValue>& args, RValue& res)
+{
+    CInstance* self = nullptr;
+    try { self = HhResolveInstance(player); } catch (...) { return false; }
+    if (!self) return false;
+    return ApCallScript(name, self, args, res);
+}
+
+// The credit: the counter hash read immediately before PickUpGoldCheck, the
+// hand sale's first branch. Only an answer that is true counts; undefined, a
+// string or a dispatch failure is a refused credit, and the item stays.
+static bool AsCredit(const RValue& player, double price)
+{
+    RValue hash, answer;
+    if (!AsCallScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_GetCounterHash), player, {}, hash)) return false;
+    if (!AsCallScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_PickUpGoldCheck), player,
+                      { hash, RValue(price), RValue(1.0), RValue(), RValue(), RValue() }, answer)) return false;
+    const uint32_t kind = static_cast<uint32_t>(answer.m_Kind) & 0x0FFFFFFFU;
+    if (kind != VALUE_BOOL && kind != VALUE_REAL && kind != VALUE_INT32 && kind != VALUE_INT64) return false;
+    return answer.ToBoolean();
+}
+
+// The gold log, type 18 as a hand sale writes it; ForgePact's own tracker and
+// HS Offline Tracker count income from it.
+static bool AsGoldLog(const RValue& player, double price)
+{
+    RValue res;
+    return AsCallScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_GoldLogAdd), player,
+                        { RValue(18.0), RValue(price) }, res);
+}
+
+// The balance, by the game's own getter (no argument); a finite number or
+// nothing.
+static bool AsGoldRead(const RValue& player, double& gold)
+{
+    RValue res;
+    if (!AsCallScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_GetGoldAmount), player, {}, res)) return false;
+    const uint32_t kind = static_cast<uint32_t>(res.m_Kind) & 0x0FFFFFFFU;
+    if (kind != VALUE_REAL && kind != VALUE_INT32 && kind != VALUE_INT64) return false;
+    const double value = res.ToDouble();
+    if (!std::isfinite(value)) return false;
+    gold = value;
+    return true;
+}
+
+// An item struct's identity for the room's credited set: the loot announcer's
+// key (a struct by its object, a reference by its value).
+static bool AsItemKey(const RValue& itemStruct, ForgePact::AutoSellMod::ItemKey& key)
+{
+    ForgePact::LootAnnounceMod::ItemKey shared{};
+    if (!LaItemKey(itemStruct, shared)) return false;
+    key = { static_cast<uint64_t>(shared.kind), shared.value };
+    return true;
+}
+
+// The room as far sleep and hidden loot read it: readable, and persistent or not.
+static ForgePact::AutoSellMod::Room AsRoomInfo()
+{
+    const ForgePact::FarSleep::RoomInfo info = FarSleepRoomInfo();
+    ForgePact::AutoSellMod::Room room;
+    room.readable = info.readable;
+    room.persistent = info.persistent;
+    return room;
+}
+
+static void AutoSellWire()
+{
+    if (g_AutoSellWired) return;
+    g_AutoSellWired = true;
+    auto& as = ForgePact::AutoSellMod::Instance();
+    as.SetLocalPlayer(&AsLocalPlayer);
+    as.SetCredit(&AsCredit);
+    as.SetGoldLog(&AsGoldLog);
+    as.SetGoldRead(&AsGoldRead);
+    as.SetItemKey(&AsItemKey);
+    as.SetRoomInfo(&AsRoomInfo);
+}
+
+// The route is the shared detour's: not-installed until its one attempt ran,
+// then whatever that attempt got. No runner call and no line.
+static void AutoSellSyncRoute()
+{
+    auto& as = ForgePact::AutoSellMod::Instance();
+    if (!g_HiddenLootInstallTried) { as.SetRoute(ForgePact::AutoSellMod::Route::NotInstalled); return; }
+    switch (ForgePact::HiddenLootMod::Instance().GetRoute()) {
+    case ForgePact::HiddenLootMod::Route::Both: as.SetRoute(ForgePact::AutoSellMod::Route::Both); break;
+    case ForgePact::HiddenLootMod::Route::TableOnly: as.SetRoute(ForgePact::AutoSellMod::Route::TableOnly); break;
+    default: as.SetRoute(ForgePact::AutoSellMod::Route::None); break;
+    }
+}
+
+// Once a session, while on: a route other than both is said out loud. There
+// is no fallback scan, so a drop the hook does not see is not sold.
+static void AutoSellSayRoute()
+{
+    auto& as = ForgePact::AutoSellMod::Instance();
+    if (g_AutoSellRouteSaid || !as.Enabled()) return;
+    const ForgePact::AutoSellMod::Route route = as.GetRoute();
+    if (route != ForgePact::AutoSellMod::Route::TableOnly && route != ForgePact::AutoSellMod::Route::None) return;
+    g_AutoSellRouteSaid = true;
+    Out(std::string("autosell: LootGroundInit hook ") + as.RouteName()
+        + " - the game's own drop calls may pass it by, and nothing is sold for the drops it does not see");
+}
+
+// The per-frame tick. Returns at once while the switch is off; otherwise
+// installs the shared detour if nobody has, lets the class decide this
+// frame's notes, and hands hidden loot the ids it sold.
+static void AutoSellTick()
+{
+    auto& as = ForgePact::AutoSellMod::Instance();
+    if (!as.Enabled()) return;
+    if (!g_HiddenLootInstallTried) HiddenLootInstall();
+    AutoSellSyncRoute();
+    AutoSellSayRoute();
+    as.OnFrame(CurrentRoomKey());
+    auto& hl = ForgePact::HiddenLootMod::Instance();
+    for (const int64_t id : as.SoldThisFrame()) hl.NoteSold(id);
+}
+
+#ifndef FORGEPACT_RELEASE
+// `autosell quote <map-0 fingerprint>` (research build): the price the sale
+// would credit for a bag item, through the same price function, so Live 1 can
+// compare it with a hand sale of the same item. The item is found the way
+// `giveitem bag` finds its template, GetItemMap(0) and the ds_map builtins.
+// Reads only.
+static void AutoSellQuote(const std::string& key)
+{
+    const std::string tag = "autosell quote: ";
+    if (key.empty() || key.find_first_of(" \t") != std::string::npos) {
+        Out(tag + "refused - usage: autosell quote <map-0 fingerprint>");
+        return;
+    }
+    try {
+        CInstance* save = CmSaveInstance();
+        if (!save) { Out(tag + "refused - no Console_Save_obj instance"); return; }
+        RValue map0, item;
+        if (!CmItemMap(save, kCmCharacterOwner, map0)) { Out(tag + "refused - GetItemMap(0) answered no map"); return; }
+        if (!CmMapItem(map0, RValue(key), item)) { Out(tag + "refused - map 0 holds no item " + key); return; }
+        std::string fields, why;
+        if (!ForgePact::AutoSellMod::Instance().QuoteFields(item, fields, why)) { Out(tag + "refused - " + why); return; }
+        Out(tag + "key=" + key + " " + fields);
+    } catch (...) { Out(tag + "refused - a read threw"); }
+}
+#endif
+
+// `autosell 1|0` (the panel's switch), `autosell stat` (or bare `autosell`),
+// and, in the research build, `autosell quote <fp>`. The live procedure reads
+// the ON, OFF and stat lines by field name.
+static void AutoSellCommand(const std::string& rest)
+{
+    const std::string trimmed = TrimCopy(rest);
+    const std::string arg = Lower(trimmed);
+    auto& as = ForgePact::AutoSellMod::Instance();
+    AutoSellWire();
+    if (arg == "1" || arg == "on") {
+        // At character select (the launch commands) the switch is only armed;
+        // the tick installs once setup is done.
+        if (g_Setup && !g_HiddenLootInstallTried) HiddenLootInstall();
+        as.Enable();
+        AutoSellSyncRoute();
+        Out(std::string("autosell -> ON route=") + as.RouteName());
+        AutoSellSayRoute();
+        return;
+    }
+    if (arg == "0" || arg == "off") {
+        as.Disable();
+        AutoSellSyncRoute();
+        Out("autosell -> OFF " + as.StatFields());
+        return;
+    }
+    if (arg.empty() || arg == "stat") {
+        AutoSellSyncRoute();
+        Out("autosell stat: " + as.StatFields());
+        return;
+    }
+    if (arg == "quote" || arg.rfind("quote ", 0) == 0 || arg.rfind("quote\t", 0) == 0) {
+#ifndef FORGEPACT_RELEASE
+        AutoSellQuote(TrimCopy(trimmed.substr(5)));
+#else
+        Out("autosell: quote refused - research build only; nothing was read");
+#endif
+        return;
+    }
+    Out("autosell: usage autosell 1 | 0 | stat");
+}
+// ---- end of the auto-sell adapter
 
 #ifndef FORGEPACT_RELEASE
 // ===== Zone census (`zonecensus [near radius]`, research build) =====
@@ -70098,7 +70355,7 @@ static void RunCommand(const std::string& line)
         "playerwarp", "stashtab", "bagtab", "stashclose", "giveitem", "frameprof", "farsleep",
         "stashmoveall", "stashmove", "densityroll", "hiddenloot", "bossrarity", "incident", "dungeonchest",
         "jumpscenery", "skillslider", "gambapity", "lootann", "pillartips", "flightcharm", "soulpiece",
-        "tracker", "mark1set", "numguard"
+        "tracker", "mark1set", "numguard", "autosell"
     };
     if (kPlayerCommands.find(lc) == kPlayerCommands.end()) {
         Out("command unavailable in player build: " + cmd);
@@ -70287,6 +70544,9 @@ static void RunCommand(const std::string& line)
     // Hidden loot sleep: the Mods tab's switch and its show key, the same
     // standalone early return.
     if (lc == "hiddenloot") { HiddenLootCommand(rest); return; }
+    // Auto-sell filtered loot (Mods > Quality of Life, ForgePact #196): the
+    // switch's command, the same early return.
+    if (lc == "autosell") { AutoSellCommand(rest); return; }
     // Bosses (Mods > Gameplay): the select's command, the same early return.
     if (lc == "bossrarity") { BossRarityCommand(rest); return; }
     // Dungeon chest opens early (Mods > Gameplay): the switch-and-slider's
@@ -71779,6 +72039,15 @@ void FrameCallback(FWFrame& FrameContext)
     // (TrackerMod.hpp). Before hidden loot's tick, for the reason above.
     // Returns at once while it is off.
     if (g_Setup) TrackerTick();
+
+    // Auto-sell filtered loot, toggled by `autosell 1` (ForgePact #196): the
+    // drops the shared LootGroundInit detour noted this frame that the
+    // player's loot filter hides are sold and removed (AutoSellMod.hpp).
+    // After the announcer and the tracker, which read the drop before it is
+    // gone, and before hidden loot's tick, which could otherwise put a
+    // sellable drop to sleep, where it can no longer be found. Returns at once
+    // while it is off.
+    if (g_Setup) AutoSellTick();
 
     // Hidden loot sleep, toggled by `hiddenloot 1`: a drop the player's loot
     // filter hides sleeps at the end of the frame it dropped in, and wakes
