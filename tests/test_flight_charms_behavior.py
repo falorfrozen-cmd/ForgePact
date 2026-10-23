@@ -37,8 +37,13 @@ prints), `tooltip_rows`
 the baseline, or at the first format-2/3 call on an item with no stats,
 Pocket Elf, the target; ForgedTooltipRows.hpp, which the harness includes),
 `stand_in`
-(the even-count rule and the coin) and `stat_line` (the fresh session's line,
-byte for byte).
+(the even-count rule and the coin), `elf_draw` (#166, Pocket Elf's kill route
+on DropItem's own draw: with the switch off or inside a roll already in
+progress a call pushes nothing, the baseline; on, the SS-only stand-in over
+lootListUnique[0..5], the coin at the call's recorded tier, no tier refusing
+the hit, two hits in one call settled apart and a nested roll setting the
+entries aside, the target) and `stat_line` (the fresh session's line, byte for
+byte).
 """
 import os
 import shutil
@@ -343,6 +348,41 @@ class FlightCharmsCoreBehaviorTests(unittest.TestCase):
 
     def test_stand_in_coin(self):
         self.assertScenarios("stand_in/the_coin_c_over_n_plus_c")
+
+    # ---- drops: Pocket Elf's kill route on DropItem's own draw (#166) -------
+
+    def test_elf_draw_baseline_switch_off_pushes_nothing(self):
+        self.assertScenarios("elf_draw/baseline_switch_off_pushes_nothing")
+
+    def test_elf_draw_baseline_nested_roll_passes_untouched(self):
+        self.assertScenarios("elf_draw/baseline_a_nested_roll_passes_untouched")
+
+    def test_elf_draw_target_stand_in_is_ss_only(self):
+        # Aimbot.exe's rarity and tier, with no fallback below SS (the owner,
+        # 2026-10-21).
+        self.assertScenarios("elf_draw/target_the_stand_in_is_ss_and_the_smallest_largest_count",
+                             "elf_draw/target_no_ss_candidate_is_none_with_no_fallback",
+                             "elf_draw/target_the_stand_in_resolves_again_when_a_list_changes",
+                             "elf_draw/target_the_stand_in_field")
+
+    def test_elf_draw_target_coin_per_k(self):
+        self.assertScenarios("elf_draw/target_the_coin_per_k",
+                             "elf_draw/target_the_hit_takes_the_coin_at_the_calls_k",
+                             "elf_draw/target_an_inner_call_reads_its_own_tier")
+
+    def test_elf_draw_target_no_tier_refuses_the_hit(self):
+        self.assertScenarios("elf_draw/target_no_tier_recorded_refuses_the_hit")
+
+    def test_elf_draw_target_push_and_two_hits_settled_apart(self):
+        self.assertScenarios("elf_draw/target_a_call_pushes_and_takes_its_entries_off",
+                             "elf_draw/target_two_hits_in_one_call_are_settled_apart")
+
+    def test_elf_draw_target_nested_roll_sets_the_entries_aside(self):
+        self.assertScenarios("elf_draw/target_a_nested_roll_sets_the_entries_and_the_hit_aside")
+
+    def test_elf_draw_target_stat_fields(self):
+        self.assertScenarios("elf_draw/target_the_stat_fields_after_use",
+                             "stat_line/the_fresh_session_line_byte_for_byte")
 
     # ---- the install and the command ----------------------------------------
 

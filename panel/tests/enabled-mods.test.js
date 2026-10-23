@@ -29,7 +29,7 @@ test('an empty or missing config is not an error', () => {
 });
 
 test('every boolean mod is an entry when true, keyed by its own checkbox', () => {
-  assert.equal(BOOLEAN_MODS.length, 29);
+  assert.equal(BOOLEAN_MODS.length, 31);
   for (const key of BOOLEAN_MODS) {
     assert.deepEqual(enabledControls(cfg({ [key]: true })), [key], key);
     assert.deepEqual(enabledControls(cfg({ [key]: false })), [], key);
@@ -141,6 +141,24 @@ test('the three flight charms\' drop switches are entries while on and off by de
   }
   // Each is its own entry, in the Items card's order.
   assert.deepEqual(enabledControls(cfg(Object.fromEntries(keys.map((k) => [k, true])))), keys);
+});
+
+test('the Mark 1 set\'s switch is an entry while on and off by default', () => {
+  assert.ok(BOOLEAN_MODS.includes('mod_mark1_set'));
+  assert.equal(DEFAULTS.mod_mark1_set, false);
+  assert.deepEqual(enabledControls(cfg({ mod_mark1_set: true })), ['mod_mark1_set']);
+  assert.deepEqual(enabledControls(cfg({ mod_mark1_set: false })), []);
+  // After the flight charms, in the Items card's order.
+  assert.deepEqual(enabledControls(cfg({ mod_flight_broom: true, mod_mark1_set: true })), ['mod_flight_broom', 'mod_mark1_set']);
+});
+
+test('Mark 1 drops\' switch is an entry while on and off by default', () => {
+  assert.ok(BOOLEAN_MODS.includes('mod_mark1_drops'));
+  assert.equal(DEFAULTS.mod_mark1_drops, false);
+  assert.deepEqual(enabledControls(cfg({ mod_mark1_drops: true })), ['mod_mark1_drops']);
+  assert.deepEqual(enabledControls(cfg({ mod_mark1_drops: false })), []);
+  // Directly after the Mark 1 set's, in the Items card's order.
+  assert.deepEqual(enabledControls(cfg({ mod_mark1_set: true, mod_mark1_drops: true })), ['mod_mark1_set', 'mod_mark1_drops']);
 });
 
 test('loot announcements is an entry while on and off by default', () => {

@@ -63,6 +63,10 @@ SIGNATURES = {
     # charms, so their install and their detour are one each, used by both.
     "shared_install": "static std::string CollisionBuiltinsInstall()",
     "shared_detour": "static void CollisionBuiltinDetour(",
+    # ForgePact #166: skillsLeap's one install and the three objects' one
+    # resolution are shared with the Mark 1 set, whichever installs first.
+    "leap_install": "static std::string SkillsLeapInstall()",
+    "resolve": "static std::string JsResolveObjects()",
 }
 
 
@@ -161,7 +165,12 @@ class JumpSceneryModContract(unittest.TestCase):
         self.assertLess(tick.index("if (!g_JumpScenery.Installed())"), tick.index("JsRefreshPlayer();"))
         self.assertNotIn("JumpSceneryInstall", tick)
         install = self.body("install")
-        self.assertEqual(self.code.count("HookOneScript("), install.count("HookOneScript("), "HookOneScript( outside JumpSceneryInstall")
+        # skillsLeap's HookOneScript is in its shared install (ForgePact #166),
+        # which JumpSceneryInstall calls.
+        leap_install = self.body("leap_install")
+        self.assertEqual(self.code.count("HookOneScript("), leap_install.count("HookOneScript("),
+                         "HookOneScript( outside SkillsLeapInstall")
+        self.assertIn("SkillsLeapInstall()", install)
         # The builtins go in through the shared install, which this adapter
         # reaches only from JumpSceneryInstall.
         shared = self.body("shared_install")
@@ -175,9 +184,12 @@ class JumpSceneryModContract(unittest.TestCase):
         self.assertIn("static constexpr unsigned long long kInstallPollFrames = 60;", self.header)
 
     def test_skills_leap_through_its_sdk_constant_and_hook_one_script(self):
-        install = self.body("install")
+        # ForgePact #166: the install moved, unchanged, into SkillsLeapInstall,
+        # shared with the Mark 1 set; JumpSceneryInstall refuses on its answer.
+        install = self.body("leap_install")
         self.assertIn("HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_skillsLeap), \"fp_jumpscenery_leap\","
                       " (PVOID)JsHookLeap, &g_JsOrigLeap, &native)", install)
+        self.assertIn('if (!leap.empty()) return leap + "; the mod stays off";', self.body("install"))
         self.assertNotIn('"skillsLeap"', self.code)
         self.assertNotIn('"gml_Script_skillsLeap"', self.code)
         self.assertNotIn("HookOneScriptTable", self.code)
@@ -209,8 +221,12 @@ class JumpSceneryModContract(unittest.TestCase):
         excluded = re.search(r"kJsExcluded\[\] = \{(.*?)\};", self.code, re.S).group(1)
         self.assertEqual(re.findall(r"HeroSiege::Objects::GameObject::(\w+)", excluded), ["Gate_Parent_obj", "Lock_obj"])
         install = self.body("install")
-        self.assertIn('"asset_get_index"', install)
-        self.assertIn("HeroSiege::Objects::GetObjectName(", install)
+        # ForgePact #166: the names resolve in JsResolveObjects, shared with
+        # the Mark 1 set, which JumpSceneryInstall calls.
+        resolve = self.body("resolve")
+        self.assertIn('"asset_get_index"', resolve)
+        self.assertIn("HeroSiege::Objects::GetObjectName(", resolve)
+        self.assertIn("JsResolveObjects()", install)
         self.assertIn('"object_is_ancestor"', install)
         self.assertIn("g_JumpScenery.SetFamily(", install)
         for name in ("Collision_Parent_obj", "Gate_Parent_obj", "Lock_obj", "Wall_Parent_obj", "Player_obj"):
@@ -276,8 +292,10 @@ class JumpSceneryModContract(unittest.TestCase):
         # jumpscenery never runs the original a second time on the result.
         self.assertNotIn("orig(Result, S, O, argc, Args);", self.body("builtin"))
         self.assertIn("CollisionBuiltinDetour(I, Result, S, O, argc, Args);", self.code)
+        # ForgePact #166: the detour is shared with the Mark 1 set, so it runs
+        # the original alone while both switches are off.
         self.assertEqual(self.lines("leap")[0],
-                         "if (!g_JumpScenery.Enabled() || g_JsBusy) return g_JsOrigLeap(S, O, R, argc, A);")
+                         "if ((!g_JumpScenery.Enabled() && !g_Mark1.Enabled()) || g_JsBusy) return g_JsOrigLeap(S, O, R, argc, A);")
 
     def test_the_original_runs_before_the_core_decides_and_only_the_local_player_counts(self):
         detour = self.body("shared_detour")
@@ -314,7 +332,8 @@ class JumpSceneryModContract(unittest.TestCase):
         self.assertIn('"citrace holds "', holders)
         self.assertIn('"jumpprobe holds "', holders)
         install = self.body("install")
-        self.assertLess(install.index("JumpSceneryResearchHolders(false)"), install.index("HookOneScript("))
+        # ForgePact #166: skillsLeap's HookOneScript is in SkillsLeapInstall now.
+        self.assertLess(install.index("JumpSceneryResearchHolders(false)"), install.index("SkillsLeapInstall()"))
         # Research build only: neither instrument exists in the player build.
         self.assertNotIn("JumpSceneryResearchHolders", self.shipped)
         self.assertNotIn("citrace", self.shipped_block)

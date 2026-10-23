@@ -80,7 +80,8 @@ if str(TESTS_DIR) not in sys.path:
 from test_release_hook_contract import function_body, strip_comments, strip_research_blocks  # noqa: E402
 
 BLOCK_START = "// gambapity (ForgePact #134 phase 6, player build): the Goburin's Head pity"
-BLOCK_END = "static void RunCommand(const std::string& line)"
+# gambapity's own end banner: the Mark 1 adapter follows it, before RunCommand.
+BLOCK_END = "// ===== end of gambapity (ForgePact #134) ====="
 
 # The charm's repository identifier: type, sub, base.
 CHARM = (10, 0, 98)

@@ -1,0 +1,1256 @@
+#pragma once
+
+#include <array>
+#include <cmath>
+#include <cstdint>
+#include <functional>
+#include <initializer_list>
+#include <string>
+#include <string_view>
+#include <vector>
+
+#include <ForgePact/Mark1Cost.hpp>
+#include <ForgePact/Mark1Priority.hpp>
+#include <ForgePact/Mark1Rolls.hpp>
+
+// The talent-screen objects' names (AskerOf below). Optional so the harnesses
+// that include this header without hs-game-sdk still compile; the plugin and
+// tests/mark1_set_harness.cpp build with it.
+#if __has_include(<hs_game_sdk/objects.hpp>)
+#include <hs_game_sdk/objects.hpp>
+#endif
+
+namespace ForgePact::Mark1Set {
+
+// ---- Mark 1: the set's decision core (ForgePact #166, phase 2) ----------------
+//
+// Four built-in Satanic pieces at SS tier: helmet, body armor, boots and gloves, each with
+// its own rolled stats (Mark1Rolls.hpp). Worn together, wherever among the gear slots,
+// with the "Mark 1 set" switch on, they give the set bonus's lines at 2, 3 and 4 pieces
+// (Mark1Rolls.hpp's table, answered through the stat dispatcher by the adapter); while
+// all four are worn the bonus is active: Mark1Automation.hpp casts the bar's Q, E, R
+// and Y, Mark1Jump.hpp scales the jump and Mark1Movement.hpp halves the walk.
+//
+// This header decides; it never touches the game. It holds:
+//   - the piece table and recognition. A piece is saved as its base item of
+//     its own class with a seed `a` from its own roll band (Mark1Rolls.hpp:
+//     the seed carries the piece's rolled stats, as a flight charm's does),
+//     or its legacy seed in ForgePact's built-in band (a piece made before
+//     the rolls); the seed layout is a save format after release.
+//   - the dressing's constants (name, rarity, tier, mechanic) and its rarity
+//     and tier decision (Dress). The adapter writes them through a
+//     recognition-only CustomForgeEntry, as the flight charms' are.
+//   - the full-set read's verdict, from the worn gear slots the adapter reads,
+//     refreshed at most once every kRefreshFrames at the point of use (inside
+//     the CheckTalentUse detour) and on `mark1set stat`.
+//   - the install state: switched on by `mark1set bonus 1`, installed once a
+//     character exists (the guide's Known Limitations item 8, as jumpscenery).
+//   - the `mark1set` command's forms and its `stat` line, whose automation,
+//     jump, art and movement fields the other cores' counters fill.
+//   - the pieces' art rule: armed by the session's first dressing of a piece
+//     or first switch-on of the drops (Mark1Drops.hpp), and when a dressing may
+//     write our icon and the ground consumer may go in.
+//   - the set block a piece's tooltip draws, the way the game draws its own
+//     sets' (`+1 to Automation`, its description, the set's name and its four
+//     pieces, the worn ones green), and the piece's type line.
+//
+// It is game-independent by contract - numbers and strings, never an instance
+// or an RValue - so tests/mark1_set_harness.cpp compiles it whole. The adapter
+// in ModuleMain.cpp resolves every script and global by name and hands the
+// gear slots in through ReadWornFn, as MinerHelmetMod.hpp's ReadWorn reads the
+// helmet. The worn gear is global.equippedItems[global.mplr][0][slot], as
+// fingerprint strings (the hub's docs/RUNTIME_DATA_MODELS.md, "Equipment Slots
+// Layout"). Which gear slot holds which class is not measured past the helmet
+// at 0 and the off hand at 9 (Mod live 2's `equip-detect` found the worn
+// gloves were not at 3), so a piece counts in whichever gear slot holds it.
+
+// ---- the four pieces ----------------------------------------------------------
+
+enum class Piece : int { Helmet, Body, Boots, Gloves };
+inline constexpr int kPieceCount = 4;
+
+struct PieceRow {
+    Piece            piece;
+    std::string_view key;         // `mark1probe spawn`'s word
+    std::string_view name;        // the display name dressing writes
+    int              itemType;    // the class, HeroSiege::Items::ItemType
+    long long        legacySeed;  // the definition's `a` every piece made before the rolls carries
+    int              baseB;       // the base item's `b` a new piece is built on
+};
+
+// Classes: Helmet 0, Body 1, Boots 2, Gloves 4 (hs-game-sdk's item_type.hpp;
+// the behavior test pins them against it). Bases as Mod live 1 measured them
+// (`base-control` and `base-check`; `piece-bases:` in docs/mark1-set-research.md,
+// which the behavior test pins this table against): the helmet builds at base
+// 7, the one the signature helmets use, and body armor, boots and gloves each
+// at base 0. `b` is not part of recognition, so changing a base later does not
+// orphan a piece already made.
+inline constexpr PieceRow kPieces[kPieceCount] = {
+    { Piece::Helmet, "helmet", "Mark 1 Helmet",     0, 777500, 7 },
+    { Piece::Body,   "body",   "Mark 1 Body Armor", 1, 777501, 0 },
+    { Piece::Boots,  "boots",  "Mark 1 Boots",      2, 777502, 0 },
+    { Piece::Gloves, "gloves", "Mark 1 Gloves",     4, 777503, 0 },
+};
+
+// ForgePact's built-in seed band. The legacy seeds 777500..777503 sit clear of
+// the ranges in use when the table was written (777001-777003, 777100-777109,
+// 777200-777343, 777400-777490, and 779000 up). A piece made since the rolls
+// carries a seed of its own roll band instead (Mark1Rolls.hpp: helmet
+// 1,000,000,000, body 1,001,000,000, boots 1,002,000,000, gloves
+// 1,003,000,000, each holding exactly its rolls).
+inline constexpr long long kBuiltInSeedLo = 777000;
+inline constexpr long long kBuiltInSeedHi = 777999;
+
+// The legacy seeds are distinct, inside the built-in band, in piece order and
+// the rolls core's own; the rolls core's bands are exact (Mark1Rolls.hpp's
+// BandsExact) and sit far above the built-in band; and both tables list the
+// pieces in the same order.
+inline constexpr bool SeedsDistinctInBand()
+{
+    if (!Mark1Rolls::BandsExact() || Mark1Rolls::kPieceCount != kPieceCount) return false;
+    for (int i = 0; i < kPieceCount; ++i) {
+        const long long legacy = kPieces[i].legacySeed;
+        if (legacy < kBuiltInSeedLo || legacy > kBuiltInSeedHi) return false;
+        if (static_cast<int>(kPieces[i].piece) != i) return false;
+        if (static_cast<int>(Mark1Rolls::kPieceRolls[i].piece) != i) return false;
+        if (Mark1Rolls::kPieceRolls[i].legacySeed != legacy) return false;
+        if (Mark1Rolls::kPieceRolls[i].bandLo <= kBuiltInSeedHi) return false;
+        for (int k = i + 1; k < kPieceCount; ++k)
+            if (legacy == kPieces[k].legacySeed) return false;
+    }
+    return true;
+}
+static_assert(SeedsDistinctInBand(), "the four legacy seeds are distinct, inside 777000..777999 and the rolls core's, the table in piece order, and the roll bands exact");
+
+// ---- the dressing --------------------------------------------------------------
+
+// Rarity Satanic, as the game's own set pieces are (Live 1's D4 measured Sacred
+// Pendant at 6), and tier SS, so a loot filter does not hide a piece (the
+// owner, 2026-10-20). hs-game-sdk/curated/item_info.json names both codes; the
+// behavior test pins them against it.
+inline constexpr int kRarity = 6;                       // Satanic (itemInfoStruct "27")
+inline constexpr int kTier = 5;                         // SS (itemInfoStruct "32")
+inline constexpr std::string_view kMechanic = "mark1";  // fp_mechanic
+// The piece's own rolled stats are written (Mark1Rolls.hpp's StatsFor, from
+// its seed); no affix rows and no lore: the tooltip's set block (below) says
+// what the set does.
+
+inline const PieceRow& RowOf(Piece p)
+{
+    return kPieces[static_cast<int>(p)];
+}
+
+inline bool PieceFromKey(std::string_view key, Piece& out)
+{
+    for (const PieceRow& r : kPieces) {
+        if (r.key != key) continue;
+        out = r.piece;
+        return true;
+    }
+    return false;
+}
+
+// A whole number a real holds exactly (|v| <= 2^53 - 1).
+inline bool AsWhole(double v, long long& out)
+{
+    if (!std::isfinite(v) || std::floor(v) != v || std::fabs(v) > 9007199254740991.0) return false;
+    out = static_cast<long long>(v);
+    return true;
+}
+
+// Recognition, with the piece's rolls: the item's `itemType` is a piece's
+// class, its definition's `a` is a seed of that piece's roll band or its
+// legacy seed (Mark1Rolls.hpp's DecodeSeed, which also gives the rolls), and
+// its `j` is 0 (not a unique). `b` and `c` are read by the adapter and
+// deliberately ignored here. A seed of another piece's band on this class is
+// no piece.
+inline bool DecodePiece(double itemType, double a, double /*b*/, double /*c*/, double j, Piece& out,
+                        Mark1Rolls::Rolled& rolled)
+{
+    long long tt = 0, aa = 0, jj = 0;
+    if (!AsWhole(itemType, tt) || !AsWhole(a, aa) || !AsWhole(j, jj) || jj != 0) return false;
+    Mark1Rolls::Rolled r;
+    if (!Mark1Rolls::DecodeSeed(aa, r)) return false;
+    const PieceRow& row = kPieces[static_cast<int>(r.piece)];
+    if (row.itemType != tt) return false;
+    out = row.piece;
+    rolled = r;
+    return true;
+}
+
+// Recognition alone (DecodePiece without the rolls).
+inline bool IsPiece(double itemType, double a, double b, double c, double j, Piece& out)
+{
+    Mark1Rolls::Rolled rolled;
+    return DecodePiece(itemType, a, b, c, j, out, rolled);
+}
+
+// The dressing's decision on one item's rarity ("27") and tier ("32"): a piece,
+// by its own fields (IsPiece), comes out at kRarity and kTier whatever its base
+// gave it; any other item keeps what it came with, a stand-in's build before
+// the drops' rewrite included. The adapter takes it through Mark1ForgeEntry,
+// which only a piece reaches, and the Custom Forge's final pass writes both.
+struct Dressed {
+    double rarity;
+    double tier;
+};
+
+inline Dressed Dress(double itemType, double a, double b, double c, double j, double rarity, double tier)
+{
+    Piece p = Piece::Helmet;
+    if (!IsPiece(itemType, a, b, c, j, p)) return { rarity, tier };
+    return { static_cast<double>(kRarity), static_cast<double>(kTier) };
+}
+
+// ---- the full-set read ----------------------------------------------------------
+
+// One worn slot as the adapter read it: empty (no fingerprint), an item with
+// its class and definition fields, or unreadable (the fingerprint or the item
+// behind it could not be resolved).
+enum class SlotRead : int { Empty, Item, Unreadable };
+
+struct WornSlot {
+    SlotRead read = SlotRead::Unreadable;
+    double   itemType = 0;
+    double   a = 0;
+    double   b = 0;
+    double   c = 0;
+    double   j = 0;
+};
+
+// The worn gear: equippedItems[mplr][0] slots 0..9 (10-14 are the relics and
+// 15 up the charms, RDM "Equipment Slots Layout"), indexed by slot.
+inline constexpr int kGearSlotCount = 10;
+using WornSlots = std::array<WornSlot, kGearSlotCount>;
+
+inline constexpr int kNotFound = -1;
+
+struct SetRead {
+    int  matched = 0;     // pieces found among the gear slots, each once
+    int  unreadable = 0;  // gear slots that could not be read
+    bool full = false;
+    // The gear slot each piece was first found in, by Piece; kNotFound if none.
+    std::array<int, kPieceCount> foundSlot{ kNotFound, kNotFound, kNotFound, kNotFound };
+};
+
+// Full = each of the four pieces is worn in some gear slot. A piece worn twice
+// counts once, at its first slot. An unreadable slot is counted; it can leave
+// a piece unfound, never make one found, so it blocks nothing already found.
+inline SetRead Evaluate(const WornSlots& slots)
+{
+    SetRead r;
+    for (int i = 0; i < kGearSlotCount; ++i) {
+        const WornSlot& s = slots[static_cast<size_t>(i)];
+        if (s.read == SlotRead::Unreadable) {
+            ++r.unreadable;
+            continue;
+        }
+        Piece p = Piece::Helmet;
+        if (s.read != SlotRead::Item || !IsPiece(s.itemType, s.a, s.b, s.c, s.j, p)) continue;
+        int& found = r.foundSlot[static_cast<size_t>(p)];
+        if (found != kNotFound) continue;
+        found = i;
+        ++r.matched;
+    }
+    r.full = r.matched == kPieceCount;
+    return r;
+}
+
+// The ` set=` field: full, partial(<n>) or none.
+inline std::string SetText(const SetRead& r)
+{
+    if (r.full) return "full";
+    if (r.matched == 0) return "none";
+    return "partial(" + std::to_string(r.matched) + ")";
+}
+
+// The ` worn=` field: the gear slot each piece was found in, helmet/body/
+// boots/gloves joined by `/`, `-` for one not found.
+inline std::string WornText(const SetRead& r)
+{
+    std::string s;
+    for (int i = 0; i < kPieceCount; ++i) {
+        if (i) s += "/";
+        const int slot = r.foundSlot[static_cast<size_t>(i)];
+        s += slot == kNotFound ? std::string("-") : std::to_string(slot);
+    }
+    return s;
+}
+
+// ---- the `mark1set stat` line -------------------------------------------------------
+
+inline constexpr int kColumnCount = 4;  // bar columns 3..6: Q, E, R, Y
+
+// One automated column's counters, filled from Mark1Automation.hpp's. The four
+// failures are never folded into a skip: `presses=0` has to say whether a read
+// or a write failed, or every column was skipped.
+struct ColumnCounts {
+    uint64_t presses = 0;
+    uint64_t skipEmpty = 0;           // no skill on the column
+    uint64_t skipAura = 0;            // an aura, never automated
+    uint64_t skipToggleOn = 0;        // a toggle already on
+    uint64_t skipSettle = 0;          // a toggle inside its settle window
+    uint64_t skipNoState = 0;         // a toggle whose state could not be read
+    uint64_t unreadable = 0;          // the bar column itself could not be read
+    uint64_t originalUnreadable = 0;  // a press planned, the entry's value unreadable: nothing pressed
+    uint64_t pressWriteFailed = 0;    // the press could not be written
+    uint64_t restoreFailed = 0;       // the original value could not be put back
+    // The turn rule's (Mark1Automation.hpp's counters of the same names).
+    uint64_t landed = 0;              // a cast landed during a gate call that pressed this column (the press route; a proc counts in procs= only)
+    uint64_t skipTurn = 0;            // eligible, but another column held the turn (or this one rested)
+    uint64_t yielded = 0;             // gave up the turn after its patience ran out without a landing
+};
+
+// The jump's counters and its natural maximum M, filled from Mark1Jump.hpp's.
+// The refusals on a successful read (rejected*) are per candidate; a failed
+// read (unread*) is counted by what was being read, never as the game's answer.
+struct JumpCounts {
+    uint64_t    granted = 0;
+    uint64_t    backedOff = 0;
+    uint64_t    refusedLanding = 0;
+    uint64_t    refusedGate = 0;
+    uint64_t    refusedCursor = 0;
+    double      max = 175;             // M
+    std::string maxSource = "start";   // cap, reach or start
+    uint64_t    refusedUnreadable = 0; // vanilla: a read the decision needed failed
+    uint64_t    jumps = 0;
+    uint64_t    scaled = 0;            // skillsLeap calls whose displacement was rewritten
+    uint64_t    clamped = 0;
+    uint64_t    answered = 0;
+    uint64_t    excluded = 0;
+    uint64_t    rejectedRoom = 0;
+    uint64_t    rejectedFamily = 0;
+    uint64_t    rejectedGrid = 0;
+    uint64_t    rejectedGate = 0;
+    uint64_t    unreadTakeoff = 0;
+    uint64_t    unreadCursor = 0;
+    uint64_t    unreadRoom = 0;
+    uint64_t    unreadFamily = 0;
+    uint64_t    unreadGrid = 0;
+    uint64_t    unreadGate = 0;
+    uint64_t    gridFree = 0;      // grid cells read free
+    uint64_t    gridBlocked = 0;   // grid cells read blocked
+    uint64_t    gridNoGrid = 0;    // grid reads that found no grid handle (they count free)
+};
+
+// A movement lever's count, or `unavailable` when its route is `none`.
+struct LeverCount {
+    bool     available = false;
+    uint64_t count = 0;
+};
+
+// Every field of the line. A default StatFields prints the fresh session's
+// line; Bonus::FillStat fills the set's part and the adapter the rest.
+struct StatFields {
+    bool         bonus = false;
+    bool         active = false;
+    std::string  install = "not-armed";
+    SetRead      set;
+    uint64_t     unreadable = 0;
+    uint64_t     reads = 0;
+    ColumnCounts columns[kColumnCount];
+    uint64_t     gateCalls = 0;   // the gate's entries for the local player while the bonus was active
+    uint64_t     gateOther = 0;   // its entries with the switch on whose self was not the local player
+    uint64_t     threw = 0;       // calls whose original threw
+    // The local player's `TalentUseSetSpeed` calls the landing detour saw with
+    // the switch on, from any source: the landing instrument's own control
+    // (`landed=0` with this rising points at attribution, both 0 while casts
+    // happen at a blind detour).
+    uint64_t     castCalls = 0;
+    JumpCounts   jump;
+    int          iconsLoaded = 0;
+    int          iconsEmbedded = 0;
+    bool         artArmed = false;           // the art rule's sticky flag (Bonus::ArtArmed)
+    uint64_t     ground = 0;                 // ground items given our icon
+    std::string  groundRoute = "not-installed";  // GroundRouteName(): the shared LootGroundInit detour's route
+    // The tooltip's counters. The player's on-screen call for a tooltip runs on
+    // every frame the tooltip shows, and the game draws its text on a hover's
+    // first frame only, showing a cached copy after (TipCallCountsOf), so
+    // each counts calls, not hovers.
+    uint64_t     tip = 0;                    // set blocks drawn in a piece's on-screen tooltip (drawn calls only)
+    uint64_t     tipUnread = 0;              // of those, drawn on a worn read that failed or had an unreadable slot
+    uint64_t     tipArmed = 0;               // on-screen calls armed for a piece in which the game drew the tooltip
+    uint64_t     typeLine = 0;               // of those, calls whose type line was drawn as `Satanic Set <type>`
+    uint64_t     typeLineMiss = 0;           // of those, calls that drew with no type line swapped
+    uint64_t     tipCached = 0;              // on-screen calls armed for a piece that drew nothing: the cached tooltip
+    std::string  typeLineHook = "not-tried"; // TypeLineHookName(): the type line's draw_text hook
+    LeverCount   speed;
+    LeverCount   penalty;
+};
+
+// A number as the line prints it: whole numbers bare, others to one decimal.
+inline std::string NumberText(double v)
+{
+    if (!std::isfinite(v)) return "?";
+    long long whole = 0;
+    if (AsWhole(v, whole)) return std::to_string(whole);
+    const long long tenths = std::llround(v * 10.0);
+    if (tenths % 10 == 0) return std::to_string(tenths / 10);
+    const long long magnitude = tenths < 0 ? -tenths : tenths;
+    return std::string(tenths < 0 ? "-" : "") + std::to_string(magnitude / 10) + "." + std::to_string(magnitude % 10);
+}
+
+inline std::string ColumnsText(const ColumnCounts (&c)[kColumnCount], uint64_t ColumnCounts::*field)
+{
+    std::string s;
+    for (int i = 0; i < kColumnCount; ++i) {
+        if (i) s += "/";
+        s += std::to_string(c[i].*field);
+    }
+    return s;
+}
+
+inline std::string LeverText(const LeverCount& l)
+{
+    return l.available ? std::to_string(l.count) : std::string("unavailable");
+}
+
+inline std::string JoinCounts(std::initializer_list<uint64_t> counts)
+{
+    std::string s;
+    for (uint64_t c : counts) {
+        if (!s.empty()) s += "/";
+        s += std::to_string(c);
+    }
+    return s;
+}
+
+// `mark1set stat`. The line begins `mark1set: bonus=`; per-column counters are
+// Q/E/R/Y joined by `/`. A field added to a group goes after that group's
+// existing fields, so a check that reads one by name keeps finding it.
+inline std::string StatLine(const StatFields& f)
+{
+    std::string s = "mark1set: bonus=" + std::string(f.bonus ? "on" : "off");
+    s += " active=" + std::string(f.active ? "yes" : "no");
+    s += " install=" + f.install;
+    s += " set=" + SetText(f.set);
+    s += " unreadable=" + std::to_string(f.unreadable);
+    s += " reads=" + std::to_string(f.reads);
+    s += " worn=" + WornText(f.set);
+    s += " | automation presses=" + ColumnsText(f.columns, &ColumnCounts::presses);
+    s += " skip-empty=" + ColumnsText(f.columns, &ColumnCounts::skipEmpty);
+    s += " skip-aura=" + ColumnsText(f.columns, &ColumnCounts::skipAura);
+    s += " skip-toggle-on=" + ColumnsText(f.columns, &ColumnCounts::skipToggleOn);
+    s += " skip-settle=" + ColumnsText(f.columns, &ColumnCounts::skipSettle);
+    s += " skip-no-state=" + ColumnsText(f.columns, &ColumnCounts::skipNoState);
+    s += " col-unreadable=" + ColumnsText(f.columns, &ColumnCounts::unreadable);
+    s += " orig-unreadable=" + ColumnsText(f.columns, &ColumnCounts::originalUnreadable);
+    s += " write-failed=" + ColumnsText(f.columns, &ColumnCounts::pressWriteFailed);
+    s += " restore-failed=" + ColumnsText(f.columns, &ColumnCounts::restoreFailed);
+    s += " gate-calls=" + std::to_string(f.gateCalls);
+    s += " gate-other=" + std::to_string(f.gateOther);
+    s += " threw=" + std::to_string(f.threw);
+    s += " landed=" + ColumnsText(f.columns, &ColumnCounts::landed);
+    s += " skip-turn=" + ColumnsText(f.columns, &ColumnCounts::skipTurn);
+    s += " yielded=" + ColumnsText(f.columns, &ColumnCounts::yielded);
+    s += " cast-calls=" + std::to_string(f.castCalls);
+    const JumpCounts& j = f.jump;
+    s += " | jump granted=" + std::to_string(j.granted);
+    s += " backed-off=" + std::to_string(j.backedOff);
+    s += " refused-landing=" + std::to_string(j.refusedLanding);
+    s += " refused-gate=" + std::to_string(j.refusedGate);
+    s += " refused-cursor=" + std::to_string(j.refusedCursor);
+    s += " max=" + NumberText(j.max) + "(" + j.maxSource + ")";
+    s += " refused-unreadable=" + std::to_string(j.refusedUnreadable);
+    s += " jumps=" + std::to_string(j.jumps);
+    s += " scaled=" + std::to_string(j.scaled);
+    s += " clamped=" + std::to_string(j.clamped);
+    s += " answered=" + std::to_string(j.answered);
+    s += " excluded=" + std::to_string(j.excluded);
+    // Candidates refused by a successful read: room/family/grid/gate.
+    s += " rejected=" + JoinCounts({ j.rejectedRoom, j.rejectedFamily, j.rejectedGrid, j.rejectedGate });
+    // Failed reads: takeoff/cursor/room/family/grid/gate.
+    s += " unread=" + JoinCounts({ j.unreadTakeoff, j.unreadCursor, j.unreadRoom, j.unreadFamily, j.unreadGrid, j.unreadGate });
+    // Grid cells read successfully, by answer: free/blocked/nogrid. A grid
+    // read that never attaches shows as nogrid, never as free.
+    s += " grid-reads=" + JoinCounts({ j.gridFree, j.gridBlocked, j.gridNoGrid });
+    s += " | icons=" + std::to_string(f.iconsLoaded) + "/" + std::to_string(f.iconsEmbedded);
+    s += " art=" + std::string(f.artArmed ? "armed" : "off");
+    s += " ground=" + std::to_string(f.ground);
+    s += " ground-route=" + f.groundRoute;
+    s += " tip=" + std::to_string(f.tip) + " tip-unread=" + std::to_string(f.tipUnread);
+    s += " tip-armed=" + std::to_string(f.tipArmed);
+    s += " typeline=" + std::to_string(f.typeLine) + " typeline-miss=" + std::to_string(f.typeLineMiss);
+    s += " tip-cached=" + std::to_string(f.tipCached);
+    s += " typeline-hook=" + f.typeLineHook;
+    s += " | speed=" + LeverText(f.speed) + " penalty=" + LeverText(f.penalty);
+    return s;
+}
+
+// ---- the second `mark1set stat` line: the set bonus, the automation, the tip, the rolls ----
+
+// The set bonus's six dispatcher lines, in the order `answered=` prints them:
+// Defense, All Resistances, Replenish Life, All Skills, Life, Physical Damage
+// Taken Reduced.
+inline constexpr int kAnsweredCount = 6;
+inline constexpr int kAnsweredIds[kAnsweredCount] = {
+    Mark1Rolls::kIdDefense, Mark1Rolls::kIdAllResistances, Mark1Rolls::kIdLifeReplenish,
+    Mark1Rolls::kIdAllSkills, Mark1Rolls::kIdMaxLife, Mark1Rolls::kIdPhysicalDamageReduction,
+};
+
+// Which `answered=` field a dispatcher id counts in (an element resistance
+// in All Resistances'), -1 for none.
+inline int AnsweredIndex(double statId)
+{
+    for (int i = 0; i < kAnsweredCount; ++i)
+        if (statId == static_cast<double>(kAnsweredIds[i])) return i;
+    for (int id : Mark1Rolls::kIdElementResistances)
+        if (statId == static_cast<double>(id)) return 1;
+    return -1;
+}
+
+// `desc-font=`: not-drawn until a description is drawn, then the font the last
+// one was drawn in.
+enum class DescFont : int { NotDrawn, Small, Unresolved };
+
+inline const char* DescFontName(DescFont f)
+{
+    switch (f) {
+    case DescFont::Small: return "small";
+    case DescFont::Unresolved: return "unresolved";
+    case DescFont::NotDrawn: break;
+    }
+    return "not-drawn";
+}
+
+// Every field of the second line. A default BonusStatFields prints the fresh
+// session's line, with the values in force at their shipped constants.
+struct BonusStatFields {
+    // the set bonus
+    int      pieces = 0;                       // distinct pieces worn at the last read
+    bool     lit[3] = { false, false, false }; // the 2-, 3- and 4-piece lines at that read
+    uint64_t answered[kAnsweredCount] = {};    // local dispatcher calls answered, per line
+    uint64_t notNumber = 0;                    // wanted calls whose answer was not a number: left alone
+    uint64_t gearReads = 0;                    // the consumer's re-resolves of the worn pieces
+    uint64_t gearUnread = 0;                   // its failed reads (nothing answered)
+    // the automation
+    double   talents[kColumnCount] = {};       // each column's talent id at the last active gate call; 0: `-`
+    int      free[kColumnCount] = { -1, -1, -1, -1 };  // 1 free, 0 cooldown, -1 not eligible (`-`)
+    uint64_t masked = 0;
+    uint64_t heldSeen = 0;
+    double   hold = ForgePact::kMark1FreePressValue;
+    long long yield = ForgePact::kMark1YieldFrames;
+    long long rest = ForgePact::kMark1ProbeRestFrames;
+    std::string mask = ForgePact::Mark1FormatMaskSetting(ForgePact::Mark1MaskSetting{});
+    std::string route = ForgePact::kMark1AutoRoute == ForgePact::Mark1Route::Proc ? "proc" : "press";
+    uint64_t procs = 0;
+    uint64_t procFail = 0;
+    uint64_t locked = 0;
+    std::string cost = ForgePact::Mark1ManaCostName(ForgePact::kMark1ManaCost);
+    double   drain = ForgePact::kMark1DrainPctPerSecond;
+    double   unit = ForgePact::kMark1ReplenishUnit;   // the drain's divisor in force (Mark1Cost::Unit; `mark1probe autounit` sets it)
+    uint64_t drained = 0;
+    double   castBase = ForgePact::kMark1BaseCastSeconds;
+    bool     haveFcr = false;
+    double   fcr = 0;
+    bool     haveHaste = false;
+    double   haste = 0;
+    uint64_t statFail = 0;
+    uint64_t sheet = 0;                        // bonus and cost answers given to a talent-screen self (AskerOf)
+    uint64_t sheetLeft = 0;                    // talent-screen calls left: the page read as another page (TalentPageOf)
+    uint64_t sheetUnread = 0;                  // talent-screen calls left: the page did not read
+    // the tooltip
+    DescFont descFont = DescFont::NotDrawn;
+    uint64_t grey = 0;                         // columns greyed in the last HUD draw: their `enabled` written (the redraw under the research look)
+    uint64_t greyBox = 0;                      // columns that fell back to the dark box in it (research looks only)
+    // the rolls
+    uint64_t dressed = 0;                      // pieces dressed with a band seed
+    uint64_t legacy = 0;                       // pieces dressed with a legacy seed
+    uint64_t dropRolls = 0;                    // drop rewrites that drew a roll
+};
+
+// A value to two decimals (`drain=`, `cast-base=`).
+inline std::string TwoDecimals(double v)
+{
+    if (!std::isfinite(v)) return "?";
+    const long long hundredths = std::llround(v * 100.0);
+    const long long magnitude = hundredths < 0 ? -hundredths : hundredths;
+    const std::string cents = std::to_string(magnitude % 100);
+    return std::string(hundredths < 0 ? "-" : "") + std::to_string(magnitude / 100) + "." + (cents.size() < 2 ? "0" : "") + cents;
+}
+
+// A value to three decimals (`unit=`), so the replenish unit 0.745 reads whole.
+inline std::string ThreeDecimals(double v)
+{
+    if (!std::isfinite(v)) return "?";
+    const long long thousandths = std::llround(v * 1000.0);
+    const long long magnitude = thousandths < 0 ? -thousandths : thousandths;
+    std::string frac = std::to_string(magnitude % 1000);
+    while (frac.size() < 3) frac = "0" + frac;
+    return std::string(thousandths < 0 ? "-" : "") + std::to_string(magnitude / 1000) + "." + frac;
+}
+
+// The second line of `mark1set stat`, printed after the first. Groups are
+// separated by ` | `; a field added to a group goes after that group's last
+// field, as the first line's rule says.
+inline std::string BonusStatLine(const BonusStatFields& f)
+{
+    std::string s = "mark1set bonus: pieces=" + std::to_string(f.pieces);
+    s += " lit=" + std::string(f.lit[0] ? "1" : "0") + "/" + (f.lit[1] ? "1" : "0") + "/" + (f.lit[2] ? "1" : "0");
+    s += " answered=" + JoinCounts({ f.answered[0], f.answered[1], f.answered[2], f.answered[3], f.answered[4], f.answered[5] });
+    s += " not-number=" + std::to_string(f.notNumber);
+    s += " gear-reads=" + std::to_string(f.gearReads);
+    s += " gear-unread=" + std::to_string(f.gearUnread);
+    s += " | auto talents=";
+    for (int i = 0; i < kColumnCount; ++i) s += (i ? "/" : "") + (f.talents[i] > 0 ? NumberText(f.talents[i]) : std::string("-"));
+    s += " free=";
+    for (int i = 0; i < kColumnCount; ++i) s += (i ? "/" : "") + (f.free[i] < 0 ? std::string("-") : std::to_string(f.free[i]));
+    s += " masked=" + std::to_string(f.masked);
+    s += " held-seen=" + std::to_string(f.heldSeen);
+    s += " hold=" + NumberText(f.hold);
+    s += " yield=" + std::to_string(f.yield);
+    s += " rest=" + std::to_string(f.rest);
+    s += " mask=" + f.mask;
+    s += " route=" + f.route;
+    s += " procs=" + std::to_string(f.procs);
+    s += " proc-fail=" + std::to_string(f.procFail);
+    s += " locked=" + std::to_string(f.locked);
+    s += " cost=" + f.cost;
+    s += " drain=" + TwoDecimals(f.drain);
+    s += " unit=" + ThreeDecimals(f.unit);
+    s += " drained=" + std::to_string(f.drained);
+    s += " cast-base=" + TwoDecimals(f.castBase);
+    s += " fcr=" + (f.haveFcr ? NumberText(f.fcr) : std::string("-"));
+    s += " haste=" + (f.haveHaste ? NumberText(f.haste) : std::string("-"));
+    s += " stat-fail=" + std::to_string(f.statFail);
+    s += " sheet=" + std::to_string(f.sheet);
+    s += " sheet-left=" + std::to_string(f.sheetLeft);
+    s += " sheet-unread=" + std::to_string(f.sheetUnread);
+    s += " | tip desc-font=" + std::string(DescFontName(f.descFont));
+    s += " grey=" + std::to_string(f.grey);
+    s += " grey-box=" + std::to_string(f.greyBox);
+    s += " | rolls dressed=" + std::to_string(f.dressed);
+    s += " legacy=" + std::to_string(f.legacy);
+    s += " drop-rolls=" + std::to_string(f.dropRolls);
+    return s;
+}
+
+// ---- the answered askers: whose dispatcher calls the bonus and the cost answer ----
+//
+// The game asks its stat dispatcher for the player's stats with selves other
+// than the player: the talent screen (T) builds its rows from instances of its
+// own objects, so the sheet showed the player's stats without the set bonus
+// (Live 2: Life 4901 on the sheet, 5651 on the HUD). The rule (the owner,
+// 2026-10-22, option 1): a call is answered when its self is the local player,
+// or an instance of one of the four talent-screen objects that call the
+// dispatcher directly (a static reading); every other self is left as the
+// game answered it, the mercenary (Mercenary_obj), monsters, summons and the
+// player's skill objects included. Identified by what self is, never by the
+// call's first argument and never by a deny list (which would answer whatever
+// is not on it).
+//
+// The adapter reads self's object index (variable_instance_get, VALUE_REF
+// accepted) only for a call whose id the bonus or the cost answers and whose
+// self is not the local player, and resolves the four objects' indices once
+// per install by their hs-game-sdk names (asset_get_index). An index that was
+// not read and a name that did not resolve never match anything, not even each
+// other: "unknown" is never a value (AGENTS.md, "Check a Permission Where It
+// Is Used").
+enum class Asker : int { Left, LocalPlayer, TalentScreen };
+
+// An object index as read or resolved: `known` false for a read that failed
+// or a name that did not resolve, whatever `index` holds.
+struct ObjectIndex {
+    bool known = false;
+    int  index = -1;
+};
+
+inline constexpr int kTalentScreenObjectCount = 4;
+
+#if __has_include(<hs_game_sdk/objects.hpp>)
+// The four talent-screen objects, by their hs-game-sdk names (resolved at
+// install through asset_get_index; never a typed index). Harnesses built
+// without hs-game-sdk on the include path compile the rest of this header.
+inline constexpr HeroSiege::Objects::GameObject kTalentScreenObjects[kTalentScreenObjectCount] = {
+    HeroSiege::Objects::GameObject::UI_Button_Talent_Player_obj,
+    HeroSiege::Objects::GameObject::UI_Talent_Screen_Attribute_obj,
+    HeroSiege::Objects::GameObject::UI_Talent_Screen_Allocate_obj,
+    HeroSiege::Objects::GameObject::Player_Talent_Tooltip_obj,
+};
+#endif
+
+// Who a dispatcher call answers as: the local player first, then a known
+// object index equal to a resolved talent-screen object's, otherwise left.
+inline Asker AskerOf(bool selfIsLocalPlayer, const ObjectIndex& self, const ObjectIndex (&screen)[kTalentScreenObjectCount])
+{
+    if (selfIsLocalPlayer) return Asker::LocalPlayer;
+    if (!self.known || self.index < 0) return Asker::Left;
+    for (const ObjectIndex& s : screen)
+        if (s.known && s.index >= 0 && s.index == self.index) return Asker::TalentScreen;
+    return Asker::Left;
+}
+
+// ---- the talent screen's page: answered only while it shows the player's own ----
+//
+// The screen's Mercenary tab builds its rows from the same four objects as the
+// Player tab, and every asker's first argument reads the same on both (Live 3,
+// merc-page), so neither self nor that argument tells the pages apart. The
+// screen's tab actions do (a static reading, in our own words): each closes
+// the screen and creates its own screen object, UI_Talent_Screen_obj for the
+// player's page and UI_Mercenary_Talents_obj for the mercenary's. So the page
+// on show is whichever of the two has an instance.
+//
+// The rule (Amendment 8): a talent-screen self is answered only when, read at
+// that call, UI_Talent_Screen_obj counts at least 1 and
+// UI_Mercenary_Talents_obj counts 0. The mercenary's page, both at once and
+// neither read as another page (`sheet-left=`); a count that did not read or
+// a name that did not resolve reads as unread (`sheet-unread=`); both leave the
+// game's answer. The local player's own calls never depend on the page. The
+// adapter resolves the two by their hs-game-sdk names (asset_get_index) once
+// per install and counts them with instance_number on every talent-screen
+// call, never cached across calls or frames: a tab action runs inside a step
+// event, so a frame-boundary reading could hand the new page the old answer
+// (AGENTS.md, "Check a Permission Where It Is Used").
+enum class TalentPage : int { Player, Other, Unread };
+
+// An instance count as read: `known` false for a read that failed, whatever
+// `count` holds.
+struct InstanceCount {
+    bool known = false;
+    long count = -1;
+};
+
+inline constexpr int kTalentPageObjectCount = 2;   // [0] the player's page, [1] the mercenary's
+
+#if __has_include(<hs_game_sdk/objects.hpp>)
+// The two page objects, by their hs-game-sdk names (resolved at install
+// through asset_get_index; never a typed index).
+inline constexpr HeroSiege::Objects::GameObject kTalentPageObjects[kTalentPageObjectCount] = {
+    HeroSiege::Objects::GameObject::UI_Talent_Screen_obj,
+    HeroSiege::Objects::GameObject::UI_Mercenary_Talents_obj,
+};
+#endif
+
+// The page on show from the two objects' resolved indices and their counts.
+inline TalentPage TalentPageOf(const ObjectIndex (&objects)[kTalentPageObjectCount], const InstanceCount (&counts)[kTalentPageObjectCount])
+{
+    for (int i = 0; i < kTalentPageObjectCount; ++i)
+        if (!objects[i].known || objects[i].index < 0 || !counts[i].known || counts[i].count < 0) return TalentPage::Unread;
+    return counts[0].count >= 1 && counts[1].count == 0 ? TalentPage::Player : TalentPage::Other;
+}
+
+// Whether a call is answered: the local player's always, a talent-screen
+// self's only on the player's page, anything else never.
+inline bool AnswersAsker(Asker asker, TalentPage page)
+{
+    if (asker == Asker::LocalPlayer) return true;
+    if (asker == Asker::TalentScreen) return page == TalentPage::Player;
+    return false;
+}
+
+// ---- the pieces' own art: the rule the adapter applies --------------------------
+//
+// The bag icon and the ground consumer go together, and both follow the pieces:
+// the art is armed for the rest of the session by the first dressing of a piece
+// (one loaded from a save, one a roll or `mark1probe spawn` built) or the first
+// `mark1set drops 1` (Bonus keeps the flag; turning a switch off does not
+// clear it). `mark1set bonus 1` does not arm it: with pieces present their own
+// dressing has, and with none there is nothing to show. Until then
+// a piece shows its base item's own bag and ground sprites. Our runtime sprite
+// under "11" draws Error_spr on the ground unless the ground consumer sets the
+// ground item's sprite_index (RDM § 23.7), so the icon is written only where
+// that consumer can follow it.
+
+// The shared LootGroundInit detour's route as the art rule and the stat line
+// name it. Before the one install attempt it is `not-installed` (the name the
+// loot announcement's `init-hook=` prints for the same state); after it, hidden
+// loot's RouteName(): `both`, `table-only`, or `none` when the install was
+// tried and refused. RouteName() alone reads `none` both before the attempt
+// and after a refused one, so the adapter passes the install state here and
+// never RouteName() bare.
+inline constexpr const char* kGroundRouteNotInstalled = "not-installed";
+inline std::string GroundRouteName(bool installTried, std::string_view routeName)
+{
+    return installTried ? std::string(routeName) : std::string(kGroundRouteNotInstalled);
+}
+
+// `not-installed` (not in yet: the tick installs the consumer once the art is
+// armed) and `both` allow the art. Anything else refuses it: `table-only`,
+// which compiled GML's direct calls pass by, and `none`, a refused install, so
+// the consumer never runs and our sprite under "11" would draw Error_spr on the
+// ground. A bare RouteName() `none` therefore fails closed.
+inline bool GroundRouteAllowsArt(std::string_view route)
+{
+    return route == kGroundRouteNotInstalled || route == "both";
+}
+
+// A dressing writes our bag icon under "11" for a piece only while the art is
+// armed, its bag icon and its ground copy both loaded, and the ground route
+// allows it.
+inline bool ArtWritesIcon(bool armed, bool bagLoaded, bool groundLoaded, std::string_view groundRoute)
+{
+    return armed && bagLoaded && groundLoaded && GroundRouteAllowsArt(groundRoute);
+}
+
+// Whether the ground consumer still waits to be installed: armed, an icon
+// embedded and no try yet. The tick checks this before any game call, so an
+// unarmed session reads nothing for it.
+inline bool ArtGroundInstallPending(bool armed, int iconsEmbedded, bool tried)
+{
+    return armed && iconsEmbedded > 0 && !tried;
+}
+
+// Whether the adapter installs the ground consumer now: pending, setup done
+// and the local player resolved (never at character select, the guide's Known
+// Limitations item 8). The switch is not asked: once armed, it is wanted
+// whatever the switch now says.
+inline bool ArtWantsGroundInstall(bool armed, int iconsEmbedded, bool tried, bool setupDone, bool playerResolved)
+{
+    return ArtGroundInstallPending(armed, iconsEmbedded, tried) && setupDone && playerResolved;
+}
+
+// Whether the pieces' type line (the tooltip's draw_text hook) still waits to
+// be installed: armed and no try yet. It needs no embedded art, so it never
+// shares the ground consumer's icon gate.
+inline bool TypeLineInstallPending(bool armed, bool tried)
+{
+    return armed && !tried;
+}
+
+// Whether anything the art installs still waits: the ground consumer or the
+// type line. The tick checks this before any game call.
+inline bool ArtInstallPending(bool armed, int iconsEmbedded, bool groundTried, bool typeLineTried)
+{
+    return ArtGroundInstallPending(armed, iconsEmbedded, groundTried) || TypeLineInstallPending(armed, typeLineTried);
+}
+
+// Whether the adapter runs the art's install now: something pending, setup
+// done and the local player resolved. The switch is not asked.
+inline bool ArtWantsInstall(bool armed, int iconsEmbedded, bool groundTried, bool typeLineTried, bool setupDone, bool playerResolved)
+{
+    return ArtInstallPending(armed, iconsEmbedded, groundTried, typeLineTried) && setupDone && playerResolved;
+}
+
+// ---- the set block in a piece's tooltip --------------------------------------------
+//
+// The game draws its own set pieces' tooltips with a set section after the
+// item's stats (hs-game-sdk/curated/item_info.json, `tooltip.set_section`,
+// measured): the set's bonus lines, each lit while its threshold is worn and
+// grey otherwise, then the set's name and each piece's name, green when worn.
+// A Mark 1 piece is no game set piece (the game names a set's pieces by a
+// unique triple, and a piece is a base item), so the adapter draws the same
+// section itself, after the piece's own stat lines (BlockAnchor below), from
+// these rows: one empty row, the set bonus's lines in Mark1Rolls.hpp's table
+// order, Automation's description under `+1 to Automation`, one empty row,
+// the set's name and the four pieces. The description reads like a skill
+// grant's (`tooltip.skill_grant`): the grant description's grey, drawn in
+// the game's smaller item font (`font_item_stats_small`, the adapter's
+// draw; static reading of DrawSkillDescription, the hub's RDM § 16.13). The
+// colours are the game's own, 0xBBGGRR; the behavior test pins each against
+// the curated file.
+inline constexpr int kColourBonusActive = 7844807;    // set_section.colours.bonus_active (RGB 199,180,119)
+inline constexpr int kColourBonusInactive = 4210752;  // set_section.colours.bonus_inactive (RGB 64,64,64)
+inline constexpr int kColourSetName = 7844807;        // set_section.colours.set_name
+inline constexpr int kColourPieceWorn = 65280;        // set_section.colours.piece_worn (green)
+inline constexpr int kColourPieceNotWorn = 4210752;   // set_section.colours.piece_not_worn
+inline constexpr int kColourDescription = 8421504;    // skill_grant.colours.description (RGB 128,128,128)
+
+inline constexpr std::string_view kSetName = "Mark 1";
+inline constexpr std::string_view kBonusLine = "+1 to Automation";
+static_assert(Mark1Rolls::kBonusLines[3].words == kBonusLine, "the Automation line is the bonus table's fourth");
+// Automation's description: player wording (the owner, 2026-10-21; reworded
+// 2026-10-22, when `-50% Movement Speed` became a line of its own).
+inline constexpr std::string_view kAutomationDescription =
+    "Your Q, E, R and Y skills cast themselves whenever they are ready, in that order. "
+    "Your jump goes three times as far, over scenery.";
+
+// One row of the block. `wrapped` marks the description, which the adapter
+// wraps with the game's own builtins at the narrowest width the game's own
+// description rows were measured at, and measures; `smallFont` marks the row
+// the adapter draws in the game's smaller item font (the description); an
+// empty text is one empty row.
+struct TipRow {
+    std::string text;
+    int         colour = kColourPieceNotWorn;
+    bool        wrapped = false;
+    bool        smallFont = false;
+};
+
+// The 4-piece lines (Automation among them) are lit while the bonus is
+// active: all four pieces worn (a read that succeeded), the "Mark 1 set"
+// switch on and the bonus installed. A switch on over an install refused or
+// still waiting is no active bonus, so the line stays grey.
+inline bool BlockBonusActive(const SetRead& r, bool readOk, bool switchOn, bool installed)
+{
+    return readOk && r.full && switchOn && installed;
+}
+
+// The distinct pieces a read found worn: none for a read that failed as a
+// whole.
+inline int PiecesWorn(const SetRead& r, bool readOk)
+{
+    return readOk ? r.matched : 0;
+}
+
+// The block was drawn on a worn read that failed as a whole or had an
+// unreadable slot (the stat line's `tip-unread=`).
+inline bool BlockUnread(const SetRead& r, bool readOk)
+{
+    return !readOk || r.unreadable > 0;
+}
+
+// The block, in the game's order, after the piece's own stat lines: one empty
+// row; the set bonus's eight lines in Mark1Rolls.hpp's table order, each lit
+// while at least its threshold of distinct pieces is worn, the switch is on
+// and the bonus installed (LitLines), grey otherwise, with Automation's
+// description (grey, wrapped, the small font) under `+1 to Automation`; one
+// empty row; the set's name; then the four pieces in table order, green when
+// worn. A read that failed as a whole shows no piece worn and every line
+// grey; an unreadable slot can leave a piece unfound, never found (Evaluate's
+// rule).
+inline std::vector<TipRow> SetBlockRows(const SetRead& r, bool readOk, bool switchOn, bool installed)
+{
+    std::vector<TipRow> rows;
+    rows.push_back({ std::string(), kColourPieceNotWorn, false, false });
+    const std::array<bool, Mark1Rolls::kBonusLineCount> lit = Mark1Rolls::LitLines(PiecesWorn(r, readOk), switchOn, installed);
+    for (int i = 0; i < Mark1Rolls::kBonusLineCount; ++i) {
+        const Mark1Rolls::BonusLine& line = Mark1Rolls::kBonusLines[i];
+        rows.push_back({ std::string(line.words), lit[static_cast<size_t>(i)] ? kColourBonusActive : kColourBonusInactive, false, false });
+        if (line.applied == Mark1Rolls::Applied::Automation)
+            rows.push_back({ std::string(kAutomationDescription), kColourDescription, true, true });
+    }
+    rows.push_back({ std::string(), kColourPieceNotWorn, false, false });
+    rows.push_back({ std::string(kSetName), kColourSetName, false, false });
+    for (int i = 0; i < kPieceCount; ++i) {
+        const bool worn = readOk && r.foundSlot[static_cast<size_t>(i)] != kNotFound;
+        rows.push_back({ std::string(kPieces[i].name), worn ? kColourPieceWorn : kColourPieceNotWorn, false, false });
+    }
+    return rows;
+}
+
+// ---- where a piece's block anchors -------------------------------------------------
+//
+// The tooltip pass calls DrawInventoryStatsNew once per stat line it knows, in
+// a fixed order, whether or not the item has that stat (RDM § 16.6,
+// measured), and ForgedTooltipRows.hpp's rule anchors a forged item's rows at
+// the first call whose stat the item has. A piece now has stats of its own,
+// so that rule would put the block between the `Defense: N` header and the
+// first of them. A piece's block anchors instead at the first format-2/3 call
+// of the pass after the call of the last of its own drawn stat lines: the
+// keys the piece writes that draw a stat line (every key StatsFor writes but
+// the header's 154 and the sockets row's 20, which draw no stat call). Item
+// Truth's captures put Mark 1's keys in the order 29, 201, 48, 51, 52, 170,
+// 59, 173, with at least 50 other drawn ids after 173, so a row call always
+// follows. The adapter feeds each call's stat id, whether the item has it and
+// its format; every other forged item keeps ForgedTooltipRows.hpp's rule.
+inline constexpr int kMaxAnchorKeys = Mark1Rolls::kMaxRolls + Mark1Rolls::kMaxFixed;
+
+// A key the tooltip draws as a stat line of its own.
+inline constexpr bool DrawsStatLine(int key)
+{
+    return key != Mark1Rolls::kKeyDefense && key != Mark1Rolls::kKeySockets;
+}
+
+class BlockAnchor {
+public:
+    // The piece's own stat-line keys, from its rolls table (the keys do not
+    // depend on the roll).
+    static BlockAnchor For(Piece p)
+    {
+        BlockAnchor a;
+        const Mark1Rolls::PieceRolls& r = Mark1Rolls::kPieceRolls[static_cast<int>(p)];
+        for (int k = 0; k < r.rolledStats; ++k)
+            if (DrawsStatLine(r.rolls[k].key)) a.keys_[a.count_++] = r.rolls[k].key;
+        for (int k = 0; k < r.fixedCount; ++k)
+            if (DrawsStatLine(r.fixed[k].key)) a.keys_[a.count_++] = r.fixed[k].key;
+        return a;
+    }
+
+    // Whether the call's own stat id matters: one of the keys still waited
+    // for. The adapter reads whether the item has the stat only then.
+    bool Waits(double statId) const
+    {
+        for (int k = 0; k < count_; ++k)
+            if (!seen_[k] && statId == static_cast<double>(keys_[k])) return true;
+        return false;
+    }
+
+    // One call of the pass. A call of a key still waited for ends that wait;
+    // when the item has the stat it is one of the piece's own drawn lines,
+    // never the anchor. The block anchors at the first format-2/3 call once
+    // no key is waited for. The caller stops asking once it anchors, so a pass
+    // anchors at most once.
+    bool AnchorsHere(double statId, bool itemHas, double format)
+    {
+        bool ownLine = false;
+        for (int k = 0; k < count_; ++k) {
+            if (seen_[k] || statId != static_cast<double>(keys_[k])) continue;
+            seen_[k] = true;
+            ownLine = itemHas;
+        }
+        if (ownLine) return false;
+        for (int k = 0; k < count_; ++k)
+            if (!seen_[k]) return false;
+        return format == 2.0 || format == 3.0;
+    }
+
+    int KeyCount() const { return count_; }
+    int Key(int k) const { return k >= 0 && k < count_ ? keys_[k] : 0; }
+
+private:
+    int  keys_[kMaxAnchorKeys] = {};
+    bool seen_[kMaxAnchorKeys] = {};
+    int  count_ = 0;
+};
+
+// ---- the piece's type line ------------------------------------------------------------
+//
+// The tooltip's type line under the name: an ordinary Satanic item reads
+// `Satanic <type>`, a game set piece `Satanic Set <type>` (measured, the
+// curated `tooltip.set_section.type_line`). A Mark 1 piece reads like the
+// game's set pieces (the owner, 2026-10-21). The adapter swaps the one text
+// the pass draws for the piece's own `Satanic <type>`; anything else, and any
+// item that is not a piece, keeps the game's line.
+inline constexpr std::string_view kTypeWords[kPieceCount] = { "Helmet", "Body Armor", "Boots", "Gloves" };
+
+inline std::string GameTypeLine(Piece p)
+{
+    return "Satanic " + std::string(kTypeWords[static_cast<int>(p)]);
+}
+
+inline std::string TypeLine(Piece p)
+{
+    return "Satanic Set " + std::string(kTypeWords[static_cast<int>(p)]);
+}
+
+// The text the pass draws, as the adapter hands it on: the piece's type line
+// for a piece's own `Satanic <type>`, the drawn text otherwise.
+inline std::string TypeLineFor(bool isPiece, Piece p, std::string_view drawn)
+{
+    if (isPiece && drawn == GameTypeLine(p)) return TypeLine(p);
+    return std::string(drawn);
+}
+
+// ---- what one on-screen tooltip call counts ------------------------------------------
+//
+// The player's on-screen call for a tooltip runs on every frame the tooltip
+// shows. The game draws the tooltip's text (the name, the type line, the stat
+// run and so our anchored block) on a hover's first frame only and shows a
+// cached copy on the frames after (RDM § 16.6 measured the stat run once per
+// hover; Live 1, 2026-10-21, showed the type line in the cached part too). A
+// call armed for a piece is drawn when the stat run ran during it (one or more
+// stat calls) or its type line was swapped, and cached when neither happened.
+// A drawn call raises `tip-armed=` and one of `typeline=` (swapped) or
+// `typeline-miss=` (not swapped), so typeline + typeline-miss = tip-armed; a
+// cached call raises `tip-cached=` alone; a call not armed for a piece raises
+// nothing. The adapter feeds the two counts as differences across the call.
+struct TipCallCounts {
+    bool tipArmed = false;
+    bool typeLine = false;
+    bool typeLineMiss = false;
+    bool tipCached = false;
+};
+
+inline TipCallCounts TipCallCountsOf(bool armedForPiece, uint64_t statCalls, uint64_t typeLineSwaps)
+{
+    TipCallCounts c;
+    if (!armedForPiece) return c;
+    const bool drawn = statCalls > 0 || typeLineSwaps > 0;
+    c.tipArmed = drawn;
+    c.typeLine = drawn && typeLineSwaps > 0;
+    c.typeLineMiss = drawn && typeLineSwaps == 0;
+    c.tipCached = !drawn;
+    return c;
+}
+
+// `typeline-hook=`: `not-tried` until the pieces' type-line install has run
+// (whatever Item Truth installed before it), then `in` when draw_text's hook
+// is in (by that install or by Item Truth's earlier one) and `failed` when it
+// is not. It tells "the hook is not in" from "it ran and matched nothing".
+inline std::string_view TypeLineHookName(bool tried, bool in)
+{
+    if (!tried) return "not-tried";
+    return in ? "in" : "failed";
+}
+
+// ---- the bonus: the switch, the install and the refreshed read -------------------
+
+class Bonus {
+public:
+    // The gear slots 0..kGearSlotCount-1, read through
+    // GetOnlinePlayerItemOwner and GetItemFromFingerprint. False when the read failed as a whole (no local
+    // player, no readable equippedItems): counted, and not full.
+    using ReadWornFn = std::function<bool(WornSlots& slots)>;
+
+    // The set is read at most once in this many frames at the point of use.
+    static constexpr unsigned long long kRefreshFrames = 30;
+
+    // The `mark1set bonus 1|0` switch. Turning it off ends the bonus at once
+    // and forgets the last read, so turning it on again reads at once. It does
+    // not arm the pieces' art: a piece's own dressing does (NotePieceDressed).
+    void SetEnabled(bool on)
+    {
+        if (on == enabled_) return;
+        enabled_ = on;
+        hasRead_ = false;
+        full_ = false;
+    }
+    bool Enabled() const { return enabled_; }
+
+    // The "Mark 1 drops" switch (`mark1set drops 1|0`, Mark1Drops.hpp's
+    // SetSwitch) arms the same flag on a switch-on, so a piece a roll builds
+    // shows the owner's art. It leaves the set's own switch, install and read
+    // alone.
+    void NoteDropsSwitch(bool on)
+    {
+        if (on) artArmed_ = true;
+    }
+
+    // A piece was dressed outside Item Truth's builds (loaded from a save, or
+    // built by a roll or `mark1probe spawn`): its art is wanted whatever the
+    // switches say, so the flag is armed. The piece's own display, not a mod
+    // switched on (the flight charms' dressing arms flight the same way).
+    void NotePieceDressed()
+    {
+        artArmed_ = true;
+    }
+
+    // The art rule's sticky flag: set by the first piece dressed or the first
+    // drops switch-on, never cleared.
+    bool ArtArmed() const { return artArmed_; }
+
+    // ---- the install: armed by the switch, hooked once a character exists ----
+    // The guide's Known Limitations item 8: a hook installed at character
+    // select stalls the runner. `mark1set bonus 1` with no character only arms;
+    // the adapter's tick (which returns at once unless TickNeeded) looks for the
+    // local player on the frames LooksForPlayer picks, counted from the first
+    // armed frame, and installs once; `mark1set bonus 1` with a character
+    // loaded tries at once, again after a refusal. A refused install turns the
+    // switch off.
+    static constexpr unsigned long long kInstallPollFrames = 60;
+    static constexpr bool LooksForPlayer(unsigned long long armedFrames)
+    {
+        return armedFrames % kInstallPollFrames == 0;
+    }
+    // Whether the adapter's tick has anything to do.
+    bool TickNeeded() const { return enabled_ && !installed_ && !tickTried_; }
+    // Whether the adapter installs now: the switch on, the hooks not in yet,
+    // setup done, the local player resolved, and, for the tick, no try of its
+    // own yet this session.
+    bool ShouldInstall(bool setupDone, bool playerResolved, bool fromTick) const
+    {
+        return enabled_ && !installed_ && !(fromTick && tickTried_) && setupDone && playerResolved;
+    }
+    // What the adapter's install returned: every hook in, or refused (the
+    // adapter prints why, once).
+    void NoteInstall(bool ok, bool fromTick)
+    {
+        if (fromTick) tickTried_ = true;
+        if (ok) {
+            installed_ = true;
+            refused_ = false;
+            return;
+        }
+        refused_ = true;
+        SetEnabled(false);
+    }
+    bool Installed() const { return installed_; }
+    // The ` install=` field: installed once the hooks are in, refused after a
+    // refused install, waiting-for-character while on without them, not-armed
+    // otherwise.
+    std::string_view InstallStateName() const
+    {
+        if (installed_) return "installed";
+        if (refused_) return "refused";
+        return enabled_ ? "waiting-for-character" : "not-armed";
+    }
+
+    // ---- the point of use ----
+    // Is the bonus active now? Called by the CheckTalentUse detour for the
+    // local player. With the switch off nothing is read; otherwise the set is
+    // read when no read is held, when kRefreshFrames have passed since the last
+    // one, or when the frame counter went back.
+    bool Active(unsigned long long frame, const ReadWornFn& read)
+    {
+        if (!enabled_) return false;
+        if (!hasRead_ || frame < lastFrame_ || frame - lastFrame_ >= kRefreshFrames) ReadNow(frame, read);
+        return full_;
+    }
+
+    // Read the set now: `mark1set stat`, and Active when the period is up. A
+    // read with the switch off fills the line's set= but never activates.
+    void ReadNow(unsigned long long frame, const ReadWornFn& read)
+    {
+        ++reads_;
+        WornSlots slots{};
+        SetRead r;
+        if (!read || !read(slots)) {
+            r.unreadable = kGearSlotCount;
+        } else {
+            r = Evaluate(slots);
+        }
+        if (r.unreadable > 0) ++unreadable_;
+        last_ = r;
+        full_ = r.full;
+        lastFrame_ = frame;
+        hasRead_ = enabled_;
+    }
+
+    // The bonus as the last read left it, without reading.
+    bool ActiveCached() const { return enabled_ && full_; }
+    const SetRead& LastRead() const { return last_; }
+    uint64_t Reads() const { return reads_; }
+    uint64_t Unreadable() const { return unreadable_; }
+
+    // The set's part of the stat line.
+    void FillStat(StatFields& f) const
+    {
+        f.bonus = enabled_;
+        f.active = ActiveCached();
+        f.install = std::string(InstallStateName());
+        f.set = last_;
+        f.unreadable = unreadable_;
+        f.reads = reads_;
+        f.artArmed = artArmed_;
+    }
+
+private:
+    bool               enabled_ = false;
+    bool               artArmed_ = false;
+    bool               installed_ = false;
+    bool               refused_ = false;
+    bool               tickTried_ = false;
+    bool               hasRead_ = false;
+    bool               full_ = false;
+    unsigned long long lastFrame_ = 0;
+    SetRead            last_;
+    uint64_t           reads_ = 0;
+    uint64_t           unreadable_ = 0;
+};
+
+// ---- the `mark1set` command ----------------------------------------------------------
+
+inline constexpr std::string_view kUsage = "usage: mark1set bonus 1|0 | mark1set drops 1|0 | mark1set stat";
+
+enum class CommandForm : int { Stat, Bonus, Drops };
+
+struct Command {
+    CommandForm form = CommandForm::Stat;
+    bool        on = false;
+};
+
+// The words after `mark1set`. Bare or `stat` prints the stat line;
+// `bonus 1|0` sets the set's switch and `drops 1|0` the drops' (Mark1Drops.hpp).
+inline bool ParseCommand(const std::vector<std::string>& args, Command& out, std::string& why)
+{
+    why.clear();
+    if (args.empty() || (args.size() == 1 && args[0] == "stat")) {
+        out = Command{};
+        return true;
+    }
+    if (args.size() == 2 && (args[0] == "bonus" || args[0] == "drops") && (args[1] == "1" || args[1] == "0")) {
+        out.form = args[0] == "bonus" ? CommandForm::Bonus : CommandForm::Drops;
+        out.on = args[1] == "1";
+        return true;
+    }
+    why = "mark1set: " + std::string(kUsage);
+    return false;
+}
+
+// The reply to `mark1set bonus 1|0`, after the adapter has tried its install.
+inline std::string BonusReply(const Bonus& b)
+{
+    return "mark1set: bonus=" + std::string(b.Enabled() ? "on" : "off") + " install=" + std::string(b.InstallStateName());
+}
+
+} // namespace ForgePact::Mark1Set

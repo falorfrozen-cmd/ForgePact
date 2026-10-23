@@ -360,6 +360,35 @@ public:
         if (jump_.active && !WindowOpen(frame)) CloseJump();
     }
 
+    // What one clean jump teaches: the take-off point, whether a cursor was
+    // read at take-off and where, and the length the jump travelled. A length
+    // of at least kMinReachPx is the reach. It clears a cap it is longer
+    // than, and becomes the cap when it ended more than kCursorSlackPx short
+    // of its cursor. A non-finite length teaches nothing and a non-finite
+    // cursor sets no cap. CloseJump calls it for this mod's own clean jumps;
+    // the Mark 1 set's adapter (ForgePact #166) calls it for Mark 1's, whether
+    // the switch is on or off. It changes the reach and the cap only: a jump
+    // in progress keeps its decision and its window.
+    void Learn(double takeoffX, double takeoffY, bool haveCursor, double cursorX, double cursorY, double length)
+    {
+        if (!std::isfinite(length) || !(length >= kMinReachPx)) return;
+        haveReach_ = true;
+        reach_ = length;
+        // Longer than the cap: the cap was out of date. Well short of its own
+        // cursor: the jump's maximum stopped it, so it is the cap.
+        if (haveCap_ && length > cap_) {
+            haveCap_ = false;
+            cap_ = 0.0;
+        }
+        if (haveCursor && std::isfinite(cursorX) && std::isfinite(cursorY)) {
+            const double aimed = std::hypot(cursorX - takeoffX, cursorY - takeoffY);
+            if (aimed - length > kCursorSlackPx) {
+                haveCap_ = true;
+                cap_ = length;
+            }
+        }
+    }
+
     // A reach learned from a clean jump; without one, kStartReachPx stands in.
     bool HasReach() const { return haveReach_; }
     double Reach() const { return reach_; }
@@ -528,26 +557,11 @@ private:
     {
         double x = 0.0, y = 0.0;
         const bool landed = ReadPosition(x, y);
-        if (landed && jump_.haveTakeoff && jump_.answered == 0 && !jump_.takeoffBlocked) {
-            const double moved = std::hypot(x - jump_.takeoffX, y - jump_.takeoffY);
-            if (moved >= kMinReachPx) {
-                haveReach_ = true;
-                reach_ = moved;
-                // Longer than the cap: the cap was out of date. Well short of
-                // its own cursor: the jump's maximum stopped it, so it is the cap.
-                if (haveCap_ && moved > cap_) {
-                    haveCap_ = false;
-                    cap_ = 0.0;
-                }
-                if (jump_.haveCursor) {
-                    const double aimed = std::hypot(jump_.cursorX - jump_.takeoffX, jump_.cursorY - jump_.takeoffY);
-                    if (aimed - moved > kCursorSlackPx) {
-                        haveCap_ = true;
-                        cap_ = moved;
-                    }
-                }
-            }
-        }
+        // A clean jump: landed, its take-off read, none of its queries
+        // answered, and no really-blocked family query in its take-off frame.
+        if (landed && jump_.haveTakeoff && jump_.answered == 0 && !jump_.takeoffBlocked)
+            Learn(jump_.takeoffX, jump_.takeoffY, jump_.haveCursor, jump_.cursorX, jump_.cursorY,
+                  std::hypot(x - jump_.takeoffX, y - jump_.takeoffY));
         if (landed && jump_.decision == Decision::Granted && FamilyAt(x, y)) ++counters_.landedInside;
         if (jump_.circles >= 2) ++counters_.walkInWindow;
         jump_ = Jump{};

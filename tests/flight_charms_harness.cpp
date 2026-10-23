@@ -39,7 +39,12 @@
 // (baseline), or at its first format-2/3 call when it has no stats at all
 // (target, Pocket Elf), at most once a pass and never with no rows
 // (ForgedTooltipRows.hpp). stand_in: the even-count rule, its order, its refusal, the
-// coin. stat_line: the fresh session's line, byte for byte. install and
+// coin. elf_draw (#166): Pocket Elf's kill route on DropItem's own draw - with
+// the switch off, or inside a roll already in progress, a call pushes nothing
+// (baseline); on, the SS-only stand-in over lootListUnique[0..5], the coin at
+// the call's recorded tier, no tier refusing the hit, two hits settled apart
+// and a nested roll setting the entries and the hit aside (target).
+// stat_line: the fresh session's line, byte for byte. install and
 // command: the install states and the `flightcharm` forms.
 #include <array>
 #include <cmath>
@@ -2000,6 +2005,300 @@ int main()
         check("stand_in/the_coin_c_over_n_plus_c", ok);
     }
 
+    // ======================= elf_draw ======================================
+    // Pocket Elf's kill route on DropItem's own draw (#166): the stand-in over
+    // lootListUnique[0..5], SS only; the coin from the call's recorded tier; one
+    // DropItem call's push, its hits, and a nested roll setting them aside.
+    {
+        // Baseline: the switch off. Every call is counted, nothing is pushed,
+        // nothing comes off, and a hit on Pocket Elf's triple is not ours.
+        ElfDraw d;
+        const DrawAction a = d.BeginCall(false, 0);
+        const DrawHit h = d.Hit(10, 0, 20, 0.0);
+        const bool off = d.EndCall();
+        StatFields s;
+        d.FillStat(s, false);
+        check("elf_draw/baseline_switch_off_pushes_nothing",
+            a == DrawAction::PassOff && h == DrawHit::NotPushed && !off && d.Calls() == 1 && d.PushedCalls() == 0
+                && d.Ours() == 0 && d.TierUnread() == 0 && s.elfDrawCalls == 1 && s.elfDrawPushed == 0
+                && s.elfDrawStandIn == "none" && ElfDrawCopies(DrawStandIn{}, 1) == 0,
+            DrawActionName(a));
+    }
+    {
+        // Baseline: a call that starts inside a roll already in progress (the
+        // shared DropUniqueItems detour, #74's Angelic roll or the Heroic hook)
+        // or inside another DropItem call pushes nothing; a roll nested in a
+        // call that pushed nothing has nothing to set aside.
+        ElfDraw d;
+        const DrawAction inRoll = d.BeginCall(true, 1);
+        const bool inRollOff = d.EndCall();
+        const DrawAction outer = d.BeginCall(false, 0);
+        const DrawAction inner = d.BeginCall(true, 0);
+        const bool innerOff = d.EndCall();
+        const bool outerOff = d.EndCall();
+        const DrawAction plain = d.BeginCall(true, 0);
+        const bool aside = d.EnterRoll();
+        const bool back = d.LeaveRoll();
+        const bool plainOff = d.EndCall();
+        check("elf_draw/baseline_a_nested_roll_passes_untouched",
+            inRoll == DrawAction::PassNested && !inRollOff && outer == DrawAction::PassOff && inner == DrawAction::PassNested
+                && !innerOff && !outerOff && plain == DrawAction::Push && !aside && !back && !plainOff && d.Calls() == 4
+                && d.Nested() == 2 && d.PushedCalls() == 0,
+            DrawActionName(inRoll) + " " + DrawActionName(inner) + " " + DrawActionName(plain));
+    }
+    // The six lists as the adapter reads them: class-10 triples with a verdict
+    // each, plus an entry of another class that is never a candidate.
+    const auto drawFixture = [](bool withSs) {
+        DrawLists l{};
+        const auto put = [&](int k, int sub, int b, int times) {
+            for (int i = 0; i < times; ++i) l[static_cast<size_t>(k)].push_back(UniqueEntry{ 10, double(sub), double(b) });
+        };
+        if (withSs) {
+            put(0, 0, 41, 1); put(1, 0, 41, 1); put(4, 0, 41, 2);   // SS, largest count 2
+            put(1, 0, 24, 1); put(5, 0, 24, 1);                     // SS, largest 1
+            put(2, 0, 20, 1); put(3, 0, 20, 1);                     // SS, largest 1, the lower (sub, b)
+            put(0, 0, 68, 1);                                       // SS, field 40 set
+            put(2, 0, 91, 1);                                       // rarity 7
+            put(3, 0, 55, 1);                                       // verdict unreadable
+        }
+        put(0, 0, 12, 1);                                           // tier 4: below SS
+        put(5, 1, 3, 1);                                            // tier 3: below SS
+        l[0].push_back(UniqueEntry{ 11, 0, 5 });                    // another class
+        l[1].push_back(UniqueEntry{ 10, 0.5, 20 });                 // not a whole number
+        return l;
+    };
+    const DrawVerdictFn drawVerdict = [](const DrawTriple& t, DrawVerdict& v) {
+        if (t.t != 10) return false;
+        v = DrawVerdict{ 6, 5, false, false };
+        if (t.b == 68) v.f40 = true;
+        if (t.b == 91) v.rarity = 7;
+        if (t.b == 12) v.tier = 4;
+        if (t.sub == 1 && t.b == 3) v.tier = 3;
+        return t.b != 55;
+    };
+    {
+        const ElfDrawResolution r = ResolveElfDrawStandIn(drawFixture(true), drawVerdict);
+        const DrawStandIn& s = r.standIn;
+        check("elf_draw/target_the_stand_in_is_ss_and_the_smallest_largest_count",
+            s.resolved && s.triple.t == 10 && s.triple.sub == 0 && s.triple.b == 20 && s.rarity == 6 && s.tier == 5
+                && s.counts == DrawCounts{ 0, 0, 1, 1, 0, 0 } && r.candidates == 5 && r.ss == 3 && r.unread == 1
+                && ElfDrawStandInText(s) == "0:20@6/5x0,0,1,1,0,0" && kElfDrawTier == kDrawSsTier && kDrawSsTier == 5
+                && kDrawListCount == 6 && kDrawRarity == 6,
+            ElfDrawStandInText(s) + " candidates=" + std::to_string(r.candidates) + " ss=" + std::to_string(r.ss)
+                + " unread=" + std::to_string(r.unread));
+    }
+    {
+        // Aimbot.exe's rarity and tier, with no fallback below SS (the owner,
+        // 2026-10-21): only below-SS candidates leave Pocket Elf with none.
+        const ElfDrawResolution r = ResolveElfDrawStandIn(drawFixture(false), drawVerdict);
+        const ElfDrawResolution empty = ResolveElfDrawStandIn(DrawLists{}, drawVerdict);
+        const ElfDrawResolution blind = ResolveElfDrawStandIn(drawFixture(true), DrawVerdictFn{});
+        check("elf_draw/target_no_ss_candidate_is_none_with_no_fallback",
+            !r.standIn.resolved && r.candidates == 2 && r.ss == 0 && ElfDrawStandInText(r.standIn) == "none"
+                && ElfDrawCopies(r.standIn, 1) == 0 && !empty.standIn.resolved && empty.candidates == 0
+                && !blind.standIn.resolved && blind.unread > 0,
+            "candidates=" + std::to_string(r.candidates) + " ss=" + std::to_string(r.ss));
+    }
+    {
+        DrawStandIn s;
+        s.resolved = true;
+        s.triple = DrawTriple{ 10, 0, 20 };
+        s.rarity = 6;
+        s.tier = 5;
+        s.counts = DrawCounts{ 0, 1, 2, 3, 4, 0 };
+        const bool ok = ElfDrawShare(s, 0, 1) == 1.0 && ElfDrawShare(s, 1, 1) == 0.5 && ElfDrawShare(s, 3, 1) == 0.25
+            && ElfDrawShare(s, 4, 1) == 0.2 && ElfDrawShare(s, 5, 1) == 1.0 && std::fabs(ElfDrawShare(s, 2, 1) - 1.0 / 3.0) < 1e-12
+            && std::fabs(ElfDrawShare(s, 1, 2) - 2.0 / 3.0) < 1e-12 && ElfDrawShare(s, -1, 1) == 0.0
+            && ElfDrawShare(s, 6, 1) == 0.0 && ElfDrawShare(s, 1, 0) == 0.0 && ElfDrawShare(DrawStandIn{}, 0, 1) == 0.0
+            && ElfDrawCopies(s, 1) == 1 && ElfDrawCopies(s, 0) == 0 && ElfDrawCopies(s, 1000) == kDrawMaxCopies;
+        check("elf_draw/target_the_coin_per_k", ok);
+    }
+    // A stand-in for the call scenarios: n_k is 0 on lists 0 and 5.
+    DrawStandIn elfStand;
+    elfStand.resolved = true;
+    elfStand.triple = DrawTriple{ 10, 0, 20 };
+    elfStand.rarity = 6;
+    elfStand.tier = 5;
+    elfStand.counts = DrawCounts{ 0, 1, 2, 3, 4, 0 };
+    {
+        ElfDraw d;
+        const DrawAction a = d.BeginCall(true, 0);
+        d.NoteResolution(ResolveElfDrawStandIn(drawFixture(true), drawVerdict));
+        d.NotePushed(elfStand, 1);
+        const bool off = d.EndCall();
+        const DrawAction again = d.BeginCall(true, 0);
+        d.NotePushed(elfStand, 0);   // no copies: nothing went on
+        const bool againOff = d.EndCall();
+        check("elf_draw/target_a_call_pushes_and_takes_its_entries_off",
+            a == DrawAction::Push && off && again == DrawAction::Push && !againOff && d.Calls() == 2 && d.PushedCalls() == 1
+                && d.Injected() == 6,
+            std::to_string(d.Injected()));
+    }
+    {
+        ElfDraw d;
+        d.BeginCall(true, 0);
+        d.NotePushed(elfStand, 1);
+        const DrawHit unread = d.Hit(10, 0, 20, 0.0);
+        d.NoteTier(7);   // out of range: still no tier
+        const DrawHit stillUnread = d.Hit(10, 0, 20, 0.0);
+        d.EndCall();
+        check("elf_draw/target_no_tier_recorded_refuses_the_hit",
+            unread == DrawHit::TierUnread && stillUnread == DrawHit::TierUnread && d.TierUnread() == 2 && d.Ours() == 0
+                && !d.HitPending(),
+            DrawHitName(unread));
+    }
+    {
+        ElfDraw d;
+        d.BeginCall(true, 0);
+        d.NotePushed(elfStand, 1);
+        d.NoteTier(1);   // n_1 = 1, c = 1: half
+        const DrawHit ours = d.Hit(10, 0, 20, 0.49);
+        d.Settle(true);
+        const DrawHit game = d.Hit(10, 0, 20, 0.5);
+        const DrawHit other = d.Hit(10, 0, 41, 0.0);
+        const DrawHit otherClass = d.Hit(11, 0, 20, 0.0);
+        d.EndCall();
+        d.NoteBuilt();
+        d.NoteBuilt();   // only one was rewritten
+        check("elf_draw/target_the_hit_takes_the_coin_at_the_calls_k",
+            ours == DrawHit::Ours && game == DrawHit::Game && other == DrawHit::NotStandIn && otherClass == DrawHit::NotStandIn
+                && d.Ours() == 1 && d.Built() == 1,
+            DrawHitName(ours) + " " + DrawHitName(game) + " " + DrawHitName(other));
+    }
+    {
+        // Two hits in one call, each settled before the next starts: the
+        // second takes its own coin at the tier recorded for it, and a hit
+        // left unsettled is closed by the next one, never carried into it.
+        ElfDraw d;
+        d.BeginCall(true, 0);
+        d.NotePushed(elfStand, 1);
+        d.NoteTier(0);
+        const DrawHit first = d.Hit(10, 0, 20, 0.99);
+        const bool firstPending = d.HitPending();
+        d.Settle(true);
+        const bool settled = !d.HitPending();
+        d.NoteTier(5);
+        const DrawHit second = d.Hit(10, 0, 20, 0.99);
+        d.Settle(true);
+        d.NoteTier(4);   // n_4 = 4: a fifth
+        const DrawHit third = d.Hit(10, 0, 20, 0.0);
+        const DrawHit fourth = d.Hit(10, 0, 20, 0.5);   // the third never settled
+        const bool fourthPending = d.HitPending();
+        d.EndCall();
+        d.NoteBuilt();
+        d.NoteBuilt();
+        d.NoteBuilt();
+        check("elf_draw/target_two_hits_in_one_call_are_settled_apart",
+            first == DrawHit::Ours && firstPending && settled && second == DrawHit::Ours && third == DrawHit::Ours
+                && fourth == DrawHit::Game && !fourthPending && d.Ours() == 3 && d.Built() == 2,
+            DrawHitName(first) + " " + DrawHitName(second) + " " + DrawHitName(third) + " " + DrawHitName(fourth)
+                + " built=" + std::to_string(d.Built()));
+    }
+    {
+        // A roll nested in the call: its entries come off once, at the first
+        // level, and go back once, at the last; inside it no hit is ours and
+        // the call's open hit waits, then comes back with the entries.
+        ElfDraw d;
+        d.BeginCall(true, 0);
+        d.NotePushed(elfStand, 1);
+        d.NoteTier(0);
+        const DrawHit before = d.Hit(10, 0, 20, 0.0);
+        const bool off = d.EnterRoll();
+        const bool aside = !d.HitPending();
+        const DrawHit inside = d.Hit(10, 0, 20, 0.0);
+        const DrawAction innerCall = d.BeginCall(true, 0);
+        d.EndCall();
+        const bool deeper = d.EnterRoll();
+        const bool deeperBack = d.LeaveRoll();
+        const bool back = d.LeaveRoll();
+        const bool restored = d.HitPending();
+        d.Settle(true);
+        const DrawHit after = d.Hit(10, 0, 20, 0.0);
+        const bool extraLeave = d.LeaveRoll();
+        const bool callOff = d.EndCall();
+        check("elf_draw/target_a_nested_roll_sets_the_entries_and_the_hit_aside",
+            before == DrawHit::Ours && off && aside && inside == DrawHit::SetAside && innerCall == DrawAction::PassNested
+                && !deeper && !deeperBack && back && restored && after == DrawHit::Ours && !extraLeave && callOff
+                && d.Ours() == 2,
+            DrawHitName(before) + " " + DrawHitName(inside) + " " + DrawHitName(after));
+    }
+    {
+        // A DropItem call inside a pushing one pushes nothing, but the draw it
+        // runs reads its own tier: the coin uses the innermost call's k.
+        ElfDraw d;
+        d.BeginCall(true, 0);
+        d.NotePushed(elfStand, 1);
+        d.NoteTier(0);
+        const DrawAction inner = d.BeginCall(true, 0);
+        const DrawHit innerUnread = d.Hit(10, 0, 20, 0.0);
+        d.NoteTier(4);
+        const DrawHit innerGame = d.Hit(10, 0, 20, 0.5);   // 0.5 >= 1/5
+        const bool innerOff = d.EndCall();
+        const DrawHit outer = d.Hit(10, 0, 20, 0.99);      // k 0 again: always ours
+        const bool outerOff = d.EndCall();
+        const DrawHit gone = d.Hit(10, 0, 20, 0.0);
+        check("elf_draw/target_an_inner_call_reads_its_own_tier",
+            inner == DrawAction::PassNested && innerUnread == DrawHit::TierUnread && innerGame == DrawHit::Game && !innerOff
+                && outer == DrawHit::Ours && outerOff && gone == DrawHit::NotPushed,
+            DrawHitName(innerUnread) + " " + DrawHitName(innerGame) + " " + DrawHitName(outer));
+    }
+    {
+        // The stand-in is resolved again whenever any of [0..5] changed its
+        // array or its length.
+        ElfDrawCache c;
+        DrawListKeys keys{};
+        for (int k = 0; k < kDrawListCount; ++k) keys[static_cast<size_t>(k)] = DrawListKey{ 100.0 + k, 10 + k };
+        const bool freshStale = c.Stale(keys) && c.Find() == nullptr;
+        c.Store(keys, ResolveElfDrawStandIn(drawFixture(true), drawVerdict));
+        const bool kept = !c.Stale(keys) && c.Find() && c.Find()->standIn.triple.b == 20;
+        DrawListKeys longer = keys;
+        longer[5].length = 99;
+        DrawListKeys moved = keys;
+        moved[0].id = 7.0;
+        check("elf_draw/target_the_stand_in_resolves_again_when_a_list_changes",
+            freshStale && kept && c.Stale(longer) && c.Stale(moved));
+    }
+    {
+        ElfDraw d;
+        const std::string offFresh = d.StandInField(false);
+        const std::string onFresh = d.StandInField(true);
+        d.NoteResolution(ResolveElfDrawStandIn(drawFixture(true), drawVerdict));
+        const std::string resolved = d.StandInField(true);
+        d.NoteResolution(ResolveElfDrawStandIn(drawFixture(false), drawVerdict));
+        const std::string none = d.StandInField(true);
+        d.NoteListsUnreadable();
+        const std::string unreadable = d.StandInField(true);
+        check("elf_draw/target_the_stand_in_field",
+            offFresh == "none" && onFresh == "pending" && resolved == "0:20@6/5x0,0,1,1,0,0" && none == "none"
+                && unreadable == "none",
+            offFresh + " " + onFresh + " " + resolved + " " + none + " " + unreadable);
+    }
+    {
+        ElfDraw d;
+        d.BeginCall(false, 0);
+        d.EndCall();
+        d.BeginCall(true, 0);
+        d.NoteResolution(ResolveElfDrawStandIn(drawFixture(true), drawVerdict));
+        d.NotePushed(elfStand, 1);
+        d.NoteTier(0);
+        d.Hit(10, 0, 20, 0.0);
+        d.Settle(true);
+        d.EndCall();
+        d.NoteBuilt();
+        StatFields s;
+        d.FillStat(s, true);
+        s.elfDrawHook = "detoured";
+        // The adapter's typed-build counters, then its class fields (#166 replan 1).
+        s.elfDrawTyped = DrawTypedCounts{ 1, 5, 2, 3, 1, 0, 2, 0, 6, 2, 2, 0, 1, 0, 9, 1, 1 };
+        const std::string line = StatLine(s);
+        const std::string tail = " standin-elf=none elf-draw-hook=detoured elf-draw-calls=2 elf-draw-pushed=1 elf-draw=1/1 "
+                                 "elf-draw-standin=0:20@6/5x0,0,1,1,0,0 elf-draw-typed=1/5 elf-draw-untyped=2 elf-draw-normal=3 "
+                                 "elf-draw-outside=busy:1,aside:0,lists:2,roll:0 elf-draw-class=bool:6/2,num:2/0,none:1,other:0 "
+                                 "elf-draw-class-check=9/1/1";
+        check("elf_draw/target_the_stat_fields_after_use",
+            line.size() > tail.size() && line.compare(line.size() - tail.size(), tail.size(), tail) == 0, line);
+    }
+
     // ======================= install =======================================
     {
         Flight f;
@@ -2061,12 +2360,17 @@ int main()
         const std::string fresh = "flightcharm: switches elf=off wings=off broom=off | flight install=not-armed state=off "
                                   "equipped=none answered=0 excluded=0 outside-room=0 depth=0 | icons=not-loaded ground=0 | "
                                   "guard kept=0 failed=0 | drops gate=off elf=0/0 wings=0/0 broom=0/0 injected=0 refused=0 "
-                                  "anomalies=0 standin-elf=none";
+                                  "anomalies=0 standin-elf=none elf-draw-hook=not-installed elf-draw-calls=0 "
+                                  "elf-draw-pushed=0 elf-draw=0/0 elf-draw-standin=none elf-draw-typed=0/0 elf-draw-untyped=0 "
+                                  "elf-draw-normal=0 elf-draw-outside=busy:0,aside:0,lists:0,roll:0 "
+                                  "elf-draw-class=bool:0/0,num:0/0,none:0,other:0 elf-draw-class-check=0/0/0";
         Flight f;
         SizeGuard<Pending> g;
+        ElfDraw e;
         StatFields s;
         f.FillStat(s);
         g.FillStat(s);
+        e.FillStat(s, false);
         const std::string built = StatLine(s);
         check("stat_line/the_fresh_session_line_byte_for_byte", StatLine(StatFields{}) == fresh && built == fresh, built);
     }
@@ -2101,7 +2405,10 @@ int main()
         const bool ok = line == "flightcharm: switches elf=on wings=off broom=on | flight install=installed state=on "
                                 "equipped=wings+broom answered=1 excluded=1 outside-room=1 depth=1 | icons=loaded ground=3 | "
                                 "guard kept=1 failed=0 | drops gate=on elf=1/2 wings=0/0 broom=4/5 injected=12 refused=1 "
-                                "anomalies=0 standin-elf=aimbot";
+                                "anomalies=0 standin-elf=aimbot elf-draw-hook=not-installed elf-draw-calls=0 "
+                                "elf-draw-pushed=0 elf-draw=0/0 elf-draw-standin=none elf-draw-typed=0/0 elf-draw-untyped=0 "
+                                "elf-draw-normal=0 elf-draw-outside=busy:0,aside:0,lists:0,roll:0 "
+                                "elf-draw-class=bool:0/0,num:0/0,none:0,other:0 elf-draw-class-check=0/0/0";
         const bool gates = GateName(Gate::Off) == "off" && GateName(Gate::On) == "on" && GateName(Gate::Refused) == "refused"
             && GateName(Gate::NotResolved) == "not-resolved" && GateName(Gate::NoDetection) == "no-detection";
         const bool equipped = EquippedText(0) == "none" && EquippedText(kAllCharmBits) == "elf+wings+broom"

@@ -528,8 +528,9 @@ async function modsCardsItems({ page }) {
   await subtab(page, 'subtab-items');
   const got = await $(page, modCards, ['itemsCard', []]);
   assert(got.transparent, `#itemsCard is still drawn as a card (${got.wrapper})`);
-  // Miner's Helmet, Headhunter, Tyrant's Crown, Beacon, then the three flight-charm drop switches (#158).
-  assert(got.top === 7 && got.raised === 7, `Items: ${got.top} top-level cards (${got.raised} raised), not 7`);
+  // Miner's Helmet, Headhunter, Tyrant's Crown, Beacon, then the three flight-charm drop switches (#158),
+  // then the Mark 1 set and Mark 1 drops switches (#166).
+  assert(got.top === 9 && got.raised === 9, `Items: ${got.top} top-level cards (${got.raised} raised), not 9`);
   assert(got.unitsAreTops, `Items: the cards are not the column's ${got.units} mods`);
   const helmet = got.perCard.filter((p) => p.id === 'minerHelmetCard');
   assert(helmet.length === 1 && helmet[0].controls.length === 0, 'The Miner\'s Helmet is not a card of its own: ' + JSON.stringify(got.perCard));

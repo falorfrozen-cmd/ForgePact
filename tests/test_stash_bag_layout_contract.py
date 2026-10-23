@@ -554,10 +554,17 @@ class CraftprobeLive2Additions(unittest.TestCase):
         return self.arg[start:end]
 
     def test_id_argument_is_the_instances_own_id(self):
+        # `id:<n>` builds the ref through InstanceIdRef, the helper the Mark 1
+        # proc route's `player` token shares (test_mark1_set_contract).
         branch = self.branch("id:")
-        at = [branch.index(step) for step in ('"instance_exists", { handle }', '"variable_instance_get", { handle, RValue("id") }')]
-        self.assertEqual(at, sorted(at), "alive first, then its own id")
+        self.assertIn("InstanceIdRef((double)id, v, gone)", branch)
         self.assertIn("return false;", branch)
+        helper = self.body("static bool InstanceIdRef(")
+        at = [helper.index(step) for step in ('"instance_exists", { handle }', '"variable_instance_get", { handle, RValue("id") }')]
+        self.assertEqual(at, sorted(at), "alive first, then its own id")
+        self.assertEqual(helper.count("return false;"), 2, "a dead instance and an unreadable id each refuse")
+        for why in ('why = "instance_exists is false";', 'why = "its id could not be read";'):
+            self.assertIn(why, helper, why)
 
     def test_obj_argument_is_asset_get_index_as_returned(self):
         branch = self.branch("obj:")
@@ -569,15 +576,19 @@ class CraftprobeLive2Additions(unittest.TestCase):
         self.assertLess(branch.index('"object_get_name"'), branch.index("v = index;"))
 
     def test_each_refusal_says_nothing_was_called_and_returns(self):
-        # id: refuses a malformed id, a dead instance and an unreadable id;
-        # obj: refuses once, whatever made the name not an object's.
-        for prefix, count in (("id:", 3), ("obj:", 1)):
+        # id: refuses a malformed id, and forwards InstanceIdRef's reason (a
+        # dead instance or an unreadable id) in its second refusal; obj:
+        # refuses once, whatever made the name not an object's.
+        for prefix, count in (("id:", 2), ("obj:", 1)):
             lines = self.branch(prefix).split("\n")
             refusals = [i for i, line in enumerate(lines) if "refused" in line]
             self.assertEqual(len(refusals), count, prefix)
             for i in refusals:
                 self.assertIn("nothing was called", lines[i], prefix)
                 self.assertIn("return false;", lines[i], prefix)
+        forwarded = [line for line in self.branch("id:").split("\n") if "refused" in line and "+ gone +" in line]
+        self.assertEqual(len(forwarded), 1, "the helper's reason is forwarded once")
+        self.assertIn("InstanceIdRef((double)id, v, gone)", forwarded[0])
         # The parser dispatches nothing: every refusal precedes the one call.
         for word in ("script_execute", "CpDispatch"):
             self.assertNotIn(word, self.arg, word)

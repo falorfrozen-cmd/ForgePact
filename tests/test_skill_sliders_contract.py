@@ -42,6 +42,8 @@ ROOT = Path(__file__).resolve().parents[1]
 PLUGIN = ROOT / "plugin" / "ModuleMain.cpp"
 INCLUDE = ROOT / "plugin" / "include" / "ForgePact"
 HEADER = INCLUDE / "SkillSlidersMod.hpp"
+# The plugin's one ReturnSpecificStat detour, shared with the Mark 1 set.
+SHARED_HEADER = INCLUDE / "ReturnSpecificStatHook.hpp"
 
 INCLUDE_LINE = "#include <ForgePact/SkillSlidersMod.hpp>"
 DISPATCH = 'if (lc == "skillslider") { ForgePact::SkillSlidersMod::Instance().HandleCommand(rest); return; }'
@@ -218,17 +220,50 @@ class SkillSlidersHeaderRulesTests(unittest.TestCase):
     def test_hook_ids_are_the_mods_own(self):
         table = function_body(self.code, "static const ScriptInfo* Scripts()")
         ids = re.findall(r'SdkShortScriptName\([^)]*\), "([^"]+)"', table)
-        self.assertEqual(len(ids), len(SCRIPTS))
+        # ReturnSpecificStat's row carries no id of its own: it is the shared
+        # detour's (ReturnSpecificStatHook.hpp), which keeps the sliders' id.
+        self.assertEqual(len(ids), len(SCRIPTS) - 1)
+        self.assertIn("SdkShortScriptName(HeroSiege::Scripts::gml_Script_ReturnSpecificStat), nullptr, nullptr }", table)
+        shared = strip_comments(_read(SHARED_HEADER))
+        shared_ids = re.findall(r'SdkShortScriptName\([^)]*\), "([^"]+)"', shared)
+        self.assertEqual(shared_ids, ["fp_ss_stat"])
+        ids += shared_ids
         self.assertEqual(len(set(ids)), len(ids), "two scripts share a hook id")
         for hook_id in ids:
             self.assertFalse(hook_id.startswith("fp_pp_"), hook_id + " is projprobe's id space")
             self.assertTrue(hook_id.startswith("fp_ss_"), hook_id)
         # No other hook in the plugin uses one.
         others = [strip_comments(_read(PLUGIN))]
-        others += [strip_comments(_read(p)) for p in INCLUDE.glob("*.hpp") if p.name != HEADER.name]
+        others += [strip_comments(_read(p)) for p in INCLUDE.glob("*.hpp")
+                   if p.name not in (HEADER.name, SHARED_HEADER.name)]
         for hook_id in ids:
             for text in others:
                 self.assertNotIn('"' + hook_id + '"', text, hook_id + " is used elsewhere")
+
+    def test_return_specific_stat_goes_through_the_one_shared_detour(self):
+        # A second HookOneScript of the same script comes up table-only, so
+        # the sliders and the Mark 1 set's half walk share one detour. The
+        # sliders install it only on the arming path, register their part
+        # first, and take its remembered original and route.
+        handle = _no_strings(function_body(self.code, "void HandleCommand(const std::string& rest)"))
+        shared = handle.index("ReturnSpecificStatHook::Install();")
+        self.assertLess(handle.index("if (value == 0.0) {"), shared)
+        self.assertLess(shared, handle.index("const int blocked = FirstNotNative(lever);"))
+        self.assertLess(handle.index("ReturnSpecificStatHook::skillSliders = OnReturnSpecificStat;"), shared)
+        self.assertIn("hook.orig = ReturnSpecificStatHook::original;", handle)
+        self.assertIn("native = ReturnSpecificStatHook::native;", handle)
+        self.assertIn('#include "ReturnSpecificStatHook.hpp"', self.header)
+        # The class's part runs after the game's answer, in the shared detour.
+        code = strip_comments(_read(SHARED_HEADER))
+        hook = function_body(code, "inline RValue& Hook(")
+        game = hook.index("RValue& r = original ? original(S, O, R, argc, A) : R;")
+        self.assertLess(game, hook.index("if (skillSliders) skillSliders(S, argc, A, r);"))
+        self.assertLess(hook.index("if (skillSliders)"), hook.index("if (mark1) mark1(S, argc, A, r);"))
+        self.assertEqual(code.count("HookOneScript("), 1)
+        install = function_body(code, "inline bool Install()")
+        self.assertIn("if (!original) {", install)
+        self.assertIn("return original && native;", install)
+        self.assertNotIn("HookOneScriptTable", code)
 
     def test_no_address_and_no_struct_read(self):
         calls = re.findall(r"g_Yytk->(\w+)", self.code)

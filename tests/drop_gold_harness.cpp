@@ -145,7 +145,12 @@ static RValue& FakeDropItem(CInstance*, CInstance*, RValue& R, int, RValue**) {
 }
 static RValue& FakeOther(CInstance*, CInstance*, RValue& R, int, RValue**) { return R; }
 
-static bool HookOneScript(const char* name, const char*, void* hook, PFUNC_YYGMLScript* origOut) {
+// Every install is an inline detour here (`*nativeOut`, the plugin's fifth argument, which
+// DropManager's DropItem-only install reads back, #166), and each name's installs are counted.
+static std::map<std::string, int> g_Installs;
+static bool HookOneScript(const char* name, const char*, void* hook, PFUNC_YYGMLScript* origOut, bool* nativeOut = nullptr) {
+    if (nativeOut) *nativeOut = true;
+    ++g_Installs[name];
     world.hooks[name] = hook;
     const std::string n = name;
     *origOut = n == "DropGold" ? &FakeDropGold
@@ -491,7 +496,49 @@ static void TargetCrumbsOrdinalRises() {
 }
 #endif
 
+// #166: the kill draw needs DropItem's hook alone. Run first, before any scenario's InstallHooks():
+// one install, detoured, and nothing else hooked; asked again it answers from the one install; a
+// later InstallHooks() puts the other hooks in and never DropItem a second time.
+static void TargetDropItemInstallAlone() {
+    auto& mgr = DropManager::Instance();
+    const std::string route = mgr.InstallDropItemHook();
+    const bool alone = g_Installs.size() == 1 && g_Installs.count("DropItem") == 1 && g_Installs.at("DropItem") == 1;
+    const std::string again = mgr.InstallDropItemHook();
+    mgr.InstallHooks();
+    const bool ok = route == "detoured" && again == "detoured" && alone && g_Installs.at("DropItem") == 1
+        && g_Installs.count("DropGold") == 1 && *mgr.DropItemOriginal() == &FakeDropItem;
+    Report("target/drop_item_install_alone_reports_its_route_once", ok,
+           "route=" + route + " again=" + again + " alone=" + (alone ? "yes" : "no")
+           + " dropitem_installs=" + std::to_string(g_Installs["DropItem"]));
+}
+
+// #166: what the kill draw splices into DropItem's saved original runs once per original call
+// Hook_DropItem makes, each `dropmult item` copy included, and hands each on with the same
+// arguments; with the splice taken out again the hook is as before.
+static int g_SpliceCalls = 0;
+static PFUNC_YYGMLScript g_SpliceHeld = nullptr;
+static RValue& SpliceCallout(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A) {
+    ++g_SpliceCalls;
+    return g_SpliceHeld(S, O, R, argc, A);
+}
+static void TargetDropItemSpliceSeesEveryOriginalCall() {
+    Fresh(1);
+    auto& mgr = DropManager::Instance();
+    mgr.SetMultiplier("item", 3);
+    g_SpliceHeld = *mgr.DropItemOriginal();
+    *mgr.DropItemOriginal() = SpliceCallout;
+    CallHooked("DropItem");
+    const bool spliced = g_SpliceCalls == 3 && world.itemOriginals == 3;
+    *mgr.DropItemOriginal() = g_SpliceHeld;
+    CallHooked("DropItem");
+    Report("target/drop_item_splice_sees_every_original_call", spliced && g_SpliceCalls == 3 && world.itemOriginals == 6,
+           "splice_calls=" + std::to_string(g_SpliceCalls) + " item_originals=" + std::to_string(world.itemOriginals));
+    mgr.SetMultiplier("item", 1);
+}
+
 int main() {
+    TargetDropItemInstallAlone();
+    TargetDropItemSpliceSeesEveryOriginalCall();
     BaselineOtherTargetsKeepCountSemantics();
     TargetFirstScalingLogsOnce();
     BaselineX100CompoundsToTenThousand();
