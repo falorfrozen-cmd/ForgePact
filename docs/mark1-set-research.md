@@ -5890,8 +5890,8 @@ takes 1 / 0.874 units of the answer, so in mana a second the drain is
 n × 1% × M whatever the unit. Multiplying by the unit, as the code did while
 it was 1.0, would have taken about 0.76% a second at 0.874, the opposite of
 the decision. A unit that is not a positive finite number leaves the answer
-alone, as a missing maximum does. The hub model's `REPLENISH_UNIT` is
-`Fraction(874, 1000)`, and the hub's shared cases
+alone, as a missing maximum does. The hub model's `REPLENISH_UNIT` is the
+exact fraction 874/1000, and the hub's shared cases
 (`hs-game-sdk/curated/mark1_automation_cases.json`) carry cases at 0.874
 that the C++ core and the model must both reproduce.
 
