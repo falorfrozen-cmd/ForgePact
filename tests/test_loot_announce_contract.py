@@ -23,8 +23,11 @@ rarity-to-colour rule and both the line's parts and the red line's text; the
 `chatcolour` body calls ChatAddMessage by SDK name with the player as self and
 the fifteen arguments in shape 8's kinds, the colours the core's, and the
 adapter holds no colour value; a refused `chatcolour` call logs, then runs the
-`server` body, which takes its text from the core; and the `lootann line:`
-line and `lootannprobe place`'s tier write are research-build only.
+`server` body, which takes its text from the core; the `lootann line:`
+line and `lootannprobe place`'s tier write are research-build only; and, in
+the hub checkout, the header's Heroic, Angelic and Unholy colours equal the
+hub's curated record (hs-game-sdk/curated/loot_announcement_measurements.json,
+announcement_colours codes 9, 7 and 10; skipped in a standalone clone).
 
 The Chaos Tower's loot burst (ForgePact #227): the tick reads
 Controller_obj.lootExplosionList by name (FindControllerInstance,
@@ -38,6 +41,8 @@ burst-listed=, burst-fresh=, burst-landed= and burst-overflow=, then the
 adapter's burst-list= (the last lookup's answer) and burst-nokey= (list
 entries that gave no key), both in the player build.
 """
+import copy
+import json
 import re
 import unittest
 from pathlib import Path
@@ -46,6 +51,9 @@ ROOT = Path(__file__).resolve().parents[1]
 PLUGIN = ROOT / "plugin" / "ModuleMain.cpp"
 HEADER = ROOT / "plugin" / "include" / "ForgePact" / "LootAnnounceMod.hpp"
 RESEARCH = ROOT / "docs" / "loot-announcement-research.md"
+# The hub's curated record of the announcement's colours. It exists only when
+# ForgePact is checked out as the hub's submodule, not in a standalone clone.
+CURATED = ROOT.parent / "hs-game-sdk" / "curated" / "loot_announcement_measurements.json"
 
 ADAPTER_START = "// ---- Loot announcements (LootAnnounceMod.hpp): the adapter"
 ADAPTER_END = "// ---- end of the loot announcement adapter"
@@ -128,6 +136,29 @@ def _research_names_in(text: str) -> list:
 
 def _loot_ground_init_hook_calls(text: str) -> list:
     return re.findall(r"HookOneScript\w*\([^;]*LootGroundInit\b", text)
+
+
+def _header_announcement_colours(code: str) -> dict:
+    """Rarity code -> text colour, as the header's AnnouncementColour maps
+    them, each name resolved through the header's own constants."""
+    constants = dict((name, int(value)) for name, value in
+                     re.findall(r"static constexpr int (k\w+) = (-?\d+);", code))
+    colour = _body(code, "static constexpr int AnnouncementColour(int rarityCode)")
+    return {constants[rarity]: constants[value]
+            for rarity, value in re.findall(r"case (k\w+): return (k\w+);", colour)}
+
+
+def _curated_colour_mismatches(header: dict, record: dict) -> list:
+    """Each announced rarity (Heroic 9, Angelic 7, Unholy 10) whose header
+    colour differs from the curated record's announcement_colours entry."""
+    curated = {entry["code"]: entry["bgr"] for entry in record.get("announcement_colours", [])}
+    mismatches = []
+    for code in (9, 7, 10):
+        if code not in curated:
+            mismatches.append(f"rarity {code}: no announcement_colours entry in the curated record")
+        elif header.get(code) != curated[code]:
+            mismatches.append(f"rarity {code}: header {header.get(code)} != curated {curated[code]}")
+    return mismatches
 
 
 class LootAnnounceHeaderTests(unittest.TestCase):
@@ -218,6 +249,26 @@ class LootAnnounceHeaderTests(unittest.TestCase):
         self.assertIn('return character + " found " + itemName;', server)
         # Never 0 or 6776816 (the sender colour that greys the text) in code.
         self.assertNotIn("6776816", self.code)
+
+    def test_header_colours_match_the_curated_record(self):
+        # The hub's curated record (hs-game-sdk/curated) and the header state
+        # the same three announcement colours; a standalone clone has no
+        # record to compare against, so the test skips there.
+        if not CURATED.is_file():
+            self.skipTest(f"{CURATED.name} not found at {CURATED}: a standalone ForgePact clone has no hub record")
+        record = json.loads(CURATED.read_text(encoding="utf-8"))
+        header = _header_announcement_colours(self.code)
+        self.assertEqual(_curated_colour_mismatches(header, record), [])
+        # Negative control: a record whose Heroic colour is one off, and one
+        # missing Unholy, are both caught.
+        off_by_one = copy.deepcopy(record)
+        for entry in off_by_one["announcement_colours"]:
+            if entry["code"] == 9:
+                entry["bgr"] += 1
+        self.assertEqual(len(_curated_colour_mismatches(header, off_by_one)), 1)
+        no_unholy = copy.deepcopy(record)
+        no_unholy["announcement_colours"] = [e for e in record["announcement_colours"] if e["code"] != 10]
+        self.assertEqual(len(_curated_colour_mismatches(header, no_unholy)), 1)
 
     def test_the_line_formats(self):
         self.assertIn('"lootann: on"', self.code)
