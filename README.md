@@ -1974,7 +1974,7 @@ lower maximum after you take a piece off, and whether every fired skill
 casts.
 
 A fifth session (2026-10-23), on this version's drain, measured it inside
-the game: with two automated skills each one took about 1.1% of your
+the game: on the test character, with two automated skills, each one took about 1.1% of your
 maximum mana a second at about 144 frames a second, and a little less,
 about 0.96%, with the game running at 60 frames a second, because the game
 gives mana back in slightly fewer steps a second at the lower frame rate.

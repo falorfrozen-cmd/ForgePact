@@ -6191,6 +6191,13 @@ operator set `VSync` Off again and the game ran at 143.5 frames a second.
   rates is 2.40, of the frames a tick 2.05. Neither a fixed count of
   frames nor a fixed time accounts for both; the mechanism (what the Step
   passes the tick) was not read.
+- **A hypothesis, inferred only and not claimed.** A tick period of 0.1 s
+  of clock plus two frames fits every window: it predicts 8.78 ticks a
+  second at 143.75 frames a second (measured 8.7575), 7.497 at 59.92
+  (7.498), 7.41 at 57.1 (D2, 7.51) and 7.52 at 60.5 (D1, 7.66). It would
+  give about 6 ticks a second and a drain of about 0.77% at 30 frames a
+  second. A future `tick-rate-limited` window, the game held below its
+  own setting by an external limiter, is what would test it.
 - **The operator's additions.** `mark1probe manaregen off` opened each
   switch-on file (S4, S8), because the spend before it left the answer
   forced to 0; D1's first window was discarded; the owner's cap at 60
@@ -6202,7 +6209,7 @@ Recorded on 2026-10-23 from Stats live 5 (results above). Each key takes
 exactly one value, on a line of its own, with its reason on the line below.
 
 regen-fps: not-observed
-The tick's divisor stayed 10 at 60 (S8's switch-off gain within one tick of ceil(R / 10) × T × dt), and its rate fell to r = 0.856 (8.76 to 7.50 ticks a second) while the frame rate fell to 0.417 (143.75 to 59.92): outside the `time` band (0.9 to 1.1) and above the `frame` band (at most 0.479). For the drain this means its share of maximum mana a second is not the same at every frame rate, but it does not fall in proportion to the frame rate either: at the shipped unit it read 1.117% at about 144 and 0.956% at 60, both inside the owner's band, and a lower frame rate takes a little less. No `time` reading was made: the game was not run below its own setting in a designed window (the 60 FPS window ran with the game capped by `VSync` and the setting row disabled, and which `game_get_speed` value was in force was not read), so whether the tick is counted against the target rate or by the clock stays not established; the debugger-slowed window (7.66 ticks a second at 60.5 frames a second) suggests the tick follows the rate the game reaches (inferred).
+The tick's divisor stayed 10 at 60 frames a second (VSync on; the setting row unchanged; S8's switch-off gain within one tick of ceil(R / 10) × T × dt), and its rate fell to r = 0.856 (8.76 to 7.50 ticks a second) while the frame rate fell to 0.417 (143.75 to 59.92): outside the `time` band (0.9 to 1.1) and above the `frame` band (at most 0.479). For the drain this means its share of maximum mana a second is not the same at every frame rate, but it does not fall in proportion to the frame rate either: at the shipped unit it read 1.117% at about 144 and 0.956% at 60, both inside the owner's band, and a lower frame rate takes a little less. No `time` reading was made: the game was not run below its own setting in a designed window (the 60 FPS window ran with the game capped by `VSync` and the setting row disabled, and which `game_get_speed` value was in force was not read), so whether the tick is counted against the target rate or by the clock stays not established; the debugger-slowed window (7.66 ticks a second at 60.5 frames a second) suggests the tick follows the rate the game reaches (inferred).
 
 drain-pct: 1.117 pass
 100 × T × a / (n × M) = 100 × 8.7575 × 6 / (2 × 2352) = 1.117% of maximum mana a second per automated skill at the shipped unit 0.745, at about 144 frames a second, uncertainty ±0.46% relative (±0.005, from 219 ticks counted), inside 0.95% to 1.15% (`tick-shape` passed, so a = 6 is the whole mana a tick the switch takes; p_off − p_on read 6.02 as a check).

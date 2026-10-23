@@ -141,8 +141,9 @@ pieces" below.
   monster hit you the game asked for your Physical Damage Taken Reduced,
   which the set answers with its 20% added (the session read the ask, not
   the number the game got back), and once, not at a hit, for your Defense.
-  A fifth session measured this version's drain: about 1.1% of your
-  maximum mana a second per automated skill at about 144 frames a second,
+  A fifth session measured this version's drain on the test character,
+  with two automated skills: about 1.1% of your maximum mana a second per
+  automated skill at about 144 frames a second,
   and a little less, about 0.96%, at 60 frames a second.
   Not checked in play yet: whether the set's Defense and Physical Damage
   Taken Reduced make a hit do less damage (your life stayed full), whether
