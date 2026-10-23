@@ -96,7 +96,10 @@ observed, hub `docs/RUNTIME_DATA_MODELS.md` § 13.4), so a player who sees
 every other Angelic drop again and again is on the Loot tab's
 **Angelic / Unholy Drops** slider (`angelic_items`, which sends
 `angelicdrop <1/N>`): ForgePact's own die. For the slider the answer is in our
-own source (below). For vanilla it is a live measurement, still open.
+own source (below). For vanilla, Live 1 (2026-10-23, `### Results` below)
+measured that the game's own Angelic list carries the potion once and that the
+Angelic roll's two filters keep it, so vanilla's roll can pick it; a vanilla
+drop itself was not observed.
 
 ### Static reading
 
@@ -121,7 +124,9 @@ Read locally through the Ghidra project, 2026-10-23; paraphrased.
   name), whose body did not decompile within the tool's time limit. So the
   potion's definition in the game (its key, hidden flag and rarity) has
   **not been read** statically: the key and the `{18, 0, 8}` triple come from
-  `kAngelicBases`, which was taken from the Item Editor's catalog.
+  `kAngelicBases`, which was taken from the Item Editor's catalog. Live 1
+  measured them from the running game instead (`### Results`): key
+  `consumable_gold_inlaid_mysterious_potion`, hidden flag unset, built rarity 7.
 - **Where the six unique lists are built** (static reading, partial). A
   read-only scan for references to the `lootListUnique` variable, with the two
   known readers (`DropItemAngelicChance` and `DropUniqueItems`) as positive
@@ -136,11 +141,15 @@ Read locally through the Ghidra project, 2026-10-23; paraphrased.
   destroys all eleven. The builder is too large to decompile here (the
   decompiler ran out of time at 30 minutes), and the rule for which entry goes
   into which list sits inline in it, so list membership is **not
-  established** statically.
+  established** statically; Live 1 measured it for the two potions instead
+  (`### Results`).
 - **A hint, not a reading.** #74 measured 48 droppable entries in
   `lootListUnique[5]` (2026-10-13, counted with repeats) against ForgePact's
   47 validated candidates: one more droppable entry than ForgePact knows. It
-  could be the potion, a repeat, or an Angelic the table lacks.
+  could be the potion, a repeat, or an Angelic the table lacks. Live 1 found
+  the potion in `lootListUnique[5]` once, kept by the Angelic filters, and the
+  validated pool at 48 with it, which is consistent with the potion being that
+  48th entry; the list was not compared with the table entry by entry.
 
 ### What the plugin did
 
@@ -173,11 +182,11 @@ Read locally through the Ghidra project, 2026-10-23; paraphrased.
   `itemInfoStruct["27"]` 7 or 10). No row is rejected, or kept, for its type.
 - The table, the uniform die, `SpawnAngelicItem`'s build and placement, the
   retry rule and the `angeliclist` line format are unchanged.
-- Expected on the real game (not established until the live session): the
-  potion validates (`-> ok`) and the pool reads 48 candidates, 10 rejected;
-  the elixir is rejected by its built rarity (`game makes it rarity 9`) if the
-  Tracker is right that it is Heroic. Whatever the game answers decides;
-  neither row is special-cased.
+- Measured on the real game (Live 1, `### Results`): the potion validates
+  (`-> ok`) and the pool reads 48 candidates, 10 rejected; the elixir is
+  rejected by its built rarity (`game makes it rarity 9`), as the Tracker's
+  table predicted. Whatever the game answers decides; neither row is
+  special-cased.
 - If the live session shows the potion refused by one of the three tests, or
   built but not usable as an item (no ground label, no pickup, gone after a
   save), the slider route is refused and the fix is redesigned from that
@@ -207,18 +216,97 @@ on a list.
   validated candidate is refused with the pool size. It never touches
   `angelicdrop`'s counters.
 
+### Live procedure 1
+
+Run 2026-10-23 by the live operator; capture
+`.claude/workorders/forgepact-229-gold-inlaid-potion-live-1.md` (hub, local;
+not tracked). Research build of the plugin at the branch head with the fix and
+`angelicprobe pool` (the installed DLL's sha256 matched the build's), character
+slot 14, Hell, Outskirts of Inoya (zone level 243), no debugger. The save
+folder was backed up before launch and restored after, and the restore checked
+clean.
+
+- Controls first: `ping` answered, and `angelicdrop status` read off with
+  zero counters before anything ran.
+- `angeliclist` away from the waypoint, every verdict recorded.
+- `angelicprobe pool find` for Liquor Holster `{8, 0, 51}` (the positive
+  control: hub RDM § 13.4 has it once in `lootListUnique[5]` only), the potion
+  `{18, 0, 8}` and the elixir `{18, 0, 5}`.
+- `angelicprobe pool drop` for Liquor Holster, then the potion, each followed by
+  a screenshot of its ground label.
+- Pickup by hovering the potion's label and pressing F, then the bag (C).
+- Drinking it, then Save & Exit, reloading the character and opening the bag.
+- The slider at `angelicdrop 1` (one roll per kill) over a little more than 20
+  kills, then `angelicdrop off`.
+
+No step needed the owner: the operator reached the zone and drank the potion
+through the game's own input. The procedure expected the `angelicdrop:` line to
+end in the item's repository key; it prints the display name twice
+(`<name> -> <name> rarity 7 at <x>,<y>`), as `SpawnAngelicItem` always has.
+That was a wrong expectation in the procedure, not a fault in the drop: the
+placement, the ground count and the label all matched (the owner read the
+session as passing on that basis, 2026-10-23).
+
+### Results
+
+Measured in Live 1 (2026-10-23) unless a line says otherwise.
+
+- **The fix works on the slider's pool.** `angeliclist` reads
+  `Gold Inlaid Mysterious Potion (18/0/8) -> ok`, and the pool is
+  `48 candidates, 10 rejected`: the 47 measured before the fix plus the potion.
+  The ten rejected are nine hidden or developer items (info flag `"40"` set)
+  and the elixir.
+- **The elixir is Heroic in the game.** `angeliclist` reads
+  `Elixir of Unworldly Cognition (18/0/5) -> game makes it rarity 9`, so the
+  rarity test keeps it out, as the Tracker's table predicted. Its `angelic`
+  flag in the table is still read by nothing.
+- **The potion's definition**, read from the game by `pool find`: key
+  `consumable_gold_inlaid_mysterious_potion`, built rarity 7, hidden flag
+  unset. The elixir's key is `consumable_elixir_of_unworldly_cognition`, rarity
+  9, hidden flag unset.
+- **Vanilla's Angelic list carries the potion.** With the control passing
+  (Liquor Holster: `[5]=1`, `[0]` to `[4]` all 0, `angelic-keeps=yes`), the
+  potion read `[5]=1` and `[0]` to `[4]` all 0, with `angelic-keeps=yes`. The
+  elixir is on `lootListUnique[5]` once as well, but `angelic-keeps=no` (rarity
+  9). The six sub-list sizes were 50, 61, 79, 152, 221 and 380.
+  `angelic-keeps` is the plugin applying the Angelic roll's two filters (hidden
+  flag clear, rarity 7 or 10) to the game's own answers, and that the roll uses
+  only those two is a static reading (above). So the game's own Angelic roll can
+  pick the potion, one entry among the list's others; a vanilla drop of it was
+  **not observed**, and offline that roll practically never fires (hub RDM
+  § 13.4).
+- **A forced drop lands like any other.** `angelicprobe pool drop 8 0 51` and
+  `pool drop 18 0 8` each printed `SpawnAngelicItem`'s line at rarity 7 and the
+  ground count went up by one (7 to 8, then 8 to 9); the screenshots show the
+  labels `Liquor Holster | SS (1)` and `Gold Inlaid Mysterious Potion | SS`.
+  The owner's loot filter was not changed.
+- **It can be picked up.** Hovering its label and pressing F gave
+  `[Gold Inlaid Mysterious Potion] Picked up`; it went to the bag grid, not the
+  potion slots. Its tooltip read `Potion`, `Currently Has 0 Charges out of 1`,
+  a 45 second flask cooldown, a 15 second effect, Tier SS, level 1.
+- **It survives a save.** After Save & Exit and reloading the character the
+  potion was still there (in potion slot 4, where the operator had moved it),
+  now with `1 Charges out of 1`.
+- **It works when drunk, once it has a charge.** With 0 charges, neither a
+  right-click in the bag nor the potion slot's key drank it. After the reload,
+  with its charge back, the slot's key gave a 15 second buff, `Endless Wealth`:
+  Magic Find increased by 275% and extra gold from kills 26%. The potion stayed
+  in its slot afterwards: it is a recharging flask, not a single use. In both
+  tries the key drank every charged potion slot at once, recorded as seen.
+- **The slider drops it.** At `angelicdrop 1`, 24 kills gave 24 rolls, 24 drops
+  and no failures from the 48-candidate pool; two of those drops were the
+  potion.
+
 ### Not established
 
-- Whether the game's own `lootListUnique[5]` carries the potion, and so
-  whether vanilla can drop it at all. The list builder's membership rule was
-  not read (above); the live session's `angelicprobe pool find 18 0 8`
-  measures it.
-- The potion's own definition in the game: its key, hidden flag and built
-  rarity. Only the Item Editor's catalog has been read; `angeliclist` and
-  `pool find` read the game's.
-- Whether a dropped potion lands, shows a ground label, can be picked up,
-  survives a save, and works when drunk.
-- What the 48th droppable entry in `lootListUnique[5]` is: the potion, a
-  repeat, or an Angelic or Unholy entry `kAngelicBases` does not carry.
-- Whether the elixir is Heroic in the game (rarity 9), as the Tracker's table
-  says, or passes the rarity test.
+- What refills the potion's charge: it was picked up empty and had its charge
+  after a save and reload. Whether time, kills or the reload refilled it was
+  not measured.
+- A vanilla drop of the potion: not observed (above). The list entry and the
+  filters say the roll can pick it; the roll was not seen doing so.
+- Whether `lootListUnique[5]` holds an Angelic or Unholy entry that
+  `kAngelicBases` lacks: the 48 candidates match #74's 48 droppable entries in
+  count only.
+- Not run in Live 1, so not observed live: the other Angelic and Unholy rows
+  through `pool drop` (they take the same path and dropped from the slider
+  before the fix), another difficulty or zone tier, and co-op.

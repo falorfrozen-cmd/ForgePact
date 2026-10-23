@@ -153,6 +153,27 @@ pieces" below.
 
 ## Fixed
 
+- **The Gold Inlaid Mysterious Potion never dropped from Angelic / Unholy
+  Drops (#229).** With the Loot tab's **Angelic / Unholy Drops** slider on,
+  every other Angelic and Unholy unique dropped again and again, but the Gold
+  Inlaid Mysterious Potion, the game's one Angelic potion, never did: since
+  1.3.14 ForgePact left every potion out of the items the slider picks from.
+  Now a potion is checked the same way as every other item, by asking the game
+  what it builds, so the Gold Inlaid Mysterious Potion joins the slider's
+  picks. The Elixir of Unworldly Cognition stays out, because the game makes
+  it a Heroic item, not an Angelic or Unholy one. Tested in a game session on
+  2026-10-23 with a development build of the plugin, in Hell: the slider's
+  picks went from 47 items to 48 with the potion; with the slider at one drop
+  per kill, 24 kills dropped the potion twice; a dropped potion showed its
+  ground label, could be picked up (it goes into the bag, not a potion slot)
+  and was still there after saving and loading, and drunk from a potion slot
+  it gave its Endless Wealth buff (275% Magic Find, 26% extra gold from
+  kills). A potion picked up from the ground had no charge yet, so it could
+  not be drunk until it had one; it had its charge after saving and loading.
+  The game itself can drop the potion too: its own list of Angelic items
+  carries it, and it passes the game's own checks for an Angelic drop. Played
+  offline, though, the game's own Angelic drop practically never happens, and
+  no such drop of the potion has been seen.
 - **Pocket Elf did not drop from kills (#166).** Since 2.3.0, switching
   on **Pocket Elf drops** added Pocket Elf only to a unique roll that kills
   seldom run, so in practice no kill dropped one: in a 30-minute test of
