@@ -203,10 +203,11 @@ class AngelicProbeSourceTests(unittest.TestCase):
 
     def test_the_subcommands_are_the_listed_ones(self):
         # #74 added `inject` (the list the stand-ins go onto, and the inject/replace mode)
-        # beside `hit`; both are subcommands of the one verb, so RunCommand gains no branch.
+        # beside `hit`, and #229 `pool` (one triple against the lists and the slider's pool);
+        # all are subcommands of the one verb, so RunCommand gains no branch.
         command = function_body(self.plugin, "static void ApRollCommand(")
         subcommands = re.findall(r'sub == "([a-z]+)"', command)
-        self.assertEqual(subcommands, ["on", "show", "reset", "list", "hit", "inject"])
+        self.assertEqual(subcommands, ["on", "show", "reset", "list", "hit", "inject", "pool"])
         usage = function_body(self.plugin, "static void ApRollUsage(")
         for sub in subcommands:
             with self.subTest(sub=sub):
@@ -328,8 +329,19 @@ class AngelicProbeSourceTests(unittest.TestCase):
         self.assertIsNone(re.search(
             r'CallGameScript[A-Za-z]*\(.*"gml_Script_DropItemAngelic"', self.plugin))
         self.require_block()
-        self.assertNotIn("CallGameScript", self.code,
+        # The rows count candidates and never invoke one. #229's `pool find` reads one unique's
+        # definition the way the rolls do, through GetUniqueRepoStruct by its SDK name (as
+        # BuildAngelicPool and flightprobe's pool read do), and that is the block's only script
+        # call; `pool drop` places through the production SpawnAngelicItem, not a call of its own.
+        calls = re.findall(r"CallGameScript[A-Za-z]*\(\s*([^,\s]+)", self.code)
+        self.assertEqual(calls, ["HeroSiege::Scripts::gml_Script_GetUniqueRepoStruct"],
                          "the probe counts candidates; it never invokes one")
+        self.assertIn("CallGameScript(HeroSiege::Scripts::gml_Script_GetUniqueRepoStruct",
+                      strip_comments(function_body(self.plugin, "static void ApPoolFind(")))
+        for name in ("ApRollOn", "ApRollShow", "ApRollList", "ApRollAttach"):
+            with self.subTest(function=name):
+                body = function_body(self.plugin, "static void %s(" % name)
+                self.assertNotIn("CallGameScript", strip_comments(body))
 
     def test_a_row_without_a_route_reports_no_count(self):
         show = function_body(self.plugin, "static void ApRollShow(")
