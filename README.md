@@ -1784,6 +1784,9 @@ any item's, and the set gives more for every piece you wear.
   only while the **Mark 1 set** switch is on. Your character sheet (the
   talent screen, T) shows the set's Life, Defense and its other lines too,
   as your HUD does; your mercenary and monsters never get the set bonus.
+  One known flaw: the character sheet's Mercenary tab shows your
+  mercenary's numbers with the set bonus and the mana drain added (for
+  example 750 more Life), though the mercenary itself does not get them.
 - **The tooltip.** Each piece's tooltip reads `Satanic Set <type>` under its
   name, shows the piece's own stats, then the set's bonus lines, each lit
   while you wear enough pieces for it and grey otherwise, with what
@@ -1941,12 +1944,22 @@ the test the same key cast 9 times; and the grey icons, back to normal when
 the set's switch went off. Those counts are the times the set fired a
 skill, not casts seen landing in the game. That build cut your maximum
 mana by 20% per automated skill, the cost then; the mana drain replaced
-it. Not checked in play yet: whether the game uses the set's Defense and
-Physical Damage Taken Reduced when a monster hits you (in that session the
-game asked for neither on your behalf), how soon the HUD shows a lower
-maximum after you take a piece off, whether every fired skill casts, what
-the drain does at low mana, the drain at its shipped 1%, and the character
-sheet showing the set's lines.
+it.
+
+A third session (2026-10-23), on a research build carrying the mana drain,
+checked the drain at its shipped 1%: with two automated skills your mana
+regeneration fell by about 2% of your maximum mana a second, as designed, and a
+drain larger than your regeneration does empty your mana rather than
+stopping at zero. It checked the character sheet too: with all four worn
+it showed the set's Life, Defense and Physical Damage Taken Reduced, the
+same numbers the game uses, while your mercenary, summons and monsters got
+none of the set bonus. It also found the flaw above, the sheet's Mercenary
+tab showing the bonus and the drain on your mercenary's numbers. Not
+checked in play yet: whether the game uses the set's Defense and Physical
+Damage Taken Reduced when a monster hits you (in that session monsters hit
+you only while two pieces were worn, before those lines count), how soon
+the HUD shows a lower maximum after you take a piece off, and whether every
+fired skill casts.
 
 ## Goburin's Head pity
 

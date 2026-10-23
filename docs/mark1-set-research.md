@@ -5454,3 +5454,97 @@ Rejected, and why. Do not propose these again without new evidence:
   the player, projectiles). The owner did not ask for it, and which of them
   act for the player is not established; the recorder lists them as other
   askers.
+
+### Stats live 3 results
+
+Stats live procedure 3 ran on 2026-10-23 (07:11 to 07:27 UTC) on save slot
+14, "Sorak" (White Mage), and restored its saves clean at the end. It ran
+the research build from ForgePact `6545891` (DLL SHA-256
+`d265cb6571c30e1ae4bd4b51b3da6c89376cf51bfb3d1d6e40fa3e9e23472531`), the
+build that ships the mana drain and the answered askers, with the hub's
+x64dbg MCP attached from D1, after S2, to D2, before S4. The capture is the
+playtest workorder's `forgepact-166-mark1-set-playtest2-live-3.md`, kept
+with the hub's workorder files and not tracked.
+
+`tools/live_checks.py` reads 21 checks: 17 pass, 2 fail and 2
+not-observed. The ten required checks all passed, and so did the two
+validity checks that are not required (`dbg-getters`, `hit-control`). Of
+the nine research checks, 5 passed, 2 failed (`merc-page`, `stat-read`)
+and 2 were not observed (`bonus-def-hit`, `bonus-pdr-hit`). A research
+check's fail or not-observed is the finding, recorded as such; a negative
+here is "not observed" unless a control in the same window backs it.
+
+**The bar as read** (`skillstate`, S0): Dark Oath (242) at 0,0, Chain of
+Holy Light (250, the right button's skill) at 0,2, Mana Orb at 0,3 (Q),
+Healing Zone (252) at 0,4 (E), Soul Spurn at 0,5 (R) and 0,6 (Y) empty.
+The operator unbound Mana Orb from Q and Soul Spurn from R and bound Shadow
+Bolt (239) to Y through the bar editor with its own clicks, so the
+automated columns read `talents=-/252/-/239 free=-/0/-/1`: two proc
+columns, E and Y, and neither Mana Orb's regen nor Soul Spurn's life drain
+on the bar for the whole session.
+
+| Check | Verdict | What it showed |
+|---|---|---|
+| `dll-hash` | pass | The lease hashed the installed DLL as `d265cb65…2531`, the Live 3 build. |
+| `control` | pass | `pong (YYTK 4.0.1)`. |
+| `marker` | pass | `mark1probe: research build`; the first `mark1set stat` second line read `route=proc`, `cost=drain drain=1.00 drained=0` and `sheet=0`. S0b: `install=installed`, no `refused` line. |
+| `dbg-control` | pass | The `PlayerMovement` logpoint logged 777 times over a 10 s idle, about once a frame at a 13.0 ms baseline, and through every window; the attach tool proved the instrument by the game's frame counter (29325 to 29434 before arming, no answer at the control's hold, 29671 after). |
+| `vitals-control` | pass | `mark1probe vitals` read life 4374/4374 and mana 3341/3341 against `statask 36,37` 4374 and 3341; with `manaregen 0` (`statask 42` 0) Y held 10 s took mana from 3341 to 1937, 42.0% of the maximum. |
+| `others-control` | pass | With the switch off, the sheet's `bonusothers` listed 25 entries, the talent screen's `UI_Talent_Screen_Attribute_obj` among them. |
+| `no-leak` | pass | Every entry of S3a, S3b and S4 whose object is not one of the four talent-screen objects read answer = original: `Mercenary_obj`, `Companion_obj`, `Controller_obj`, `White_Mage_Healing_Zone_obj`, `Legion_Skeleton_Passive_obj`, `Legion_Skeleton_Archer_Passive_obj`, `Spider_Passive_obj` and `Zombie_Passive_obj`. Only `UI_Talent_Screen_Attribute_obj` and `UI_Button_Talent_Player_obj` (id 2, 28 to 33) differed. |
+| `sheet-life` | pass | With the full set worn, `36:UI_Talent_Screen_Attribute_obj` read 4901->5651 with the switch on and 4901->4901 with it off. |
+| `sheet-defense` | pass | Switch on: `92:UI_Talent_Screen_Attribute_obj` 7056->7556 and `97:UI_Talent_Screen_Attribute_obj` 21->41. |
+| `drain-default` | pass | M = 2352, R = 140, n = 2: id 37 read 2352 with the switch off and on, id 42 92.96 with it on (140 − 2 × 0.01 × 2352 = 92.96, a difference of 0.00), and the second line read `cost=drain drain=1.00 drained=42` against S0's `drained=0`. |
+| `dbg-getters` | pass | `statask 92,97` logged one `df` and one `pd` line with one self in town and, on arrival in Outskirts of Inoya, a new self, that room's reference. |
+| `hit-control` | pass | S3a, two pieces worn, after two warps toward a pack: four `hu` lines (`sc_hurt`) with the room's reference self. S3b had none: the mercenary held the packs off and no monster reached Sorak in the window. |
+| `bonus-def-hit` | not-observed | No `df` line with the reference self inside either window: the four hits of S3a asked no Defense with the player's self, and S3b's 67 `df` lines all carried another self. |
+| `bonus-pdr-hit` | not-observed | Each of S3a's four hits was followed by a `pd` line with the reference self, while 97 read 21->21 at two pieces, as designed (97 is the four-piece line). S3b, four pieces worn, had no hit on the player and no `pd` line with the reference self (14 with another self). |
+| `other-object` | pass | Recorded. Outside town, 92 and 97 were asked by `Mercenary_obj` (`92:Mercenary_obj*69=5114->5114@a0=1`, `97:Mercenary_obj*14=86->86@a0=1`, against S3b's 67 `df` and 14 `pd` lines with the other self); 36 by the passives `Legion_Skeleton_Archer_Passive_obj`, `Legion_Skeleton_Passive_obj`, `Spider_Passive_obj` and `Zombie_Passive_obj`; 64 by `Companion_obj` and `Mercenary_obj`. Every asker's argument 0 read 1. |
+| `merc-page` | fail | The talent screen's own top tab `Mercenary` opened the mercenary's page. With the switch on, its entries carried the set bonus and the cost on the mercenary's numbers: `36:UI_Talent_Screen_Attribute_obj` 12527->13277, `92` 5114->5614, `97` 86->106, `38` 886->911, `161` 140->175, `42` 31->-16.04 (the drain of two proc columns at the player's maximum mana), and `2:UI_Button_Talent_Player_obj` 0->5. The page showed Life 13277 and Mana Replenish -16.04 in red. The originals equal what `Mercenary_obj` itself was answered (12527, 742, 5114, 86), and the mercenary's own calls stayed X->X: the bonus reaches the mercenary's page on the sheet, not the mercenary. |
+| `sheet-view` | pass | The sheet's Base Stats read Life 5651, equal to `statask 36`; the Defensive tab, reached by a hover then a held left click on its label at (744,544), read Defense 7556 and Physical damage reduction 41%, equal to `statask 92` and `97`. |
+| `regen-units` | pass | Recorded. Switch off, the replenish at its own R = 140 after a spend: 154 mana in 1258 ms, 122.417 a second, 0.874 a second per unit. |
+| `drain-rate` | pass | The switch on (R − D = 92.96): 87.37 mana a second against 122.417 × 92.96 / 140 = 81.29 expected, +7.5%, within 15%. |
+| `drain-below` | pass | Recorded as drains. With `manaregen -140` from 1428/2352, mana fell 518 (22.0% of the maximum) in 4173 ms, −124.131 a second. A first attempt began at the maximum (Y, automated with the switch on, spent nothing) and is not counted. |
+| `stat-read` | fail | In one command file: `statask 106` 54, after `statadd castrate 100` (`first boosted call 52 -> 152`) 158, after `statadd castrate 0` 54. +104 against 100 ± 2 (Stats live 2: +103); the third read returned to the first. |
+
+**What else the session showed.**
+
+- **A hit on the player asks for PDR with the player's self.** Each of
+  S3a's four `sc_hurt` lines with the reference self was followed by a
+  `StatPhysicalDamageReduction` line with the same self; no `StatDefense`
+  line came with them. Whether those hits were projectiles (the static
+  reading puts the player's id-92 ask in its collision with enemy
+  projectiles) was not read.
+- **The sheet's askers.** On the Player tab the talent screen asked 2,
+  21, 36, 37, 38, 42, 64, 92, 97, 103, 106, 161 to 165 and 167 with
+  `UI_Talent_Screen_Attribute_obj` as self, and id 2 also with
+  `UI_Button_Talent_Player_obj` (18836 calls in one opening with the switch
+  off, 33694 with it on). On the Mercenary tab the same objects asked for
+  the mercenary's stats, and `Load_Mana_Costs_obj` asked id 2 (left as the
+  game answered it). `UI_Talent_Screen_Allocate_obj` and
+  `Player_Talent_Tooltip_obj` were not seen asking.
+- **The HUD's numbers**, read in process from the text `DrawHud` draws,
+  agreed with the dispatcher's 36 and 37 (`vitals-control`).
+- **The drain at its shipped 1%** took 47.04 of a replenish of 140 with two
+  proc columns, and the regen fell by about that share (`drain-rate`).
+
+### Stats live 3 decision
+
+Recorded on 2026-10-23 from Stats live 3 (results above). Each key takes
+exactly one value, on a line of its own, with its reason on the line below.
+
+other-self: mercenary
+`other-object` named `Mercenary_obj` as the non-player self asking 92 and 97 outside town (69 and 14 asks against the window's 67 `df` and 14 `pd` lines with that self), and it was left as the game answered it (`no-leak`). Answering it stays ruled out by the owner. Every asker's argument 0 read 1, the mercenary's and the sheet's included, so argument 0 cannot tell the player's own asks from the mercenary's.
+
+drain-below: drains
+`drain-below` from 1428/2352 with the replenish forced to −140: mana fell 518, 22.0% of the maximum, in 4.2 s. A replenish answer below zero takes mana away, so a drain larger than a character's replenish empties the pool rather than stopping at zero.
+
+replenish-unit: 0.87
+`regen-units` read in process (`mark1probe vitals`), not from HUD crops: 122.417 mana a second at R = 140, 0.874 a unit (Stats live 2's HUD crops read 0.883; S9's below-zero window 124.131 / 140 = 0.887). So the shipped 1% takes about 0.87% of the maximum a second. `kMark1ReplenishUnit` stays 1.0 here; moving it is a code change for the driver to plan.
+
+sheet-askers: UI_Talent_Screen_Attribute_obj
+The sheet asked 36, 92 and 97 with `UI_Talent_Screen_Attribute_obj` as self on the Player tab (`sheet-life`, `sheet-defense`), and id 2 also with `UI_Button_Talent_Player_obj`; the other two answered objects were not seen asking. The same `UI_Talent_Screen_Attribute_obj` asks for the mercenary's stats on the sheet's Mercenary tab and is answered there too (`merc-page` failed): the predicate tells the sheet from the mercenary, not the sheet's two pages apart.
+
+These set the workorder's route tokens `other-self: mercenary` and
+`drain-below: drains`. The mercenary page's answers are a defect for the
+driver to route; nothing here changes the plugin.

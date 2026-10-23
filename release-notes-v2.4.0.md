@@ -36,7 +36,10 @@ pieces" below.
     underneath in the game's smaller grey description text, then the set's
     name and its four pieces, the ones you wear in green. Your character
     sheet (the talent screen, T) shows the set's Life, Defense and its other
-    lines too; your mercenary and monsters never get the set bonus.
+    lines too; your mercenary and monsters never get the set bonus. One
+    known flaw: the sheet's Mercenary tab shows your mercenary's numbers
+    with the set bonus and the mana drain added, though the mercenary
+    itself does not get them.
   - **Your skills cast themselves.** With all four worn, the skills on your
     Q, E, R and Y slots are cast for you. A skill that is not a toggle fires
     the way an item's proc fires a skill: at once, with no cast time, so a
@@ -121,10 +124,14 @@ pieces" below.
   firing while the right mouse button was held with that button's own skill
   still casting, an automated skill's key casting nothing, and the grey
   icons; those counts are the times the set fired a skill, not casts seen
-  landing. Not checked in play yet: whether the game uses the set's Defense
-  and Physical Damage Taken Reduced when a monster hits you, whether every
-  fired skill casts, the mana drain as it ships, the character sheet
-  showing the set's lines and a piece dropping from a vault.
+  landing. A third session checked the mana drain as it ships, 1% of your
+  maximum mana a second per automated skill taken off your regeneration,
+  and that a drain larger than your regeneration empties your mana; and the
+  character sheet showing the set's Life, Defense and Physical Damage Taken
+  Reduced with all four worn, while your mercenary, summons and monsters
+  got none of the bonus. Not checked in play yet: whether the game uses the
+  set's Defense and Physical Damage Taken Reduced when a monster hits you,
+  whether every fired skill casts and a piece dropping from a vault.
 
 ## Fixed
 
