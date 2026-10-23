@@ -878,8 +878,34 @@ public:
         if (armed_ && playerResolved) Refresh(frame);
     }
 
+    // Refresh, then the state: what a hook asks before it builds a Query
+    // (#216 c4). Still at most one read of the worn charms a frame, so every
+    // later call of the frame answers from what the first one read.
+    State StateAt(int64_t frame)
+    {
+        Refresh(frame);
+        return state_;
+    }
+
     State CurrentState() const { return state_; }
     unsigned EquippedMask() const { return equippedMask_; }
+
+    // ---- the local player, confirmed at the point of use (#216 c3) -----------
+    // The adapter's frame counter advances at the end of a frame, but the
+    // hooks compare `self` against the local player during the next frame's
+    // Step, so a player confirmed only at the frame's end is the previous
+    // frame's (a room change gives a new instance). Each hook asks this before
+    // its `self` compare: true for the first call of a frame, which then
+    // resolves the player again; false for every later call of that frame,
+    // which costs the adapter one compare. Reads nothing, and is apart from
+    // Refresh's own once-a-frame mark.
+    bool ConfirmsPlayer(int64_t frame)
+    {
+        if (havePlayerFrame_ && frame == playerFrame_) return false;
+        havePlayerFrame_ = true;
+        playerFrame_ = frame;
+        return true;
+    }
 
     // One hooked call, after its original ran. `excludedBlocks()` re-runs the
     // same original, same arguments and self, against Wall_Parent_obj and
@@ -1277,6 +1303,8 @@ private:
     bool refused_ = false;
     bool haveFrame_ = false;
     int64_t frame_ = 0;
+    bool havePlayerFrame_ = false;
+    int64_t playerFrame_ = 0;
     unsigned equippedMask_ = 0;
     State state_ = State::Off;
     LayerOps ops_;

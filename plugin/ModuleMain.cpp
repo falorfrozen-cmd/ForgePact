@@ -626,6 +626,7 @@ namespace FcNs = ForgePact::FlightCharms;
 static ForgePact::FlightCharms::Flight g_Flight;
 static bool g_FlightBusy = false;   // game thread only: the flight adapter's own calls inside a detour
 static const char* FlightPlayerCheck();   // the trace line's ` player=`; defined with the flight adapter
+static bool FlightConfirmPlayer();        // the player, once a frame at the point of use; defined with the adapter
 // Mark 1 set (`mark1set`, ForgePact #166): the set's decision core and the
 // owner's icons for the four pieces. The Custom Forge recognises and dresses
 // the pieces (what it reads sits just after the flight charms', before
@@ -23624,8 +23625,10 @@ static void FlightGuardInstall()
 static FcNs::StatFields FlightCharmStatFields()
 {
     FcNs::StatFields s;
-    RValue player;
-    g_Flight.RefreshForStat((int64_t)g_RuntimeFrame, HhResolveLocalPlayer(player));
+    // The player first, as the hooks confirm it: the overlap read Refresh may
+    // make runs with g_FlightPlayer as self, so it must be this frame's.
+    const bool player = FlightConfirmPlayer();
+    g_Flight.RefreshForStat((int64_t)g_RuntimeFrame, player);
     g_Flight.FillStat(s);
     s.icons = !g_FlightIconsTried ? "not-loaded" : (g_FlightIconsFailed ? "failed" : "loaded");
     s.ground = g_FlightGround;
@@ -55386,7 +55389,7 @@ static PFUNC_YYGMLScript g_FlightOrigDepth = nullptr;   // UpdateDepth
 static bool g_FlightIptNative = false;     // each got its inline detour, not only the table swap
 static bool g_FlightDepthNative = false;
 static bool g_FlightConfigured = false;    // the objects resolved and the core's callbacks set
-static CInstance* g_FlightPlayer = nullptr;   // the local player, refreshed each frame once installed
+static CInstance* g_FlightPlayer = nullptr;   // the local player, confirmed at each frame's first hooked call (FlightConfirmPlayer)
 static int g_FlightFamilyIdx = -1;
 static int g_FlightMonsterIdx = -1;        // Enemy_Parent_obj's index, once resolved
 static std::vector<int> g_FlightExcludedIdx;
@@ -55772,6 +55775,7 @@ static void FlightOnBuiltin(int row, RValue& Result, CInstance* S, CInstance* O,
 {
     if (!S || g_FlightBusy || !g_Flight.Installed()) return;
     if (row < 0 || row >= JsNs::kBuiltinCount) return;
+    FlightConfirmPlayer();   // the frame's first hooked call resolves the player; later ones compare
     if (S != g_FlightPlayer) { g_Flight.NoteCall(false); return; }
     const FcNs::HookedRow& h = FcNs::kHooked[row];
     if (!FlightBlocked(h.answer, Result)) { g_Flight.NoteCall(true); return; }   // a free answer stands
@@ -55780,7 +55784,7 @@ static void FlightOnBuiltin(int row, RValue& Result, CInstance* S, CInstance* O,
     g_FlightBusy = true;
     try {
         const int64_t frame = (int64_t)g_RuntimeFrame;
-        g_Flight.Refresh(frame);
+        const FcNs::State state = g_Flight.StateAt(frame);
         FcNs::Query q{};
         q.row = static_cast<FcNs::Hooked>(row);
         q.frame = frame;
@@ -55789,7 +55793,7 @@ static void FlightOnBuiltin(int row, RValue& Result, CInstance* S, CInstance* O,
         q.reallyBlocked = true;
         // Off, nothing more is read; the core still counts the query (`seen=`
         // and `idle=`), so the trace line shows the player's queries reach it.
-        if (g_Flight.CurrentState() != FcNs::State::Off) {
+        if (state != FcNs::State::Off) {
             q.object = (Args && h.objectArg < argc) ? JsObjectIndexOf(Args[h.objectArg]) : -1;
             FlightPoints(row, argc, Args, q);
         }
@@ -55803,13 +55807,14 @@ static RValue& Hook_FlightInstancePlaceTallest(CInstance* S, CInstance* O, RValu
 {
     RValue& r = g_FlightOrigIpt(S, O, R, argc, A);
     if (!S || g_FlightBusy || !g_Flight.Installed()) return r;
+    FlightConfirmPlayer();   // as FlightOnBuiltin
     if (S != g_FlightPlayer) { g_Flight.NoteCall(false); return r; }
     if (!FlightBlocked(FcNs::Answer::Noone, r)) { g_Flight.NoteCall(true); return r; }   // `noone` stands
     FcNs::Answer answer = FcNs::Answer::Real;
     g_FlightBusy = true;
     try {
         const int64_t frame = (int64_t)g_RuntimeFrame;
-        g_Flight.Refresh(frame);
+        const FcNs::State state = g_Flight.StateAt(frame);
         FcNs::Query q{};
         q.row = FcNs::Hooked::InstancePlaceTallest;
         q.frame = frame;
@@ -55817,7 +55822,7 @@ static RValue& Hook_FlightInstancePlaceTallest(CInstance* S, CInstance* O, RValu
         q.object = -1;
         q.reallyBlocked = true;
         // As FlightOnBuiltin: off, nothing is read, and the core counts the call.
-        if (g_Flight.CurrentState() != FcNs::State::Off) {
+        if (state != FcNs::State::Off) {
             q.object = FlightInstanceObject(r);
             q.x0 = FlightArgNumber(argc > 0 && A ? A[0] : nullptr);
             q.y0 = FlightArgNumber(argc > 1 && A ? A[1] : nullptr);
@@ -55838,6 +55843,7 @@ static RValue& Hook_FlightUpdateDepth(CInstance* S, CInstance* O, RValue& R, int
 {
     RValue& r = g_FlightOrigDepth(S, O, R, argc, A);
     if (!S || g_FlightBusy || !g_Flight.Installed()) return r;
+    FlightConfirmPlayer();   // as FlightOnBuiltin
     if (S != g_FlightPlayer) { g_Flight.NoteDepthOther(); return r; }
     g_FlightBusy = true;
     try {
@@ -55963,10 +55969,23 @@ static void FlightRefreshPlayer()
     g_FlightPlayer = inst;
 }
 
+// The local player, confirmed at the first hooked call of each frame (#216
+// c3): g_RuntimeFrame advances at the frame's end, and the hooks compare
+// `self` during the next frame's Step, so the player is resolved again (as
+// FlightRefreshPlayer does, under g_FlightBusy) the first time a hook, or the
+// stat line, asks within a frame value. Every later call of that frame costs
+// one compare (the core's ConfirmsPlayer). Whether a player is confirmed.
+static bool FlightConfirmPlayer()
+{
+    if (g_Flight.ConfirmsPlayer((int64_t)g_RuntimeFrame)) FlightRefreshPlayer();
+    return g_FlightPlayer != nullptr;
+}
+
 // ` player=` on the trace line: the pointer the hooks compare `self` against,
 // checked against the local player resolved now. `none` when either is
-// missing (before the install, or at character select); `differs` would mean
-// the hooks are comparing against a stale instance and answer nothing.
+// missing (before the first hooked call or stat line confirmed one, or at
+// character select); `differs` would mean the hooks are comparing against a
+// stale instance and answer nothing.
 static const char* FlightPlayerCheck()
 {
     CInstance* now = nullptr;
@@ -55996,8 +56015,9 @@ static void FlightInstallIfReady()
 
 // The per-frame tick. Returns at once until dressing arms flight; while armed
 // and not installed, looks for the local player every kInstallPollFrames
-// frames; once installed, refreshes the local player only. The decisions
-// happen inside the hooked calls.
+// frames; once installed, does nothing: the local player is confirmed by the
+// hooks themselves, at the first hooked call of each frame (FlightConfirmPlayer),
+// not here at its end. The decisions happen inside the hooked calls.
 static void FlightCharmTick()
 {
     if (!g_Flight.Armed()) return;
@@ -56005,7 +56025,6 @@ static void FlightCharmTick()
         if (FcNs::Flight::LooksForPlayer(g_FlightArmedFrames++)) FlightInstallIfReady();
         return;
     }
-    FlightRefreshPlayer();
 }
 // ---- end of the flight charms flight adapter
 

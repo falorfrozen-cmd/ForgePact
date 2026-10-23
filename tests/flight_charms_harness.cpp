@@ -2393,6 +2393,98 @@ int main()
                 && !Flight::LooksForPlayer(59) && Flight::LooksForPlayer(60) && Flight::LooksForPlayer(120));
     }
 
+    // ======================= state_at (#216 c4) =============================
+    // What a hook asks before it builds a Query: the state, refreshed at most
+    // once a frame, in one call rather than Refresh then CurrentState.
+    {
+        FlightWorld w;
+        Flight f = makeFlight(w);
+        w.equipped = CharmBit(Charm::Broom);
+        const bool first = f.StateAt(7) == State::On && w.equippedReads == 1;
+        w.equipped = 0;   // taken off within the frame: not read again until the next
+        const bool sameFrame = f.StateAt(7) == State::On && f.StateAt(7) == State::On && w.equippedReads == 1;
+        const bool nextFrame = f.StateAt(8) == State::Off && w.equippedReads == 2;
+        const bool frameZero = [&]() {
+            FlightWorld z;
+            Flight g = makeFlight(z);
+            z.equipped = CharmBit(Charm::Wings);
+            return g.StateAt(0) == State::On && g.StateAt(0) == State::On && z.equippedReads == 1;
+        }();
+        check("state_at/reads_the_worn_charms_once_a_frame", first && sameFrame && nextFrame && frameZero,
+            "equipped-reads=" + std::to_string(w.equippedReads));
+    }
+    {
+        // The same world, frame by frame, through StateAt and through Refresh
+        // then CurrentState: on, residual inside a prop, residual held within
+        // the frame, off once free, on again, and an unreadable charm array.
+        FlightWorld a, b;
+        Flight viaStateAt = makeFlight(a);
+        Flight viaRefresh = makeFlight(b);
+        struct Step { int64_t frame; unsigned equipped; bool overlapping; bool equippedReadable; };
+        const std::vector<Step> steps = {
+            { 1, CharmBit(Charm::Elf), false, true }, { 2, 0, true, true }, { 2, 0, false, true },
+            { 3, 0, true, true }, { 4, 0, false, true }, { 5, CharmBit(Charm::Wings), false, true },
+            { 6, CharmBit(Charm::Wings), true, false }, { 7, 0, false, true },
+        };
+        bool same = true;
+        std::string trail;
+        for (const Step& s : steps) {
+            for (FlightWorld* world : { &a, &b }) {
+                world->equipped = s.equipped;
+                world->overlapping = s.overlapping;
+                world->equippedReadable = s.equippedReadable;
+            }
+            const State at = viaStateAt.StateAt(s.frame);
+            viaRefresh.Refresh(s.frame);
+            const State refreshed = viaRefresh.CurrentState();
+            same = same && at == refreshed && viaStateAt.EquippedMask() == viaRefresh.EquippedMask();
+            trail += std::string(" ") + std::string(StateName(at)) + "/" + std::string(StateName(refreshed));
+        }
+        same = same && a.equippedReads == b.equippedReads && a.overlapReads == b.overlapReads;
+        check("state_at/answers_what_refresh_then_current_state_answered", same, trail);
+    }
+
+    // ======================= player_point (#216 c3) =========================
+    // The local player is confirmed at the first hooked call of each frame,
+    // before any `self` compare; the core decides which call that is. The
+    // frame counter advances at the frame's end, so every call between two
+    // advances is one frame.
+    {
+        Flight f;
+        Flight g;
+        const bool fresh = f.ConfirmsPlayer(5);
+        g.ConfirmsPlayer(4);
+        const bool afterAnother = g.ConfirmsPlayer(5);
+        Flight z;
+        const bool frameZero = z.ConfirmsPlayer(0);   // 0 is a frame like any other, not "none yet"
+        check("player_point/the_first_call_of_a_frame_confirms_the_player", fresh && afterAnother && frameZero);
+    }
+    {
+        Flight f;
+        f.ConfirmsPlayer(5);
+        bool none = true;
+        for (int i = 0; i < 4; ++i) none = none && !f.ConfirmsPlayer(5);
+        Flight z;
+        z.ConfirmsPlayer(0);
+        const bool zeroOnce = !z.ConfirmsPlayer(0);
+        check("player_point/later_calls_of_the_frame_confirm_nothing", none && zeroOnce);
+    }
+    {
+        Flight f;
+        f.ConfirmsPlayer(5);
+        f.ConfirmsPlayer(5);
+        const bool next = f.ConfirmsPlayer(6) && !f.ConfirmsPlayer(6);
+        const bool skipped = f.ConfirmsPlayer(9);
+        const bool wrapped = f.ConfirmsPlayer(0) && !f.ConfirmsPlayer(0);   // a counter that wraps still changes
+        // The state's own once-a-frame refresh is apart: confirming the player
+        // reads nothing, and refreshing the state confirms nothing.
+        FlightWorld w;
+        Flight s = makeFlight(w);
+        s.StateAt(3);
+        const bool apart = s.ConfirmsPlayer(3) && w.equippedReads == 1 && w.overlapReads == 0;
+        check("player_point/a_new_frame_confirms_again", next && skipped && wrapped && apart);
+    }
+
     // ======================= command =======================================
     {
         Command c;

@@ -403,6 +403,20 @@ class FlightCharmsCoreBehaviorTests(unittest.TestCase):
                              "install/a_refusal_is_final_for_the_session",
                              "install/looks_for_the_player_every_60_frames")
 
+    # ---- the state and the player, at the point of use (#216 c3, c4) ---------
+
+    def test_state_at_refreshes_once_a_frame(self):
+        self.assertScenarios("state_at/reads_the_worn_charms_once_a_frame",
+                             "state_at/answers_what_refresh_then_current_state_answered")
+
+    def test_player_point_the_first_call_of_a_frame(self):
+        # The hooks compare `self` against the local player during a frame's
+        # Step, but the frame counter advances at its end: the player is
+        # confirmed at the first hooked call of each frame, once.
+        self.assertScenarios("player_point/the_first_call_of_a_frame_confirms_the_player",
+                             "player_point/later_calls_of_the_frame_confirm_nothing",
+                             "player_point/a_new_frame_confirms_again")
+
     def test_command_forms(self):
         self.assertScenarios("command/accepted_forms", "command/refused_forms_name_the_usage")
 

@@ -358,8 +358,13 @@ class FlightCharmsForgeContract(unittest.TestCase):
         self.assertIn("Out(FcNs::StatLine(FlightCharmStatFields()));", command)
         # The state is refreshed when the line is printed, with the counter
         # every frame advances, so a charm equipped in place reads `state=on`.
+        # The player is confirmed first, as the hooks confirm it (#216 c3), so
+        # the overlap read runs with this frame's player as self.
         fields = self.body("stat_fields")
-        self.assertIn("g_Flight.RefreshForStat((int64_t)g_RuntimeFrame, HhResolveLocalPlayer(player));", fields)
+        self.assertIn("const bool player = FlightConfirmPlayer();", fields)
+        self.assertIn("g_Flight.RefreshForStat((int64_t)g_RuntimeFrame, player);", fields)
+        self.assertNotIn("HhResolveLocalPlayer(", fields)
+        self.assertLess(fields.index("FlightConfirmPlayer();"), fields.index("g_Flight.RefreshForStat("))
         self.assertLess(fields.index("g_Flight.RefreshForStat("), fields.index("g_Flight.FillStat(s);"))
 
     # ---- no address -------------------------------------------------------------------
@@ -501,17 +506,25 @@ class FlightCharmsLeverContract(unittest.TestCase):
     def test_flight_answers_only_the_local_players_blocked_query(self):
         lines = self.lines("on_builtin")
         self.assertEqual(lines[0], "if (!S || g_FlightBusy || !g_Flight.Installed()) return;")
+        # The player is confirmed at the frame's first hooked call (#216 c3),
+        # right before the compare: one line, after the row bound.
+        self.assertEqual(lines[1:4], ["if (row < 0 || row >= JsNs::kBuiltinCount) return;",
+                                      "FlightConfirmPlayer();",
+                                      "if (S != g_FlightPlayer) { g_Flight.NoteCall(false); return; }"])
         # Any self but the local player is counted (the trace line's not-player=)
         # and returns before anything is answered.
-        self.assertIn("if (S != g_FlightPlayer) { g_Flight.NoteCall(false); return; }", lines)
         body = self.body("on_builtin")
         self.assertLess(body.index("if (S != g_FlightPlayer)"), body.index("FlightBlocked(h.answer, Result)"))
         # A free answer stands, before anything is read, and is counted (free=).
         self.assertIn("if (!FlightBlocked(h.answer, Result)) { g_Flight.NoteCall(true); return; }", body)
-        self.assertLess(body.index("FlightBlocked(h.answer, Result)"), body.index("g_Flight.Refresh("))
-        # The state is refreshed at the point of use, and nothing more is read while off.
-        self.assertIn("g_Flight.Refresh(frame);", body)
-        self.assertIn("if (g_Flight.CurrentState() != FcNs::State::Off)", body)
+        self.assertLess(body.index("FlightBlocked(h.answer, Result)"), body.index("g_Flight.StateAt("))
+        # The state is refreshed at the point of use, in one call (#216 c4),
+        # and nothing more is read while off.
+        self.assertIn("const FcNs::State state = g_Flight.StateAt(frame);", body)
+        self.assertNotIn("g_Flight.Refresh(", body)
+        self.assertNotIn("g_Flight.CurrentState()", body)
+        self.assertIn("if (state != FcNs::State::Off)", body)
+        self.assertLess(body.index("g_Flight.StateAt(frame)"), body.index("if (state != FcNs::State::Off)"))
         self.assertIn("JsObjectIndexOf(Args[h.objectArg])", body)
         self.assertIn("g_Flight.OnQuery(q, [&]() { return FlightExcludedBlocks(orig, h, S, O, argc, Args); })", body)
         self.assertIn("if (answer != FcNs::Answer::Real) Result = FlightAnswerValue(answer);", body)
@@ -595,10 +608,20 @@ class FlightCharmsLeverContract(unittest.TestCase):
         hook = self.body("tallest")
         self.assertIn("RValue& r = g_FlightOrigIpt(S, O, R, argc, A);", hook)
         self.assertLess(hook.index("g_FlightOrigIpt(S, O, R, argc, A)"), hook.index("g_Flight.OnQuery("))
-        self.assertIn("if (!S || g_FlightBusy || !g_Flight.Installed()) return r;", hook)
-        self.assertIn("if (S != g_FlightPlayer) { g_Flight.NoteCall(false); return r; }", hook)
+        lines = self.lines("tallest")
+        # The player is confirmed at the frame's first hooked call (#216 c3),
+        # between the guard and the compare.
+        self.assertEqual(lines[1:4], ["if (!S || g_FlightBusy || !g_Flight.Installed()) return r;",
+                                      "FlightConfirmPlayer();",
+                                      "if (S != g_FlightPlayer) { g_Flight.NoteCall(false); return r; }"])
         self.assertIn("if (!FlightBlocked(FcNs::Answer::Noone, r)) { g_Flight.NoteCall(true); return r; }", hook)
         self.assertLess(hook.index("if (S != g_FlightPlayer)"), hook.index("g_Flight.OnQuery("))
+        # The state in one call (#216 c4), after the free answer stood.
+        self.assertIn("const FcNs::State state = g_Flight.StateAt(frame);", hook)
+        self.assertNotIn("g_Flight.Refresh(", hook)
+        self.assertNotIn("g_Flight.CurrentState()", hook)
+        self.assertIn("if (state != FcNs::State::Off)", hook)
+        self.assertLess(hook.index("FlightBlocked(FcNs::Answer::Noone, r)"), hook.index("g_Flight.StateAt("))
         self.assertIn("FcNs::Hooked::InstancePlaceTallest", hook)
         self.assertIn("FlightInstanceObject(r)", hook)
         # Never re-run: the core's single-argument OnQuery.
@@ -612,8 +635,10 @@ class FlightCharmsLeverContract(unittest.TestCase):
         self.assertLess(hook.index("g_FlightOrigDepth(S, O, R, argc, A)"), hook.index("g_Flight.OnUpdateDepth("))
         lines = self.lines("depth")
         self.assertEqual(lines[1], "if (!S || g_FlightBusy || !g_Flight.Installed()) return r;")
+        # The player is confirmed at the frame's first hooked call (#216 c3).
+        self.assertEqual(lines[2], "FlightConfirmPlayer();")
         # Any other self is counted (depth-other=) and never written.
-        self.assertEqual(lines[2], "if (S != g_FlightPlayer) { g_Flight.NoteDepthOther(); return r; }")
+        self.assertEqual(lines[3], "if (S != g_FlightPlayer) { g_Flight.NoteDepthOther(); return r; }")
         self.assertIn('RValue("layer")', hook)
         self.assertIn("if (w.write)", hook)
         self.assertLess(hook.index("g_Flight.OnUpdateDepth("), hook.index('RValue("layer")'))
@@ -828,7 +853,12 @@ class FlightCharmsLeverContract(unittest.TestCase):
         self.assertEqual(tick[0], "if (!g_Flight.Armed()) return;")
         body = self.body("tick")
         self.assertIn("if (FcNs::Flight::LooksForPlayer(g_FlightArmedFrames++)) FlightInstallIfReady();", body)
-        self.assertLess(body.index("if (!g_Flight.Installed())"), body.index("FlightRefreshPlayer();"))
+        self.assertIn("if (!g_Flight.Installed())", body)
+        # Installed, the tick no longer refreshes the player (#216 c3): the
+        # hooks confirm it at the first hooked call of each frame instead.
+        self.assertNotIn("FlightRefreshPlayer(", body)
+        self.assertNotIn("FlightConfirmPlayer(", body)
+        self.assertNotIn("g_FlightPlayer", body)
         for source in (self.plugin, strip_research_blocks(self.plugin)):
             frame = strip_comments(function_body(source, LEVER["frame"]))
             self.assertEqual(frame.count("FlightCharmTick();"), 1)
@@ -855,6 +885,28 @@ class FlightCharmsLeverContract(unittest.TestCase):
         self.assertIn("HhResolveInstance(p)", resolves)
         player = self.body("player")
         self.assertIn("HhResolveLocalPlayer(p)", player)
+
+    def test_the_player_is_confirmed_at_the_first_hooked_call_of_a_frame(self):
+        # #216 c3: the core decides which call is the frame's first, keyed on
+        # the counter the queries use; only that call resolves the player, as
+        # FlightRefreshPlayer does (VALUE_REF-safe, under g_FlightBusy).
+        confirm = strip_comments(function_body(self.plugin, "static bool FlightConfirmPlayer()"))
+        self.assertIn("if (g_Flight.ConfirmsPlayer((int64_t)g_RuntimeFrame)) FlightRefreshPlayer();", confirm)
+        self.assertIn("return g_FlightPlayer != nullptr;", confirm)
+        self.assertNotIn("HhResolveLocalPlayer(", confirm)
+        player = self.body("player")
+        self.assertIn("g_FlightBusy = true;", player)
+        self.assertLess(player.index("g_FlightBusy = true;"), player.index("HhResolveLocalPlayer(p)"))
+        self.assertIn("HhResolveInstance(p)", player)
+        # Each of the three hooks confirms once, before its `self` compare; the
+        # stat line once, before its refresh. Nothing else does.
+        for which in ("on_builtin", "tallest", "depth"):
+            with self.subTest(hook=which):
+                body = self.body(which)
+                self.assertEqual(body.count("FlightConfirmPlayer();"), 1)
+                self.assertLess(body.index("FlightConfirmPlayer();"), body.index("if (S != g_FlightPlayer)"))
+        self.assertEqual(len(re.findall(r"\bFlightConfirmPlayer\(\)", self.shipped)), 6,
+                         "the declaration, the definition, three hooks and the stat line")
 
     # ---- the research build, both directions -------------------------------------------------
 
