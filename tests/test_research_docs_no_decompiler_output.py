@@ -103,6 +103,9 @@ STRICT_DOCS = (
     # Written to this standard from the start (ForgePact #166): the cast gate,
     # movement and walkability readings as names, callers and branches, in words.
     "mark1-set-research.md",
+    # Written to this standard from the start (ForgePact #196): the merchant
+    # sale and the price as names and effects, in words, never call by call.
+    "auto-sell-research.md",
 )
 
 # One known-bad sample per category, built in pieces.
