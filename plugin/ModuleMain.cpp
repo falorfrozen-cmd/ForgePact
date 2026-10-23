@@ -628,6 +628,13 @@ static bool g_FlightBusy = false;   // game thread only: the flight adapter's ow
 static const char* FlightPlayerCheck();   // the trace line's ` player=`; defined with the flight adapter
 static bool FlightConfirmPlayer();        // the player, once a frame at the point of use; defined with the adapter
 static bool FlightStatPlayerReady();      // whether the stat line may refresh; defined with the adapter
+// The hooks' own confirms of the player (#216 c3), for `flightcharm stat`'s
+// `flightcharm player:` line. Only the hooks' once-a-frame confirm writes them,
+// never the tick or the stat line, so they say whether the hooks themselves
+// re-resolved after a room change.
+static uint64_t g_FlightConfirms = 0;        // re-resolves made by a frame's first hooked call
+static uint64_t g_FlightConfirmChanged = 0;  // of those, the ones that found another pointer than the last (none included)
+static uint64_t g_FlightConfirmFrame = 0;    // the frame value of the last re-resolve; 0 before the first
 // Mark 1 set (`mark1set`, ForgePact #166): the set's decision core and the
 // owner's icons for the four pieces. The Custom Forge recognises and dresses
 // the pieces (what it reads sits just after the flight charms', before
@@ -23684,6 +23691,16 @@ static void FlightCharmCommand(const std::string& rest)
     const char* const player = FlightPlayerCheck();
     Out(FcNs::StatLine(FlightCharmStatFields()));
     Out(FcNs::TraceLine(player, g_Flight.Stats()));
+    // The hooks' own confirms (#216 c3): how many frames' first hooked call
+    // re-resolved the player, how many of those found another pointer, and
+    // the frame value of the last against the counter now. The command runs
+    // after the counter advanced, so a hook that ran in the frame just ended
+    // reads one behind `frame=`. A room change the hooks saw raises
+    // `changed=`; a `confirmed-frame=` far behind says no hook has asked since.
+    Out("flightcharm player: confirms=" + std::to_string(g_FlightConfirms)
+        + " changed=" + std::to_string(g_FlightConfirmChanged)
+        + " confirmed-frame=" + std::to_string(g_FlightConfirmFrame)
+        + " frame=" + std::to_string(g_RuntimeFrame));
     // The guard's own line: its route and how far each load got, so a quiet
     // `guard kept=0 failed=0` is told apart from a guard that saw nothing.
     Out(FcNs::GuardStatLine(g_FlightGuardRoute, g_FlightGuard.Stats()));
@@ -56015,11 +56032,18 @@ static void FlightRefreshPlayer()
 // FlightRefreshPlayer does, under g_FlightBusy) the first time a hook asks
 // within a frame value. Every later call of that frame costs one compare (the
 // core's ConfirmsPlayer). Only the three hooks call it: the stat line never
-// does, so it cannot set what its own ` player=` reports. Whether a player
-// is confirmed.
+// does, so it cannot set what its own ` player=` reports. Each re-resolve is
+// counted, with its frame value and whether it found another pointer, so the
+// stat's `flightcharm player:` line shows the hooks re-resolving after a room
+// change. Whether a player is confirmed.
 static bool FlightConfirmPlayer()
 {
+    CInstance* const was = g_FlightPlayer;
     if (g_Flight.ConfirmsPlayer((int64_t)g_RuntimeFrame)) FlightRefreshPlayer();
+    else return g_FlightPlayer != nullptr;   // a later call of the frame
+    ++g_FlightConfirms;
+    g_FlightConfirmFrame = g_RuntimeFrame;
+    if (g_FlightPlayer != was) ++g_FlightConfirmChanged;
     return g_FlightPlayer != nullptr;
 }
 
