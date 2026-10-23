@@ -5949,11 +5949,15 @@ not established.
   the tick's timing and its divisor was not read.
 - **The mercenary's regen (static reading)** counts a timer down by the
   mercenary's own `deltaFrame` each step and resets it from
-  `game_get_speed`. No `deltaFrame` slot appears in the player's scripts.
+  `game_get_speed`. The local slot scan (RIP-relative references only, the
+  kind that missed id 42 above) and the names-only trace of `Player_obj`'s
+  Step did not show a `deltaFrame` slot; whether the player's timing reads
+  one is not established.
 - **The step rate (static reading).** `SetRoomSpeed` sets `game_set_speed`
   to 60, 120 or 144 from the video FPS option (60 for any other value).
-  GameMaker runs one step per drawn frame, so the step rate is the frame
-  rate, capped at that setting. `Timer_obj`'s Step keeps a real-time factor
+  GameMaker runs one step per drawn frame (engine behaviour, not read from
+  this binary; consistent with Live 3's measured rate below), so the step
+  rate is the frame rate, capped at that setting. `Timer_obj`'s Step keeps a real-time factor
   (the frame's `delta_time` over the target frame time, clamped to 0.9 ..
   4.0); the player's tick was not seen to read it.
 - **Stats live 3 ran at about 143 frames a second (measured).** The
@@ -5964,9 +5968,15 @@ not established.
 - **The tick in Live 3's numbers (inferred from the measured gains).** Each
   window's gain is a whole number of ticks of the answer over ten, rounded
   up: S7 (answer 140) gained 154 = 11 × 14, S8 (answer 92.96) gained
-  110 = 11 × 10, S9 (answer −140) lost 518 = 37 × 14. So the divisor is 10
-  and a tick came every 16.2 to 16.4 frames, about 8.7 to 8.9 ticks a
-  second.
+  110 = 11 × 10, S9 (answer −140) lost 518 = 37 × 14. The gains alone also
+  fit a divisor of 20 (154 = 22 × 7, 110 = 22 × 5, 518 = 74 × 7); the mod's
+  own count of id 42 asks it answered (`forced=`) excludes that: it rose
+  133 to 223 and 223 to 323 over the two 10 s switch-off spends, about 9
+  asks a second, one per tick at about 8.8 ticks a second, not the 17.5 a
+  divisor of 20 would need. So at the 144 setting the divisor is 10 and a
+  tick came every 16.2 to 16.4 frames, about 8.7 to 8.9 ticks a second.
+  Whether the divisor (the Step's argument; the Step reads `game_get_speed`
+  just before the call) depends on the FPS setting is not established.
 - **Why 0.874 and 0.745 disagree (inferred).** S7's 0.874 is mana a second
   per unit of the whole answer, which is ticks a second over ten. The
   adopted 0.745 (S7 minus S8, *The replenish unit adopted* above) is the
@@ -5991,7 +6001,10 @@ not established.
   *Clock-timed:* ticks a second hold at any frame rate. Moving the FPS
   setting from 144 to 60 separates (a) from (b) and (c); only a window where
   the game runs below its own setting (an external limiter) separates (b)
-  from (c).
+  from (c). Each prediction assumes the divisor stays 10; if the Step
+  scales it with `game_get_speed` (about 4.17 at 60), the mana a tick
+  changes with the setting too, and the tick rate alone does not say which
+  hypothesis holds.
 
 Live procedure 5 measures the tick's rate at the game's setting as found and
 at 60, and the drain's share at the shipped unit; its results are written
