@@ -5499,7 +5499,7 @@ on the bar for the whole session.
 | `hit-control` | pass | S3a, two pieces worn, after two warps toward a pack: four `hu` lines (`sc_hurt`) with the room's reference self. S3b had none: the mercenary held the packs off and no monster reached Sorak in the window. |
 | `bonus-def-hit` | not-observed | No `df` line with the reference self inside either window: the four hits of S3a asked no Defense with the player's self, and S3b's 67 `df` lines all carried another self. |
 | `bonus-pdr-hit` | not-observed | Each of S3a's four hits was followed by a `pd` line with the reference self, while 97 read 21->21 at two pieces, as designed (97 is the four-piece line). S3b, four pieces worn, had no hit on the player and no `pd` line with the reference self (14 with another self). |
-| `other-object` | pass | Recorded. Outside town, 92 and 97 were asked by `Mercenary_obj` (`92:Mercenary_obj*69=5114->5114@a0=1`, `97:Mercenary_obj*14=86->86@a0=1`, against S3b's 67 `df` and 14 `pd` lines with the other self); 36 by the passives `Legion_Skeleton_Archer_Passive_obj`, `Legion_Skeleton_Passive_obj`, `Spider_Passive_obj` and `Zombie_Passive_obj`; 64 by `Companion_obj` and `Mercenary_obj`. Every asker's argument 0 read 1. |
+| `other-object` | pass | Recorded. Outside town, 92 and 97 were asked by `Mercenary_obj` (`92:Mercenary_obj*69=5114->5114@a0=1`, `97:Mercenary_obj*14=86->86@a0=1`, against S3b's 67 `df` and 14 `pd` lines with the other self); 36 by the passives `Legion_Skeleton_Archer_Passive_obj`, `Legion_Skeleton_Passive_obj`, `Spider_Passive_obj` and `Zombie_Passive_obj`; 64 by `Companion_obj` and `Mercenary_obj`. Every non-player asker recorded read argument 0 as 1 (the player's own calls' argument 0 was not recorded). |
 | `merc-page` | fail | The talent screen's own top tab `Mercenary` opened the mercenary's page. With the switch on, its entries carried the set bonus and the cost on the mercenary's numbers: `36:UI_Talent_Screen_Attribute_obj` 12527->13277, `92` 5114->5614, `97` 86->106, `38` 886->911, `161` 140->175, `42` 31->-16.04 (the drain of two proc columns at the player's maximum mana), and `2:UI_Button_Talent_Player_obj` 0->5. The page showed Life 13277 and Mana Replenish -16.04 in red. The originals equal what `Mercenary_obj` itself was answered (12527, 742, 5114, 86), and the mercenary's own calls stayed X->X: the bonus reaches the mercenary's page on the sheet, not the mercenary. |
 | `sheet-view` | pass | The sheet's Base Stats read Life 5651, equal to `statask 36`; the Defensive tab, reached by a hover then a held left click on its label at (744,544), read Defense 7556 and Physical damage reduction 41%, equal to `statask 92` and `97`. |
 | `regen-units` | pass | Recorded. Switch off, the replenish at its own R = 140 after a spend: 154 mana in 1258 ms, 122.417 a second, 0.874 a second per unit. |
@@ -5512,7 +5512,9 @@ on the bar for the whole session.
 - **A hit on the player asks for PDR with the player's self.** Each of
   S3a's four `sc_hurt` lines with the reference self was followed by a
   `StatPhysicalDamageReduction` line with the same self; no `StatDefense`
-  line came with them. Whether those hits were projectiles (the static
+  line came with them. Life read full before and after the window, so
+  whether those calls dealt damage was not read. Whether those hits were
+  projectiles (the static
   reading puts the player's id-92 ask in its collision with enemy
   projectiles) was not read.
 - **The sheet's askers.** On the Player tab the talent screen asked 2,
@@ -5526,7 +5528,8 @@ on the bar for the whole session.
 - **The HUD's numbers**, read in process from the text `DrawHud` draws,
   agreed with the dispatcher's 36 and 37 (`vitals-control`).
 - **The drain at its shipped 1%** took 47.04 of a replenish of 140 with two
-  proc columns, and the regen fell by about that share (`drain-rate`).
+  proc columns, and the remaining regen came within 7.5% of its prediction
+  (`drain-rate`: 87.37 a second against 81.29).
 
 ### Stats live 3 decision
 
@@ -5534,7 +5537,7 @@ Recorded on 2026-10-23 from Stats live 3 (results above). Each key takes
 exactly one value, on a line of its own, with its reason on the line below.
 
 other-self: mercenary
-`other-object` named `Mercenary_obj` as the non-player self asking 92 and 97 outside town (69 and 14 asks against the window's 67 `df` and 14 `pd` lines with that self), and it was left as the game answered it (`no-leak`). Answering it stays ruled out by the owner. Every asker's argument 0 read 1, the mercenary's and the sheet's included, so argument 0 cannot tell the player's own asks from the mercenary's.
+`other-object` named `Mercenary_obj` as the non-player self asking 92 and 97 outside town (69 and 14 asks against the window's 67 `df` and 14 `pd` lines with that self), and it was left as the game answered it (`no-leak`). Answering it stays ruled out by the owner. Every non-player asker recorded read argument 0 as 1, the mercenary's and the sheet's included, so argument 0 cannot tell the sheet's asks from the mercenary's (the player's own calls' argument 0 was not recorded).
 
 drain-below: drains
 `drain-below` from 1428/2352 with the replenish forced to −140: mana fell 518, 22.0% of the maximum, in 4.2 s. A replenish answer below zero takes mana away, so a drain larger than a character's replenish empties the pool rather than stopping at zero.

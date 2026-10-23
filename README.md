@@ -1948,12 +1948,14 @@ it.
 
 A third session (2026-10-23), on a research build carrying the mana drain,
 checked the drain at its shipped 1%: with two automated skills your mana
-regeneration fell by about 2% of your maximum mana a second, as designed, and a
-drain larger than your regeneration does empty your mana rather than
-stopping at zero. It checked the character sheet too: with all four worn
-it showed the set's Life, Defense and Physical Damage Taken Reduced, the
-same numbers the game uses, while your mercenary, summons and monsters got
-none of the set bonus. It also found the flaw above, the sheet's Mercenary
+regeneration fell by about 1.5% of your maximum mana a second (each
+skill's 1% comes off the game's mana replenish stat, which the game turns
+into a little less than 1% a second), and a drain larger than your
+regeneration does empty your mana rather than stopping at zero. It checked
+the character sheet too: with all four worn it showed the set's Life,
+Defense and Physical Damage Taken Reduced, the same numbers the game's own
+stat calls return for you, while your mercenary and summons got none of
+the set bonus and no monster asked for it. It also found the flaw above, the sheet's Mercenary
 tab showing the bonus and the drain on your mercenary's numbers. Not
 checked in play yet: whether the game uses the set's Defense and Physical
 Damage Taken Reduced when a monster hits you (in that session monsters hit
