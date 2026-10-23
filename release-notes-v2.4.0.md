@@ -128,7 +128,7 @@ pieces" below.
   into a little less than 1% a second (about 1.5% of your maximum a second
   with two automated skills in that session; this version scales the drain
   by the replenish rate that session measured, aiming at about 1% a second
-  per skill, and the new rate has not been measured in a game session yet), and that a drain larger than your regeneration empties your mana;
+  per skill, and the new rate is not measured in a game session yet), and that a drain larger than your regeneration empties your mana;
   and the character sheet
   showing the set's Life, Defense and Physical Damage Taken Reduced with
   all four worn, the same numbers the game's own stat calls return for

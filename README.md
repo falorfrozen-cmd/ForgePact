@@ -1953,8 +1953,8 @@ into a little less than 1% a second), and a drain larger than your
 regeneration does empty your mana rather than stopping at zero. That
 session also measured how much mana the game takes for each point the drain
 removes, and this version scales the drain by it, aiming at about 1% of your
-maximum mana a second per automated skill; the new rate has not been
-measured in a game session yet. It checked
+maximum mana a second per automated skill; the new rate is
+not measured in a game session yet. It checked
 the character sheet too: with all four worn it showed the set's Life,
 Defense and Physical Damage Taken Reduced, the same numbers the game's own
 stat calls return for you, while your mercenary and summons got none of
