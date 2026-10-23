@@ -5914,3 +5914,85 @@ So each automated skill takes about 1% of maximum mana a second by the
 arithmetic, checked by `tests/test_mark1_cost_behavior.py` and the hub's
 `tests/test_mark1_automation_model.py`; that rate is not measured in a game
 session yet: no session has run a build with the scaled unit.
+
+### Regen and the frame rate (static reading)
+
+The owner's question of 2026-10-23: does the game's mana regen, and so the
+Mark 1 drain, which only lowers the answer to id 42, depend on the frame
+rate? Answered statically first, then by a short live round (Live procedure
+5). Labels: **static reading**, **measured**, **inferred**, **not
+established**. In our own words; the shared reference is
+[RUNTIME_DATA_MODELS § 7.10](../../docs/RUNTIME_DATA_MODELS.md#710-the-skill-bars-buttons-mana-and-the-casts-speed).
+
+Sources: the ghidra MCP's decompiles of `SetRoomSpeed`, `PlayerRegenSet`,
+`stepMercenaryTimers` and `playerUpdateTimerMana`; one headless decompile of
+`PlayerUpdateTimers` (the MCP timed out on it) with `Timer_obj`'s Step; local
+byte scans for constant-id askers and direct callers, with positive controls
+(id 64's askers as the shared reference lists them, and `CheckTalentUse`
+called from `PlayerMovement`); and a names-only trace of `Player_obj`'s Step.
+A long decompile of that Step did not finish, so what only it would show is
+not established.
+
+- **Where the player's regen happens (static reading).** In
+  `playerUpdateTimerMana`, called once, directly, from `Player_obj`'s Step;
+  not in `PlayerUpdateTimers`, whose one `PlayerManaUpdate` call is the clamp
+  back to the maximum. For the local player, while current mana is below the
+  maximum, the tick asks the dispatcher for id 42, divides the answer by its
+  second argument, rounds up, and adds that through `PlayerManaUpdate`. Life
+  works the same way in `playerUpdateTimerLife` with id 38. The earlier scan
+  that found only `stepMercenaryTimers` asking 42 missed this one because the
+  tick loads 42 as a plain integer constant: a scan blindness, not an
+  absence.
+- **What the Step passes (not established).** Before each tick call the Step
+  reads a `pSt` entry, asks id 44 (mana) or 41 (life), which have no case in
+  the dispatcher's table, and reads `game_get_speed` twice. How those become
+  the tick's timing and its divisor was not read.
+- **The mercenary's regen (static reading)** counts a timer down by the
+  mercenary's own `deltaFrame` each step and resets it from
+  `game_get_speed`. No `deltaFrame` slot appears in the player's scripts.
+- **The step rate (static reading).** `SetRoomSpeed` sets `game_set_speed`
+  to 60, 120 or 144 from the video FPS option (60 for any other value).
+  GameMaker runs one step per drawn frame, so the step rate is the frame
+  rate, capped at that setting. `Timer_obj`'s Step keeps a real-time factor
+  (the frame's `delta_time` over the target frame time, clamped to 0.9 ..
+  4.0); the player's tick was not seen to read it.
+- **Stats live 3 ran at about 143 frames a second (measured).** The
+  `vitals` lines' `frame=` and `dt=`: S7 180 frames in 1258 ms, S8 180 in
+  1259 ms, S9 600 in 4173 ms; that is the 144 setting. The "about 78" taken
+  from the debugger control's 777 `PlayerMovement` hits in 10 s is not once
+  a frame (or the logpoints slowed the game; not established which).
+- **The tick in Live 3's numbers (inferred from the measured gains).** Each
+  window's gain is a whole number of ticks of the answer over ten, rounded
+  up: S7 (answer 140) gained 154 = 11 × 14, S8 (answer 92.96) gained
+  110 = 11 × 10, S9 (answer −140) lost 518 = 37 × 14. So the divisor is 10
+  and a tick came every 16.2 to 16.4 frames, about 8.7 to 8.9 ticks a
+  second.
+- **Why 0.874 and 0.745 disagree (inferred).** S7's 0.874 is mana a second
+  per unit of the whole answer, which is ticks a second over ten. The
+  adopted 0.745 (S7 minus S8, *The replenish unit adopted* above) is the
+  drain side: the drain took 14 − 10 = 4 whole mana a tick where 4.70 was
+  asked, and that rounding, not the unit, is the gap. How precise 0.745 is:
+  it comes from two integer gains (154 and 110) over windows of about
+  1.26 s, on one character, S7 starting at 1582 mana and S8 at 1428; one
+  mana more or less in either gain moves it by about 0.017, so it reads
+  0.745 ± 0.035 at best, and a gain counted in whole ticks could move it
+  further. The frame rate in that session was about 143, not 78.
+- **What the shipped unit predicts (inferred).** At 0.745, answer 140,
+  maximum 2352 and two proc columns, the drain asks 63.14; each tick then
+  takes 14 − 8 = 6 mana, about 1.12% of maximum mana a second per skill,
+  not exactly 1%. One mana a tick is about 0.19% of that maximum a second
+  per column, so the drain can only move in steps of that size.
+- **What each frame-rate hypothesis predicts (not established which
+  holds).** (a) *Frame-counted at a fixed count:* about 16 frames a tick at
+  any setting, so at 60 FPS the ticks fall to about 3.7 a second (× 0.42),
+  and the drain's share a second falls with them; no constant fixes that.
+  (b) *Frame-counted against `game_get_speed`:* ticks a second hold while the
+  game reaches its setting and fall in proportion when it runs below it. (c)
+  *Clock-timed:* ticks a second hold at any frame rate. Moving the FPS
+  setting from 144 to 60 separates (a) from (b) and (c); only a window where
+  the game runs below its own setting (an external limiter) separates (b)
+  from (c).
+
+Live procedure 5 measures the tick's rate at the game's setting as found and
+at 60, and the drain's share at the shipped unit; its results are written
+under *Stats live procedure 5* when that session is recorded.
