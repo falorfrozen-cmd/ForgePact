@@ -242,7 +242,7 @@ public:
     // Reads only.
     bool PriceOf(const RValue& item, PriceParts& parts) {
         parts = PriceParts();
-        if (Kind(item) != VALUE_OBJECT) { parts.why = "not an item struct"; return false; }
+        if (!StructLike(item)) { parts.why = "not an item struct"; return false; }
         double type = -1;
         if (!Number(StructField(item, kType), type)) {
             parts.typeRefused = true;
@@ -256,13 +256,13 @@ public:
             return false;
         }
         const RValue info = StructField(item, kInfo);
-        if (Kind(info) != VALUE_OBJECT) { parts.why = "no itemInfoStruct"; return false; }
+        if (!StructLike(info)) { parts.why = "no itemInfoStruct"; return false; }
         double info9 = 0;
         if (!Number(StructField(info, kPriceKey), info9)) { parts.why = "info 9 missing or not a number"; return false; }
         parts.info9 = info9;
         if (!(info9 > 0)) { parts.why = "info 9 not above 0"; return false; }
         const RValue definition = StructField(item, kDefinition);
-        if (Kind(definition) == VALUE_OBJECT) {
+        if (StructLike(definition)) {
             double count = 0;
             if (Number(StructField(definition, kCountKey), count) && count > 0) parts.count = count;
         }
@@ -375,11 +375,28 @@ private:
         return std::isfinite(out);
     }
     RValue Call(const char* name, std::vector<RValue> args) { return g_Yytk->CallBuiltin(name, args); }
-    // A struct's field, asked for before it is read; undefined when absent.
+    // A struct-like value: a struct (VALUE_OBJECT) or the reference this
+    // runner can hand back instead (VALUE_REF), the kinds the SDK's
+    // ReadGroundRelic takes for the same itemInstance. The kind never
+    // decides whether the sale is tried; an empty value holds nothing.
+    static bool StructLike(const RValue& v) {
+        const uint32_t kind = Kind(v);
+        return kind == VALUE_OBJECT || kind == VALUE_REF;
+    }
+    // A struct-like value's field, asked for before it is read; undefined
+    // when absent. `variable_struct_*` for a VALUE_OBJECT,
+    // `variable_instance_*` for a VALUE_REF (the ReadGroundRelic split).
     RValue StructField(const RValue& s, const char* name) {
-        if (Kind(s) != VALUE_OBJECT) return RValue();
-        if (!Call("variable_struct_exists", { s, RValue(name) }).ToBoolean()) return RValue();
-        return Call("variable_struct_get", { s, RValue(name) });
+        const uint32_t kind = Kind(s);
+        if (kind == VALUE_OBJECT) {
+            if (!Call("variable_struct_exists", { s, RValue(name) }).ToBoolean()) return RValue();
+            return Call("variable_struct_get", { s, RValue(name) });
+        }
+        if (kind == VALUE_REF) {
+            if (!Call("variable_instance_exists", { s, RValue(name) }).ToBoolean()) return RValue();
+            return Call("variable_instance_get", { s, RValue(name) });
+        }
+        return RValue();
     }
 
     // Loot_Ground_obj's object index, by its SDK name; asked again until it
@@ -460,7 +477,7 @@ private:
         if (!RoomAllows()) { ++m_Stats.skippedPersistent; return; }
         // 4. Without an item struct there is nothing a merchant could price.
         const RValue item = Call("variable_instance_get", { handle, RValue(kItem) });
-        if (Kind(item) != VALUE_OBJECT) { ++m_Stats.unsellable; return; }
+        if (!StructLike(item)) { ++m_Stats.unsellable; return; }
         ItemKey key;
         if (!m_KeyOf || !m_KeyOf(item, key)) { ++m_Stats.noKey; return; }
         if (m_Credited.count(key)) { ++m_Stats.repeatHeld; return; }
