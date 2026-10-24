@@ -2223,6 +2223,11 @@ uniques and sets included.
   anything else the filter gives no verdict, and anything in a persistent
   room such as town. An item whose price comes out at nothing, or whose gold
   the game refuses to credit, is left where it fell.
+- **Never sold: what a merchant will not buy.** Keys, tarot cards, materials,
+  gems and runes, and relics, the items the game marks "Item cannot be sold",
+  are never sold, even when your filter hides them. They stay on the ground
+  where they fell, or are put to sleep when **Sleep loot your filter hides**
+  is on.
 - **No buyback.** A sold item is not added to the merchant's buyback list,
   and the merchant window is never opened or used.
 - **With Sleep loot your filter hides.** The sale comes first: a hidden drop
@@ -2237,8 +2242,9 @@ uniques and sets included.
   Tower floor, where the game holds drops until the floor is cleared, whether
   an item is sold when it falls or when the floor's loot lands is not known
   yet.
-- **Not yet checked in play.** The price against a sale to a real merchant,
-  the credit and the gold read have not been measured in a game session yet.
+- **Not yet checked in play.** In a first game session the price of one item
+  matched what a real merchant paid for it, but the sale itself, the credit
+  and the gold read, has not been seen working in a game session yet.
 
 The mechanism, what it mirrors of the game's own merchant sale and what is
 not known yet: [`docs/auto-sell-research.md`](docs/auto-sell-research.md).
