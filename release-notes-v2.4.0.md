@@ -287,8 +287,13 @@ pieces" below.
   later. On top of that it takes a quick safety look every 60 frames, about
   once a second at 60 fps, in case the game changed your charms some other
   way. If the plugin cannot watch for charm changes on your game, flight
-  checks every frame as before and works the same. This is covered by ForgePact's own tests and has not been
-  tried in a game session yet.
+  checks every frame as before and works the same. Tested in two game
+  sessions on 2026-10-24 with a research build of the plugin and Pocket Elf:
+  worn, the charms were read about once a second instead of every frame,
+  ForgePact's share of each frame fell from about 3% to about 1%, and putting
+  the charm on, taking it off and changing zones were each picked up. Gabriel
+  Wings and Witch's Broomstick take the same path and were not tried;
+  dragging a charm, a stash transfer and loading a save were not tried.
 
 ## How to update
 

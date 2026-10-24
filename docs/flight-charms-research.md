@@ -2334,8 +2334,8 @@ built.
   isolate this read because the read is mostly game builtins called from the
   plugin. Whether the game's `UpdateCharmData` runs on an equip change (hub
   RDM § 23.1 reads it as rebuilding `localCharmItemArray`, a static reading;
-  the decompiler's cross-references show no caller of it, which is not
-  observed rather than none) goes to a debugger logpoint, since it is a "does
+  no caller of it was found on the drag, stash-transfer or save-load routes,
+  which is not observed rather than none) goes to a debugger logpoint, since it is a "does
   it fire, how often" question. A cache was left to the owner on those
   numbers; after Mod live 4 the owner had it built in #216 (§ "The worn-charm
   cache (#216)" below).
@@ -2557,8 +2557,9 @@ by a right-click in the bag, entered through `RunItemEquipped` just before
 it, and was not observed while Sorak stood or walked with the control
 logging. So it is a usable signal that the worn charms changed on that
 route. Other routes (dragging a charm into the grid, a stash transfer, a
-load, a room change) were not observed, and the decompiler shows no caller
-of `UpdateCharmData` (not observed, not none), so whether every change to the
+load, a room change (since measured, Mod live 5 below)) were not observed,
+and no caller of `UpdateCharmData` was found on the drag, stash-transfer or
+save-load routes (not observed, not none), so whether every change to the
 worn list passes through it is not established. The owner decided on
 2026-10-24 to build a cache of the read, invalidated by `UpdateCharmData`,
 in #216 rather than a follow-up.
