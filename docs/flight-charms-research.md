@@ -2496,14 +2496,81 @@ lines (the guide's "Flight charms" › Commands); `UpdateCharmData` and
 Outskirts of Inoya (done in Mod live 2, not written as steps in the shared
 references).
 
+### Mod live 4 results
+
+Run on 2026-10-24 by the live operator, on the research DLL built from
+ForgePact `3c13b50` (the last plugin commit `b26b28f`) with `build.bat dev`
+(sha256 `de4d3c9d42dbfe1941496734ce4e4e829b8b9a3040dfb2726b42b4bbea26ffa2`):
+every #216 code change and the marker `flp4`. Save slot 14 "Sorak", in
+`Town_01_rm`, with no flight charm in the save (`flightcharm stat` read
+`install=not-armed` at load), on the same game build as the earlier
+sessions, the one the debugger's addresses were read from (the operator
+checked the installed game's hash before step V8). The record is the session
+capture `forgepact-216-flight-followups-live-1.md`, kept with the hub's
+workorder files and not tracked. `tools/live_checks.py` reads 19 checks from
+it: 19 pass, none fail, none not observed, none not run. The operator drove
+every step through hs-drive, the waypoint travel included (about 25 s each
+way, by clicking the waypoint and the map's node); none went to the owner.
+The debugger step first met a stale x64dbg session left from 2026-10-23 on a
+game process that no longer existed; the owner approved ending it, the driver
+did, and the attach then went through on this session's game. The saves were
+restored at teardown and read back clean.
+
+| Check | Verdict | What it showed |
+|---|---|---|
+| `dll-hash` | pass | The installed DLL's SHA-256 equalled the build's and the lease's. |
+| `control` | pass | `ping` answered `pong (YYTK 4.0.1)`. |
+| `marker` | pass | Bare `flightprobe` answered `flightprobe: marker=flp4`. |
+| `perf-control` | pass | Before any charm was owned, 10 s of `perf` counted `FrameCallback body` at `calls=1650` over 1649 frames and the `flight worn-charm read` row at `calls=0`: nothing reads before arming. The zero counts because the next two checks show the same row counting. |
+| `perf-bucket-poll` | pass | With Pocket Elf carried in the bag, 10 s standing: `calls=28` over 1649 frames, one look per 59 frames, avg 143.7 us. At the session's 144 fps that is about 2.4 looks a second, not the "about one a second" the procedure assumed at 60 fps; the look runs every 60 frames, as built. |
+| `perf-bucket-frame` | pass | Worn, a 5 s walk: `calls=900` over 899 frames, one read a frame, avg 174.1 us. |
+| `dbg-control` | pass | The `CheckTalentUse` logpoint logged throughout (about 75 hits a second), and the control hold proved the attach by the game's frame counter (102114 and 102258 before the arm, no answer at the hold, 102449 after the resume). It rose by 1578 in window A and 724 in window B. |
+| `arm-waiting` | pass | Three seconds after Sorak picked the spawned Pocket Elf up, `flightcharm stat`'s first line read `install=waiting-for-worn-charm state=off equipped=none`: a carried charm no longer installs flight's hooks. |
+| `ground-route` | pass | The same line read `ground=1`, the `flightcharm drops:` line `ground-route=both`, and `out.txt` held no `flightcharm: ground icon off` line. |
+| `arm-installed` | pass | Right-clicked into the charm grid (no Sorak charm had to move), within about 1.5 s `flightcharm stat` read `install=installed state=on equipped=elf`; `out.txt` showed the builtin hooks installed then. |
+| `flight-walk` | pass | At the ravine's north rim (929, 1591), `flightprobe free 0 8` read `blocked=yes`; S held 3 s moved Sorak to y 2031.43 (440 px, as in Mod live 1) and `answered=` rose from 388 to 1054. |
+| `player-room` | pass | After the waypoint to the Outskirts of Inoya, before any `flightcharm stat`, a 3 s walk south moved him 1297 px and `answered=` rose from 1054 to 3829; back in town, the ravine walk crossed again (440 px) and `answered=` rose to 4191; only then did the trace read `player=match`, with `changed=4` over the two room changes. The Outskirts has no ravine, so that walk was on open ground: it shows flight answering in the new room, not a crossing there. |
+| `cost-off` | pass (recorded) | Pocket Elf back in the bag, flight `installed state=off`, 12 charms worn; 15 s standing and 10 s walking: header `perf: 3839 frames, avg 6.94 ms, max 8.3 ms`; the worn read `calls=3840`, avg 150.8 us, share of frames 2.173%; plugin total 2.989% of the frame time. |
+| `frameprof-off` | pass (recorded) | 20 s walking: 144.0 fps, median frame 6.9 ms, worst 7.3 ms, no frame over 50 ms; the frame thread's time split game code 21.1%, GameMaker runtime 23.5%, mods (plugins) 4.2%, graphics driver 3.3%, idle (the frame limiter's spin) 47.9%. The report is `bp_ipc\perf\frameprof-20261024-085611.json` on the operator's machine. |
+| `cost-on` | pass (recorded) | Pocket Elf worn again (`state=on`, 13 charms), the same window: header `perf: 3839 frames, avg 6.94 ms, max 9.2 ms`; the worn read `calls=3840`, avg 169.5 us, share of frames 2.441%; plugin total 3.309%. |
+| `dbg-ucd-still` | pass (recorded: 0) | Window A, about 21 s of standing and walking with no equip change: `UpdateCharmData` 0 hits, `RunItemEquipped` 0, while the control rose by 1578. |
+| `dbg-ucd-equip` | pass (recorded: 2) | Window B, Pocket Elf right-clicked to the bag and, 2 s later, back into the grid: `UpdateCharmData` 2 hits, one per equip change. |
+| `dbg-rie-equip` | pass (recorded: 2) | In window B `RunItemEquipped` was hit twice, each time just before the matching `UpdateCharmData` hit. |
+| `restored` | pass | The game stopped with exit code 0, the saves were inspected (the save, the bag order and `shop.ini` had changed), restored (105 files) and read back clean; the lease released with no restore pending. |
+
+**What the cost numbers say.** Once flight is installed the worn-charm read
+runs on every frame, with the charm worn or not: about 150 to 170 us of a
+6.94 ms frame (2.2% to 2.4% of the frame time), most of the plugin's own
+total of about 3% (0.93% before any charm was owned, in V2). The read grows
+with the charms worn (12 against 13 here). `frameprof` cannot isolate it,
+because the read is mostly game builtins called from the plugin; it put all
+mods at 4.2% of the frame thread's time. Both bucket controls passed in the
+same session, so these are the read's cost, not the instrument's.
+
+**What the debugger says.** `UpdateCharmData` ran once per equip change made
+by a right-click in the bag, entered through `RunItemEquipped` just before
+it, and was not observed while Sorak stood or walked with the control
+logging. So it is a usable signal that the worn charms changed on that
+route. Other routes (dragging a charm into the grid, a stash transfer, a
+load, a room change) were not observed, and the decompiler shows no caller
+of `UpdateCharmData` (not observed, not none), so whether every change to the
+worn list passes through it is not established. The owner decided on
+2026-10-24 to build a cache of the read, invalidated by `UpdateCharmData`,
+in #216 rather than a follow-up.
+
+Notes, not checks: unlike every earlier session, the game exited with code 0
+on the graceful close. During window A's stand another window held the
+foreground; the walk set it back first.
+
 ### Status and what is not established
 
-All three sessions are recorded. Every acceptance check of Mod live 2 passed,
+All four sessions are recorded. Every acceptance check of Mod live 2 passed,
 and it re-ran every check Mod live 1 failed or did not observe. Mod live 3
 tried the monster rule against a town training dummy; its control failed, so
 it verified the walls and the residual state but not the monster path. The
 owner then played with a Pocket Elf on the same research build and reported
-the mod working as intended, monsters included.
+the mod working as intended, monsters included. Mod live 4 checked #216's
+follow-ups on their research build: all 19 checks passed.
 
 **Owner-confirmed in play, 2026-10-13** (the owner's report, not an
 instrumented measurement: no trace, counter or debugger read backs it):
@@ -2536,7 +2603,18 @@ Measured:
   (`monster-baseline`, the failed control);
 - `StatPhasing`, the getter of item stat 26, is entered on every step, once
   per `CheckTalentUse` hit, standing still included (`dbg-phasing`), and
-  `InstancePlaceTallest` during walks only (`dbg-ipt`).
+  `InstancePlaceTallest` during walks only (`dbg-ipt`);
+- a carried charm waits without installing flight's hooks and a worn one
+  installs them (`arm-waiting`, `arm-installed`), the ground icon's route is
+  both (`ground-route`), and flight answers after two room changes with the
+  player confirmed at the point of use (`flight-walk`, `player-room`), all in
+  Mod live 4;
+- the worn-charm read, once flight is installed, costs about 150 us a frame
+  with 12 charms worn and 170 us with 13, 2.2% to 2.4% of the frame time
+  (`cost-off`, `cost-on`, both bucket controls passing);
+- `UpdateCharmData` runs once per right-click equip change, just after
+  `RunItemEquipped`, and was not observed while standing or walking
+  (`dbg-ucd-still`, `dbg-ucd-equip`, `dbg-rie-equip`).
 
 **Not established**, each written as not observed live rather than as a
 negative:
@@ -2578,10 +2656,12 @@ negative:
   church's wall walked with flight on (at the church wall spot the blocker is
   in the family but is not a `Wall_Parent_obj`, so flight would cross it),
   grids other than the bag, the charm grid and the stash, co-op.
-- **#216's follow-ups, live.** Not yet in a game session: the worn-charm
-  install, the ground route, flight after a room change, the cost of the
-  worn-charm read and whether `UpdateCharmData` runs on an equip change. Mod
-  live procedure 4 is written for them.
+- **#216's follow-ups, live, beyond Mod live 4.** A table-only ground route
+  and the depth tie (the contract tests and the harness cover them), the
+  Wings and the Broomstick on the worn-charm install, and whether every
+  change to the worn charms passes through `UpdateCharmData`: Mod live 4
+  equipped only by right-click in the bag, so dragging, a stash transfer, a
+  load or a room change was not observed calling it.
 - **The census's other answers.** What the 50 and 55 non-struct effect reads
   were, and whether passing a layer's name instead of its id changes them.
 - **How the flying player looks.** The operator saw the scene's own tint on
