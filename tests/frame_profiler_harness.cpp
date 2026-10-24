@@ -201,6 +201,18 @@ static bool Finish(const char* label, std::vector<std::string>& summary, double 
         if (fp::detail::Qpc() > deadline) return false;
         Sleep(10);
     }
+    // Busy() turns false a moment before the sampler thread returns, and
+    // Start refuses the next capture until it has ("the previous capture is
+    // still finishing"). On a loaded machine that moment is long enough for
+    // the next scenario's Start to land in it. A Start with no frame thread
+    // changes nothing and says which it is: "no handle" once the thread is gone.
+    for (;;) {
+        std::string why;
+        profiler.Start(fp::StartParams{}, why);
+        if (why.find("no handle") != std::string::npos) break;
+        if (fp::detail::Qpc() > deadline) return false;
+        Sleep(10);
+    }
     summary.clear();
     if (!profiler.TakeSummary(summary)) return false;
     for (const auto& l : summary) std::printf("  %s: %s\n", label, l.c_str());

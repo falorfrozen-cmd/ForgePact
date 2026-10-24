@@ -14,7 +14,7 @@
 
 import { statSync } from 'node:fs';
 import { join } from 'node:path';
-import { PANEL_DIR } from '../lib/browser.mjs';
+import { PANEL_DIR, waitBooted } from '../lib/browser.mjs';
 
 export const EXPECTED = [
   'first-load-plays-nothing-it-already-had',
@@ -126,6 +126,10 @@ async function armed(t, options = {}) {
   p.page.on('response', (r) => { if (new URL(r.url()).pathname === '/api/tracker/extra') extras += 1; });
   await p.page.reload();
   await p.page.waitForFunction(() => Array.isArray(window.__plays));
+  // reload() returns at the load event, and boot() wires the tab buttons only
+  // after its own /api/state answer: on a loaded machine a click before that
+  // lands on a button with no handler, and the tab never opens.
+  await waitBooted(p.page);
   p.trackerGets.length = 0;
   if (options.tab) {
     // Playwright's click is a real (trusted) one, which would let a silent
