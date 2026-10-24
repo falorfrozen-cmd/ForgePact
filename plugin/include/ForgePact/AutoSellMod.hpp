@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Common.hpp"
+#include <hs_game_sdk/item_type.hpp>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -30,15 +31,24 @@ namespace ForgePact {
 //      9, the product and the rounding up are a static reading; the count
 //      is AFK FARM's earlier reading, not re-read);
 //   2. the credit: GetCounterHash() read just before PickUpGoldCheck(hash,
-//      price, 1, undefined x3), the sale's first branch; only a true answer
-//      counts as credited;
+//      price, 1, undefined x3), the sale's first branch. Whether the player
+//      was paid is decided by the balance read either side of it, not by
+//      its answer: the credit answers undefined on every path but a failed
+//      hash check, which answers false (static reading of PickUpGoldCheck,
+//      after Live 1 counted every passing credit refused);
 //   3. the gold log: GoldLogAdd(18, price), as the sale writes it, and how
 //      ForgePact's tracker and HS Offline Tracker count income.
 // Not mirrored, by design: the item's hash check (a fresh ground item is in
 // no map), the sell pool, the ownership change, the online inventory record,
-// and the sound. Which `self` the credit needs is not established (the sale
-// passes the grid node); the local player is what is passed, and Live 1's
-// exact-gold check settles it.
+// and the sound. The hash is read from the game's global protected store,
+// not from `self` (static reading); the local player is what is passed.
+//
+// What the game will not buy is never sold: an item whose itemType is a key,
+// a tarot card, a material, a socketable or a relic (the SDK's ItemType
+// members; the inventory tooltip prices these 0 and shows "Item cannot be
+// sold", static reading, two of them seen by hand in Live 1), or whose
+// itemType cannot be read. Such an item stays on the ground for hidden loot
+// (the owner: anything not sellable is not sold).
 //
 // When: ModuleMain's one LootGroundInit detour (shared with hidden loot and
 // the other ground-item consumers) hands Note() the call's argument 0 and
@@ -51,20 +61,33 @@ namespace ForgePact {
 //   2. the game's verdict `lootFilterVisible`, asked for before it is read:
 //      absent (no-filter-var), shown (visible, never touched);
 //   3. a room that is readable and not persistent (skipped-persistent);
-//   4. its item struct not credited before in this room (repeat-held): a
-//      Chaos Tower floor may place the same struct on the ground twice;
-//   5. a price above 0 (unsellable, left on the ground);
+//   4. its item struct (else unsellable), its key (no-key), not credited
+//      before in this room (repeat-held): a Chaos Tower floor may place the
+//      same struct on the ground twice;
+//   5. sellable: an itemType the game buys (else unsellable and
+//      type-unsellable), then a price above 0 (else unsellable); left on the
+//      ground either way;
 //   6. a local player (no-player);
-//   7. the balance read, then the credit; anything but true (credit-refused,
-//      the item stays, so a refused credit never loses an item);
-//   8. the gold log, the balance read again: after - before == price is
-//      exact, anything else inexact (the offline cap is one cause);
+//   7. the balance read (unreadable: gold-unreadable, no credit call), the
+//      credit, the balance read again. Paid when the balance rose; when the
+//      second read fails, when the credit dispatched and did not answer false
+//      (also counted credit-unverified). Not paid: the item stays and the
+//      cause is counted, credit-call-failed (a script did not dispatch),
+//      credit-false (answered false) or credit-unpaid (the balance did not
+//      rise), credit-refused being their sum; so a refused credit never
+//      loses an item;
+//   8. paid: after - before == price is exact, anything else inexact (the
+//      offline cap is one cause); then the gold log (refused or thrown:
+//      log-refused, the sale stands);
 //   9. instance_destroy on the ground item, as the game's own pickup callers
 //      and the pet relic collector remove one; still there is destroy-failed,
 //      else sold, and the price is added to gold.
-// The item struct is remembered as credited the moment the credit takes, so
-// a failure after it can never pay for the same struct twice. An exception
-// in one item counts errors and leaves that item; the next is still decided.
+// Every credit attempt, paid or not, is kept for the stat line's last=: the
+// price, the balance either side and the credit's answer.
+// The item struct is remembered as credited the moment the payment is seen,
+// so a failure after it can never pay for the same struct twice. An
+// exception in one item counts errors and leaves that item; the next is
+// still decided.
 // The instance ids sold this frame are kept for ModuleMain to hand hidden
 // loot, which then counts those notes sold instead of unidentified.
 //
@@ -88,8 +111,20 @@ public:
     static constexpr const char* kPriceKey = "9";      // the info value a merchant pays per unit
     static constexpr const char* kNameKey = "28";      // the info value holding the display name
     static constexpr const char* kCountKey = "o";      // the stack count, absent counting as 1
+    static constexpr const char* kType = "itemType";   // the item's class, on the item struct
+    // The item types the game will not buy (the tooltip's "Item cannot be
+    // sold" rule, static reading).
+    static constexpr HeroSiege::Items::ItemType kNotBought[] = {
+        HeroSiege::Items::ItemType::Key, HeroSiege::Items::ItemType::Tarot, HeroSiege::Items::ItemType::Material,
+        HeroSiege::Items::ItemType::Socketable, HeroSiege::Items::ItemType::Relic,
+    };
 
     enum class Route { NotInstalled, None, TableOnly, Both };
+    // What the credit call gave back. Failed: a script did not dispatch.
+    // False: it answered false (the hash check, static reading). The rest
+    // name the kind of any other answer; none of them decides payment, the
+    // balance does.
+    enum class CreditAnswer { Failed, False, True, Undefined, Number, Other };
     struct Room { bool readable = false; bool persistent = false; };
     // An item struct's identity for the room's credited set (ModuleMain's
     // LaItemKey: a kind and a value).
@@ -98,7 +133,7 @@ public:
     // The game-facing calls, made by name in ModuleMain. Each answers false
     // when it could not do what it says.
     using LocalPlayer = bool (*)(RValue& player);
-    using Credit = bool (*)(const RValue& player, double price);   // the counter hash, then the credit; true only on a true answer
+    using Credit = CreditAnswer (*)(const RValue& player, double price);   // the counter hash, then the credit; what it answered
     using GoldLog = bool (*)(const RValue& player, double price);  // the game's gold log, type 18
     using GoldRead = bool (*)(const RValue& player, double& gold); // the balance, by the game's own getter
     using KeyOf = bool (*)(const RValue& itemStruct, ItemKey& key);
@@ -106,19 +141,25 @@ public:
 
     struct Stats {
         uint64_t notes = 0, sold = 0, exact = 0, inexact = 0;
-        uint64_t visible = 0, noFilterVar = 0, unsellable = 0, skippedPersistent = 0, repeatHeld = 0;
-        uint64_t noPlayer = 0, creditRefused = 0, destroyFailed = 0, gone = 0, unidentified = 0, errors = 0;
-        uint64_t logRefused = 0;   // the gold log answered false or threw (not on the stat line)
+        uint64_t visible = 0, noFilterVar = 0, unsellable = 0, typeUnsellable = 0, skippedPersistent = 0, repeatHeld = 0;
+        uint64_t noPlayer = 0, goldUnreadable = 0;
+        uint64_t creditRefused = 0;   // the sum of the three causes below
+        uint64_t creditCallFailed = 0, creditFalse = 0, creditUnpaid = 0;
+        uint64_t creditUnverified = 0;   // paid on the answer, the balance after unreadable (counted inexact too)
+        uint64_t logRefused = 0;         // the gold log answered false or threw; the sale stands
+        uint64_t destroyFailed = 0, gone = 0, unidentified = 0, noKey = 0, errors = 0;
         double gold = 0;           // the sum of the prices of the items sold
     };
     struct Last {
         bool any = false;
         double price = 0, before = 0, after = 0;
         bool beforeRead = false, afterRead = false;
+        CreditAnswer answer = CreditAnswer::Failed;
     };
-    // The price and its inputs, or why there is none.
+    // The item's type, the price and its inputs, or why there is none.
     struct PriceParts {
-        double info9 = 0, count = 1, price = 0;
+        double type = -1, info9 = 0, count = 1, price = 0;
+        bool typeRefused = false;   // the game will not buy the type, or it could not be read
         std::string why;
     };
 
@@ -188,11 +229,32 @@ public:
         }
     }
 
-    // The price a merchant pays for an item struct, the one function both the
-    // sale and `autosell quote` use. Reads only.
+    // Whether the game buys an item of this type: not one of kNotBought.
+    static bool TypeIsBought(double type) {
+        for (HeroSiege::Items::ItemType t : kNotBought)
+            if (type == static_cast<double>(static_cast<int32_t>(t))) return false;
+        return true;
+    }
+
+    // Whether the item is sellable and the price a merchant pays for it, the
+    // one function both the sale and `autosell quote` use: its itemType
+    // readable as a number and one the game buys, then the price above 0.
+    // Reads only.
     bool PriceOf(const RValue& item, PriceParts& parts) {
         parts = PriceParts();
         if (Kind(item) != VALUE_OBJECT) { parts.why = "not an item struct"; return false; }
+        double type = -1;
+        if (!Number(StructField(item, kType), type)) {
+            parts.typeRefused = true;
+            parts.why = "item type missing or not a number";
+            return false;
+        }
+        parts.type = type;
+        if (!TypeIsBought(type)) {
+            parts.typeRefused = true;
+            parts.why = "item type " + Num(type) + " is not sold by the game";
+            return false;
+        }
         const RValue info = StructField(item, kInfo);
         if (Kind(info) != VALUE_OBJECT) { parts.why = "no itemInfoStruct"; return false; }
         double info9 = 0;
@@ -209,8 +271,8 @@ public:
         return true;
     }
 
-    // `autosell quote`'s fields for an item struct: name="..." info9=<v>
-    // count=<n> price=<p>, or false with the reason. Reads only.
+    // `autosell quote`'s fields for an item struct: name="..." type=<t>
+    // info9=<v> count=<n> price=<p>, or false with the reason. Reads only.
     bool QuoteFields(const RValue& item, std::string& fields, std::string& why) {
         PriceParts parts;
         try {
@@ -219,17 +281,34 @@ public:
             const RValue info = StructField(item, kInfo);
             const RValue text = StructField(info, kNameKey);
             if (Kind(text) == VALUE_STRING) name = text.ToString();
-            fields = "name=\"" + name + "\" info9=" + Num(parts.info9) + " count=" + Num(parts.count) + " price=" + Num(parts.price);
+            fields = "name=\"" + name + "\" type=" + Num(parts.type) + " info9=" + Num(parts.info9) + " count=" + Num(parts.count) + " price=" + Num(parts.price);
             return true;
         } catch (...) { why = "a read threw"; return false; }
     }
 
-    // The last sale's price and the balance either side of its credit:
-    // <price>:<before>-><after>, or none.
+    // The last credit attempt's price and the balance either side of it:
+    // <price>:<before>-><after>, or none. The stat line's last= adds the
+    // answer (LastAnswerText).
     std::string LastText() const {
         if (!m_Last.any) return "none";
         return Num(m_Last.price) + ":" + (m_Last.beforeRead ? Num(m_Last.before) : std::string("unreadable"))
             + "->" + (m_Last.afterRead ? Num(m_Last.after) : std::string("unreadable"));
+    }
+    static const char* AnswerName(CreditAnswer answer) {
+        switch (answer) {
+        case CreditAnswer::Failed: return "failed";
+        case CreditAnswer::False: return "false";
+        case CreditAnswer::True: return "true";
+        case CreditAnswer::Undefined: return "undefined";
+        case CreditAnswer::Number: return "number";
+        case CreditAnswer::Other: return "other";
+        }
+        return "other";
+    }
+    // The last=: <price>:<before>-><after>:<answer>, or none.
+    std::string LastAnswerText() const {
+        if (!m_Last.any) return "none";
+        return LastText() + ":" + AnswerName(m_Last.answer);
     }
     // The balance now, read on demand through the setters: a number or
     // unreadable.
@@ -251,10 +330,15 @@ public:
         t += " notes=" + U(s.notes) + " sold=" + U(s.sold) + " gold=" + Num(s.gold);
         t += " exact=" + U(s.exact) + " inexact=" + U(s.inexact);
         t += " visible=" + U(s.visible) + " no-filter-var=" + U(s.noFilterVar) + " unsellable=" + U(s.unsellable);
+        t += " type-unsellable=" + U(s.typeUnsellable);
         t += " skipped-persistent=" + U(s.skippedPersistent) + " repeat-held=" + U(s.repeatHeld);
-        t += " no-player=" + U(s.noPlayer) + " credit-refused=" + U(s.creditRefused) + " destroy-failed=" + U(s.destroyFailed);
-        t += " gone=" + U(s.gone) + " unidentified=" + U(s.unidentified) + " errors=" + U(s.errors);
-        t += " last=" + LastText();
+        t += " no-player=" + U(s.noPlayer) + " gold-unreadable=" + U(s.goldUnreadable);
+        t += " credit-refused=" + U(s.creditRefused) + " credit-call-failed=" + U(s.creditCallFailed);
+        t += " credit-false=" + U(s.creditFalse) + " credit-unpaid=" + U(s.creditUnpaid);
+        t += " credit-unverified=" + U(s.creditUnverified) + " log-refused=" + U(s.logRefused);
+        t += " destroy-failed=" + U(s.destroyFailed);
+        t += " gone=" + U(s.gone) + " unidentified=" + U(s.unidentified) + " no-key=" + U(s.noKey) + " errors=" + U(s.errors);
+        t += " last=" + LastAnswerText();
         t += " gold-now=" + GoldNowText();
         return t;
     }
@@ -378,29 +462,48 @@ private:
         const RValue item = Call("variable_instance_get", { handle, RValue(kItem) });
         if (Kind(item) != VALUE_OBJECT) { ++m_Stats.unsellable; return; }
         ItemKey key;
-        if (!m_KeyOf || !m_KeyOf(item, key)) { ++m_Stats.errors; return; }
+        if (!m_KeyOf || !m_KeyOf(item, key)) { ++m_Stats.noKey; return; }
         if (m_Credited.count(key)) { ++m_Stats.repeatHeld; return; }
-        // 5.
+        // 5. Sellable: a type the game buys, then a price above 0.
         PriceParts parts;
-        if (!PriceOf(item, parts)) { ++m_Stats.unsellable; return; }
+        if (!PriceOf(item, parts)) {
+            ++m_Stats.unsellable;
+            if (parts.typeRefused) ++m_Stats.typeUnsellable;
+            return;
+        }
         const double price = parts.price;
         // 6.
         RValue player;
         if (!Player(player)) { ++m_Stats.noPlayer; return; }
-        // 7. The balance before, then the credit. A refused credit leaves the
-        // item where it is and the struct unremembered.
+        // 7. The balance before; without it there is no telling whether a
+        // credit paid, so no credit is attempted.
         Last last;
-        last.any = true;
         last.price = price;
         try { last.beforeRead = m_GoldRead && m_GoldRead(player, last.before); } catch (...) { last.beforeRead = false; }
-        if (!m_Credit || !m_Credit(player, price)) { ++m_Stats.creditRefused; return; }
-        m_Credited.insert(key);
-        // 8. The gold log, the balance after.
-        try { if (!m_GoldLog || !m_GoldLog(player, price)) ++m_Stats.logRefused; } catch (...) { ++m_Stats.logRefused; }
+        if (!last.beforeRead) { ++m_Stats.goldUnreadable; return; }
+        // The credit, then the balance after, which decides the payment. The
+        // answer decides only when the balance cannot be read again, and then
+        // only a dispatched call that did not answer false counts as paid.
+        last.any = true;
+        last.answer = m_Credit ? m_Credit(player, price) : CreditAnswer::Failed;
         try { last.afterRead = m_GoldRead && m_GoldRead(player, last.after); } catch (...) { last.afterRead = false; }
         m_Last = last;
-        if (last.beforeRead && last.afterRead && last.after - last.before == price) ++m_Stats.exact;
+        const bool answered = last.answer != CreditAnswer::Failed && last.answer != CreditAnswer::False;
+        const bool paid = last.afterRead ? last.after - last.before > 0 : answered;
+        if (!paid) {
+            // Not paid: the item stays where it is and the struct unremembered.
+            ++m_Stats.creditRefused;
+            if (last.answer == CreditAnswer::Failed) ++m_Stats.creditCallFailed;
+            else if (last.answer == CreditAnswer::False) ++m_Stats.creditFalse;
+            else ++m_Stats.creditUnpaid;
+            return;
+        }
+        m_Credited.insert(key);
+        if (!last.afterRead) ++m_Stats.creditUnverified;
+        // 8. Exact or not, then the gold log; a refused log leaves the sale.
+        if (last.afterRead && last.after - last.before == price) ++m_Stats.exact;
         else ++m_Stats.inexact;
+        try { if (!m_GoldLog || !m_GoldLog(player, price)) ++m_Stats.logRefused; } catch (...) { ++m_Stats.logRefused; }
         // 9. The ground item goes.
         Call("instance_destroy", { handle });
         if (Call("instance_exists", { handle }).ToBoolean()) { ++m_Stats.destroyFailed; return; }

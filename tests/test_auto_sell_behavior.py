@@ -11,6 +11,15 @@ room, an unsellable price, no local player, a refused credit, a failed
 destroy, a struct already credited in the room), the call order, room
 changes, the price function `autosell quote` shares, and the stat line's
 fields.
+
+Replan 1 (after Live 1): the game's credit answers `undefined` when it pays
+(static reading), so the balance read either side of the credit decides
+whether the player was paid, and the refusal names its cause (the call did
+not dispatch, it answered false, or it paid nothing). The five item types the
+game will not buy (key, tarot card, material, socketable, relic) and an item
+whose type cannot be read are never sold. The header includes the SDK's
+`hs_game_sdk/item_type.hpp`, so the harness builds against the hub's
+`hs-game-sdk/cpp/include`, as tests/test_mining_ore_behavior.py does.
 """
 import os
 import shutil
@@ -40,6 +49,7 @@ class AutoSellBehaviorTests(unittest.TestCase):
         cpp = out / "autosell.cpp"
         cpp.write_text(code, encoding="utf-8")
         cls.binary = out / ("autosell.exe" if os.name == "nt" else "autosell")
+        sdk = ROOT.parent / "hs-game-sdk/cpp/include"
         if os.name == "nt":
             vswhere = Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Microsoft Visual Studio/Installer/vswhere.exe"
             if not vswhere.is_file():
@@ -54,14 +64,14 @@ class AutoSellBehaviorTests(unittest.TestCase):
             batch = out / "compile.cmd"
             batch.write_text(
                 f'@echo off\ncall "{vcvars}" >nul\nif errorlevel 1 exit /b 1\n'
-                f'cl /nologo /std:c++20 /EHsc /O2 /I "{ROOT / "plugin/include"}" "{cpp}" /Fe:"{cls.binary}" /Fo:"{out / "autosell.obj"}"\n'
+                f'cl /nologo /std:c++20 /EHsc /O2 /I "{ROOT / "plugin/include"}" /I "{sdk}" "{cpp}" /Fe:"{cls.binary}" /Fo:"{out / "autosell.obj"}"\n'
                 f'exit /b %errorlevel%\n', encoding="utf-8")
             command = ["cmd", "/d", "/c", str(batch)]
         else:
             compiler = shutil.which("c++")
             if not compiler:
                 raise unittest.SkipTest("A C++20 compiler is required for native behavior tests")
-            command = [compiler, "-std=c++20", "-O2", "-I", str(ROOT / "plugin/include"), str(cpp), "-o", str(cls.binary)]
+            command = [compiler, "-std=c++20", "-O2", "-I", str(ROOT / "plugin/include"), "-I", str(sdk), str(cpp), "-o", str(cls.binary)]
         # The compiler speaks the machine's locale; decode leniently so a
         # localized diagnostic cannot itself crash the test.
         result = subprocess.run(command, cwd=out, capture_output=True, text=True, encoding="utf-8", errors="replace")
@@ -129,7 +139,42 @@ class AutoSellBehaviorTests(unittest.TestCase):
         self.assertScenario("noplayer/no_sale")
 
     def test_refused_credit_leaves_the_item(self):
-        for label in ("refused/item_left", "refused/counted", "refused/not_remembered"):
+        """Answered false (the hash check): credit-false, the item left and its struct not remembered."""
+        for label in ("refused/item_left", "refused/counted", "refused/last_false", "refused/not_remembered"):
+            self.assertScenario(label)
+
+    def test_credit_answer_undefined_pays(self):
+        """Live 1's failure: a credit that answers undefined and raises the balance by the price is a sale."""
+        for label in ("credit/undefined_pays", "credit/undefined_last"):
+            self.assertScenario(label)
+
+    def test_answer_alone_never_decides_payment(self):
+        for label in ("credit/true_without_payment_unpaid", "credit/unpaid_item_left", "credit/unpaid_not_remembered"):
+            self.assertScenario(label)
+
+    def test_credit_call_failed(self):
+        self.assertScenario("credit/call_failed")
+        self.assertScenario("credit/call_failed_last")
+
+    def test_gold_unreadable_before_makes_no_credit(self):
+        self.assertScenario("credit/gold_unreadable_before")
+        self.assertScenario("credit/gold_unreadable_no_last")
+
+    def test_unverified_credit(self):
+        """Unreadable after a dispatched, not-false answer: sold, inexact and unverified; after false or a failure: not paid."""
+        self.assertScenario("inexact/unreadable_gold")
+        self.assertScenario("credit/unverified_needs_dispatch_and_not_false")
+
+    def test_gold_log_refused_sale_stands(self):
+        self.assertScenario("log/refused_sale_stands")
+
+    def test_key_lookup_failure_is_no_key(self):
+        self.assertScenario("nokey/counted_not_error")
+
+    def test_unsellable_item_types(self):
+        """Key, tarot, material, socketable, relic and an unreadable type are never sold; a ring is."""
+        for label in ("types/left_on_the_ground", "types/counted", "types/no_credit_no_balance", "types/ring_sells",
+                      "quote/refuses_unsellable_types", "quote/refuses_unreadable_type", "quote/ring_type"):
             self.assertScenario(label)
 
     def test_inexact_gold(self):
@@ -161,8 +206,9 @@ class AutoSellBehaviorTests(unittest.TestCase):
             self.assertScenario(label)
 
     def test_stat_line_fields(self):
-        for label in ("stat/fields_in_order", "stat/gold_now_read", "stat/route_both", "stat/route_table_only",
-                      "stat/route_none", "stat/gold_now_unreadable"):
+        for label in ("stat/fields_in_order", "stat/no_other_fields", "stat/credit_refused_is_the_sum",
+                      "stat/type_unsellable_within_unsellable", "stat/gold_now_read", "stat/route_both",
+                      "stat/route_table_only", "stat/route_none", "stat/gold_now_unreadable"):
             self.assertScenario(label)
 
 

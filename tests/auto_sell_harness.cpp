@@ -8,11 +8,14 @@
 //
 // The controlled world holds ground items (Loot_Ground_obj) carrying the
 // game's filter verdict `lootFilterVisible` and an `itemInstance` item struct,
-// whose `itemInfoStruct["9"]` and `itemDefinitionStruct.o` are the price
-// inputs; a monster (a drop call's `self`); and a coin (not a ground item).
-// object_index answers as a typed reference with a flag bit above the kind,
-// and `id` as a reference, as this runner answers them. The gold balance
-// moves only through the injected credit, and stops at the offline cap.
+// whose `itemType`, `itemInfoStruct["9"]` and `itemDefinitionStruct.o` are
+// the sellability and price inputs; a monster (a drop call's `self`); and a
+// coin (not a ground item). object_index answers as a typed reference with a
+// flag bit above the kind, and `id` as a reference, as this runner answers
+// them. The gold balance moves only through the injected credit, and stops at
+// the offline cap. The credit answers `undefined` when it pays, as the game's
+// PickUpGoldCheck does (static reading, Live 1), `false` on the hash check,
+// and can be made to dispatch nothing or to pay nothing.
 //
 // Every call the class makes, to the runner or through a setter, is counted
 // and kept in order, so a scenario can say both what happened and that
@@ -77,7 +80,13 @@ struct World {
     double gold = 1000;
     double goldCap = 500000000;                  // the offline cap
     bool hasPlayer = true;
-    bool refuseCredit = false;
+    bool refuseCredit = false;                   // the credit answers false and pays nothing (the hash check)
+    bool creditDispatches = true;                // false: a script did not dispatch
+    bool creditPays = true;                      // false: dispatched and answered, the balance did not move
+    std::string creditAnswer = "undefined";      // what a dispatched, passing credit answers
+    bool goldUnreadableAfterCredit = false;      // the balance read right after a credit fails
+    bool refuseLog = false;
+    bool keyFails = false;
     bool refuseDestroy = false;
     bool goldUnreadable = false;
     int64_t throwOnItemOf = -1;                  // variable_instance_get(itemInstance) throws for this id
@@ -162,29 +171,38 @@ static bool LocalPlayer(RValue& player) {
     player = Ref(kPlayerId);
     return true;
 }
-static bool Credit(const RValue& player, double price) {
+static AutoSellMod::CreditAnswer Credit(const RValue& player, double price) {
+    using A = AutoSellMod::CreditAnswer;
     ++world.game; ++world.credits;
     world.events.push_back("credit");
     world.lastCredit = price;
-    if (idOf(player) != kPlayerId || world.refuseCredit) return false;
-    world.gold = std::min(world.gold + price, world.goldCap);
-    return true;
+    if (!world.creditDispatches) return A::Failed;
+    if (idOf(player) != kPlayerId || world.refuseCredit) return A::False;
+    if (world.creditPays) world.gold = std::min(world.gold + price, world.goldCap);
+    const std::string& a = world.creditAnswer;
+    if (a == "true") return A::True;
+    if (a == "false") return A::False;
+    if (a == "number") return A::Number;
+    if (a == "other") return A::Other;
+    return A::Undefined;
 }
 static bool GoldLog(const RValue&, double price) {
     ++world.game; ++world.logs;
     world.events.push_back("log");
     world.lastLog = price;
-    return true;
+    return !world.refuseLog;
 }
 static bool GoldRead(const RValue&, double& gold) {
     ++world.game; ++world.goldReads;
+    const bool afterCredit = !world.events.empty() && world.events.back() == "credit";
     world.events.push_back("gold-read");
-    if (world.goldUnreadable) return false;
+    if (world.goldUnreadable || (world.goldUnreadableAfterCredit && afterCredit)) return false;
     gold = world.gold;
     return true;
 }
 static bool KeyOf(const RValue& item, AutoSellMod::ItemKey& key) {
     ++world.game; ++world.keyReads;
+    if (world.keyFails) return false;
     if ((item.m_Kind & 0x0FFFFFFF) != VALUE_OBJECT) return false;
     key = { 1, static_cast<uint64_t>(idOf(item)) };
     return true;
@@ -197,8 +215,10 @@ static int64_t g_NextId = 100001;
 static int64_t g_NextStruct = 1;
 static const double kNoValue = std::numeric_limits<double>::quiet_NaN();
 // An item struct: info value 9 (absent when NaN unless given as a string),
-// the stack count `o` (absent when NaN), and a display name.
-static int64_t addStruct(double info9, double count = kNoValue, const std::string& name = "Rusty Sword") {
+// the stack count `o` (absent when NaN), a display name, and the item's
+// `itemType` (absent when NaN; 3 is a weapon).
+static int64_t addStruct(double info9, double count = kNoValue, const std::string& name = "Rusty Sword",
+                         double type = 3) {
     const int64_t key = g_NextStruct++;
     const int64_t info = g_NextStruct++;
     const int64_t def = g_NextStruct++;
@@ -210,6 +230,7 @@ static int64_t addStruct(double info9, double count = kNoValue, const std::strin
     if (!std::isnan(count)) defFields["o"] = RValue(count);
     world.structs[def] = defFields;
     world.structs[key] = { { "itemInfoStruct", StructRef(info) }, { "itemDefinitionStruct", StructRef(def) } };
+    if (!std::isnan(type)) world.structs[key]["itemType"] = RValue(type);
     return key;
 }
 static int64_t addGround(int64_t structKey, bool hidden = true, bool hasVerdict = true) {
@@ -292,7 +313,9 @@ int main() {
         check("target/sold_once", world.credits == 1 && world.logs == 1);
     }
 
-    // ---- The call order: gold read, credit, log, gold read, destroy -------------
+    // ---- The call order: gold read, credit, gold read, log, destroy -------------
+    // The balance after is read right after the credit, since it decides
+    // whether the player was paid; only a paid sale is logged.
     {
         world.events.clear();
         const int64_t item = addGround(addStruct(10));
@@ -301,7 +324,7 @@ int main() {
         const auto& e = world.events;
         const long read = indexOf(e, "gold-read"), credit = indexOf(e, "credit"), log = indexOf(e, "log"),
                    after = indexOf(e, "gold-read", static_cast<size_t>(credit < 0 ? 0 : credit)), destroy = indexOf(e, "destroy");
-        check("order/credit_log_destroy", read >= 0 && read < credit && credit < log && log < after && after < destroy,
+        check("order/credit_log_destroy", read >= 0 && read < credit && credit < after && after < log && log < destroy,
             "read=" + n(read) + " credit=" + n(credit) + " log=" + n(log) + " after=" + n(after) + " destroy=" + n(destroy));
         check("order/one_of_each", e.size() == 5, "events=" + n(static_cast<long long>(e.size())));
     }
@@ -399,7 +422,9 @@ int main() {
             "no-player=" + n(mod().StatsRef().noPlayer));
     }
 
-    // ---- The credit refused: the item stays, nothing logged, not remembered ----------
+    // ---- The credit answered false: the item stays, nothing logged, not remembered ---
+    // The hash check's answer (static reading): nothing paid, the cause is
+    // credit-false, and credit-refused counts it too.
     {
         const auto before = mod().StatsRef();
         world.refuseCredit = true;
@@ -407,13 +432,195 @@ int main() {
         const int64_t item = addGround(addStruct(50));
         drop(item); tick();
         world.refuseCredit = false;
+        const auto& s = mod().StatsRef();
         check("refused/item_left", on(item) && indexOf(world.events, "log") < 0 && indexOf(world.events, "destroy") < 0);
-        check("refused/counted", mod().StatsRef().creditRefused == before.creditRefused + 1 && mod().StatsRef().sold == before.sold,
-            "credit-refused=" + n(mod().StatsRef().creditRefused));
+        check("refused/counted", s.creditRefused == before.creditRefused + 1 && s.sold == before.sold
+            && s.creditFalse == before.creditFalse + 1 && s.creditCallFailed == before.creditCallFailed
+            && s.creditUnpaid == before.creditUnpaid,
+            "credit-refused=" + n(s.creditRefused) + " credit-false=" + n(s.creditFalse));
+        const std::string g = AutoSellMod::Num(world.gold);
+        check("refused/last_false", mod().StatFields().find(" last=50:" + g + "->" + g + ":false ") != std::string::npos,
+            mod().StatFields());
         // A later drop of the same item, once the credit takes, is sold: a
         // refusal does not mark the struct credited.
         drop(item); tick();
         check("refused/not_remembered", !on(item) && mod().StatsRef().sold == before.sold + 1 && mod().StatsRef().repeatHeld == before.repeatHeld);
+    }
+
+    // ---- Replan 1: a credit that answers undefined and pays is a sale ----------------
+    // Live 1's failure: the game's credit answers undefined on every path but
+    // the hash check (static reading), and the old rule counted that refused
+    // while the player was paid. The balance either side decides now.
+    {
+        const auto before = mod().StatsRef();
+        world.creditAnswer = "undefined";
+        const double gold = world.gold;
+        const int64_t item = addGround(addStruct(40));
+        drop(item); tick();
+        const auto& s = mod().StatsRef();
+        check("credit/undefined_pays", !on(item) && world.gold == gold + 40 && s.sold == before.sold + 1
+            && s.exact == before.exact + 1 && s.creditRefused == before.creditRefused,
+            "sold=" + n(s.sold - before.sold) + " exact=" + n(s.exact - before.exact)
+            + " credit-refused=" + n(s.creditRefused - before.creditRefused));
+        const std::string line = mod().StatFields();
+        check("credit/undefined_last", line.find(" last=40:" + AutoSellMod::Num(gold) + "->" + AutoSellMod::Num(gold + 40)
+            + ":undefined ") != std::string::npos, line);
+    }
+
+    // ---- The answer alone never decides: true without payment is unpaid ---------------
+    {
+        const auto before = mod().StatsRef();
+        world.creditAnswer = "true";
+        world.creditPays = false;
+        world.events.clear();
+        const int64_t item = addGround(addStruct(40));
+        drop(item); tick();
+        world.creditPays = true;
+        const auto& s = mod().StatsRef();
+        check("credit/true_without_payment_unpaid", on(item) && s.creditUnpaid == before.creditUnpaid + 1
+            && s.creditRefused == before.creditRefused + 1 && s.sold == before.sold
+            && indexOf(world.events, "log") < 0 && indexOf(world.events, "destroy") < 0,
+            "credit-unpaid=" + n(s.creditUnpaid - before.creditUnpaid));
+        // Undefined without payment: unpaid as well, and the item is not
+        // remembered, so once the credit pays it is sold.
+        world.creditAnswer = "undefined";
+        world.creditPays = false;
+        const int64_t other = addGround(addStruct(40));
+        drop(other); tick();
+        world.creditPays = true;
+        check("credit/unpaid_item_left", on(other) && mod().StatsRef().creditUnpaid == before.creditUnpaid + 2
+            && mod().StatFields().find(":undefined ") != std::string::npos, mod().StatFields());
+        drop(other); tick();
+        check("credit/unpaid_not_remembered", !on(other) && mod().StatsRef().sold == before.sold + 1
+            && mod().StatsRef().repeatHeld == before.repeatHeld);
+        byId(item)->exists = false;
+    }
+
+    // ---- A script that does not dispatch: credit-call-failed, item left ---------------
+    {
+        const auto before = mod().StatsRef();
+        world.creditDispatches = false;
+        world.events.clear();
+        const int64_t item = addGround(addStruct(40));
+        drop(item); tick();
+        world.creditDispatches = true;
+        const auto& s = mod().StatsRef();
+        check("credit/call_failed", on(item) && s.creditCallFailed == before.creditCallFailed + 1
+            && s.creditRefused == before.creditRefused + 1 && s.creditFalse == before.creditFalse
+            && indexOf(world.events, "log") < 0 && indexOf(world.events, "destroy") < 0,
+            "credit-call-failed=" + n(s.creditCallFailed - before.creditCallFailed));
+        check("credit/call_failed_last", mod().StatFields().find(":failed ") != std::string::npos, mod().StatFields());
+        byId(item)->exists = false;
+    }
+
+    // ---- The balance unreadable before: no credit call, the item left ------------------
+    {
+        const auto before = mod().StatsRef();
+        const auto last = mod().LastText();
+        world.goldUnreadable = true;
+        world.events.clear();
+        const long credits = world.credits;
+        const int64_t item = addGround(addStruct(40));
+        drop(item); tick();
+        world.goldUnreadable = false;
+        const auto& s = mod().StatsRef();
+        check("credit/gold_unreadable_before", on(item) && world.credits == credits && s.goldUnreadable == before.goldUnreadable + 1
+            && s.sold == before.sold && s.creditRefused == before.creditRefused && world.events.size() == 1,
+            "gold-unreadable=" + n(s.goldUnreadable - before.goldUnreadable) + " events=" + n((long long)world.events.size()));
+        check("credit/gold_unreadable_no_last", mod().LastText() == last, mod().LastText());
+        byId(item)->exists = false;
+    }
+
+    // ---- Unreadable after a false answer or a failed dispatch: not paid ----------------
+    {
+        const auto before = mod().StatsRef();
+        world.goldUnreadableAfterCredit = true;
+        world.refuseCredit = true;
+        const int64_t a = addGround(addStruct(40));
+        drop(a); tick();
+        world.refuseCredit = false;
+        world.creditDispatches = false;
+        const int64_t b = addGround(addStruct(40));
+        drop(b); tick();
+        world.creditDispatches = true;
+        world.goldUnreadableAfterCredit = false;
+        const auto& s = mod().StatsRef();
+        check("credit/unverified_needs_dispatch_and_not_false", on(a) && on(b) && s.creditFalse == before.creditFalse + 1
+            && s.creditCallFailed == before.creditCallFailed + 1 && s.creditUnverified == before.creditUnverified
+            && s.sold == before.sold);
+        byId(a)->exists = false;
+        byId(b)->exists = false;
+    }
+
+    // ---- The gold log refused: counted on the stat line, the sale stands ---------------
+    {
+        const auto before = mod().StatsRef();
+        world.refuseLog = true;
+        const int64_t item = addGround(addStruct(40));
+        drop(item); tick();
+        world.refuseLog = false;
+        const auto& s = mod().StatsRef();
+        check("log/refused_sale_stands", !on(item) && s.logRefused == before.logRefused + 1 && s.sold == before.sold + 1
+            && mod().StatFields().find(" log-refused=" + n((long long)s.logRefused) + " ") != std::string::npos, mod().StatFields());
+    }
+
+    // ---- The key lookup fails: no-key, not an error -----------------------------------
+    {
+        const auto before = mod().StatsRef();
+        world.keyFails = true;
+        world.events.clear();
+        const int64_t item = addGround(addStruct(40));
+        drop(item); tick();
+        world.keyFails = false;
+        const auto& s = mod().StatsRef();
+        check("nokey/counted_not_error", on(item) && world.events.empty() && s.noKey == before.noKey + 1 && s.errors == before.errors,
+            "no-key=" + n(s.noKey - before.noKey) + " errors=" + n(s.errors - before.errors));
+        byId(item)->exists = false;
+    }
+
+    // ---- The types the game will not buy are never sold --------------------------------
+    // Key 12, Tarot 13, Material 14, Socketable 15, Relic 16 (the tooltip's
+    // "Item cannot be sold" rule, static reading), and an item with no
+    // readable itemType: each unsellable and type-unsellable, no credit and
+    // no balance read, left on the ground. A ring (7) beside them sells.
+    {
+        const auto before = mod().StatsRef();
+        const long credits = world.credits, reads = world.goldReads;
+        std::vector<int64_t> refused;
+        for (double t : { 12.0, 13.0, 14.0, 15.0, 16.0 }) refused.push_back(addGround(addStruct(1350, kNoValue, "Destiny Shard", t)));
+        refused.push_back(addGround(addStruct(692, kNoValue, "No Type", kNoValue)));
+        const int64_t textType = addStruct(692, kNoValue, "Text Type");
+        world.structs[textType]["itemType"] = RValue("15");
+        refused.push_back(addGround(textType));
+        const int64_t ring = addGround(addStruct(57, kNoValue, "Ring", 7));
+        for (int64_t id : refused) drop(id);
+        drop(ring);
+        tick();
+        const auto& s = mod().StatsRef();
+        bool left = true;
+        for (int64_t id : refused) left = left && on(id);
+        check("types/left_on_the_ground", left);
+        check("types/counted", s.unsellable == before.unsellable + 7 && s.typeUnsellable == before.typeUnsellable + 7,
+            "unsellable=" + n(s.unsellable - before.unsellable) + " type-unsellable=" + n(s.typeUnsellable - before.typeUnsellable));
+        check("types/no_credit_no_balance", world.credits == credits + 1 && world.goldReads == reads + 2,
+            "credits=" + n(world.credits - credits) + " gold-reads=" + n(world.goldReads - reads));
+        check("types/ring_sells", !on(ring) && s.sold == before.sold + 1 && world.lastCredit == 57);
+        bool quoted = true;
+        std::string seen;
+        for (int t = 12; t <= 16; ++t) {
+            std::string fields, why;
+            const bool ok = mod().QuoteFields(StructRef(addStruct(1350, kNoValue, "Destiny Shard", t)), fields, why);
+            quoted = quoted && !ok && fields.empty() && why == "item type " + std::to_string(t) + " is not sold by the game";
+            seen += why + "; ";
+        }
+        check("quote/refuses_unsellable_types", quoted, seen);
+        std::string fields, why;
+        const bool untyped = !mod().QuoteFields(StructRef(addStruct(692, kNoValue, "No Type", kNoValue)), fields, why);
+        check("quote/refuses_unreadable_type", untyped && fields.empty() && why.find("item type") != std::string::npos, why);
+        fields.clear(); why.clear();
+        const bool priced = mod().QuoteFields(StructRef(addStruct(57, kNoValue, "Ring", 7)), fields, why);
+        check("quote/ring_type", priced && fields == "name=\"Ring\" type=7 info9=57 count=1 price=57", fields + " " + why);
+        for (int64_t id : refused) byId(id)->exists = false;
     }
 
     // ---- Inexact: the balance stops at the offline cap -----------------------------
@@ -425,15 +632,18 @@ int main() {
         check("inexact/counted", !on(item) && mod().StatsRef().inexact == before.inexact + 1 && mod().StatsRef().exact == before.exact
             && mod().StatsRef().sold == before.sold + 1, "inexact=" + n(mod().StatsRef().inexact));
         check("inexact/last", mod().LastText() == "100:499999960->500000000", mod().LastText());
-        // An unreadable balance cannot show the credit was exact either; the
-        // sale itself still happens.
+        // A balance unreadable right after a credit that dispatched and did
+        // not answer false cannot show the credit was exact; the sale itself
+        // still happens, counted unverified. (Unreadable before the credit is
+        // no sale at all: credit/gold_unreadable_before, below.)
         world.gold = 1000;
-        world.goldUnreadable = true;
+        world.goldUnreadableAfterCredit = true;
         const int64_t other = addGround(addStruct(100));
         drop(other); tick();
-        world.goldUnreadable = false;
+        world.goldUnreadableAfterCredit = false;
         check("inexact/unreadable_gold", !on(other) && mod().StatsRef().inexact == before.inexact + 2
-            && mod().LastText() == "100:unreadable->unreadable", mod().LastText());
+            && mod().StatsRef().creditUnverified == before.creditUnverified + 1
+            && mod().LastText() == "100:1000->unreadable", mod().LastText());
     }
 
     // ---- Destroy failed: counted, not counted sold, never credited again -------------
@@ -543,7 +753,7 @@ int main() {
     {
         std::string fields, why;
         const bool ok = mod().QuoteFields(StructRef(addStruct(37.4, 3, "Rusty Sword")), fields, why);
-        check("quote/fields", ok && fields == "name=\"Rusty Sword\" info9=37.4 count=3 price=113", fields + " " + why);
+        check("quote/fields", ok && fields == "name=\"Rusty Sword\" type=3 info9=37.4 count=3 price=113", fields + " " + why);
         fields.clear(); why.clear();
         const bool refused = !mod().QuoteFields(StructRef(addStruct(kNoValue)), fields, why);
         check("quote/refused_with_reason", refused && !why.empty() && fields.empty(), why);
@@ -555,8 +765,10 @@ int main() {
     {
         const std::string line = mod().StatFields();
         const char* fields[] = { "on=1", "route=not-installed", "notes=", "sold=", "gold=", "exact=", "inexact=",
-            "visible=", "no-filter-var=", "unsellable=", "skipped-persistent=", "repeat-held=", "no-player=",
-            "credit-refused=", "destroy-failed=", "gone=", "unidentified=", "errors=", "last=", "gold-now=" };
+            "visible=", "no-filter-var=", "unsellable=", "type-unsellable=", "skipped-persistent=", "repeat-held=",
+            "no-player=", "gold-unreadable=", "credit-refused=", "credit-call-failed=", "credit-false=", "credit-unpaid=",
+            "credit-unverified=", "log-refused=", "destroy-failed=", "gone=", "unidentified=", "no-key=", "errors=",
+            "last=", "gold-now=" };
         size_t at = 0;
         bool ordered = true;
         std::string missing;
@@ -566,6 +778,16 @@ int main() {
             at = p;
         }
         check("stat/fields_in_order", ordered && line.rfind("on=", 0) == 0, missing + "| " + line);
+        // Exactly these fields, none beside them.
+        size_t count = 0;
+        for (size_t p = 0; (p = line.find('=', p)) != std::string::npos; ++p) ++count;
+        check("stat/no_other_fields", count == sizeof(fields) / sizeof(fields[0]), "fields=" + n((long long)count) + " | " + line);
+        const auto& s = mod().StatsRef();
+        check("stat/credit_refused_is_the_sum", s.creditRefused == s.creditCallFailed + s.creditFalse + s.creditUnpaid
+            && s.creditCallFailed > 0 && s.creditFalse > 0 && s.creditUnpaid > 0,
+            "credit-refused=" + n(s.creditRefused) + " call-failed=" + n(s.creditCallFailed) + " false=" + n(s.creditFalse)
+            + " unpaid=" + n(s.creditUnpaid));
+        check("stat/type_unsellable_within_unsellable", s.typeUnsellable > 0 && s.typeUnsellable <= s.unsellable);
         check("stat/gold_now_read", line.find("gold-now=" + std::to_string(static_cast<long long>(world.gold))) != std::string::npos, line);
         mod().SetRoute(AutoSellMod::Route::Both);
         check("stat/route_both", mod().StatFields().find(" route=both ") != std::string::npos);
