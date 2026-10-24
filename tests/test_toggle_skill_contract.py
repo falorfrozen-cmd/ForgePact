@@ -885,6 +885,9 @@ class ToggleIndicatorReadContractTests(unittest.TestCase):
             # The number display guard's `numguard stat` (ForgePact #230;
             # test_number_guard_contract.py).
             "numguard",
+            # Auto sell, the Loot tab's switch, filter and `autosell stat`
+            # (ForgePact #196; test_auto_sell_contract.py).
+            "autosell",
         }
         self.assertEqual(entries, expected)
 
@@ -3130,9 +3133,10 @@ class ToggleTableProbeContractTests(unittest.TestCase):
         # pieces (ForgePact #197, test_soul_piece_contract.py), `tracker`
         # is HS Offline Tracker's sensor (ForgePact #185,
         # test_tracker_mod_contract.py), `mark1set` is the Mark 1 set's
-        # switch and stat (ForgePact #166, test_mark1_set_contract.py), and
+        # switch and stat (ForgePact #166, test_mark1_set_contract.py),
         # `numguard` is the number display guard's `numguard stat` (ForgePact
-        # #230, test_number_guard_contract.py).
+        # #230, test_number_guard_contract.py), and `autosell` is Auto sell
+        # (ForgePact #196, test_auto_sell_contract.py).
         self.assertEqual(now - before, {"autoprospect", "skilltimer", "menulayout", "restartanytime",
                                         "miningore", "miningrolls", "minerhelm", "packmarks", "craftmats",
                                         "gemmythic", "gemmaxroll", "gemfilter",
@@ -3142,7 +3146,7 @@ class ToggleTableProbeContractTests(unittest.TestCase):
                                         "densityroll", "hiddenloot", "bossrarity", "incident", "dungeonchest",
                                         "jumpscenery", "satzone", "skillslider", "gambapity", "lootann",
                                         "pillartips", "flightcharm", "soulpiece", "tracker", "mark1set",
-                                        "numguard"})
+                                        "numguard", "autosell"})
         self.assertEqual(before - now, set())
 
     # ---- Sprite look probe (R round 3, issue #11): `tgprobe sprite ...` ----
