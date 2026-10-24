@@ -737,9 +737,12 @@ struct WornCacheCounters {
 // (how the signal went in: not-installed, detour, table-only, not-found).
 // `late=` counts the confirm reads that found another mask than the remembered
 // one (the first read after a signal was too early). A zero there means
-// something only beside the counters it is out of: a window can close with no
-// confirm read at all (see Flight's confirm window), and then `late=` could not
-// have counted. `worn=` is the mask the last refresh answered, `fresh=` a read made for the
+// something only beside the counters it is out of, printed right after it:
+// `confirms=` the confirm reads made at all, and `unconfirmed=` the windows
+// that closed with no confirm read (see Flight's confirm window), in which
+// `late=` could not have counted. `late=0` says the first read was right only
+// when `confirms=` rose and `unconfirmed=` did not. `worn=` is the mask the
+// last refresh answered, `fresh=` a read made for the
 // line alone (`unread` when it failed), and `agree=` whether the two match; a
 // failed fresh read never agrees. Live procedure 2 checks these field names.
 inline std::string CacheFields(const WornCacheCounters& c, unsigned worn, bool freshRead, unsigned fresh)
@@ -750,6 +753,7 @@ inline std::string CacheFields(const WornCacheCounters& c, unsigned worn, bool f
     s += " safety=" + std::to_string(c.safety);
     s += " stale=" + std::to_string(c.stale);
     s += " late=" + std::to_string(c.late);
+    s += " confirms=" + std::to_string(c.confirms) + " unconfirmed=" + std::to_string(c.unconfirmed);
     s += " worn=" + EquippedText(worn);
     s += " fresh=" + (freshRead ? EquippedText(fresh) : std::string("unread"));
     s += " agree=" + std::string(freshRead && fresh == worn ? "yes" : "no");
