@@ -112,13 +112,14 @@ gold was paid. The hash `GetCounterHash` makes and the check inside
 A missing third argument becomes 0. What the rest of the body does after the
 hash check (its online calls, the balance write) was **not read**. The game's
 own gamba machine calls `GetGoldAmount` after its own `PickUpGoldCheck` debit
-(RDM § 20.4, measured as an order of calls). Whether a balance read in the
-same frame, right after the call, already includes the credit is **not
-established**: the write could happen inside the call or be deferred behind
-its online calls. The mod reads the balance on either side of its own call
-and takes the difference as the payment, so it relies on the write being
-synchronous; Live procedure 2 measures that in the same session (step 5,
-[write-sync]).
+(RDM § 20.4, measured as an order of calls); that the balance write lands
+inside the call is an inference from that order, **not established**, as RDM
+§ 13.10 says: the write could happen inside the call or be deferred behind its
+online calls. The mod reads the balance on either side of its own call and
+takes the difference as the payment, so it relies on that inference. Live
+procedure 2 measures it before the kill window, with one controlled sale and
+no coins about (step 4, [write-sync]), and an unpaid count means nothing about
+the game until that check has run.
 
 **The types the game will not buy** (static reading, 2026-10-24, same build).
 The tooltip line "Item cannot be sold" comes from the translation key
@@ -515,8 +516,9 @@ bag and the gold are as Live 1 found them.
   runs between the two reads but the credit itself. That shows the calls run in
   order, not that the balance write happens inside the credit: the write was
   not read and could be deferred, and then the after-read would miss a payment
-  that does arrive. Step 5's [write-sync] proves this instrument in the same
-  session before an unpaid result is allowed to mean anything. What the call
+  that does arrive. Step 4's [write-sync] gives this instrument its positive
+  control in the same session, on one sale made while no coin can move the
+  balance, before an unpaid result is allowed to mean anything. What the call
   answered is the content of
   its result, which a hardware logpoint at the function's entry cannot see, and
   an item's type is a field the mod reads. A `PickUpGoldCheck` logpoint would
@@ -538,7 +540,10 @@ bag and the gold are as Live 1 found them.
   (Live 1's [gold-read]); the credit's answer, the self-free hash and the five
   types (§ Static reading, and RDM § 13.10 and § 16.6); the bag fingerprints
   Live 1 recorded for the Topaz (`0-0-212850037745-15`), the Diamond
-  (`0-0-212850154515-15`) and the ring (`0-0-213716543158-7`).
+  (`0-0-212850154515-15`) and the ring (`0-0-213716543158-7`); a `lootspawn`
+  copy reaching the mod's detour like a monster drop (Live 1's [kept-stays]
+  counted it `visible=`). Whether the owner's filter hides a copy of the ring
+  is not known in advance, which is why step 4 allows three templates.
 - **Person block**: reaching a Chaos Tower, if the operator cannot.
 
 Steps:
@@ -560,7 +565,31 @@ Steps:
    away from the waypoint. Note the YYError count. `autosell 1` answers
    `route=both` [route]; `autosell stat` and `lootcensus` give the baseline
    `gold-now=`, `ground=` and `hidden=`.
-4. `lootspawn 1`, then [kept-stays] exactly as Live procedure 1 step 4.
+4. `lootspawn 1`, then [kept-stays] exactly as Live procedure 1 step 4. Then,
+   before any kill, [write-sync] (research, the instrument's own positive
+   control). Stand still where no coin lies within reach and none can drop
+   (no kill since step 3). Take `autosell stat` twice about 5 s apart: both
+   `gold-now=` values must be equal (the balance at rest; if they differ,
+   [write-sync] is `not-observed`). Then `lootspawn 1 <fingerprint>` with an
+   equipment item from the bag that the filter hides: the ring from step 2
+   first, then other equipment items, at most three tries, each template and
+   its `hidden-now=`/`visible-now=` recorded. On the first `hidden-now=1`, the
+   mod sells that copy at the frame's end: take `autosell stat` at once (S1)
+   and again about 5 s later without moving (S2), and record S1's `sold=`,
+   `exact=`, `credit-unpaid=` and `last=`, and both `gold-now=` values.
+   - `in-call` (the instrument proven): S1's `sold=` and `exact=` each rose
+     by one, `last=`'s after-balance minus its before-balance equals its
+     price, and S2's `gold-now=` equals S1's and `last=`'s after-balance (no
+     second payment arrived later).
+   - `deferred`: S1's `credit-unpaid=` rose by one with `last=`'s
+     after-balance equal to its before-balance, and S2's `gold-now=` exceeds
+     that after-balance by exactly `last=`'s price: the credit paid, after
+     the mod's same-frame read.
+   - `unpaid`: S1's `credit-unpaid=` rose by one and S2's `gold-now=` still
+     equals `last=`'s after-balance: the balance rose neither across the call
+     nor in the seconds after it.
+   - `not-observed`: no try answered `hidden-now=1`, or the balance moved at
+     rest. Any other result is recorded as it is and settles nothing.
 5. Kill for about 120 s (`playerwarp` beside packs, right-click cast), no
    `dropmult`. `autosell stat` about every 30 s, then at the end `autosell
    stat` and `lootcensus`:
@@ -570,8 +599,9 @@ Steps:
    - [clean]: `credit-refused=0 credit-call-failed=0 credit-false=0
      credit-unpaid=0 gold-unreadable=0 log-refused=0 destroy-failed=0
      no-player=0 unidentified=0 no-key=0 errors=0`;
-   - [gold-rose]: `gold-now=` rose over the window by at least the window's
-     `gold=` rise (coins only add to it);
+   - [gold-rose]: the window's `gold=` rise is above 0, and `gold-now=` rose
+     over the window by at least that much (coins only add to it); a window
+     with no `gold=` rise fails it rather than passing on a zero;
    - [no-hidden-left]: `lootcensus` `hidden=` no higher than its step-3 value
      plus the window's `unsellable=` rise;
    - [no-runner-errors]: the YYError count is unchanged since step 3;
@@ -580,17 +610,16 @@ Steps:
    - [type-seen] (research): `pass` when `type-unsellable=` rose and
      `hidden=` kept those items; `not-observed` when no drop of the five
      types fell;
-   - [write-sync] (research, the instrument's own check): the first time an
-     `autosell stat` shows `credit-unpaid=` risen, stop killing at once, step
-     away from any coins on the ground, stand still for about 5 s and read
-     `autosell stat` again. Record `credit-unpaid=`'s rise, `last=`'s price
-     and after-balance, and the new `gold-now=`. `deferred` when `gold-now=`
-     exceeds `last=`'s after-balance by `last=`'s price (or by more, when
-     `credit-unpaid=` rose by more than one, which is recorded with it): the
-     credit paid, after the mod's same-frame read. `same-frame` when
-     `gold-now=` still equals `last=`'s after-balance: the balance did not
-     rise in the seconds after either. `not-observed` when `credit-unpaid=`
-     stayed 0. Any other gap is recorded as it is and settles nothing.
+   - [write-sync-window] (research, only when step 4's [write-sync] was
+     `not-observed`): the first time an `autosell stat` shows
+     `credit-unpaid=` risen, stop killing at once, step away from any coins
+     on the ground, stand still for about 5 s and read `autosell stat` again;
+     record `credit-unpaid=`'s rise, `last=`'s price and after-balance, and
+     the new `gold-now=`. Coins can confound this one, so it reads `unpaid`
+     only when `gold-now=` still equals `last=`'s after-balance, and
+     `deferred` only when `credit-unpaid=` rose by one and the gap is exactly
+     `last=`'s price; any other gap or rise, or no `credit-unpaid=` rise, is
+     `not-observed`.
 6. `hiddenloot 1`, kill about 60 s, then `hiddenloot stat` and `autosell
    stat`: hidden loot's `sold=` rose by as much as autosell's `sold=` over the
    window, and hidden loot's `slept=` rose by no more than autosell's
@@ -605,18 +634,22 @@ Steps:
    [restored].
 
 **What the outcomes mean.** `credit-route: paid` when [sold-some] and
-[credit-exact] pass. When `sold=0` and `credit-unpaid=` rose, the balance
-did not rise across the call, and [write-sync] decides what that means.
-`credit-route: deferred` when [write-sync] is `deferred`: the by-name credit
-pays, but after the mod's same-frame read, so the player is paid while the
-mod counts the drop `credit-unpaid=` and leaves it on the ground; the payment
-route holds and the mod's payment check needs a replan. `credit-route:
-unpaid` only when [write-sync] is `same-frame`: the balance did not rise
-across the call nor in the seconds after it, so the by-name credit pays
-nothing, the payment route itself is wrong and the mod needs a replan. With
-[write-sync] neither of those, `credit-unpaid=` settles nothing about the
-game, no `credit-route:` token is recorded, and the session's other results
-stand. `credit-route:
+[credit-exact] pass. A `credit-unpaid=` count says only that the balance did
+not rise between the mod's two reads; what it means about the game is decided
+by [write-sync] (step 4), or by [write-sync-window] when step 4's was
+`not-observed`. `credit-route: deferred` when either reads `deferred`: the
+by-name credit pays, but after the mod's same-frame read, so the player is
+paid while the mod counts the drop `credit-unpaid=` and leaves it on the
+ground. The payment route holds; the mod's payment check is wrong, a defect
+in the build for a fix round, not a replan of the payment route.
+`credit-route: unpaid` only when either reads `unpaid`: the balance rose
+neither across the call nor in the seconds after it, so the by-name credit
+pays nothing, the payment route itself is wrong and the mod needs a replan.
+With [write-sync] `in-call`, the instrument is proven, so a `credit-unpaid=`
+rise in a later window is a [clean] failure like any other, for a fix round.
+With neither check reading `deferred`, `unpaid` or `in-call`,
+`credit-unpaid=` settles nothing about the game, no `credit-route:` token is
+recorded from it, and the session's other results stand. `credit-route:
 refused-false` when `credit-false=` rose: the hash check refused the mod's
 call, so the self-free reading of the hash is wrong, also a replan.
 `credit-route: call-failed` when only `credit-call-failed=` rose: a dispatch
@@ -634,10 +667,12 @@ check is a defect in the build, and nothing is recorded as measured from it.
   argument means (the second branch leaves it out, which the script turns
   into 0). The mod mirrors the first branch.
 - **The rest of `PickUpGoldCheck` after its hash check** (its online calls
-  and the balance write): not read. The mod relies on the balance write being
-  synchronous, since it decides payment from the balance read right before
-  and right after its call in the same frame; Live 2 measures that
-  ([write-sync], `credit-route:`).
+  and the balance write): not read. That the write lands inside the call is
+  an inference from the gamba machine's order of calls (RDM § 13.10), not
+  established, and the mod relies on it, since it decides payment from the
+  balance read right before and right after its call in the same frame. Live
+  2 measures it on one controlled sale before the kill window ([write-sync],
+  `credit-route:`).
 - **Whether Live 1's refused credits paid the player.** The balance rose
   while they were counted, but coins dropped throughout (§ Live 1 results).
   Live 2's [credit-exact] and [gold-rose] measure the payment directly.
