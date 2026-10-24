@@ -5081,7 +5081,7 @@ static bool TryApplyCustomForge(RValue* candidate, bool finalPass = false)
                 // tests, so the worn-charm cache reads again (#216 b1).
                 if (entry.mechanic == "flight") {
                     g_Flight.Arm();
-                    g_Flight.InvalidateWorn(FcNs::WornInvalidation::Dress);
+                    g_Flight.InvalidateWorn(FcNs::WornInvalidation::Dress, (int64_t)g_RuntimeFrame);
                 }
                 if (entry.mechanic == ForgePact::SoulPieces::kMechanicTag) g_SoulPieceSeen = true;
             }
@@ -55939,7 +55939,7 @@ static RValue& Hook_FlightUpdateDepth(CInstance* S, CInstance* O, RValue& R, int
 static RValue& Hook_FlightUpdateCharmData(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
 {
     RValue& r = g_FlightOrigUcd(S, O, R, argc, A);
-    g_Flight.InvalidateWorn(FcNs::WornInvalidation::UpdateCharmData);
+    g_Flight.InvalidateWorn(FcNs::WornInvalidation::UpdateCharmData, (int64_t)g_RuntimeFrame);
     return r;
 }
 
@@ -56099,7 +56099,7 @@ static bool FlightConfirmPlayer()
         ++g_FlightConfirmChanged;
         // Another instance (a room or character change): the worn-charm
         // cache reads again before this frame's state.
-        g_Flight.InvalidateWorn(FcNs::WornInvalidation::Player);
+        g_Flight.InvalidateWorn(FcNs::WornInvalidation::Player, (int64_t)g_RuntimeFrame);
     }
     return g_FlightPlayer != nullptr;
 }

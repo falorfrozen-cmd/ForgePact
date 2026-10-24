@@ -2613,6 +2613,21 @@ change and a character change both give a new instance; Mod live 4's
 `player-room` saw `changed=` rise on travel); and the Custom Forge dressing a
 flight charm.
 
+**The confirm window (after Mod live 5's `equip-pickup`).** After an
+invalidation, every refresh through `kWornConfirmFrames` (4) frames after the
+frame the signal came in reads the worn charms again, not only the first; a
+new invalidation inside the window restarts it, and after it nothing changes.
+Mod live 5 took a Pocket Elf off by right-click and flight still carried the
+player 247 px south, with `stale=0` and `dress:` up by 2 in the same step.
+Two readings fit and neither is established: the signal came before the array
+changed, so the first read remembered the elf until a later invalidation
+(`dress:`, whose read is not counted stale) caught it; or the start point
+overlapped the rim's collision and residual carried the player until free,
+as designed. The window closes the first for a handful of reads per signal
+whichever holds. A confirm read that finds a mask other than the remembered
+one takes it and counts `late=`, which is the next session's evidence: `late=0`
+with the walk passing says the first read was already right.
+
 **The safety re-read, and why.** Once 60 frames have passed since the last
 read (the install look's period: about a second at 60 fps, under half a
 second at the 144 fps Mod live 4 ran at) the charms are read even while the
@@ -2629,9 +2644,10 @@ invalidation instead of one a frame, about 2.5 us a frame on Mod live 4's
 
 **The stat.** `flightcharm stat` prints one more line, after the drops line:
 `flightcharm cache: route=<not-installed|detour|table-only|not-found> reads=
-invalidations=ucd:<n>,player:<n>,dress:<n> safety= stale= worn=<mask>
+invalidations=ucd:<n>,player:<n>,dress:<n> safety= stale= late= worn=<mask>
 fresh=<mask> agree=<yes|no>`. `reads=` counts the cache's own re-reads (after
-an invalidation or the safety period); `worn=` is the remembered mask in
+an invalidation, through its confirm window, or the safety period); `late=`
+the confirm-window reads that found another mask; `worn=` is the remembered mask in
 `equipped=`'s spelling; `fresh=` is a read made for the line alone, touching
 neither the cache nor its counters; `agree=` says whether they match. Both
 builds. The stat's own refresh and its `fresh=` read go through the timed

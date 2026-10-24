@@ -722,17 +722,19 @@ inline std::string StatLine(const StatFields& f)
 enum class WornInvalidation { UpdateCharmData, Player, Dress };
 
 struct WornCacheCounters {
-    uint64_t reads = 0;    // the cache's own reads of the worn charms: invalid, or the safety period up
+    uint64_t reads = 0;    // the cache's own reads of the worn charms: invalid, the confirm window, or the safety period up
     uint64_t ucd = 0;      // invalidations by an UpdateCharmData call
     uint64_t player = 0;   // ... by the local player changing
     uint64_t dress = 0;    // ... by a charm being dressed
     uint64_t safety = 0;   // reads made only because the safety period was up
     uint64_t stale = 0;    // of those, the ones that found a mask other than the remembered one
+    uint64_t late = 0;     // confirm reads (after an invalidation's first) that found another mask
 };
 
 // `flightcharm stat`'s cache line after its `route=`, which the adapter writes
 // (how the signal went in: not-installed, detour, table-only, not-found).
-// `worn=` is the mask the last refresh answered, `fresh=` a read made for the
+// `late=` counts the confirm reads that found another mask than the remembered
+// one (the first read after a signal was too early). `worn=` is the mask the last refresh answered, `fresh=` a read made for the
 // line alone (`unread` when it failed), and `agree=` whether the two match; a
 // failed fresh read never agrees. Live procedure 2 checks these field names.
 inline std::string CacheFields(const WornCacheCounters& c, unsigned worn, bool freshRead, unsigned fresh)
@@ -742,6 +744,7 @@ inline std::string CacheFields(const WornCacheCounters& c, unsigned worn, bool f
         + std::to_string(c.dress);
     s += " safety=" + std::to_string(c.safety);
     s += " stale=" + std::to_string(c.stale);
+    s += " late=" + std::to_string(c.late);
     s += " worn=" + EquippedText(worn);
     s += " fresh=" + (freshRead ? EquippedText(fresh) : std::string("unread"));
     s += " agree=" + std::string(freshRead && fresh == worn ? "yes" : "no");
@@ -951,17 +954,34 @@ public:
     // takes it. Everything after the mask is unchanged, so the residual overlap
     // read still runs once a frame while residual. A failed read answers none,
     // as before, and leaves the cache invalid, so the next frame reads again.
+    //
+    // The confirm window (Live 2's pick-up after an unequip): a signal may come
+    // before the worn-charm array changes, and the first read after it would
+    // then remember the old mask until the next signal or the safety read. So
+    // every refresh through kWornConfirmFrames frames after the invalidating
+    // frame reads again; a new invalidation inside the window restarts it.
+    // A confirm read that finds a mask other than the remembered one takes it
+    // and counts as late, so `late=` stays 0 while the first read is already
+    // right. After the window, nothing changes: the remembered mask until the
+    // next invalidation or the safety read. A handful of reads per signal.
     static constexpr int64_t kWornSafetyFrames = static_cast<int64_t>(kInstallPollFrames);
+    static constexpr int64_t kWornConfirmFrames = 4;
     void SetWornCache(bool on)
     {
         wornCacheOn_ = on;
         wornValid_ = false;
+        wornConfirming_ = false;
     }
     bool WornCacheOn() const { return wornCacheOn_; }
-    // Counted whether the cache is on or not; reads nothing.
-    void InvalidateWorn(WornInvalidation why)
+    // Counted whether the cache is on or not; reads nothing. `frame` is the
+    // frame the signal came in (the adapter's frame counter, as the hooks'
+    // refreshes pass it): the confirm window runs through kWornConfirmFrames
+    // frames after it.
+    void InvalidateWorn(WornInvalidation why, int64_t frame)
     {
         wornValid_ = false;
+        wornConfirming_ = true;
+        wornConfirmUntil_ = frame + kWornConfirmFrames;
         switch (why) {
         case WornInvalidation::UpdateCharmData: ++wornCounters_.ucd; break;
         case WornInvalidation::Player:          ++wornCounters_.player; break;
@@ -1229,19 +1249,24 @@ private:
     }
 
     // The frame's worn mask. Cache off: one read, as always. Cache on: the
-    // remembered mask while it is valid and the last read is less than
-    // kWornSafetyFrames behind (a frame counter that went backwards reads);
-    // otherwise one read, a safety read when the cache was still valid.
+    // remembered mask while it is valid, outside the confirm window, and the
+    // last read is less than kWornSafetyFrames behind (a frame counter that
+    // went backwards reads); otherwise one read: a confirm read inside the
+    // window, a safety read when the cache was valid outside it.
     unsigned WornAt(int64_t frame)
     {
-        if (wornCacheOn_ && wornValid_ && frame > wornReadFrame_ && frame - wornReadFrame_ < kWornSafetyFrames)
+        if (wornConfirming_ && frame > wornConfirmUntil_) wornConfirming_ = false;
+        if (wornCacheOn_ && wornValid_ && !wornConfirming_ && frame > wornReadFrame_
+            && frame - wornReadFrame_ < kWornSafetyFrames)
             return equippedMask_;
         unsigned mask = 0;
         const bool read = ReadEquipped(mask);
         mask = read ? (mask & kAllCharmBits) : 0u;
         if (!wornCacheOn_) return mask;
         ++wornCounters_.reads;
-        if (wornValid_) {
+        if (wornValid_ && wornConfirming_) {
+            if (read && mask != equippedMask_) ++wornCounters_.late;
+        } else if (wornValid_) {
             ++wornCounters_.safety;
             if (read && mask != equippedMask_) ++wornCounters_.stale;
         }
@@ -1413,6 +1438,8 @@ private:
     bool wornCacheOn_ = false;     // SetWornCache: the adapter's signal went in inline
     bool wornValid_ = false;       // a read since the last invalidation, and it succeeded
     int64_t wornReadFrame_ = 0;    // the frame of the cache's last read
+    bool wornConfirming_ = false;  // an invalidation's confirm window is open
+    int64_t wornConfirmUntil_ = 0; // ... through this frame (meaningful only while open)
     WornCacheCounters wornCounters_;
     State state_ = State::Off;
     LayerOps ops_;

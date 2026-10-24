@@ -177,9 +177,9 @@ class FlightCharmsForgeContract(unittest.TestCase):
         # Arming, and the worn-charm cache told a charm was dressed (#216 b1),
         # in the block that writes fp_mechanic.
         self.assertRegex(forge, r'if \(entry\.mechanic == "flight"\) \{\s*g_Flight\.Arm\(\);\s*'
-                                r'g_Flight\.InvalidateWorn\(FcNs::WornInvalidation::Dress\);\s*\}')
+                                r'g_Flight\.InvalidateWorn\(FcNs::WornInvalidation::Dress, \(int64_t\)g_RuntimeFrame\);\s*\}')
         self.assertLess(forge.index('RValue("fp_mechanic"), RValue(entry.mechanic)'),
-                        forge.index("g_Flight.InvalidateWorn(FcNs::WornInvalidation::Dress);"))
+                        forge.index("g_Flight.InvalidateWorn(FcNs::WornInvalidation::Dress, (int64_t)g_RuntimeFrame);"))
         for function in ("forge", "entry", "final", "icons_load", "icon_path"):
             text = self.body(function)
             for install in ("HookOneScript", "HookBuiltin", "HiddenLootInstall(", "MmCreateHook"):
@@ -1076,11 +1076,46 @@ class FlightCharmsLeverContract(unittest.TestCase):
         self.assertIn("frame - wornReadFrame_ < kWornSafetyFrames", worn_at)
         self.assertIn("static constexpr int64_t kWornSafetyFrames = static_cast<int64_t>(kInstallPollFrames);", core)
 
+    def test_the_confirm_window_after_an_invalidation(self):
+        # Live 2's pick-up after an unequip (#216): every refresh through
+        # kWornConfirmFrames frames after the invalidating frame reads again.
+        # Its bound: at least 2 frames after the signal (a change landing one
+        # frame late is caught), at most 8 (a handful of reads per signal).
+        core = self.core()
+        m = re.search(r"static constexpr int64_t kWornConfirmFrames = (\d+);", core)
+        self.assertIsNotNone(m)
+        self.assertGreaterEqual(int(m.group(1)), 2)
+        self.assertLessEqual(int(m.group(1)), 8)
+        invalidate = strip_comments(function_body(core, "void InvalidateWorn(WornInvalidation why, int64_t frame)"))
+        self.assertIn("wornValid_ = false;", invalidate)
+        self.assertIn("wornConfirming_ = true;", invalidate)
+        self.assertIn("wornConfirmUntil_ = frame + kWornConfirmFrames;", invalidate)
+        worn_at = strip_comments(function_body(core, "unsigned WornAt(int64_t frame)"))
+        # The window closes once a refresh is past it, before the cache decides.
+        self.assertLess(worn_at.index("if (wornConfirming_ && frame > wornConfirmUntil_) wornConfirming_ = false;"),
+                        worn_at.index("return equippedMask_;"))
+        self.assertRegex(worn_at, r"wornValid_ && !wornConfirming_ && frame > wornReadFrame_")
+        # A confirm read that finds another mask counts late, never safety or stale.
+        late = worn_at.index("++wornCounters_.late;")
+        safety = worn_at.index("++wornCounters_.safety;")
+        self.assertLess(worn_at.index("if (wornValid_ && wornConfirming_) {"), late)
+        self.assertLess(late, worn_at.index("} else if (wornValid_) {"))
+        self.assertLess(worn_at.index("} else if (wornValid_) {"), safety)
+        # Turning the cache on or off closes any window.
+        self.assertIn("wornConfirming_ = false;",
+                      strip_comments(function_body(core, "void SetWornCache(bool on)")))
+        # The counter, and the adapter passing the frame its refreshes use.
+        self.assertIn("uint64_t late = 0;", core)
+        # Every invalidation passes it; negative control: all three are counted.
+        self.assertEqual(len(re.findall(r"\bInvalidateWorn\(", self.shipped)), 3)
+        self.assertEqual(len(re.findall(
+            r"g_Flight\.InvalidateWorn\(FcNs::WornInvalidation::\w+, \(int64_t\)g_RuntimeFrame\);", self.shipped)), 3)
+
     def test_the_signal_runs_the_original_then_invalidates_and_reads_nothing(self):
         hook = self.body("ucd")
         lines = self.lines("ucd")
         self.assertEqual(lines[0], "RValue& r = g_FlightOrigUcd(S, O, R, argc, A);")
-        self.assertEqual(lines[1], "g_Flight.InvalidateWorn(FcNs::WornInvalidation::UpdateCharmData);")
+        self.assertEqual(lines[1], "g_Flight.InvalidateWorn(FcNs::WornInvalidation::UpdateCharmData, (int64_t)g_RuntimeFrame);")
         self.assertEqual(lines[2], "return r;")
         self.assertEqual(len(lines), 3)
         for read in ("CallBuiltin", "FlightEquipped", "g_FlightPlayer", "if (", "g_FlightBusy"):
@@ -1091,7 +1126,7 @@ class FlightCharmsLeverContract(unittest.TestCase):
     def test_the_cache_is_invalidated_at_a_player_change(self):
         confirm = self.body("confirm")
         changed = confirm.index("if (g_FlightPlayer != was) {")
-        invalidate = confirm.index("g_Flight.InvalidateWorn(FcNs::WornInvalidation::Player);")
+        invalidate = confirm.index("g_Flight.InvalidateWorn(FcNs::WornInvalidation::Player, (int64_t)g_RuntimeFrame);")
         self.assertLess(confirm.index("FlightRefreshPlayer();"), changed)
         self.assertLess(changed, invalidate)
         self.assertLess(confirm.index("++g_FlightConfirmChanged;"), invalidate)
@@ -1115,7 +1150,7 @@ class FlightCharmsLeverContract(unittest.TestCase):
                 self.assertNotIn(touch, line)
         fields = strip_comments(function_body(self.core(), "inline std::string CacheFields("))
         for field in ('"reads="', '" invalidations=ucd:"', '",player:"', '",dress:"', '" safety="', '" stale="',
-                      '" worn="', '" fresh="', '" agree="'):
+                      '" late="', '" worn="', '" fresh="', '" agree="'):
             with self.subTest(field=field):
                 self.assertIn(field, fields)
         # Both builds.

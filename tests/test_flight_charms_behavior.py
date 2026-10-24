@@ -436,6 +436,24 @@ class FlightCharmsCoreBehaviorTests(unittest.TestCase):
         self.assertScenarios("worn_cache/a_safety_re_read_every_60_frames",
                              "worn_cache/a_stale_safety_read_is_counted_and_taken")
 
+    def test_worn_cache_an_invalidation_before_the_array_changes(self):
+        # Live 2: the signal may come before the worn-charm array changes, so
+        # the frames of the confirm window read again after an invalidation.
+        self.assertScenarios("worn_cache/an_invalidation_before_the_array_changes_is_picked_up_next_frame")
+
+    def test_worn_cache_an_unequip_is_off_before_the_next_movement_frame(self):
+        self.assertScenarios("worn_cache/an_unequip_is_off_before_the_next_movement_frame")
+
+    def test_worn_cache_a_late_confirm_read_is_counted(self):
+        # `late=` on the cache line: Live 3's evidence for whether the first
+        # read after an invalidation was already right.
+        self.assertScenarios("worn_cache/a_late_confirm_read_is_counted")
+
+    def test_worn_cache_the_confirm_window_ends(self):
+        # The cost bound: after the window nothing is read until the safety
+        # period, and an invalidation inside the window restarts it.
+        self.assertScenarios("worn_cache/the_confirm_window_ends")
+
     def test_worn_cache_baseline_signal_off_reads_once_a_frame(self):
         self.assertScenarios("worn_cache/signal_off_reads_once_a_frame")
 

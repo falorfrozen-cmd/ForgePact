@@ -263,11 +263,12 @@ pieces" below.
   (#216).** While a flight charm was in play, flight looked at every charm
   you wear on every frame, about 2% of each frame's time in a test session.
   Now it looks again only when you put a charm on or take one off, change
-  zones or character, or a flight charm is made or loaded, plus a quick
-  safety look about once a second in case the game changed your charms some
-  other way, so a change is never missed for longer than that. If the plugin cannot watch
-  for charm changes on your game, flight checks every frame as before and
-  works the same. This is covered by ForgePact's own tests and has not been
+  zones or character, or a flight charm is made or loaded, and for a few
+  frames after each of those in case the game finishes the change a moment
+  later. On top of that it takes a quick safety look every 60 frames, about
+  once a second at 60 fps, in case the game changed your charms some other
+  way. If the plugin cannot watch for charm changes on your game, flight
+  checks every frame as before and works the same. This is covered by ForgePact's own tests and has not been
   tried in a game session yet.
 
 ## How to update

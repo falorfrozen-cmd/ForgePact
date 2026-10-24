@@ -2541,8 +2541,10 @@ int main()
             "equipped-reads=" + std::to_string(w.equippedReads) + " cache-reads=" + std::to_string(c.reads));
     }
     {
-        // One invalidation of each cause: the frame after it reads once, and
-        // only that frame; each cause counts in its own field alone.
+        // One invalidation of each cause: the frame after it reads, and so does
+        // each frame of the confirm window (through kWornConfirmFrames frames
+        // after the invalidating one), and only those; each cause counts in
+        // its own field alone.
         struct Cause { const char* label; WornInvalidation why; uint64_t WornCacheCounters::* field; };
         const Cause causes[] = {
             { "worn_cache/an_update_charm_data_call_invalidates", WornInvalidation::UpdateCharmData, &WornCacheCounters::ucd },
@@ -2558,20 +2560,28 @@ int main()
             f.StateAt(2);
             const bool before = w.equippedReads == 1;
             w.equipped = 0;
-            f.InvalidateWorn(cause.why);
+            f.InvalidateWorn(cause.why, 2);
             // Within the frame already refreshed nothing is read again.
             const bool sameFrame = f.StateAt(2) == State::On && w.equippedReads == 1;
             const bool next = f.StateAt(3) == State::Off && w.equippedReads == 2 && f.EquippedMask() == 0;
+            const int64_t windowEnd = 2 + Flight::kWornConfirmFrames;
+            bool window = true;
+            for (int64_t frame = 4; frame <= windowEnd; ++frame)
+                window = window && f.StateAt(frame) == State::Off && w.equippedReads == frame - 1;
             w.equipped = CharmBit(Charm::Broom);   // put on with no signal: not seen until the next invalidation
-            bool onlyThatFrame = true;
-            for (int64_t frame = 4; frame <= 20; ++frame) onlyThatFrame = onlyThatFrame && f.StateAt(frame) == State::Off;
-            onlyThatFrame = onlyThatFrame && w.equippedReads == 2;
-            f.InvalidateWorn(cause.why);
-            const bool again = f.StateAt(21) == State::On && f.EquippedMask() == CharmBit(Charm::Broom) && w.equippedReads == 3;
+            bool onlyThoseFrames = true;
+            for (int64_t frame = windowEnd + 1; frame <= 20; ++frame)
+                onlyThoseFrames = onlyThoseFrames && f.StateAt(frame) == State::Off;
+            onlyThoseFrames = onlyThoseFrames && w.equippedReads == 1 + Flight::kWornConfirmFrames;
+            f.InvalidateWorn(cause.why, 20);
+            const bool again = f.StateAt(21) == State::On && f.EquippedMask() == CharmBit(Charm::Broom)
+                && w.equippedReads == 2 + Flight::kWornConfirmFrames;
             const WornCacheCounters& c = f.WornCache();
             const uint64_t total = c.ucd + c.player + c.dress;
-            const bool counted = c.*cause.field == 2 && total == 2 && c.reads == 3 && c.safety == 0 && c.stale == 0;
-            check(cause.label, before && sameFrame && next && onlyThatFrame && again && counted,
+            const bool counted = c.*cause.field == 2 && total == 2
+                && c.reads == static_cast<uint64_t>(2 + Flight::kWornConfirmFrames) && c.safety == 0 && c.stale == 0
+                && c.late == 0;
+            check(cause.label, before && sameFrame && next && window && onlyThoseFrames && again && counted,
                 "equipped-reads=" + std::to_string(w.equippedReads) + " cache-reads=" + std::to_string(c.reads)
                     + " ucd=" + std::to_string(c.ucd) + " player=" + std::to_string(c.player) + " dress="
                     + std::to_string(c.dress));
@@ -2597,7 +2607,7 @@ int main()
         const bool twice = w.equippedReads == 3 && f.WornCache().safety == 2;
         f.StateAt(300);   // no hooked call from 122 to 299
         const bool gap = w.equippedReads == 4 && f.WornCache().safety == 3;
-        f.InvalidateWorn(WornInvalidation::UpdateCharmData);
+        f.InvalidateWorn(WornInvalidation::UpdateCharmData, 300);
         f.StateAt(310);
         const bool invalid = w.equippedReads == 5 && f.WornCache().safety == 3;
         for (int64_t frame = 311; frame <= 369; ++frame) f.StateAt(frame);
@@ -2652,7 +2662,7 @@ int main()
             f.StateAt(frame);
             perFrame = perFrame && w.equippedReads == frame;
         }
-        f.InvalidateWorn(WornInvalidation::UpdateCharmData);
+        f.InvalidateWorn(WornInvalidation::UpdateCharmData, 10);
         w.equipped = 0;
         const bool seen = f.StateAt(11) == State::Off && w.equippedReads == 11;
         FlightWorld z;
@@ -2666,6 +2676,122 @@ int main()
             perFrame && seen && offAgain && f.WornCache().reads == 0 && g.WornCache().reads == 0,
             "equipped-reads=" + std::to_string(w.equippedReads));
     }
+    // ---- the confirm window (Live 2's pick-up after an unequip) ----------------
+    // The signal may arrive before the worn-charm array changes (the array's
+    // rebuild not being the hooked call, or landing later in the frame): the
+    // first read after an invalidation would then remember the old mask. So
+    // each frame through kWornConfirmFrames frames after the invalidating one
+    // reads again, and a confirm read that finds another mask takes it and
+    // counts as late.
+    {
+        // Signal at frame 2 (after its refresh); frame 3's read still finds
+        // elf; the array changes after it; frame 4 answers none, and so does
+        // every frame after, with no further signal.
+        FlightWorld w;
+        Flight f = makeFlight(w);
+        f.SetWornCache(true);
+        w.equipped = CharmBit(Charm::Elf);
+        f.StateAt(1);
+        f.StateAt(2);
+        f.InvalidateWorn(WornInvalidation::UpdateCharmData, 2);
+        const bool first = f.StateAt(3) == State::On && f.EquippedMask() == CharmBit(Charm::Elf) && w.equippedReads == 2;
+        w.equipped = 0;
+        const bool picked = f.StateAt(4) == State::Off && f.EquippedMask() == 0 && w.equippedReads == 3;
+        bool held = true;
+        for (int64_t frame = 5; frame <= 40; ++frame) held = held && f.StateAt(frame) == State::Off && f.EquippedMask() == 0;
+        check("worn_cache/an_invalidation_before_the_array_changes_is_picked_up_next_frame",
+            Flight::kWornConfirmFrames >= 2 && first && picked && held && f.WornCache().stale == 0,
+            "equipped-reads=" + std::to_string(w.equippedReads) + " mask=" + std::to_string(f.EquippedMask()));
+    }
+    {
+        // The same shape, the player free of the family and of monsters: the
+        // state is Off, not On (and not Residual), at the first frame after
+        // the array changed. Twice: the signal after the frame's refresh
+        // (UpdateCharmData), and before it (a new player instance, confirmed
+        // at the frame's first hooked call), whose first read is that frame's.
+        FlightWorld w;
+        Flight f = makeFlight(w);
+        f.SetWornCache(true);
+        w.equipped = CharmBit(Charm::Elf);
+        f.StateAt(1);
+        f.InvalidateWorn(WornInvalidation::UpdateCharmData, 1);
+        const bool onAfterSignal = f.StateAt(2) == State::On;
+        w.equipped = 0;
+        const bool offNext = f.StateAt(3) == State::Off && w.overlapReads == 1;
+        FlightWorld z;
+        Flight g = makeFlight(z);
+        g.SetWornCache(true);
+        z.equipped = CharmBit(Charm::Wings);
+        g.StateAt(1);
+        g.InvalidateWorn(WornInvalidation::Player, 2);
+        const bool onAtSignal = g.StateAt(2) == State::On;
+        z.equipped = 0;
+        const bool offAfter = g.StateAt(3) == State::Off;
+        check("worn_cache/an_unequip_is_off_before_the_next_movement_frame",
+            onAfterSignal && offNext && onAtSignal && offAfter,
+            "overlap-reads=" + std::to_string(w.overlapReads));
+    }
+    {
+        // The late case counts late=1, once, however many confirm reads find
+        // the new mask; a window whose first read was already right counts 0.
+        FlightWorld w;
+        Flight f = makeFlight(w);
+        f.SetWornCache(true);
+        w.equipped = CharmBit(Charm::Elf);
+        f.StateAt(1);
+        f.InvalidateWorn(WornInvalidation::UpdateCharmData, 1);
+        f.StateAt(2);
+        w.equipped = 0;
+        for (int64_t frame = 3; frame <= 30; ++frame) f.StateAt(frame);
+        const bool lateOne = f.WornCache().late == 1 && f.WornCache().stale == 0;
+        FlightWorld z;
+        Flight g = makeFlight(z);
+        g.SetWornCache(true);
+        z.equipped = CharmBit(Charm::Elf);
+        g.StateAt(1);
+        z.equipped = 0;   // the array already changed when the signal comes
+        g.InvalidateWorn(WornInvalidation::UpdateCharmData, 1);
+        for (int64_t frame = 2; frame <= 30; ++frame) g.StateAt(frame);
+        const bool lateZero = g.WornCache().late == 0 && g.EquippedMask() == 0 && g.WornCache().stale == 0;
+        check("worn_cache/a_late_confirm_read_is_counted", lateOne && lateZero,
+            "late=" + std::to_string(f.WornCache().late) + "/" + std::to_string(g.WornCache().late));
+    }
+    {
+        // After the window, with no new invalidation, nothing is read until
+        // the safety period from the window's last read: the cost bound. A
+        // new invalidation inside the window restarts it.
+        FlightWorld w;
+        Flight f = makeFlight(w);
+        f.SetWornCache(true);
+        w.equipped = CharmBit(Charm::Elf);
+        f.StateAt(1);
+        f.InvalidateWorn(WornInvalidation::UpdateCharmData, 1);
+        const int64_t lastRead = 1 + Flight::kWornConfirmFrames;
+        for (int64_t frame = 2; frame <= lastRead; ++frame) f.StateAt(frame);
+        const bool windowRead = w.equippedReads == 1 + Flight::kWornConfirmFrames;
+        for (int64_t frame = lastRead + 1; frame < lastRead + Flight::kWornSafetyFrames; ++frame) f.StateAt(frame);
+        const bool quiet = w.equippedReads == 1 + Flight::kWornConfirmFrames;
+        f.StateAt(lastRead + Flight::kWornSafetyFrames);
+        const bool safety = w.equippedReads == 2 + Flight::kWornConfirmFrames && f.WornCache().safety == 1;
+        FlightWorld z;
+        Flight g = makeFlight(z);
+        g.SetWornCache(true);
+        z.equipped = CharmBit(Charm::Wings);
+        g.StateAt(1);
+        g.InvalidateWorn(WornInvalidation::UpdateCharmData, 1);
+        g.StateAt(2);
+        g.StateAt(3);
+        g.InvalidateWorn(WornInvalidation::Dress, 3);   // inside the window: it restarts
+        const int64_t restartedEnd = 3 + Flight::kWornConfirmFrames;
+        for (int64_t frame = 4; frame <= restartedEnd; ++frame) g.StateAt(frame);
+        const bool restarted = z.equippedReads == 3 + Flight::kWornConfirmFrames;
+        for (int64_t frame = restartedEnd + 1; frame <= restartedEnd + 30; ++frame) g.StateAt(frame);
+        const bool thenQuiet = z.equippedReads == 3 + Flight::kWornConfirmFrames;
+        check("worn_cache/the_confirm_window_ends",
+            Flight::kWornConfirmFrames >= 2 && Flight::kWornConfirmFrames <= 8 && windowRead && quiet && safety
+                && restarted && thenQuiet && f.WornCache().reads == static_cast<uint64_t>(2 + Flight::kWornConfirmFrames),
+            "equipped-reads=" + std::to_string(w.equippedReads) + "/" + std::to_string(z.equippedReads));
+    }
     {
         // The stat's cache line after its route: field names and spellings.
         WornCacheCounters c;
@@ -2675,12 +2801,13 @@ int main()
         c.dress = 3;
         c.safety = 1;
         c.stale = 0;
+        c.late = 1;
         const std::string agree = CacheFields(c, CharmBit(Charm::Elf), true, CharmBit(Charm::Elf));
         const std::string differ = CacheFields(WornCacheCounters{}, 0, true, CharmBit(Charm::Wings));
         const std::string unread = CacheFields(WornCacheCounters{}, 0, false, 0);
-        const bool ok = agree == "reads=4 invalidations=ucd:2,player:1,dress:3 safety=1 stale=0 worn=elf fresh=elf agree=yes"
-            && differ == "reads=0 invalidations=ucd:0,player:0,dress:0 safety=0 stale=0 worn=none fresh=wings agree=no"
-            && unread == "reads=0 invalidations=ucd:0,player:0,dress:0 safety=0 stale=0 worn=none fresh=unread agree=no";
+        const bool ok = agree == "reads=4 invalidations=ucd:2,player:1,dress:3 safety=1 stale=0 late=1 worn=elf fresh=elf agree=yes"
+            && differ == "reads=0 invalidations=ucd:0,player:0,dress:0 safety=0 stale=0 late=0 worn=none fresh=wings agree=no"
+            && unread == "reads=0 invalidations=ucd:0,player:0,dress:0 safety=0 stale=0 late=0 worn=none fresh=unread agree=no";
         check("worn_cache/the_cache_line_names_its_fields", ok, agree + " | " + differ + " | " + unread);
     }
 
