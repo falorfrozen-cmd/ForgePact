@@ -14,7 +14,7 @@
 
 import { statSync } from 'node:fs';
 import { join } from 'node:path';
-import { PANEL_DIR } from '../lib/browser.mjs';
+import { PANEL_DIR, waitBooted } from '../lib/browser.mjs';
 
 export const EXPECTED = [
   'first-load-plays-nothing-it-already-had',
@@ -126,6 +126,10 @@ async function armed(t, options = {}) {
   p.page.on('response', (r) => { if (new URL(r.url()).pathname === '/api/tracker/extra') extras += 1; });
   await p.page.reload();
   await p.page.waitForFunction(() => Array.isArray(window.__plays));
+  // reload() returns at the load event, and boot() wires the tab buttons only
+  // after its own /api/state answer: on a loaded machine a click before that
+  // lands on a button with no handler, and the tab never opens.
+  await waitBooted(p.page);
   p.trackerGets.length = 0;
   if (options.tab) {
     // Playwright's click is a real (trusted) one, which would let a silent
@@ -193,13 +197,21 @@ export default async function (t) {
     assert(p.claims.length === 0, `the page claimed with the switch off: ${JSON.stringify(p.claims)}`);
     assert((await plays(p)).length === 0, 'the page played with the switch off');
     // The control: turned on, it takes what is there as seen and plays the next one.
+    // Opening the tab starts the polls by itself, and the first one already
+    // fetches /extra (the drop above changed its revision), so the wait for it
+    // is armed before the click: armed after, a loaded machine let that fetch
+    // finish first, and the switch, which changes no revision, fetched no other.
+    const extra = p.page.waitForResponse((r) => new URL(r.url()).pathname === '/api/tracker/extra', { timeout: 15000 });
     await p.page.click('.tabbtn[data-tab="tracker"]');
-    const extra = p.page.waitForResponse((r) => new URL(r.url()).pathname === '/api/tracker/extra', { timeout: 8000 });
+    // The alerts arm on a poll that answers `on`, so the claim check below
+    // waits for one: that poll is where a missed drop would be claimed.
+    const armedOn = p.page.waitForResponse(async (r) => new URL(r.url()).pathname === '/api/tracker'
+      && (await r.json().catch(() => ({}))).on === true, { timeout: 15000 });
     await Promise.all([
       p.page.waitForRequest((r) => r.method() === 'POST' && new URL(r.url()).pathname === '/api/set'),
       p.page.locator('#mod_tracker').click(),
     ]);
-    await extra;
+    await Promise.all([extra, armedOn]);
     await wait(1500);
     assert(p.claims.length === 0, `turning the switch on claimed the drop it missed: ${JSON.stringify(p.claims)}`);
     const next = 'Alerts Switch On Heroic';

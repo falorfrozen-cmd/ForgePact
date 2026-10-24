@@ -1,8 +1,12 @@
 // Screenshots of every tab at two widths, and a pixel comparison between two
 // sets of them.
 //
-//   node tests/screens.mjs --out <dir> [--legacy] [--dist <dir>]
+//   node tests/screens.mjs --out <dir> [--legacy] [--dist <dir>] [--theme <name>]
 //                          [--compare <dir> --max-mismatch <ratio>]
+//
+// --theme seeds the sandbox's forgepact.json with that `theme` (ledger,
+// graphite, sigil, ...), so a capture can be taken in a theme other than the
+// default; the README's screenshots are `--theme ledger` at 1280 wide.
 //
 // For each tab (setup, modifiers, world, loot, and the Mods tab's three
 // sub-tabs, mods-qol, mods-items and mods-gameplay) at 1280x800 and 900x700 this writes a
@@ -34,7 +38,8 @@ const SHOTS = [
 async function capture(args) {
   const out = here(args.out);
   mkdirSync(out, { recursive: true });
-  const sandbox = await startSandbox({ legacy: !!args.legacy, dist: args.dist });
+  const theme = typeof args.theme === 'string' ? args.theme : null;
+  const sandbox = await startSandbox({ legacy: !!args.legacy, dist: args.dist, seed: theme ? { theme } : null });
   const browser = await launchBrowser();
   const written = [];
   try {
@@ -104,7 +109,7 @@ function compare(outDir, againstDir, maxMismatch) {
 
 const args = parseArgs(process.argv.slice(2));
 if (!args.out || args.out === true) {
-  console.error('usage: screens.mjs --out <dir> [--legacy] [--dist <dir>] [--compare <dir> --max-mismatch <ratio>]');
+  console.error('usage: screens.mjs --out <dir> [--legacy] [--dist <dir>] [--theme <name>] [--compare <dir> --max-mismatch <ratio>]');
   process.exitCode = 2;
 } else {
   await capture(args);

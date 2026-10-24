@@ -28,7 +28,10 @@ line's counters add up as FlightCounters says), `front_layer` (the flight
 layer's depth, its census once per room visit and its re-choice at most once
 a second, validated where it is written; no write while off, residual or for
 another self, the baseline), `front_layer_filter` (never past a filter: the
-rearmost filter decides, on the data file's room stacks), `census_outcomes`
+rearmost filter decides, on the data file's room stacks, and the layer lies
+strictly behind it, never at its depth, in whole depths; where none lies
+between them, the census or the re-choice writes no layer and `no-front=`
+counts it), `census_outcomes`
 (every layer the census was handed lands in exactly one outcome: an effect
 read that answered a struct, something else, or failed, or a layer never
 read, with the reason; the core's own text, which `flightprobe depth`
@@ -280,6 +283,15 @@ class FlightCharmsCoreBehaviorTests(unittest.TestCase):
     def test_front_layer_filter_several_the_rearmost_decides(self):
         self.assertScenarios("front_layer_filter/several_filters_the_rearmost_decides")
 
+    def test_front_layer_filter_strictly_behind_the_rearmost_filter(self):
+        # Never at a filter's own depth: equal depths draw in an order that
+        # ignores depth. No whole depth between them is no layer, at the census
+        # and at a re-choice alike.
+        self.assertScenarios("front_layer_filter/a_filter_at_the_game_front_minus_one_writes_no_layer",
+                             "front_layer_filter/a_drawn_layer_one_behind_the_filter_writes_no_layer",
+                             "front_layer_filter/a_gap_of_two_puts_the_layer_strictly_between",
+                             "front_layer_filter/a_rechoice_that_yields_no_layer_writes_nothing")
+
     def test_front_layer_filter_hidden_or_behind_the_game_front_is_ignored(self):
         self.assertScenarios("front_layer_filter/a_hidden_filter_and_one_behind_the_game_front_change_nothing")
 
@@ -388,8 +400,65 @@ class FlightCharmsCoreBehaviorTests(unittest.TestCase):
 
     def test_install_states(self):
         self.assertScenarios("install/armed_by_a_charm_installed_once_a_character_exists",
+                             "install/a_charm_not_worn_waits_for_a_worn_charm",
+                             "install/a_worn_charm_installs_at_the_next_look",
                              "install/a_refusal_is_final_for_the_session",
                              "install/looks_for_the_player_every_60_frames")
+
+    # ---- the state and the player, at the point of use (#216 c3, c4) ---------
+
+    def test_state_at_refreshes_once_a_frame(self):
+        self.assertScenarios("state_at/reads_the_worn_charms_once_a_frame",
+                             "state_at/answers_what_refresh_then_current_state_answered")
+
+    def test_player_point_the_first_call_of_a_frame(self):
+        # The hooks compare `self` against the local player during a frame's
+        # Step, but the frame counter advances at its end: the player is
+        # confirmed at the first hooked call of each frame, once.
+        self.assertScenarios("player_point/the_first_call_of_a_frame_confirms_the_player",
+                             "player_point/later_calls_of_the_frame_confirm_nothing",
+                             "player_point/a_new_frame_confirms_again")
+
+    # ---- the worn-charm cache (#216 b1) ---------------------------------------
+
+    def test_worn_cache_answers_from_the_remembered_mask(self):
+        # With the signal on, the worn charms are read once and remembered.
+        self.assertScenarios("worn_cache/answers_without_a_re_read")
+
+    def test_worn_cache_each_invalidation_reads_the_next_frame(self):
+        self.assertScenarios("worn_cache/an_update_charm_data_call_invalidates",
+                             "worn_cache/a_player_change_invalidates",
+                             "worn_cache/a_dress_invalidates")
+
+    def test_worn_cache_safety_re_read(self):
+        # The array's other writers are not established: one read a second
+        # whatever happens, and a read that finds another mask counts as stale.
+        self.assertScenarios("worn_cache/a_safety_re_read_every_60_frames",
+                             "worn_cache/a_stale_safety_read_is_counted_and_taken")
+
+    def test_worn_cache_an_invalidation_before_the_array_changes(self):
+        # Live 2: the signal may come before the worn-charm array changes, so
+        # the frames of the confirm window read again after an invalidation.
+        self.assertScenarios("worn_cache/an_invalidation_before_the_array_changes_is_picked_up_next_frame")
+
+    def test_worn_cache_an_unequip_is_off_before_the_next_movement_frame(self):
+        self.assertScenarios("worn_cache/an_unequip_is_off_before_the_next_movement_frame")
+
+    def test_worn_cache_a_late_confirm_read_is_counted(self):
+        # `late=` on the cache line: Live 3's evidence for whether the first
+        # read after an invalidation was already right.
+        self.assertScenarios("worn_cache/a_late_confirm_read_is_counted")
+
+    def test_worn_cache_the_confirm_window_ends(self):
+        # The cost bound: after the window nothing is read until the safety
+        # period, and an invalidation inside the window restarts it.
+        self.assertScenarios("worn_cache/the_confirm_window_ends")
+
+    def test_worn_cache_baseline_signal_off_reads_once_a_frame(self):
+        self.assertScenarios("worn_cache/signal_off_reads_once_a_frame")
+
+    def test_worn_cache_stat_line(self):
+        self.assertScenarios("worn_cache/the_cache_line_names_its_fields")
 
     def test_command_forms(self):
         self.assertScenarios("command/accepted_forms", "command/refused_forms_name_the_usage")

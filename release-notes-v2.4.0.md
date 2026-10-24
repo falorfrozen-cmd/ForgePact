@@ -292,6 +292,35 @@ pieces" below.
   that case is covered by ForgePact's own tests but was not tried in a game
   session yet.
 
+## Changed
+
+- **A flight charm you only carry no longer switches flight on (#216).**
+  Until now, owning a Pocket Elf, Gabriel Wings or Witch's Broomstick, even
+  one left in your bag or stash, switched on flight's checks for the whole
+  session. Now they start only the first time you wear a flight charm, within
+  about a second of putting it on; until then a charm you carry costs only a
+  quick check once a second. Wearing one works as before. Tested in a game
+  session on 2026-10-24 with a research build of the plugin, with Pocket
+  Elf: carried in the bag it left flight's checks off, and worn it switched
+  them on within about a second; Gabriel Wings and Witch's Broomstick take
+  the same path and were not tried.
+- **A worn flight charm is checked when your charms change, not every frame
+  (#216).** While a flight charm was in play, flight looked at every charm
+  you wear on every frame, about 2% of each frame's time in a test session.
+  Now it looks again only when you put a charm on or take one off, change
+  zones or character, or a flight charm is made or loaded, and for a few
+  frames after each of those in case the game finishes the change a moment
+  later. On top of that it takes a quick safety look every 60 frames, about
+  once a second at 60 fps, in case the game changed your charms some other
+  way. If the plugin cannot watch for charm changes on your game, flight
+  checks every frame as before and works the same. Tested in two game
+  sessions on 2026-10-24 with a research build of the plugin and Pocket Elf:
+  worn, the charms were read about once a second instead of every frame,
+  ForgePact's share of each frame fell from about 3% to about 1%, and putting
+  the charm on, taking it off and changing zones were each picked up. Gabriel
+  Wings and Witch's Broomstick take the same path and were not tried;
+  dragging a charm, a stash transfer and loading a save were not tried.
+
 ## How to update
 
 Download and extract the complete release, then reopen ForgePact and press

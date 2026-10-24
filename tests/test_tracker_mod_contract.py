@@ -273,7 +273,7 @@ class TrackerModContractTests(unittest.TestCase):
         accept = self.body("bool AcceptInit(bool installed)", self.header)
         self.assertBefore("if (!m_Enabled || !installed) return false;", "++m_Stats.initCalls;", accept, "AcceptInit")
         self.assertIn("LaDurable(", on_init)
-        for forbidden in ("DecideDrop", "itemInfoStruct", "LaRarity", "LaField", "CallBuiltin"):
+        for forbidden in ("DecideDrop", "itemInfoStruct", "LaRarity", "StructOrRefField", "CallBuiltin"):
             self.assertNotIn(forbidden, on_init, forbidden)
 
     def test_creations_are_noted_from_the_shared_create_item_new_hook(self):
