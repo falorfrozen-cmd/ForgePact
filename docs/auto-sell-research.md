@@ -691,7 +691,7 @@ persisted. Measured unless labelled.
 - [credit-exact]: pass (`exact=81`, `inexact=0`, `credit-unverified=0`).
 - [clean]: pass (every refusal, failure and error counter stayed 0).
 - [gold-rose]: pass (`gold-now=` from 318545 to 323085, +4,540, at least the
-  window's `gold=` rise of 4,342; coins make up the rest).
+  window's `gold=` rise of 4,342; the other 198 is not attributed; coin pickups were not measured).
 - [no-hidden-left]: pass (`lootcensus` `hidden=0` at the end, as at step 3).
 - [no-runner-errors]: pass (the YYError count did not change).
 - [credit-answer] (research): `undefined`, on every `last=` read in steps 5
