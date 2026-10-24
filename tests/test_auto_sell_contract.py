@@ -17,7 +17,13 @@ comment-stripped source:
   GetGoldAmount) are called by name through their SDK constants, with the
   argument shapes the static reading gives, self the local player accepted
   through the instance-handle rule;
-- `autosell` is a player command; `quote` is research build only;
+- the credit reports what it got back (a script that did not dispatch, a
+  boolean false, or the answer's kind) and decides nothing: a passing credit
+  answers undefined (static reading, after Live 1), and the class decides
+  payment from the balance either side;
+- `autosell` is a player command; `quote` is research build only, and
+  prints the class's item type and its refusal of a type the game will not
+  buy;
 - none of the sale's parts the owner ruled out (the sell pool, the ownership
   change, the online record), no address, no ground scan, no verdict write;
 - the ON, OFF and stat lines and the modstate `autoSell` object, and
@@ -40,10 +46,17 @@ ADAPTER_END = "// ---- end of the auto-sell adapter"
 
 HOOK = "static RValue& HookHiddenLootInit(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)"
 
-#: The stat line's fields, in order, as Live procedure 1 reads them.
+#: The stat line's fields, in order, as Live procedure 2 reads them (Replan 1
+#: added type-unsellable, gold-unreadable, the three credit-* causes,
+#: credit-unverified, log-refused and no-key).
 STAT_FIELDS = ["on", "route", "notes", "sold", "gold", "exact", "inexact", "visible", "no-filter-var", "unsellable",
-               "skipped-persistent", "repeat-held", "no-player", "credit-refused", "destroy-failed", "gone",
-               "unidentified", "errors", "last", "gold-now"]
+               "type-unsellable", "skipped-persistent", "repeat-held", "no-player", "gold-unreadable",
+               "credit-refused", "credit-call-failed", "credit-false", "credit-unpaid", "credit-unverified",
+               "log-refused", "destroy-failed", "gone", "unidentified", "no-key", "errors", "last", "gold-now"]
+
+#: The credit adapter's signature: it reports what the credit call gave back,
+#: and the class decides payment from the balance.
+CREDIT = ("static ForgePact::AutoSellMod::CreditAnswer AsCredit(const RValue& player, double price)")
 
 #: What the sale does that autosell must never mirror, and what no player
 #: binary may carry (an address, a module base).
@@ -152,12 +165,36 @@ class AutoSellAdapterContractTests(unittest.TestCase):
         self.assertIn("HhResolveInstance(player)", call)
         self.assertIn("ApCallScript(name, self, args, res)", call)
 
-    def test_the_credit_reads_the_hash_just_before_the_check_and_wants_true(self):
-        credit = self.body("static bool AsCredit(const RValue& player, double price)")
+    def test_the_credit_reads_the_hash_just_before_the_check(self):
+        credit = self.body(CREDIT)
         self.assertBefore("gml_Script_GetCounterHash", "gml_Script_PickUpGoldCheck", credit, "AsCredit")
         self.assertIn("{ hash, RValue(price), RValue(1.0), RValue(), RValue(), RValue() }", credit)
-        self.assertIn("VALUE_BOOL", credit)
-        self.assertIn(".ToBoolean()", credit)
+
+    def test_the_credit_reports_its_answer_and_decides_no_payment(self):
+        credit = self.body(CREDIT)
+        A = "ForgePact::AutoSellMod::CreditAnswer::"
+        # A script that did not dispatch is reported as such, for either call,
+        # apart from a false answer.
+        for script in ("GetCounterHash", "PickUpGoldCheck"):
+            self.assertRegex(credit, r"if \(!AsCallScript\(SdkShortScriptName\(HeroSiege::Scripts::gml_Script_"
+                             + script + r"\)[^;]*\)\)\s*return " + re.escape(A) + r"Failed;", script)
+        # Only a boolean false is a false answer; undefined (the passing
+        # credit's answer, static reading) is named, never turned into a refusal.
+        self.assertRegex(credit, r"kind == VALUE_BOOL\)\s*return [^;]*\.ToBoolean\(\)\s*\?\s*"
+                         + re.escape(A) + r"True\s*:\s*" + re.escape(A) + r"False;")
+        self.assertRegex(credit, r"kind == VALUE_UNDEFINED\)\s*return " + re.escape(A) + r"Undefined;")
+        self.assertEqual(1, credit.count(A + "False"), "only the boolean branch answers False")
+        self.assertEqual(1, credit.count(A + "Undefined"))
+        for kind in ("VALUE_REAL", "VALUE_INT32", "VALUE_INT64"):
+            self.assertIn(kind, credit)
+        self.assertIn(A + "Number", credit)
+        self.assertIn(A + "Other", credit)
+        # The adapter decides nothing: no bool result, no balance read.
+        self.assertNotIn("return false", credit)
+        self.assertNotIn("return true", credit)
+        self.assertNotIn("GetGoldAmount", credit)
+        # And the class's credit setter is the one it fills.
+        self.assertIn("using Credit = CreditAnswer (*)(const RValue& player, double price);", self.header)
 
     def test_the_gold_log_and_the_balance(self):
         log = self.body("static bool AsGoldLog(const RValue& player, double price)")
@@ -217,7 +254,14 @@ class AutoSellAdapterContractTests(unittest.TestCase):
         self.assertIn("CmMapItem(map0, RValue(key), item)", quote)
         self.assertIn(".QuoteFields(item, fields, why)", quote)
         self.assertIn('"autosell quote: "', quote)
-        self.assertIn('"refused - "', quote)
+        self.assertIn('"refused - " + why', quote)
+        self.assertIn('"key=" + key + " " + fields', quote)
+        # The quote prints the class's type field and its refusal of a type
+        # the game will not buy, through the price function the sale uses.
+        fields = self.body("bool QuoteFields(const RValue& item, std::string& fields, std::string& why)", self.header)
+        self.assertIn("PriceOf(item, parts)", fields)
+        self.assertIn('" type=" + Num(parts.type)', fields)
+        self.assertIn('" is not sold by the game"', self.header)
         for write in ("CmCall(", "variable_struct_set", "ds_map_delete", "ds_map_add", "instance_destroy"):
             self.assertNotIn(write, quote, write)
         # The player build answers a quote with a refusal, not silence.

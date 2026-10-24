@@ -57971,9 +57971,10 @@ static void TrackerCommand(const std::string& rest)
 // local player: GetCounterHash() just before PickUpGoldCheck(hash, price, 1,
 // undefined x3), which credits the gold; GoldLogAdd(18, price), as a hand sale
 // logs it; and GetGoldAmount() either side of the credit, which is how the
-// class tells an exact credit from an inexact one. Which `self` the game's
-// credit wants is not established (a hand sale passes the inventory grid's
-// node); Live 1's exact-gold check settles the player. The sell pool, the
+// class tells whether the player was paid at all, and an exact credit from an
+// inexact one (the credit's own answer only diagnoses). The counter hash is
+// read from the game's global protected store, not `self` (static reading),
+// so self stays the local player. The sell pool, the
 // ownership change and the online inventory record a hand sale also makes
 // are left out by design (docs/auto-sell-research.md).
 static bool g_AutoSellWired = false;
@@ -58011,17 +58012,23 @@ static bool AsCallScript(const char* name, const RValue& player, const std::vect
 }
 
 // The credit: the counter hash read immediately before PickUpGoldCheck, the
-// hand sale's first branch. Only an answer that is true counts; undefined, a
-// string or a dispatch failure is a refused credit, and the item stays.
-static bool AsCredit(const RValue& player, double price)
+// hand sale's first branch. It reports what came back and decides nothing:
+// Failed when either script did not dispatch, False for a boolean false (the
+// hash check, static reading), otherwise the answer's kind. A credit that
+// passes the hash check answers undefined (static reading, after Live 1
+// counted every such credit refused), so the class decides payment from the
+// balance either side, never from this answer alone.
+static ForgePact::AutoSellMod::CreditAnswer AsCredit(const RValue& player, double price)
 {
     RValue hash, answer;
-    if (!AsCallScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_GetCounterHash), player, {}, hash)) return false;
+    if (!AsCallScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_GetCounterHash), player, {}, hash)) return ForgePact::AutoSellMod::CreditAnswer::Failed;
     if (!AsCallScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_PickUpGoldCheck), player,
-                      { hash, RValue(price), RValue(1.0), RValue(), RValue(), RValue() }, answer)) return false;
+                      { hash, RValue(price), RValue(1.0), RValue(), RValue(), RValue() }, answer)) return ForgePact::AutoSellMod::CreditAnswer::Failed;
     const uint32_t kind = static_cast<uint32_t>(answer.m_Kind) & 0x0FFFFFFFU;
-    if (kind != VALUE_BOOL && kind != VALUE_REAL && kind != VALUE_INT32 && kind != VALUE_INT64) return false;
-    return answer.ToBoolean();
+    if (kind == VALUE_BOOL) return answer.ToBoolean() ? ForgePact::AutoSellMod::CreditAnswer::True : ForgePact::AutoSellMod::CreditAnswer::False;
+    if (kind == VALUE_UNDEFINED) return ForgePact::AutoSellMod::CreditAnswer::Undefined;
+    if (kind == VALUE_REAL || kind == VALUE_INT32 || kind == VALUE_INT64) return ForgePact::AutoSellMod::CreditAnswer::Number;
+    return ForgePact::AutoSellMod::CreditAnswer::Other;
 }
 
 // The gold log, type 18 as a hand sale writes it; ForgePact's own tracker and
