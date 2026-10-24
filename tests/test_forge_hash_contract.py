@@ -144,6 +144,9 @@ EXPECTED_PLAYER_COMMANDS = {
     # #230); its research verbs are refused in the player build
     # (test_number_guard_contract.py pins it).
     "numguard",
+    # Auto sell, the Loot tab's switch, filter and `autosell stat`
+    # (ForgePact #196; test_auto_sell_contract.py pins it).
+    "autosell",
 }
 
 

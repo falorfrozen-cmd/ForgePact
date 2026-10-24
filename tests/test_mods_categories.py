@@ -88,6 +88,8 @@ QOL_CONTROL_IDS = [
     # Sleep loot your filter hides and its show key (forgepact-issue-95-mod).
     "mod_hidden_loot",
     "mod_hidden_loot_key",
+    # Sell loot your filter hides (forgepact-196-autosell-filtered).
+    "mod_auto_sell",
     # Jump through scenery (forgepact-16-jump-scenery-mod).
     "mod_jump_scenery",
     # Loot announcements (forgepact-issue-17-loot-announcements).

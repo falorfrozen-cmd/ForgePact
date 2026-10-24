@@ -49,6 +49,7 @@ none of these diagnostic hooks or the recorder. See
 | **Jump Through Scenery** | Mods → Quality of Life, off by default (plugin command `jumpscenery 1` / `jumpscenery 0`, `jumpscenery stat`). Your universal jump carries you over rocks, fences, carts and other scenery that stop it today, when your mouse cursor is on open ground past the scenery: the landing is checked where the jump is aimed, and a jump aimed into the scenery itself stays blocked as in the game. On at launch, it waits for your character to load before it hooks in. The first jump after loading needs no practice jump, and changing zone keeps what it learned about your jump. Locked doors and zone gates still block it. Some jumps the game itself refuses to start stay refused ([details](#jump-through-scenery-jump-over-the-props-that-stop-it)) |
 | **Loot Announcements** | Mods → Quality of Life, off by default (plugin command `lootann 1` / `lootann 0`, `lootann stat`). Offline play shows no chat line when a great item drops; online play announces it. With this on, a Heroic, Angelic or Unholy item the game drops on the ground is announced once in the in-game chat, as a `<your character>: found <item name>` line laid out like the game's online announcement, your character's name in orange and "found <item name>" in the colour that announcement uses for the item's rarity (green Heroic, pale yellow Angelic, crimson Unholy); if the game refuses that line, the old red `SERVER:` line is shown instead (not the game's own online announcement; colours checked in play on 2026-10-23 with placed items). Satanic, Mythic and lower items, gold, gems, materials and relics are not announced, and neither are items you drop yourself from the bag. In the Chaos Tower, where the game holds a floor's drops until the floor is cleared, the line comes when the floor's loot lands at its end (checked in play on 2026-10-23 on a first floor with a placed Heroic item). Checked in play on 2026-10-04: a placed Heroic and Angelic item announced, a Satanic one not, an item dropped from the bag not announced again, nothing with the switch off, and a drop from a kill announced ([details](#loot-announcements)) |
 | **Always Show Chaos Pillar Mods** | Mods → Quality of Life, off by default (plugin command `pillartips 1` / `pillartips 0`, `pillartips stat`). A Chaos Pillar shows its box of mods only while your mouse cursor is on it. With this on, every Chaos Pillar on screen shows its box without being hovered, like a strongbox in Path of Exile: the game's own box, text and colours. A pillar that leaves the screen hides it again, and a pillar you have activated stops showing its box. Mouse play only; gamepad is not supported. Checked in a game session with mouse play ([details](#always-show-chaos-pillar-mods)) |
+| **Sell Loot Your Filter Hides** | Mods → Quality of Life, off by default (plugin command `autosell 1` / `autosell 0`, `autosell stat`). With this on, an item your loot filter hides is sold the moment it drops: it leaves the ground and you get the gold a merchant would pay for it, through the game's own gold routine. Nothing is added to the merchant's buyback list. Items the filter shows, gold, Gems of Incarnation and anything in town are never touched, and only drops from the moment it is on are sold. With **Sleep loot your filter hides** also on, the sale comes first and only what cannot be sold is put to sleep. Checked in a game session; not yet seen in play: a key, tarot card, material, socketable or relic dropping, the buyback list, stacked items, a Chaos Tower floor and co-op ([details](#sell-loot-your-filter-hides)) |
 | **Flight Charms** | Mods → Items, three switches, all off by default (plugin command `flightcharm elf\|wings\|broom 1` / `0`, `flightcharm stat`). Three charms of ForgePact's own: **Pocket Elf** (Satanic, one cell), **Gabriel Wings** (Angelic, 2x2, 1-12% less physical and magic damage taken) and **Witch's Broomstick** (Unholy, 1x5, +10-100% movement speed), each with its own icon and a gold Flight line. While you wear one, you walk through scenery and are drawn in front of it, tree canopies included, and you walk through monsters too, though they still hit you (owner-confirmed in play, 2026-10-13); walls, zone gates, locked doors and the map's edge still stop you, though a few stone walls the game builds as scenery, such as the town church's, can be crossed (measured as scenery in a game session, not yet walked with a charm on). The game counts only one flight charm at a time. Each switch lets its charm drop from the game's own rolls (Pocket Elf among the SS uniques a kill can drop, at the rarity and tier of Aimbot.exe, the other two from the Angelic roll); a charm you own works either way. Offline only. Checked in three game sessions on a research build, drop rates included, plus the owner's play check for monsters, and in a fourth Pocket Elf dropped from a kill, with its share raised for the test ([details](#flight-charms-pocket-elf-gabriel-wings-witchs-broomstick)) |
 | **Mark 1 Set** | Mods → Items → **Mark 1 set** and **Mark 1 drops**, both off by default (plugin commands `mark1set bonus 1` / `mark1set bonus 0`, `mark1set drops 1` / `mark1set drops 0`, `mark1set stat`). Four Satanic pieces of ForgePact's own, like the game's own set pieces: the Mark 1 Helmet, Body Armor, Boots and Gloves, each with its own art and its own rolled stats (Defense, Enhanced Defense and more, sockets on the helmet and body armor). With the switch on, the set gives a bonus at 2, 3 and 4 pieces worn (`+500 Defense`; then All Resistances and Replenish Life; then All Skills, `+750 to Life` and Physical Damage Taken Reduced). With all four worn, the skills on your Q, E, R and Y slots cast themselves whenever the game lets them, by priority in Q, E, R, Y order: a skill with a cooldown as soon as it is ready, a skill with no cooldown continuously, fired the way an item's proc fires a skill (a toggle skill is pressed, only while it is off); an automated skill cannot be cast by hand and its icon is drawn grey, each slot outlined; each automated skill drains about 1% of your maximum mana a second, taken off your mana regeneration; your jump always goes three times as far toward your cursor, over scenery, and lands only where you can walk (until it has learned your reach, a jump can stop short of its landing); in exchange you walk at half speed, and a cast still slows you as it does without the set. With **Mark 1 drops** on, the pieces drop from kills (seen in Hell), through the draw the game uses for a kill's unique items, among its SS uniques like the game's own SS set pieces, and join the Heroic roll a vault runs; how often a kill gives one at the normal setting is not measured. Checked in play: the pieces, their art and stat ranges, the set bonus at 2, 3 and 4 pieces, the jump, the half walk, the Q, E, R, Y order with a toggle skill on R, the lock on casting by hand, the grey icons, the mana drain, and all four pieces dropping from kills with their share raised for the test; a piece from a vault not yet ([details](#mark-1-set)) |
 | **Goburin's Head pity** | Mods → Quality of Life, off by default (plugin command `gambapity <1-200>` / `gambapity off`, `gambapity status`). A switch and a slider from 1 to 200. Each slot machine explosion without a head counts one, and the explosion that reaches your number drops exactly one Goburin's Head; then the count starts over. If the game drops the charm itself, the count starts over too. The count carries over between machines and between sessions, kept in `forgepact_gamba_pity.json`. Checked in play on 2026-10-06 with the number at 2: the first machine to explode dropped nothing and was counted, the second dropped one Goburin's Head, and the count started over. A head the game drops on its own has not been observed yet ([details](#goburins-head-pity)) |
@@ -2206,6 +2207,56 @@ everything it put to sleep.
 
 Measurements, the mechanism and what is not known yet:
 [`docs/hidden-loot-research.md`](docs/hidden-loot-research.md).
+
+## Sell loot your filter hides
+
+Mods → Quality of Life → **Sell loot your filter hides** (plugin command
+`autosell 1|0`, `autosell stat` for its state and counters). Off by default.
+
+An item your loot filter hides still drops on the ground, where you never see
+it. With this on, such a drop is sold at the end of the frame it dropped in:
+the item leaves the ground and you are credited the gold a merchant would pay
+for it, through the game's own gold routine, and the sale is written to the
+game's gold log, so ForgePact's tracker and the HS Offline Tracker count it as
+income. The mod never decides what to sell: it reads the verdict the game's
+own filter just left on the item, and whatever the filter hides is sold,
+uniques and sets included.
+
+- **Never touched.** Items the filter shows, gold, Gems of Incarnation and
+  anything else the filter gives no verdict, and anything in a persistent
+  room such as town. An item whose price comes out at nothing, or whose gold
+  the game refuses to credit, is left where it fell.
+- **Never sold: what a merchant will not buy.** Keys, tarot cards, materials,
+  socketables, and relics, the items the game marks "Item cannot be sold",
+  are never sold, even when your filter hides them. They stay on the ground
+  where they fell, or are put to sleep when **Sleep loot your filter hides**
+  is on.
+- **No buyback.** A sold item is not added to the merchant's buyback list
+  (how the sale is built; not yet looked at in a game session), and the
+  merchant window is never opened or used.
+- **With Sleep loot your filter hides.** The sale comes first: a hidden drop
+  that can be sold is sold, and only one that cannot be sold is put to sleep
+  as before.
+- **Limits.** Only drops from the moment it is switched on are sold: items
+  already on the ground, and items **Sleep loot your filter hides** already
+  has asleep, stay where they are. An item you drop from your own bag that
+  the filter hides is sold too, outside town. Near the game's offline gold
+  cap a sale may add less than its price; the item is still sold. If the game's drop hook could not be fully installed,
+  `autosell 1` says so, and drops that pass it by are not sold. On a Chaos
+  Tower floor, where the game holds drops until the floor is cleared, whether
+  an item is sold when it falls or when the floor's loot lands is not known
+  yet.
+- **Checked in play.** In game sessions on 2026-10-24, in Act 1 on Hell, a
+  ring sold by hand paid exactly the price the switch gives it (57 gold), and
+  in about two minutes of kills 81 hidden drops were sold, each paying exactly
+  its price; with Sleep loot your filter hides also on, 30 more were sold and
+  none was put to sleep; with the switch off nothing was sold. Not seen in
+  play yet: a key, tarot card, material, socketable or relic dropping while
+  it is on, the merchant's buyback list, stacked items, a Chaos Tower floor
+  and co-op.
+
+The mechanism, what it mirrors of the game's own merchant sale and what is
+not known yet: [`docs/auto-sell-research.md`](docs/auto-sell-research.md).
 
 ## Tracker (HS Offline Tracker, built in)
 

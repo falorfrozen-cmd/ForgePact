@@ -170,6 +170,32 @@ pieces" below.
   As before, the line goes to the chat's general channel, so with the
   game's general chat switched off it may not appear (not tried in play).
 
+- **Sell loot your filter hides (#196).** A new switch under Mods → Quality
+  of Life, off by default. With it on, an item your loot filter hides no
+  longer lies on the ground: the moment it drops, it is sold for the gold a
+  merchant would pay for it, the gold goes straight to you, and the item
+  never appears on a merchant's buyback list. Items a merchant will not buy,
+  the ones whose tooltip reads "Item cannot be sold" (keys, tarot cards,
+  materials, socketables and relics), are never sold and stay where they
+  fell. With **Sleep loot your filter hides** also on, selling comes first:
+  only what cannot be sold is put to sleep. Only items that drop after you
+  switch it on are sold; what already lies on the ground is left alone, and
+  nothing is sold in town. Careful: an item you drop from your bag yourself,
+  outside town, is sold too if your filter hides it (not tried in a game
+  session).
+  Tested in game sessions on 2026-10-24 with a development build of the
+  plugin, in Act 1 on Hell: a ring sold to a merchant by hand paid exactly
+  the price the switch gives it (57 gold); in about two minutes of kills, 81
+  hidden drops were sold, each paying exactly its price, 4,342 gold in all,
+  while an item the filter shows stayed on the ground; asked to price a
+  socketable and a material from the bag, it refused both; with Sleep loot
+  your filter hides on as well, 30 more hidden drops were sold and none was
+  put to sleep; and with the switch off nothing was sold and the hidden
+  items stayed on the ground. Not seen in play yet: a key, tarot card,
+  material, socketable or relic dropping while the switch is on, the
+  merchant's buyback list (those sessions found no buyback view to look
+  at), stacked items, a Chaos Tower floor and co-op.
+
 ## Fixed
 
 - **The Gold Inlaid Mysterious Potion never dropped from Angelic / Unholy

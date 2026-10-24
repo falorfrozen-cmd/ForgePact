@@ -69,6 +69,7 @@ struct World {
     long callsOnMissing = 0;                     // activate/deactivate/set on an instance that is not there
     long readsOnMissing = 0;                     // variable_instance_get on an instance that is not there
     long danglingPointerCalls = 0;               // a builtin handed an instance pointer whose instance is gone
+    std::map<int64_t, long> addressed;           // calls whose first argument names this id, whatever its kind
     std::set<std::string> unexpected;            // builtins the class called that this world does not know
     bool throwOnDeactivate = false;
     bool refuseVisibleWrite = false;
@@ -92,6 +93,10 @@ struct Runner {
             if ((arg.m_Kind & 0x0FFFFFFF) != VALUE_OBJECT || arg.isStruct) continue;
             const Instance* i = anyId(idOf(arg));
             if (!i || !i->exists) ++world.danglingPointerCalls;
+        }
+        if (!args.empty()) {
+            const int kind = args[0].m_Kind & 0x0FFFFFFF;
+            if ((kind == VALUE_REAL || kind == VALUE_REF || kind == VALUE_OBJECT) && !args[0].isStruct) ++world.addressed[idOf(args[0])];
         }
         if (name == "asset_get_index") {
             if (args[0].text == "Loot_Ground_obj") return RValue((double)LootGround);
@@ -601,6 +606,79 @@ int main() {
         check("errors/counted", mod().StatsRef().errors >= errors + 2 && byId(item)->active && mod().AsleepNow() == 0,
             "errors=" + n(mod().StatsRef().errors - errors));
         world.throwOnDeactivate = false;
+        mod().Disable();
+    }
+
+    // ---- Sell supersedes hide: a drop autosell sold this frame -----------------
+    // Autosell's tick runs first and destroys the hidden drops it sells; the
+    // adapter then names them to this class before its own tick. A sold drop
+    // is counted `sold` and asked nothing (never `unidentified`); the other
+    // hidden drop of the same frame is slept as before.
+    {
+        for (auto& i : world.instances) if (i.object == LootGround) i.exists = false;
+        mod().Enable(9, zone);
+        const int64_t sold = addItem(true), kept = addItem(true);
+        init(Ref(sold), ItemStruct(), InstancePointer(monster));
+        init(Ref(kept), ItemStruct(), InstancePointer(monster));
+        byId(sold)->exists = false;          // autosell destroyed it
+        mod().NoteSold(sold);
+        const HiddenLootMod::Stats st = mod().StatsRef();
+        const long soldAddressed = world.addressed[sold], keptAddressed = world.addressed[kept];
+        const long missing = world.callsOnMissing, missingReads = world.readsOnMissing;
+        tick(1, 9);
+        check("sold/counted_not_asked", mod().StatsRef().sold - st.sold == 1 && mod().StatsRef().unidentified == st.unidentified
+            && world.addressed[sold] == soldAddressed && world.callsOnMissing == missing && world.readsOnMissing == missingReads,
+            "sold=" + n(mod().StatsRef().sold - st.sold) + " unidentified=" + n(mod().StatsRef().unidentified - st.unidentified)
+            + " sold-addressed=" + n(world.addressed[sold] - soldAddressed));
+        // The instrument: the same frame's other hidden drop was asked about
+        // (so a call naming the sold id would have been seen) and slept.
+        check("sold/other_slept", !anyId(kept)->active && world.addressed[kept] > keptAddressed
+            && mod().StatsRef().slept - st.slept == 1 && mod().AsleepNow() == 1,
+            "kept-addressed=" + n(world.addressed[kept] - keptAddressed) + " slept=" + n(mod().StatsRef().slept - st.slept));
+
+        // Handed over twice in one frame, and found through `self` (reduced to
+        // its id inside the call): each sold item counts once.
+        const int64_t twice = addItem(true), viaSelf = addItem(true);
+        init(Ref(twice), ItemStruct(), InstancePointer(monster));
+        init(Ref(twice), ItemStruct(), InstancePointer(monster));
+        init(RValue(12.0), ItemStruct(), InstancePointer(viaSelf));
+        byId(twice)->exists = false;
+        byId(viaSelf)->exists = false;
+        mod().NoteSold(twice);
+        mod().NoteSold(viaSelf);
+        const HiddenLootMod::Stats st2 = mod().StatsRef();
+        const long twiceAddressed = world.addressed[twice], selfAddressed = world.addressed[viaSelf];
+        tick(1, 9);
+        check("sold/once_each_any_slot", mod().StatsRef().sold - st2.sold == 2 && mod().StatsRef().unidentified == st2.unidentified
+            && world.addressed[twice] == twiceAddressed && world.addressed[viaSelf] == selfAddressed
+            && world.danglingPointerCalls == 0,
+            "sold=" + n(mod().StatsRef().sold - st2.sold) + " unidentified=" + n(mod().StatsRef().unidentified - st2.unidentified));
+
+        // A sold id lasts one frame: named in one frame, a note of the same id
+        // in the next is judged as any other (a hidden item still there is
+        // slept), and the id that matched no note counted nothing.
+        const int64_t late = addItem(true);
+        const HiddenLootMod::Stats st3 = mod().StatsRef();
+        mod().NoteSold(late);
+        tick(1, 9);
+        init(Ref(late), ItemStruct(), InstancePointer(monster));
+        tick(1, 9);
+        check("sold/lasts_one_frame", !anyId(late)->active && mod().StatsRef().sold == st3.sold
+            && mod().StatsRef().slept - st3.slept == 1, "sold=" + n(mod().StatsRef().sold - st3.sold));
+        mod().Disable();
+
+        // Off: a sold id is not kept, costs no call, and is gone by the time
+        // the mod is on again.
+        const int64_t offItem = addItem(true);
+        const long calls = world.calls;
+        mod().NoteSold(offItem);
+        check("sold/ignored_while_off", world.calls == calls, "calls=" + n(world.calls - calls));
+        mod().Enable(10, zone, false);
+        const HiddenLootMod::Stats st4 = mod().StatsRef();
+        init(Ref(offItem), ItemStruct(), InstancePointer(monster));
+        tick(1, 10);
+        check("sold/not_kept_while_off", !anyId(offItem)->active && mod().StatsRef().sold == st4.sold
+            && mod().StatsRef().slept - st4.slept == 1, "sold=" + n(mod().StatsRef().sold - st4.sold));
         mod().Disable();
     }
 

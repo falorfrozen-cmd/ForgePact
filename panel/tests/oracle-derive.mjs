@@ -174,6 +174,7 @@ export const NATIVE_BOOLEANS = [
   { key: 'mod_jump_scenery', tab: 'tab:mods', sub: 'subtab:qol', verb: 'jumpscenery' },
   { key: 'mod_loot_announce', tab: 'tab:mods', sub: 'subtab:qol', verb: 'lootann' },
   { key: 'mod_pillar_tips', tab: 'tab:mods', sub: 'subtab:qol', verb: 'pillartips' },
+  { key: 'mod_auto_sell', tab: 'tab:mods', sub: 'subtab:qol', verb: 'autosell' },
 ];
 // The show key's select (#mod_hidden_loot_key, Sleep loot your filter hides'
 // child row), derived as #mod_skill_timer_style is but with literals, since no

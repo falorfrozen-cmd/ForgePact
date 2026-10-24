@@ -258,6 +258,8 @@ class TrackerModContractTests(unittest.TestCase):
         self.assertEqual(1, hook.count("TrackerOnInit(S, argc, A);"))
         self.assertBefore("g_Orig_LootGroundInit(S, O, R, argc, A)", "TrackerOnInit(S, argc, A);", hook, "HookHiddenLootInit")
         self.assertBefore("FlightCharmOnGroundInit(argc, A);", "TrackerOnInit(S, argc, A);", hook, "HookHiddenLootInit")
+        # Auto-sell (ForgePact #196) is the fifth, after the tracker.
+        self.assertBefore("TrackerOnInit(S, argc, A);", "AutoSellOnInit(S, argc, A);", hook, "HookHiddenLootInit")
         self.assertEqual(1, len(re.findall(r"HookOneScript\w*\([^;]*LootGroundInit\b", self.code)))
         self.assertIn("if (!g_HiddenLootInstallTried) HiddenLootInstall();", self.body("static void TrackerInstall()"))
         # Inside the call: the handles made durable, nothing of the item.
@@ -359,6 +361,8 @@ class TrackerModContractTests(unittest.TestCase):
         self.assertEqual(1, frame.count("TrackerTick();"))
         self.assertBefore("if (g_Setup) LootAnnounceTick();", "if (g_Setup) TrackerTick();", frame, "FrameCallback")
         self.assertBefore("if (g_Setup) TrackerTick();", "if (g_Setup) HiddenLootTick();", frame, "FrameCallback")
+        # Auto-sell (ForgePact #196) removes what it sells, so the tracker reads the drop first.
+        self.assertBefore("if (g_Setup) TrackerTick();", "if (g_Setup) AutoSellTick();", frame, "FrameCallback")
         # Never at setup: nothing in InstallHook mentions the tracker.
         self.assertNotIn("Tracker", self.body("static void InstallHook()"))
 

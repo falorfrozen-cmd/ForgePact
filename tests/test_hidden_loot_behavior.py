@@ -9,8 +9,9 @@ pointer into a durable id, and never a dead pointer to the runner), what it
 acts on (only a Loot_Ground_obj whose verdict reads hidden, found among the
 call's arguments and `self` whatever their kind), what it counts instead of
 acting on, the hold key and its foreground guard, switching off and on, room
-changes and persistent rooms, and the fallback pass that takes over when the
-drop hook is table-only.
+changes and persistent rooms, the fallback pass that takes over when the
+drop hook is table-only, and a drop autosell sold in its own frame, which is
+counted and never asked about.
 """
 import os
 import shutil
@@ -135,6 +136,14 @@ class HiddenLootBehaviorTests(unittest.TestCase):
     def test_room_change_forgets_without_calls(self):
         for label in ("room/walk_in_new_room", "room/forgets_without_calls", "room/old_ids_never_addressed",
                       "room/persistent_sleeps_nothing"):
+            self.assertScenario(label)
+
+    def test_a_drop_autosell_sold_is_counted_not_asked(self):
+        # Sell supersedes hide: a drop autosell sold (and destroyed) this frame
+        # is counted `sold` with no runner call naming it, never
+        # `unidentified`; the same frame's other hidden drop still sleeps.
+        for label in ("sold/counted_not_asked", "sold/other_slept", "sold/once_each_any_slot",
+                      "sold/lasts_one_frame", "sold/ignored_while_off", "sold/not_kept_while_off"):
             self.assertScenario(label)
 
     def test_table_only_route_uses_the_pass(self):

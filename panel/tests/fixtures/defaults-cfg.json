@@ -24,6 +24,7 @@
  "density_rolling": false,
  "mod_hidden_loot": false,
  "mod_hidden_loot_key": 164,
+ "mod_auto_sell": false,
  "mod_jump_scenery": false,
  "mod_loot_announce": false,
  "mod_tracker": false,
