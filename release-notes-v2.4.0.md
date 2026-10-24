@@ -254,8 +254,21 @@ pieces" below.
   one left in your bag or stash, switched on flight's checks for the whole
   session. Now they start only the first time you wear a flight charm, within
   about a second of putting it on; until then a charm you carry costs only a
-  quick check once a second. Wearing one works as before. This is covered by ForgePact's own tests
-  and has not been tried in a game session yet.
+  quick check once a second. Wearing one works as before. Tested in a game
+  session on 2026-10-24 with a research build of the plugin, with Pocket
+  Elf: carried in the bag it left flight's checks off, and worn it switched
+  them on within about a second; Gabriel Wings and Witch's Broomstick take
+  the same path and were not tried.
+- **A worn flight charm is checked when your charms change, not every frame
+  (#216).** While a flight charm was in play, flight looked at every charm
+  you wear on every frame, about 2% of each frame's time in a test session.
+  Now it looks again only when you put a charm on or take one off, change
+  zones or character, or a flight charm is made or loaded, plus a quick
+  safety look about once a second in case the game changed your charms some
+  other way, so a change is never missed for longer than that. If the plugin cannot watch
+  for charm changes on your game, flight checks every frame as before and
+  works the same. This is covered by ForgePact's own tests and has not been
+  tried in a game session yet.
 
 ## How to update
 

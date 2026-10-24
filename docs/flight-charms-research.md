@@ -1381,7 +1381,10 @@ Everything is resolved by name, and every script hook goes through
   once a flight charm is worn (#216, § "Follow-ups from the #214 review"
   below), `InstancePlaceTallest`, `UpdateDepth` and the five shared builtins.
   A refusal prints one `flightcharm: refused - <why>` line and is final for
-  the session;
+  the session. After them, `UpdateCharmData`, the worn-charm cache's signal
+  (§ "The worn-charm cache (#216)" below), the one hook here that refuses
+  nothing: not found or table-only, the cache stays off and flight installs
+  anyway;
 - from a drop switch turned on: #74's detection hooks, `DropUniqueItems`
   (Pocket Elf only), the kill draw's two shared detours (Pocket Elf only:
   DropManager's one `DropItem` detour and raredrop's one
@@ -2333,7 +2336,9 @@ built.
   RDM § 23.1 reads it as rebuilding `localCharmItemArray`, a static reading;
   the decompiler's cross-references show no caller of it, which is not
   observed rather than none) goes to a debugger logpoint, since it is a "does
-  it fire, how often" question. A cache is not built here.
+  it fire, how often" question. A cache was left to the owner on those
+  numbers; after Mod live 4 the owner had it built in #216 (§ "The worn-charm
+  cache (#216)" below).
 
 Two findings are decisions, each the owner's default and reversible:
 
@@ -2562,9 +2567,229 @@ Notes, not checks: unlike every earlier session, the game exited with code 0
 on the graceful close. During window A's stand another window held the
 foreground; the walk set it back first.
 
+### The worn-charm cache (#216)
+
+The owner, 2026-10-24, on Mod live 4's numbers: "fold in cache follow up
+here". So the worn-charm read is cached in #216, and Mod live procedure 5
+below measures it.
+
+**What it rests on.** `FlightEquipped` reads the worn charms from
+`localCharmItemArray`. Hub RDM § 23.1 reads `UpdateCharmData` as the script
+that rebuilds that array, called by `RunItemEquipped` and by a `Client_obj`
+closure (static readings). Mod live 4 measured `UpdateCharmData` at one call
+per right-click equip change, each just after `RunItemEquipped`, and none in
+about 21 s of standing and walking. No other writer of the array is
+established: the decompiler has no string `localCharmItemArray` to follow,
+which is not observed, not none. ForgePact itself changes what the read
+answers in one more place: the Custom Forge's dressing writes the
+`fp_mechanic` the read tests.
+
+**The mechanism.** The cache lives in the core (`Flight` in
+`FlightCharms.hpp`, game-independent, so the harness drives it). While it is
+on, `Flight::Refresh` remembers the worn-charm mask between frames and reads
+the charms again only when the cache is invalid (an invalidation since the
+last read, or no read yet) or the safety period is up; otherwise the frame's
+answer is the remembered mask. Everything after the mask is as before: on
+while a charm is worn, residual by the overlap read (which still runs once a
+frame while residual), off otherwise. A failed read answers none, as before,
+and leaves the cache invalid. With the cache off, `Refresh` reads once a
+frame exactly as before #216's cache, and every earlier harness scenario is
+that baseline.
+
+**The signal.** `FlightInstall` hooks `UpdateCharmData` by name through
+`HookOneScript` (table swap and inline detour), after flight's own hooks, so a
+charm only carried still costs nothing per frame. The hook runs the game's
+original first, then invalidates; it reads nothing of the game, and any
+`self` invalidates, since an extra invalidation costs one read. The cache is
+turned on only when the inline detour went in: a table-only hook would miss
+the game's own direct calls and leave a wrong mask standing. Not found or
+table-only, flight still installs and the cache stays off; the hook never
+refuses flight, and the stat's `route=` says which.
+
+**Three invalidations**, each counted on its own (`invalidations=ucd:,
+player:, dress:` on the `flightcharm cache:` line): an `UpdateCharmData` call;
+the local player becoming another instance at `FlightConfirmPlayer` (a room
+change and a character change both give a new instance; Mod live 4's
+`player-room` saw `changed=` rise on travel); and the Custom Forge dressing a
+flight charm.
+
+**The safety re-read, and why.** Once 60 frames have passed since the last
+read (the install look's period: about a second at 60 fps, under half a
+second at the 144 fps Mod live 4 ran at) the charms are read even while the
+cache is valid. Three reasons: the array's other writers are not established
+(the `Client_obj` closure, a save load); the measured signal covers the
+right-click route only (dragging and a stash transfer were not observed); and
+a missed signal would otherwise leave flight on for a charm taken off, or off
+for one put on, for the rest of the session. A safety read that finds another
+mask counts as `stale=` and takes the new mask, so a missed change holds for
+at most the safety period; `stale=0` over a session is the live evidence that
+the signal is enough. The cost becomes one read per 60 frames plus one per
+invalidation instead of one a frame, about 2.5 us a frame on Mod live 4's
+150 to 170 us figures.
+
+**The stat.** `flightcharm stat` prints one more line, after the drops line:
+`flightcharm cache: route=<not-installed|detour|table-only|not-found> reads=
+invalidations=ucd:<n>,player:<n>,dress:<n> safety= stale= worn=<mask>
+fresh=<mask> agree=<yes|no>`. `reads=` counts the cache's own re-reads (after
+an invalidation or the safety period); `worn=` is the remembered mask in
+`equipped=`'s spelling; `fresh=` is a read made for the line alone, touching
+neither the cache nor its counters; `agree=` says whether they match. Both
+builds. The stat's own refresh and its `fresh=` read go through the timed
+read too, so a `perf` window holds no `flightcharm stat`. `flightprobe`'s
+marker stays `flp4`: `dll-hash` and the new line tell this build from Mod
+live 4's.
+
+**Rejected alternatives.**
+
+- Invalidating on `RunItemEquipped` instead of `UpdateCharmData`:
+  `UpdateCharmData` is the array's own rebuilder, and the `Client_obj`
+  closure reaches it without `RunItemEquipped` (static readings).
+- Trusting the cache with no safety re-read: the array's other writers are not
+  established, and a missed signal would hold a wrong flight state for the
+  session; one read every 60 frames bounds that at about 1/60 of the uncached
+  cost.
+- Caching anything else flight reads (the residual overlap read, the stat's
+  own read): out of the owner's decision, and the overlap read runs only while
+  residual.
+- Bumping `flightprobe`'s marker to `flp5`: it would rewrite passed pins for
+  no gain, since the DLL's hash and the cache line tell the build apart.
+- A logpoint on `UpdateCharmData` in Mod live procedure 5: this build detours
+  its entry, so its first bytes no longer match the decompiler's and the
+  debugger's byte check would refuse; `RunItemEquipped`, one-for-one with it
+  in Mod live 4, is the independent count.
+
+### Mod live procedure 5
+
+The session for #216's worn-charm cache: it checks that the cache arms with
+its signal inline, holds between invalidations, picks up an equip change and
+a room change, and agrees with a fresh read; and it measures the cached read's
+cost beside Mod live 4's `cost-off` and `cost-on`. The DLL installed for Mod
+live 4 lacks the cache, so this is a new build: the research build
+(`build.bat dev`) at the ForgePact commit where the cache is in; the driver
+records the DLL's SHA-256 and asks the owner before installing it. As before,
+the debugger's addresses and first bytes stay out of this file, in the
+session's local notes, and the operator confirms the installed game is the
+build they were read from, or skips the debugger step and marks its checks
+not observed.
+
+**Setup.** Save slot 14, "Sorak", in `Town_01_rm`, as in Mod live 4: the
+session's own backup was restored at its teardown, so Pocket Elf is spawned
+again and nothing of Mod live 4's state carries over. The saves are backed up
+with the game closed and restored at teardown whatever happened. The operator
+drives every person-step through hs-drive; the one step a tool may not do,
+the waypoint travel, is recorded with what, why and how long (Mod live 4's
+operator did it with clicks). The bag opens with `C`; a right-click equips
+and unequips; a ground item is picked up by hovering its label, then `F`. No
+`flightcharm stat` is read inside a timing window or between an equip change
+and the walk that tests it, since the stat makes its own read.
+
+**Cases.** Pocket Elf, right-click equip and unequip (the measured
+`UpdateCharmData` route). The outliers: a room change by waypoint (the
+player-change invalidation) and standing still (no hooked call). Not run, and
+so not observed live: a table-only signal (the contract tests and the
+`signal_off` scenario cover it), the dress invalidation (the harness),
+equipping by dragging, the Wings and the Broomstick.
+
+**Steps, in order:**
+
+- C0, setup: the lease, the self-check and the save backup with the game
+  closed; `dll-hash`, the installed DLL's SHA-256 equals the build's; launch
+  and load slot 14.
+- C1 `control`: `ping` answers a line starting `pong (YYTK`. `marker`: a bare
+  `flightprobe` answers a line starting `flightprobe: marker=flp4`.
+  `cache-line`: `flightcharm stat` prints a line starting `flightcharm cache:
+  route=not-installed` (the line exists only in this build); every line is
+  recorded.
+- C2 `perf-control`: `perf reset`, 10 s, `perf`: the `FrameCallback body`
+  row has `calls=` above 0.
+- C3 `cache-armed`: `playerwarp 884 628`, `flightprobe spawn elf`, Sorak
+  picks it up, and it is right-clicked into the charm grid (if the grid is
+  full, one of Sorak's one-cell charms to the bag first, recorded); the bag
+  closed. Within 3 s `flightcharm stat` reads `install=installed state=on
+  equipped=elf` and `flightcharm cache: route=detour` with `agree=yes`; the
+  cache line is recorded.
+- C4 `cache-reads`: `perf reset`, 15 s standing and 10 s walking back and
+  forth on open ground, `perf`: the header's frame count and the `flight
+  worn-charm read` row are recorded. Its `calls=` is above 0 (the safety
+  re-reads, so the bucket is on the path) and at most the frame count / 60 +
+  3 (Mod live 4: one read a frame). `cost-cached-on`: its `avg=` and share of
+  frames are recorded. Then `cache-agree`: `flightcharm stat` reads `stale=0
+  agree=yes`; the cache line is recorded.
+- C5 `equip-pickup`: `playerwarp 929 1591`, the ravine's north rim; Pocket
+  Elf right-clicked to the bag, the bag closed, no stat; S held 3000 ms moves
+  the player less than 100 px south (blocked: flight went off with no stat
+  having read). `playerwarp 929 1591` again; Pocket Elf right-clicked back
+  into the grid, the bag closed, no stat; S held 3000 ms moves him 100 px or
+  more south and `answered=` rises (the trace line read before the first walk
+  and after the second). Then `cache-invalidate`: `flightcharm stat`'s cache
+  line has `ucd:` at least 2 above C4's, `stale=0` and `agree=yes`.
+- C6 `cache-room`: travel by the town waypoint to the Outskirts of Inoya and
+  back (as in Mod live 4's V5); after the return `flightcharm stat` reads
+  `state=on equipped=elf`, and its cache line has `player:` at least 1 above
+  C5's, `stale=0` and `agree=yes`.
+- C7 `cost-cached-off`: `playerwarp 884 628`; Pocket Elf to the bag;
+  `flightcharm stat` reads `state=off equipped=none`; `perf reset`, 15 s
+  standing and 10 s walking, `perf`: the header and the `flight worn-charm
+  read` row are recorded. Then the debugger (below).
+- C8, teardown: the game stopped, the saves inspected and restored, and the
+  lease released (`restored`).
+
+**The debugger.** Attached only after C7's timing window, since a held
+logpoint would distort `perf`, and only once the installed game's hash is
+confirmed as the build the addresses were read from. Two hardware logpoints,
+non-breaking: `CheckTalentUse` first (`dbg-control`; it logged in both of Mod
+live 4's windows), then `RunItemEquipped` (`dbg-rie-equip`), which this build
+does not detour with `mark1set` and the research traces off. `UpdateCharmData`
+gets no logpoint: this build detours its entry. `flightcharm stat` (its
+`ucd:` recorded); the bag opened, Pocket Elf right-clicked into the grid, 2 s,
+then back to the bag, the bag closed; `flightcharm stat` again.
+`RunItemEquipped`'s hits in that window are `dbg-rie-equip`, and whether the
+cache line's `ucd:` rose by the same number is `dbg-ucd-match`. The control
+must log in the window, or both `dbg-` research checks are not observed. The
+debugger is detached before the game is stopped.
+
+**Checks**, the capture's names: `dll-hash`, `control`, `marker`,
+`cache-line`, `perf-control`, `cache-armed`, `cache-reads`,
+`cost-cached-on`, `cache-agree`, `equip-pickup`, `cache-invalidate`,
+`cache-room`, `cost-cached-off`, `dbg-control`, `dbg-rie-equip`,
+`dbg-ucd-match` and `restored`.
+
+- **Validity**, which must pass: `dll-hash`, `control`, `marker`,
+  `cache-line`, `perf-control` and `dbg-control`.
+- **Acceptance**: `cache-armed`, `cache-reads`, `cache-agree`,
+  `equip-pickup`, `cache-invalidate` and `cache-room`.
+- **Research**, whose values are the finding and never need to pass:
+  `cost-cached-on`, `cost-cached-off`, `dbg-rie-equip` and `dbg-ucd-match`.
+- **Operational**: `restored`.
+
+**What the outcomes mean.** `cache-reads` above its bound with `stale=0`
+means the cache does not hold between invalidations; `calls=0` means the
+safety re-read is not on the path the bucket times, so nothing was measured.
+`equip-pickup` crossing on the first walk means the unequip was not picked
+up before the walk, blocked on the second means the equip was not; if
+`cache-invalidate` then shows `ucd:` unchanged, the hook saw no call, and
+`route=` is checked before anything is concluded about the game. `stale=`
+above 0 anywhere means an equip change reached the array without an
+invalidation the cache saw, and the safety read covered it; it is recorded
+with the step it rose in, as a route the signal misses, not as a defect of
+the designed bound. `dbg-ucd-match` differing means our hook's count and the
+game's `RunItemEquipped` count disagree; it is recorded, and hub RDM § 23.1
+states only what matched. `cost-cached-on` and `cost-cached-off` go beside
+Mod live 4's `cost-on` and `cost-off`.
+
+**What it relies on.** Everything Mod live procedure 4's list names (the
+spawn, the pick-up, the bag on `C`, the right-click equip, the ravine rim at
+(929, 1591) blocked with flight off and crossed with Pocket Elf worn, the
+waypoint travel, `perf` and `perf reset`); `UpdateCharmData` firing once per
+right-click equip change and not while standing or walking, and
+`RunItemEquipped` likewise (Mod live 4's `dbg-ucd-still`, `dbg-ucd-equip`
+and `dbg-rie-equip`, hub RDM § 23.1); the `flightcharm cache:` line (the
+guide's Command Reference `flightcharm` row).
+
 ### Status and what is not established
 
-All four sessions are recorded. Every acceptance check of Mod live 2 passed,
+All four sessions are recorded; Mod live procedure 5, for the worn-charm
+cache, has not run yet. Every acceptance check of Mod live 2 passed,
 and it re-ran every check Mod live 1 failed or did not observe. Mod live 3
 tried the monster rule against a town training dummy; its control failed, so
 it verified the walls and the residual state but not the monster path. The
@@ -2661,7 +2886,11 @@ negative:
   Wings and the Broomstick on the worn-charm install, and whether every
   change to the worn charms passes through `UpdateCharmData`: Mod live 4
   equipped only by right-click in the bag, so dragging, a stash transfer, a
-  load or a room change was not observed calling it.
+  load or a room change was not observed calling it. The worn-charm cache
+  built on that signal is pinned by the harness and the contract tests only
+  until Mod live procedure 5 runs: its cost, whether `stale=` stays 0, and
+  whether our hook's `UpdateCharmData` count matches the game's
+  `RunItemEquipped` count are not measured.
 - **The census's other answers.** What the 50 and 55 non-struct effect reads
   were, and whether passing a layer's name instead of its id changes them.
 - **How the flying player looks.** The operator saw the scene's own tint on
