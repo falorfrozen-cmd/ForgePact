@@ -354,7 +354,7 @@ struct FlightCounters {
     uint64_t depthOther = 0;    // of depthCalls, self was not the local player
     uint64_t depthSeen = 0;     // of depthCalls, the local player's
     uint64_t depthIdle = 0;     // of depthSeen, no write because flight was not on (off or residual)
-    uint64_t noFront = 0;       // of depthSeen while on, no write: the room unreadable, or no flight layer (the census yielded none)
+    uint64_t noFront = 0;       // of depthSeen while on, no write: the room unreadable, or no flight layer (the census yielded none), or no depth strictly behind the rearmost filter
     uint64_t fxStruct = 0;      // effect reads that answered a struct: an effect
     uint64_t fxOther = 0;       // effect reads that answered anything else: no effect
     uint64_t fxFailed = 0;      // effect reads that failed: no effect
@@ -452,6 +452,14 @@ inline bool IsDrawnLayer(const RoomLayer& l)
 // `by` is the index in `layers` of the drawn layer that decided, -1 when the
 // game layers' front end did. Rearmost, not frontmost: a drawn layer between
 // two filters (Act_09_05's Smoke) stays in front of the flying player.
+// With a filter, the depth lies strictly behind it: never at its depth, since
+// layers of equal depth draw in an order that ignores depth, so the player
+// could draw past the filter ("Never past a filter", the owner, 2026-10-13).
+// Whole depths only (every measured depth was whole; whether the runner keeps
+// a fractional one is not established), so when no whole depth lies strictly
+// between the rearmost filter and that lowest depth (a filter at the front end
+// minus one with nothing drawn behind it, or a drawn layer one behind the
+// filter), there is no choice: `ok` is false and nothing is written.
 struct FlightDepthChoice {
     bool   ok = false;
     double depth = 0.0;
@@ -489,8 +497,20 @@ inline FlightDepthChoice ChooseFlightDepth(double gameFront, const std::vector<R
             c.by = static_cast<int>(i);
         }
     }
+    if (!haveFilter) {
+        c.ok = true;
+        c.depth = lowest - 1.0;
+        return c;
+    }
+    // The nearest whole depth in front of `lowest`, and only if it is still
+    // behind the rearmost filter.
+    const double depth = std::ceil(lowest) - 1.0;
+    if (!(depth > rearmost)) {
+        c.by = -1;
+        return c;
+    }
     c.ok = true;
-    c.depth = lowest - 1.0;
+    c.depth = depth;
     return c;
 }
 
@@ -547,6 +567,7 @@ struct FlightLayerVisit {
     CensusTally            tally;                  // what the census did with each of them; the re-choice leaves it
     double                 censusMs = 0.0;
     uint64_t               moves = 0;              // re-choices that moved the layer this visit
+    bool                   noChoice = false;       // the last re-choice found no depth behind the filter: no write until one does
 };
 
 // ---- drops: the gate ------------------------------------------------------------
@@ -691,6 +712,54 @@ inline std::string StatLine(const StatFields& f)
     return s;
 }
 
+// ---- the worn-charm cache (#216 b1) ---------------------------------------------
+// What tells the cache the worn charms may have changed, each counted on its
+// own: an UpdateCharmData call (the script that rebuilds the worn-charm array:
+// a static reading, RDM § 23.1; Live 1 measured one call per equip change and
+// none while standing or walking), the local player becoming another instance
+// (a room or character change), and the Custom Forge dressing a charm (the
+// `fp_mechanic` the read tests is written then).
+enum class WornInvalidation { UpdateCharmData, Player, Dress };
+
+struct WornCacheCounters {
+    uint64_t reads = 0;    // the cache's own reads of the worn charms: invalid, the confirm window, or the safety period up
+    uint64_t ucd = 0;      // invalidations by an UpdateCharmData call
+    uint64_t player = 0;   // ... by the local player changing
+    uint64_t dress = 0;    // ... by a charm being dressed
+    uint64_t safety = 0;   // reads made only because the safety period was up
+    uint64_t stale = 0;    // of those, the ones that found a mask other than the remembered one
+    uint64_t late = 0;     // confirm reads (after an invalidation's first) that found another mask
+    uint64_t confirms = 0;    // confirm reads made at all: `late=` is out of these
+    uint64_t unconfirmed = 0; // confirm windows that closed with no confirm read, so tested nothing
+};
+
+// `flightcharm stat`'s cache line after its `route=`, which the adapter writes
+// (how the signal went in: not-installed, detour, table-only, not-found).
+// `late=` counts the confirm reads that found another mask than the remembered
+// one (the first read after a signal was too early). A zero there means
+// something only beside the counters it is out of, printed right after it:
+// `confirms=` the confirm reads made at all, and `unconfirmed=` the windows
+// that closed with no confirm read (see Flight's confirm window), in which
+// `late=` could not have counted. `late=0` says the first read was right only
+// when `confirms=` rose and `unconfirmed=` did not. `worn=` is the mask the
+// last refresh answered, `fresh=` a read made for the
+// line alone (`unread` when it failed), and `agree=` whether the two match; a
+// failed fresh read never agrees. Live procedure 2 checks these field names.
+inline std::string CacheFields(const WornCacheCounters& c, unsigned worn, bool freshRead, unsigned fresh)
+{
+    std::string s = "reads=" + std::to_string(c.reads);
+    s += " invalidations=ucd:" + std::to_string(c.ucd) + ",player:" + std::to_string(c.player) + ",dress:"
+        + std::to_string(c.dress);
+    s += " safety=" + std::to_string(c.safety);
+    s += " stale=" + std::to_string(c.stale);
+    s += " late=" + std::to_string(c.late);
+    s += " confirms=" + std::to_string(c.confirms) + " unconfirmed=" + std::to_string(c.unconfirmed);
+    s += " worn=" + EquippedText(worn);
+    s += " fresh=" + (freshRead ? EquippedText(fresh) : std::string("unread"));
+    s += " agree=" + std::string(freshRead && fresh == worn ? "yes" : "no");
+    return s;
+}
+
 // ---- flight ----------------------------------------------------------------------
 
 class Flight {
@@ -784,15 +853,19 @@ public:
         return true;
     }
 
-    // ---- the install: armed by a charm, hooked once a character exists ----
+    // ---- the install: armed by a charm, hooked once a character wears one ----
     // Dressing arms flight the first time it recognises a flight charm; a
     // hook is never installed from inside CreateItemNew. While armed, the
     // adapter's frame tick looks for the local player on the frames
     // LooksForPlayer picks (HhResolveLocalPlayer, which accepts the runner's
-    // VALUE_REF) and installs the builtins, InstancePlaceTallest and
-    // UpdateDepth once. A refusal (a table-only hook, a research hook holding
-    // one of them) is final for the session; the adapter prints RefusedLine
-    // once. Nothing runs per frame before arming.
+    // VALUE_REF); each look that finds one reads the worn charms and reports
+    // both through NoteLook. The builtins, InstancePlaceTallest and
+    // UpdateDepth install once, at the first look that finds a flight charm
+    // worn (#216 b2): a charm carried in the bag or stash arms flight but
+    // costs nothing per frame beyond that look, once a second. A refusal (a
+    // table-only hook, a research hook holding one of them) is final for the
+    // session; the adapter prints RefusedLine once. Nothing runs per frame
+    // before arming, and once installed the hooks stay.
     static constexpr unsigned long long kInstallPollFrames = 60;
     static constexpr bool LooksForPlayer(unsigned long long armedFrames)
     {
@@ -800,9 +873,16 @@ public:
     }
     void Arm() { armed_ = true; }
     bool Armed() const { return armed_; }
-    bool ShouldInstall(bool setupDone, bool playerResolved) const
+    bool ShouldInstall(bool setupDone, bool playerResolved, bool charmWorn) const
     {
-        return armed_ && !installed_ && !refused_ && setupDone && playerResolved;
+        return armed_ && !installed_ && !refused_ && setupDone && playerResolved && charmWorn;
+    }
+    // What the latest look found: whether the local player resolved and, if
+    // so, whether a flight charm is worn. Only InstallStateName reads it.
+    void NoteLook(bool playerResolved, bool charmWorn)
+    {
+        lookFoundPlayer_ = playerResolved;
+        lookFoundWorn_ = playerResolved && charmWorn;
     }
     void NoteInstall(bool ok)
     {
@@ -810,13 +890,15 @@ public:
         else refused_ = true;
     }
     bool Installed() const { return installed_; }
-    // ` install=`: installed, refused, waiting-for-character while armed,
-    // not-armed otherwise.
+    // ` install=`: installed, refused; while armed, waiting-for-worn-charm when
+    // the latest look found the player wearing no flight charm, and
+    // waiting-for-character otherwise; not-armed before arming.
     std::string_view InstallStateName() const
     {
         if (installed_) return "installed";
         if (refused_) return "refused";
-        return armed_ ? "waiting-for-character" : "not-armed";
+        if (!armed_) return "not-armed";
+        return lookFoundPlayer_ && !lookFoundWorn_ ? "waiting-for-worn-charm" : "waiting-for-character";
     }
 
     // ---- the state, refreshed at the point of use ----------------------------
@@ -824,15 +906,15 @@ public:
     // worn charms, and, only when none is worn after flight was on or
     // residual, whether the player still overlaps the family or a monster. `flightcharm
     // stat` refreshes too (RefreshForStat), so what it prints never depends on
-    // a hooked call having run since the last equip.
+    // a hooked call having run since the last equip. With the worn-charm
+    // cache on (SetWornCache, below), the worn charms are read only when the
+    // cache says so; the rest is the same either way.
     void Refresh(int64_t frame)
     {
         if (haveFrame_ && frame == frame_) return;
         haveFrame_ = true;
         frame_ = frame;
-        unsigned mask = 0;
-        if (!ReadEquipped(mask)) mask = 0;
-        mask &= kAllCharmBits;
+        const unsigned mask = WornAt(frame);
         equippedMask_ = mask;
         if (mask != 0) {
             state_ = State::On;
@@ -857,8 +939,94 @@ public:
         if (armed_ && playerResolved) Refresh(frame);
     }
 
+    // Refresh, then the state: what a hook asks before it builds a Query
+    // (#216 c4). Still at most one read of the worn charms a frame, so every
+    // later call of the frame answers from what the first one read.
+    State StateAt(int64_t frame)
+    {
+        Refresh(frame);
+        return state_;
+    }
+
     State CurrentState() const { return state_; }
     unsigned EquippedMask() const { return equippedMask_; }
+
+    // ---- the worn-charm cache (#216 b1) ----------------------------------------
+    // Off by default, and then Refresh reads the worn charms once a frame as
+    // above. The adapter turns it on only when its signal, UpdateCharmData,
+    // went in as an inline detour: a table-only hook would miss the game's own
+    // direct calls and leave a wrong mask standing. On, Refresh re-reads only
+    // after an invalidation (or before any read), and otherwise answers with
+    // the remembered mask; once the safety period has passed since the last
+    // read it reads anyway, since the array's other writers are not
+    // established. A safety read that finds another mask counts as stale and
+    // takes it. Everything after the mask is unchanged, so the residual overlap
+    // read still runs once a frame while residual. A failed read answers none,
+    // as before, and leaves the cache invalid, so the next frame reads again.
+    //
+    // The confirm window (Live 2's pick-up after an unequip): a signal may come
+    // before the worn-charm array changes, and the first read after it would
+    // then remember the old mask until the next signal or the safety read. So
+    // every refresh through kWornConfirmFrames frames after the invalidating
+    // frame reads again; a new invalidation inside the window restarts it.
+    // A confirm read that finds a mask other than the remembered one takes it
+    // and counts as late. After the window, nothing changes: the remembered
+    // mask until the next invalidation or the safety read. A handful of reads
+    // per signal.
+    //
+    // The window is counted in frames from the signal, not in refreshes, and
+    // only a hooked call or the stat refreshes: nothing measured shows one
+    // while the player stands. So a window can pass with no confirm read (an
+    // unequip from the bag while standing), and the first read, at the next
+    // step, is then an ordinary one that counts nothing. `late=0` therefore
+    // says the first read was right only when confirm reads ran: `confirms`
+    // counts the confirm reads made, and `unconfirmed` the windows that
+    // closed with none (counted when a later refresh finds the window past).
+    static constexpr int64_t kWornSafetyFrames = static_cast<int64_t>(kInstallPollFrames);
+    static constexpr int64_t kWornConfirmFrames = 4;
+    void SetWornCache(bool on)
+    {
+        wornCacheOn_ = on;
+        wornValid_ = false;
+        wornConfirming_ = false;
+        wornWindowConfirms_ = 0;
+    }
+    bool WornCacheOn() const { return wornCacheOn_; }
+    // Counted whether the cache is on or not; reads nothing. `frame` is the
+    // frame the signal came in (the adapter's frame counter, as the hooks'
+    // refreshes pass it): the confirm window runs through kWornConfirmFrames
+    // frames after it. A restarted window is one window: its confirm reads
+    // are counted from the restart.
+    void InvalidateWorn(WornInvalidation why, int64_t frame)
+    {
+        wornValid_ = false;
+        wornConfirming_ = true;
+        wornConfirmUntil_ = frame + kWornConfirmFrames;
+        wornWindowConfirms_ = 0;
+        switch (why) {
+        case WornInvalidation::UpdateCharmData: ++wornCounters_.ucd; break;
+        case WornInvalidation::Player:          ++wornCounters_.player; break;
+        case WornInvalidation::Dress:           ++wornCounters_.dress; break;
+        }
+    }
+    const WornCacheCounters& WornCache() const { return wornCounters_; }
+
+    // ---- the local player, confirmed at the point of use (#216 c3) -----------
+    // The adapter's frame counter advances at the end of a frame, but the
+    // hooks compare `self` against the local player during the next frame's
+    // Step, so a player confirmed only at the frame's end is the previous
+    // frame's (a room change gives a new instance). Each hook asks this before
+    // its `self` compare: true for the first call of a frame, which then
+    // resolves the player again; false for every later call of that frame,
+    // which costs the adapter one compare. Reads nothing, and is apart from
+    // Refresh's own once-a-frame mark.
+    bool ConfirmsPlayer(int64_t frame)
+    {
+        if (havePlayerFrame_ && frame == playerFrame_) return false;
+        havePlayerFrame_ = true;
+        playerFrame_ = frame;
+        return true;
+    }
 
     // One hooked call, after its original ran. `excludedBlocks()` re-runs the
     // same original, same arguments and self, against Wall_Parent_obj and
@@ -989,7 +1157,8 @@ public:
     // the visit lasts, the re-choice runs at most once a second. A negative
     // room is one the adapter could not read: no write, counted in noFront.
     // A census that yields no layer writes nothing (noFront) and is retried no
-    // sooner than a second later.
+    // sooner than a second later; a re-choice that finds no depth strictly
+    // behind the rearmost filter writes nothing (noFront) until a later one does.
     DepthWrite OnUpdateDepth(int64_t frame, bool playerSelf, int64_t room)
     {
         ++counters_.depthCalls;
@@ -1010,6 +1179,10 @@ public:
         const double now = Now(frame);
         if (visit_.have && visit_.room == room && LayerValid(visit_.layer)) {
             Rechoose(now);
+            if (visit_.noChoice) {
+                ++counters_.noFront;
+                return DepthWrite{};
+            }
         } else {
             if (haveCensus_ && !visit_.have && visit_.room == room && now - censusAt_ < kRechoiceMs) {
                 ++counters_.noFront;
@@ -1094,6 +1267,38 @@ private:
     {
         if (!equipped_) return false;
         try { return equipped_(mask); } catch (...) { return false; }
+    }
+
+    // The frame's worn mask. Cache off: one read, as always. Cache on: the
+    // remembered mask while it is valid, outside the confirm window, and the
+    // last read is less than kWornSafetyFrames behind (a frame counter that
+    // went backwards reads); otherwise one read: a confirm read inside the
+    // window, a safety read when the cache was valid outside it. A window
+    // found past with no confirm read in it counts as unconfirmed.
+    unsigned WornAt(int64_t frame)
+    {
+        if (wornCacheOn_ && wornConfirming_ && frame > wornConfirmUntil_ && wornWindowConfirms_ == 0)
+            ++wornCounters_.unconfirmed;
+        if (wornConfirming_ && frame > wornConfirmUntil_) wornConfirming_ = false;
+        if (wornCacheOn_ && wornValid_ && !wornConfirming_ && frame > wornReadFrame_
+            && frame - wornReadFrame_ < kWornSafetyFrames)
+            return equippedMask_;
+        unsigned mask = 0;
+        const bool read = ReadEquipped(mask);
+        mask = read ? (mask & kAllCharmBits) : 0u;
+        if (!wornCacheOn_) return mask;
+        ++wornCounters_.reads;
+        if (wornValid_ && wornConfirming_) {
+            ++wornCounters_.confirms;
+            ++wornWindowConfirms_;
+            if (read && mask != equippedMask_) ++wornCounters_.late;
+        } else if (wornValid_) {
+            ++wornCounters_.safety;
+            if (read && mask != equippedMask_) ++wornCounters_.stale;
+        }
+        wornValid_ = read;
+        wornReadFrame_ = frame;
+        return mask;
     }
 
     bool ReadOverlap(bool& inside) const
@@ -1225,6 +1430,9 @@ private:
             if (l.visible && l.elements == 0 && !l.effectRead) ReadEffect(l);
         }
         const FlightDepthChoice c = ChooseFlightDepth(visit_.gameFront, visit_.layers);
+        // No depth strictly behind the filter: the layer stays where it was,
+        // and nothing is written to it until a re-choice finds one again.
+        visit_.noChoice = !c.ok;
         if (!c.ok) return;
         if (c.depth != visit_.depth) {
             if (!Call(ops_.move, visit_.layer, c.depth)) return;
@@ -1246,9 +1454,20 @@ private:
     bool armed_ = false;
     bool installed_ = false;
     bool refused_ = false;
+    bool lookFoundPlayer_ = false;   // NoteLook: the latest look resolved the local player
+    bool lookFoundWorn_ = false;     // NoteLook: ... and found a flight charm worn
     bool haveFrame_ = false;
     int64_t frame_ = 0;
+    bool havePlayerFrame_ = false;
+    int64_t playerFrame_ = 0;
     unsigned equippedMask_ = 0;
+    bool wornCacheOn_ = false;     // SetWornCache: the adapter's signal went in inline
+    bool wornValid_ = false;       // a read since the last invalidation, and it succeeded
+    int64_t wornReadFrame_ = 0;    // the frame of the cache's last read
+    bool wornConfirming_ = false;  // an invalidation's confirm window is open
+    int64_t wornConfirmUntil_ = 0; // ... through this frame (meaningful only while open)
+    uint64_t wornWindowConfirms_ = 0; // ... and the confirm reads made in it so far
+    WornCacheCounters wornCounters_;
     State state_ = State::Off;
     LayerOps ops_;
     FlightLayerVisit visit_;

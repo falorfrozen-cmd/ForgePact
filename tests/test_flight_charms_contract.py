@@ -51,7 +51,7 @@ FORGE_START = "// ---- Flight charms (FlightCharms.hpp): the forge adapter"
 FORGE_END = "// ---- end of the flight charms forge adapter"
 
 SIGNATURES = {
-    "decode": "static bool FlightCharmDecode(const RValue& item, const RValue& definition, FcNs::Rolled& rolled)",
+    "decode": "static bool FlightCharmDecode(const RValue& item, const RValue& definition, FcNs::Rolled& rolled, FlightCharmFields& f)",
     "of": "static bool FlightCharmOf(const RValue& item, FcNs::Rolled& rolled)",
     "entry": "static bool FlightCharmForgeEntry(const RValue& item, const RValue& definition, CustomForgeEntry& entry, FcNs::Rolled& rolled)",
     "final": "static void FlightCharmDressFinal(RValue& item, const FcNs::Rolled& rolled)",
@@ -100,17 +100,25 @@ class FlightCharmsForgeContract(unittest.TestCase):
 
     def test_recognition_is_the_cores_rule_on_the_items_own_fields(self):
         decode = self.body("decode")
-        self.assertIn('FlightNumber(item, "itemType", t)', decode)
+        self.assertIn('FlightNumber(item, "itemType", f.t)', decode)
         for key in ("a", "b", "c", "j"):
-            self.assertIn(f'FlightNumber(definition, "{key}", {key})', decode)
+            self.assertIn(f'FlightNumber(definition, "{key}", f.{key})', decode)
         # A struct or the reference the runner may hand out instead, each
         # through its own builtins: the kind picks the reader, never whether
-        # the item is read.
-        field = strip_comments(function_body(self.plugin, "static bool FlightField(const RValue& owner, const char* name, RValue& out)"))
+        # the item is read. One reader (#216): the forge adapter, flight,
+        # Mark 1 and loot announcements share it, defined before its first use.
+        signature = "static bool StructOrRefField(const RValue& owner, const char* name, RValue& out)"
+        field = strip_comments(function_body(self.plugin, signature))
         self.assertIn('"variable_struct_get"', field)
         self.assertIn('"variable_instance_get"', field)
         self.assertIn("owner.m_Kind == VALUE_REF", field)
-        self.assertIn("FcNs::IsFlightCharm(t, a, b, c, j, rolled)", decode)
+        self.assertEqual(self.plugin.count(signature), 1)
+        # Its first mention is its own definition: no caller comes before it.
+        self.assertEqual(self.plugin.index("StructOrRefField("), self.plugin.index(signature) + len("static bool "))
+        for gone in ("FlightField(", "LaField("):
+            with self.subTest(gone=gone):
+                self.assertNotIn(gone, self.plugin)
+        self.assertIn("FcNs::IsFlightCharm(f.t, f.a, f.b, f.c, f.j, rolled)", decode)
         # The type is read first and a non-charm stops there: one read for
         # every other item the game builds.
         self.assertLess(decode.index('"itemType"'), decode.index('"a"'))
@@ -146,7 +154,12 @@ class FlightCharmsForgeContract(unittest.TestCase):
 
     def test_the_entry_carries_the_charms_row(self):
         entry = self.body("entry")
-        self.assertIn("FlightCharmDecode(item, definition, rolled)", entry)
+        self.assertIn("if (!FlightCharmDecode(item, definition, rolled, f)) return false;", entry)
+        # The selector is built from the fields the decode read (#216): the
+        # entry reads nothing of the item again.
+        for reread in ("FlightNumber(", "StructOrRefField(", "CallBuiltin("):
+            with self.subTest(reread=reread):
+                self.assertNotIn(reread, entry)
         self.assertIn("FcNs::RowOf(rolled.charm)", entry)
         for field in ("entry.name = std::string(row.name);", "entry.lore = std::string(row.lore);",
                       "entry.rarity = row.rarity;", "entry.tier = row.tier;",
@@ -156,12 +169,17 @@ class FlightCharmsForgeContract(unittest.TestCase):
                 self.assertIn(field, entry)
         self.assertIn("FcNs::StatsFor(rolled)", entry)
         # The selector is the item's own, so the lore key is per seed.
-        for key in ('{"t", t}', '{"a", a}', '{"b", b}', '{"c", c}', '{"j", j}'):
+        for key in ('{"t", f.t}', '{"a", f.a}', '{"b", f.b}', '{"c", f.c}', '{"j", f.j}'):
             self.assertIn(key, entry)
 
     def test_dressing_arms_flight_and_installs_nothing_inside_create_item_new(self):
         forge = self.body("forge")
-        self.assertIn('if (entry.mechanic == "flight") g_Flight.Arm();', forge)
+        # Arming, and the worn-charm cache told a charm was dressed (#216 b1),
+        # in the block that writes fp_mechanic.
+        self.assertRegex(forge, r'if \(entry\.mechanic == "flight"\) \{\s*g_Flight\.Arm\(\);\s*'
+                                r'g_Flight\.InvalidateWorn\(FcNs::WornInvalidation::Dress, \(int64_t\)g_RuntimeFrame\);\s*\}')
+        self.assertLess(forge.index('RValue("fp_mechanic"), RValue(entry.mechanic)'),
+                        forge.index("g_Flight.InvalidateWorn(FcNs::WornInvalidation::Dress, (int64_t)g_RuntimeFrame);"))
         for function in ("forge", "entry", "final", "icons_load", "icon_path"):
             text = self.body(function)
             for install in ("HookOneScript", "HookBuiltin", "HiddenLootInstall(", "MmCreateHook"):
@@ -188,6 +206,34 @@ class FlightCharmsForgeContract(unittest.TestCase):
         self.assertIn("if (g_FlightIconOk[k])", final)
         self.assertLess(final.index("if (g_FlightIconOk[k])"), final.index('RValue("11")'))
         self.assertIn("static bool g_FlightDressFootprint = true;", self.code)
+
+    def test_the_bag_icon_goes_in_only_where_its_ground_route_can_follow(self):
+        # #216 c5: a table-only or refused LootGroundInit route would leave our
+        # sprite under "11" drawing Error_spr on the ground, so the dressing asks
+        # Mark 1's rule first (called, never copied); the footprint is unchanged.
+        final = self.body("final")
+        check = "if (!M1sNs::GroundRouteAllowsArt(FlightGroundRoute())) return;"
+        self.assertEqual(final.count(check), 1)
+        self.assertLess(final.index('RValue("3"), RValue((double)row.h)'), final.index(check))
+        self.assertLess(final.index(check), final.index("FlightIconsLoad();"))
+        self.assertLess(final.index(check), final.index('RValue("11")'))
+        self.assertLess(final.index(check), final.rindex("variable_struct_set"))
+        # The route is hidden loot's own, with its install state, through
+        # Mark 1's GroundRouteName: never a literal, never "installed" alone.
+        route = strip_comments(function_body(self.plugin, "static std::string FlightGroundRoute()"))
+        self.assertIn("M1sNs::GroundRouteName(g_HiddenLootInstallTried, ForgePact::HiddenLootMod::Instance().RouteName())",
+                      route)
+        # Negative control: no route text of its own, so `both` can only come
+        # from HookOneScript's native flag via HiddenLootMod.
+        for literal in ('"both"', '"table-only"', '"none"', '"not-installed"'):
+            with self.subTest(literal=literal):
+                self.assertNotIn(literal, route)
+                self.assertNotIn(literal, final)
+        # No second copy of the rule anywhere in the plugin: the one definition
+        # stays in Mark1Set.hpp.
+        self.assertNotIn("bool GroundRouteAllowsArt(", strip_comments(self.plugin))
+        rule = (ROOT / "plugin" / "include" / "ForgePact" / "Mark1Set.hpp").read_text(encoding="utf-8")
+        self.assertIn('return route == kGroundRouteNotInstalled || route == "both";', rule)
 
     # ---- the icons ----------------------------------------------------------------
 
@@ -358,9 +404,33 @@ class FlightCharmsForgeContract(unittest.TestCase):
         self.assertIn("Out(FcNs::StatLine(FlightCharmStatFields()));", command)
         # The state is refreshed when the line is printed, with the counter
         # every frame advances, so a charm equipped in place reads `state=on`.
+        # The stat path never confirms the player (#216 c3): the confirm mark
+        # is the hooks' alone, so ` player=` reports what they set. It refreshes
+        # only while the pointer the overlap read uses as self is the local
+        # player or none, never through a pointer the hooks have not confirmed.
         fields = self.body("stat_fields")
-        self.assertIn("g_Flight.RefreshForStat((int64_t)g_RuntimeFrame, HhResolveLocalPlayer(player));", fields)
+        self.assertIn("g_Flight.RefreshForStat((int64_t)g_RuntimeFrame, FlightStatPlayerReady());", fields)
+        self.assertNotIn("FlightConfirmPlayer(", fields)
+        self.assertNotIn("ConfirmsPlayer(", fields)
+        self.assertNotIn("FlightRefreshPlayer(", fields)
+        self.assertNotIn("g_FlightPlayer", fields)
+        self.assertNotIn("HhResolveLocalPlayer(", fields)
         self.assertLess(fields.index("g_Flight.RefreshForStat("), fields.index("g_Flight.FillStat(s);"))
+        ready = strip_comments(function_body(self.plugin, "static bool FlightStatPlayerReady()"))
+        self.assertLess(ready.index("g_FlightBusy = true;"), ready.index("HhResolveLocalPlayer(p)"))
+        self.assertLess(ready.index("HhResolveLocalPlayer(p)"), ready.index("g_FlightBusy = false;"))
+        self.assertIn("now = HhResolveInstance(p);", ready)
+        self.assertIn("return now != nullptr && (g_FlightPlayer == nullptr || g_FlightPlayer == now);", ready)
+        self.assertIsNone(re.search(r"g_FlightPlayer\s*=(?!=)", ready), "the stat path never sets the player")
+        for touch in ("ConfirmsPlayer(", "FlightConfirmPlayer(", "FlightRefreshPlayer("):
+            with self.subTest(ready_never=touch):
+                self.assertNotIn(touch, ready)
+        # The trace line's ` player=` is checked before the stat line is built,
+        # so nothing the stat path does can set what it reports.
+        self.assertIn("const char* const player = FlightPlayerCheck();", command)
+        self.assertLess(command.index("FlightPlayerCheck("), command.index("FlightCharmStatFields("))
+        self.assertIn("Out(FcNs::TraceLine(player, g_Flight.Stats()));", command)
+        self.assertEqual(command.count("FlightPlayerCheck("), 1)
 
     # ---- no address -------------------------------------------------------------------
 
@@ -386,7 +456,7 @@ JS_END = "// ---- end of the jump through scenery adapter"
 SDK_OBJECTS = ROOT.parent / "hs-game-sdk" / "cpp" / "include" / "hs_game_sdk" / "objects.hpp"
 
 LEVER = {
-    "array": "static bool FlightCharmArray(RValue& array)",
+    "array": "static bool FlightCharmArray(RValue& array, std::string* why)",
     "equipped": "static bool FlightEquipped(unsigned& mask)",
     "overlap": "static bool FlightOverlap(bool& overlapping)",
     "layer_ends": "static bool FlightLayerEnds(int64_t room, FcNs::LayerEnd& first, FcNs::LayerEnd& last)",
@@ -402,6 +472,9 @@ LEVER = {
     "tallest": "static RValue& Hook_FlightInstancePlaceTallest(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)",
     "depth": "static RValue& Hook_FlightUpdateDepth(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)",
     "install": "static std::string FlightInstall()",
+    "ucd": "static RValue& Hook_FlightUpdateCharmData(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)",
+    "cache_line": "static std::string FlightCacheLine()",
+    "confirm": "static bool FlightConfirmPlayer()",
     "install_if_ready": "static void FlightInstallIfReady()",
     "tick": "static void FlightCharmTick()",
     "player": "static void FlightRefreshPlayer()",
@@ -501,17 +574,25 @@ class FlightCharmsLeverContract(unittest.TestCase):
     def test_flight_answers_only_the_local_players_blocked_query(self):
         lines = self.lines("on_builtin")
         self.assertEqual(lines[0], "if (!S || g_FlightBusy || !g_Flight.Installed()) return;")
+        # The player is confirmed at the frame's first hooked call (#216 c3),
+        # right before the compare: one line, after the row bound.
+        self.assertEqual(lines[1:4], ["if (row < 0 || row >= JsNs::kBuiltinCount) return;",
+                                      "FlightConfirmPlayer();",
+                                      "if (S != g_FlightPlayer) { g_Flight.NoteCall(false); return; }"])
         # Any self but the local player is counted (the trace line's not-player=)
         # and returns before anything is answered.
-        self.assertIn("if (S != g_FlightPlayer) { g_Flight.NoteCall(false); return; }", lines)
         body = self.body("on_builtin")
         self.assertLess(body.index("if (S != g_FlightPlayer)"), body.index("FlightBlocked(h.answer, Result)"))
         # A free answer stands, before anything is read, and is counted (free=).
         self.assertIn("if (!FlightBlocked(h.answer, Result)) { g_Flight.NoteCall(true); return; }", body)
-        self.assertLess(body.index("FlightBlocked(h.answer, Result)"), body.index("g_Flight.Refresh("))
-        # The state is refreshed at the point of use, and nothing more is read while off.
-        self.assertIn("g_Flight.Refresh(frame);", body)
-        self.assertIn("if (g_Flight.CurrentState() != FcNs::State::Off)", body)
+        self.assertLess(body.index("FlightBlocked(h.answer, Result)"), body.index("g_Flight.StateAt("))
+        # The state is refreshed at the point of use, in one call (#216 c4),
+        # and nothing more is read while off.
+        self.assertIn("const FcNs::State state = g_Flight.StateAt(frame);", body)
+        self.assertNotIn("g_Flight.Refresh(", body)
+        self.assertNotIn("g_Flight.CurrentState()", body)
+        self.assertIn("if (state != FcNs::State::Off)", body)
+        self.assertLess(body.index("g_Flight.StateAt(frame)"), body.index("if (state != FcNs::State::Off)"))
         self.assertIn("JsObjectIndexOf(Args[h.objectArg])", body)
         self.assertIn("g_Flight.OnQuery(q, [&]() { return FlightExcludedBlocks(orig, h, S, O, argc, Args); })", body)
         self.assertIn("if (answer != FcNs::Answer::Real) Result = FlightAnswerValue(answer);", body)
@@ -595,12 +676,28 @@ class FlightCharmsLeverContract(unittest.TestCase):
         hook = self.body("tallest")
         self.assertIn("RValue& r = g_FlightOrigIpt(S, O, R, argc, A);", hook)
         self.assertLess(hook.index("g_FlightOrigIpt(S, O, R, argc, A)"), hook.index("g_Flight.OnQuery("))
-        self.assertIn("if (!S || g_FlightBusy || !g_Flight.Installed()) return r;", hook)
-        self.assertIn("if (S != g_FlightPlayer) { g_Flight.NoteCall(false); return r; }", hook)
+        lines = self.lines("tallest")
+        # The player is confirmed at the frame's first hooked call (#216 c3),
+        # between the guard and the compare.
+        self.assertEqual(lines[1:4], ["if (!S || g_FlightBusy || !g_Flight.Installed()) return r;",
+                                      "FlightConfirmPlayer();",
+                                      "if (S != g_FlightPlayer) { g_Flight.NoteCall(false); return r; }"])
         self.assertIn("if (!FlightBlocked(FcNs::Answer::Noone, r)) { g_Flight.NoteCall(true); return r; }", hook)
         self.assertLess(hook.index("if (S != g_FlightPlayer)"), hook.index("g_Flight.OnQuery("))
+        # The state in one call (#216 c4), after the free answer stood.
+        self.assertIn("const FcNs::State state = g_Flight.StateAt(frame);", hook)
+        self.assertNotIn("g_Flight.Refresh(", hook)
+        self.assertNotIn("g_Flight.CurrentState()", hook)
+        self.assertIn("if (state != FcNs::State::Off)", hook)
+        self.assertLess(hook.index("FlightBlocked(FcNs::Answer::Noone, r)"), hook.index("g_Flight.StateAt("))
         self.assertIn("FcNs::Hooked::InstancePlaceTallest", hook)
         self.assertIn("FlightInstanceObject(r)", hook)
+        # The fallback past JsObjectIndexOf is gated on the shared predicate, never
+        # on one kind (#216): VALUE_REF and an instance struct both reach it.
+        instance = strip_comments(function_body(self.plugin, "static int FlightInstanceObject(const RValue& v)"))
+        self.assertIn("HeroSiege::Player::IsInstanceHandle(v)", instance)
+        self.assertNotIn("m_Kind", instance)
+        self.assertLess(instance.index("JsObjectIndexOf(v)"), instance.index("IsInstanceHandle(v)"))
         # Never re-run: the core's single-argument OnQuery.
         self.assertIn("g_Flight.OnQuery(q)", hook)
         self.assertIn("r = FlightAnswerValue(answer);", hook)
@@ -612,8 +709,10 @@ class FlightCharmsLeverContract(unittest.TestCase):
         self.assertLess(hook.index("g_FlightOrigDepth(S, O, R, argc, A)"), hook.index("g_Flight.OnUpdateDepth("))
         lines = self.lines("depth")
         self.assertEqual(lines[1], "if (!S || g_FlightBusy || !g_Flight.Installed()) return r;")
+        # The player is confirmed at the frame's first hooked call (#216 c3).
+        self.assertEqual(lines[2], "FlightConfirmPlayer();")
         # Any other self is counted (depth-other=) and never written.
-        self.assertEqual(lines[2], "if (S != g_FlightPlayer) { g_Flight.NoteDepthOther(); return r; }")
+        self.assertEqual(lines[3], "if (S != g_FlightPlayer) { g_Flight.NoteDepthOther(); return r; }")
         self.assertIn('RValue("layer")', hook)
         self.assertIn("if (w.write)", hook)
         self.assertLess(hook.index("g_Flight.OnUpdateDepth("), hook.index('RValue("layer")'))
@@ -807,7 +906,11 @@ class FlightCharmsLeverContract(unittest.TestCase):
         # Online refuses before anything else is read.
         self.assertLess(array.index("kOnlineFlagGlobal"), array.index('"instance_find"'))
         equipped = self.body("equipped")
-        self.assertIn("FlightCharmArray(array)", equipped)
+        # The per-frame read builds no text: the probe's `why` is not asked for.
+        self.assertIn("FlightCharmArray(array, nullptr)", equipped)
+        for text in ("if (why) *why = \"online:", "if (why) *why = \"no Controller_obj instance\";"):
+            self.assertIn(text, array)
+        self.assertNotIn("*why =", array.replace("if (why) *why =", ""))
         self.assertIn("FlightCharmOf(item, rolled)", equipped)
         self.assertIn("FcNs::kMechanic", equipped)
         self.assertIn("mask |= FcNs::CharmBit(rolled.charm);", equipped)
@@ -828,7 +931,12 @@ class FlightCharmsLeverContract(unittest.TestCase):
         self.assertEqual(tick[0], "if (!g_Flight.Armed()) return;")
         body = self.body("tick")
         self.assertIn("if (FcNs::Flight::LooksForPlayer(g_FlightArmedFrames++)) FlightInstallIfReady();", body)
-        self.assertLess(body.index("if (!g_Flight.Installed())"), body.index("FlightRefreshPlayer();"))
+        self.assertIn("if (!g_Flight.Installed())", body)
+        # Installed, the tick no longer refreshes the player (#216 c3): the
+        # hooks confirm it at the first hooked call of each frame instead.
+        self.assertNotIn("FlightRefreshPlayer(", body)
+        self.assertNotIn("FlightConfirmPlayer(", body)
+        self.assertNotIn("g_FlightPlayer", body)
         for source in (self.plugin, strip_research_blocks(self.plugin)):
             frame = strip_comments(function_body(source, LEVER["frame"]))
             self.assertEqual(frame.count("FlightCharmTick();"), 1)
@@ -848,13 +956,207 @@ class FlightCharmsLeverContract(unittest.TestCase):
         self.assertLess(ready.index("FlightInstall();"), ready.index("g_Flight.NoteInstall(why.empty());"))
         self.assertIn("Out(FcNs::RefusedLine(why));", ready)
         self.assertEqual(self.shipped.count("FcNs::RefusedLine(why)"), 1)
-        # The ground icon rides hidden loot's one LootGroundInit detour.
-        self.assertIn("if (!g_HiddenLootInstallTried) HiddenLootInstall();", ready)
         resolves = strip_comments(function_body(self.plugin, "static bool FlightPlayerResolves()"))
         self.assertIn("HhResolveLocalPlayer(p)", resolves)
         self.assertIn("HhResolveInstance(p)", resolves)
         player = self.body("player")
         self.assertIn("HhResolveLocalPlayer(p)", player)
+
+    def test_the_hooks_install_only_for_a_worn_charm_and_the_ground_detour_first(self):
+        # #216 b2: armed by any dressed charm, but flight's own hooks go in
+        # only at a look that finds a flight charm worn; the ground icon's
+        # detour goes in at every look before the worn read, whatever is worn,
+        # since a charm never worn can still be dropped.
+        ready = self.body("install_if_ready")
+        lines = self.lines("install_if_ready")
+        self.assertEqual(lines[0], "const bool havePlayer = g_Flight.ShouldInstall(g_Setup, true, true) && FlightPlayerResolves();")
+        self.assertEqual(lines[1], "if (!g_Flight.ShouldInstall(g_Setup, havePlayer, true)) { g_Flight.NoteLook(havePlayer, false); return; }")
+        ground = ready.index("FlightGroundIconInstall();")
+        worn = ready.index("FlightEquipped(worn)")
+        note = ready.index("g_Flight.NoteLook(havePlayer, charmWorn);")
+        gate = ready.index("if (!g_Flight.ShouldInstall(g_Setup, havePlayer, charmWorn)) return;")
+        self.assertLess(ready.index("FlightPlayerResolves()"), ground)
+        self.assertLess(ground, worn)
+        self.assertLess(worn, note)
+        self.assertLess(note, gate)
+        self.assertLess(gate, ready.index("FlightInstall();"))
+        self.assertIn("const bool charmWorn = FlightEquipped(worn) && worn != 0;", ready)
+        self.assertEqual(ready.count("FlightGroundIconInstall();"), 1)
+        # The ground detour is hidden loot's one LootGroundInit hook, tried once.
+        ground_body = strip_comments(function_body(self.plugin, "static void FlightGroundIconInstall()"))
+        self.assertIn("if (!g_HiddenLootInstallTried) HiddenLootInstall();", ground_body)
+        # Negative control: no unconditional install path skips the worn gate.
+        self.assertNotIn("g_Flight.ShouldInstall(g_Setup, havePlayer)", ready)
+        self.assertEqual(self.code.count("g_Flight.ShouldInstall("), 3)
+        # The core: the decision takes the worn charm, and the state names it.
+        should = strip_comments(function_body(self.core(), "bool ShouldInstall(bool setupDone, bool playerResolved, bool charmWorn) const"))
+        self.assertIn("&& charmWorn", should)
+        name = strip_comments(function_body(self.core(), "std::string_view InstallStateName() const"))
+        self.assertIn('"waiting-for-worn-charm"', name)
+        for state in ('"installed"', '"refused"', '"not-armed"', '"waiting-for-character"'):
+            self.assertIn(state, name)
+        self.assertLess(name.index('"not-armed"'), name.index('"waiting-for-worn-charm"'))
+        # The tick is unchanged: the look stays once every kInstallPollFrames.
+        tick = self.body("tick")
+        self.assertNotIn("FlightEquipped(", tick)
+        self.assertNotIn("FlightGroundIconInstall(", tick)
+
+    def test_the_player_is_confirmed_at_the_first_hooked_call_of_a_frame(self):
+        # #216 c3: the core decides which call is the frame's first, keyed on
+        # the counter the queries use; only that call resolves the player, as
+        # FlightRefreshPlayer does (VALUE_REF-safe, under g_FlightBusy).
+        confirm = strip_comments(function_body(self.plugin, "static bool FlightConfirmPlayer()"))
+        self.assertIn("if (g_Flight.ConfirmsPlayer((int64_t)g_RuntimeFrame)) FlightRefreshPlayer();", confirm)
+        self.assertIn("return g_FlightPlayer != nullptr;", confirm)
+        self.assertNotIn("HhResolveLocalPlayer(", confirm)
+        player = self.body("player")
+        self.assertIn("g_FlightBusy = true;", player)
+        self.assertLess(player.index("g_FlightBusy = true;"), player.index("HhResolveLocalPlayer(p)"))
+        self.assertIn("HhResolveInstance(p)", player)
+        # Each of the three hooks confirms once, before its `self` compare.
+        # Nothing else does: not the tick, not the stat line.
+        for which in ("on_builtin", "tallest", "depth"):
+            with self.subTest(hook=which):
+                body = self.body(which)
+                self.assertEqual(body.count("FlightConfirmPlayer();"), 1)
+                self.assertLess(body.index("FlightConfirmPlayer();"), body.index("if (S != g_FlightPlayer)"))
+        self.assertEqual(len(re.findall(r"\bFlightConfirmPlayer\(\)", self.shipped)), 5,
+                         "the declaration, the definition and the three hooks")
+        self.assertEqual(len(re.findall(r"\bConfirmsPlayer\(", self.shipped)), 1, "FlightConfirmPlayer alone")
+
+    # ---- the worn-charm cache (#216 b1) --------------------------------------------------------
+
+    UCD_HOOK = re.compile(r"HookOneScript(?P<table>Table)?\(\s*SdkShortScriptName\(\s*HeroSiege::Scripts::"
+                          r"gml_Script_UpdateCharmData\s*\)")
+
+    def test_the_cache_signal_is_update_charm_data_by_name_both_routes_after_flights_own_hooks(self):
+        install = self.body("install")
+        self.assertRegex(install, r"HookOneScript\(SdkShortScriptName\(HeroSiege::Scripts::gml_Script_UpdateCharmData\),"
+                                  r"[^;]*\(PVOID\)Hook_FlightUpdateCharmData, &g_FlightOrigUcd, &native\)")
+        # After every hook flight itself needs, so a charm only carried still
+        # costs nothing per frame, and a missing signal never refuses flight.
+        signal = install.index("gml_Script_UpdateCharmData")
+        for own in ("gml_Script_InstancePlaceTallest", "gml_Script_UpdateDepth", "CollisionBuiltinsInstall()"):
+            with self.subTest(after=own):
+                self.assertLess(install.index(own), signal)
+        tail = install[signal:]
+        self.assertNotRegex(tail, r'return\s+"[^"]')
+        self.assertIn('return "";', tail)
+        # Once in the whole plugin, by both routes; never table-only, never by a
+        # string. Negative control: the pattern does see a table-only install.
+        whole = strip_comments(self.plugin)
+        hooks = list(self.UCD_HOOK.finditer(whole))
+        self.assertEqual(len(hooks), 1)
+        self.assertIsNone(hooks[0].group("table"))
+        self.assertIsNotNone(self.UCD_HOOK.search(
+            "HookOneScriptTable(SdkShortScriptName(HeroSiege::Scripts::gml_Script_UpdateCharmData), \"x\", f, &o);"
+        ).group("table"))
+        self.assertNotIn('"UpdateCharmData"', whole)
+        self.assertNotIn('"gml_Script_UpdateCharmData"', whole)
+        self.assertEqual(whole.count('"fp_flight_ucd"'), 1)
+
+    def test_the_cache_is_on_only_when_its_signal_went_in_inline(self):
+        install = self.body("install")
+        self.assertIn("g_FlightUcdNative = native;", install)
+        self.assertIn('g_FlightUcdRoute = !g_FlightOrigUcd ? "not-found" : (g_FlightUcdNative ? "detour" : "table-only");',
+                      install)
+        self.assertIn("g_Flight.SetWornCache(g_FlightOrigUcd != nullptr && g_FlightUcdNative);", install)
+        self.assertLess(install.index("g_FlightUcdNative = native;"), install.index("g_Flight.SetWornCache("))
+        # The one SetWornCache; nothing turns the cache on unconditionally.
+        # Negative control: the call above is found by the same count.
+        self.assertEqual(len(re.findall(r"\bSetWornCache\(", self.shipped)), 1)
+        self.assertNotRegex(self.shipped, r"SetWornCache\(\s*true\s*\)")
+        self.assertIn('static const char* g_FlightUcdRoute = "not-installed";', self.code)
+        # The core: off by default, and off means a read every frame.
+        core = self.core()
+        self.assertIn("bool wornCacheOn_ = false;", core)
+        worn_at = strip_comments(function_body(self.core(), "unsigned WornAt(int64_t frame)"))
+        self.assertIn("if (!wornCacheOn_) return mask;", worn_at)
+        self.assertLess(worn_at.index("ReadEquipped(mask)"), worn_at.index("if (!wornCacheOn_) return mask;"))
+        self.assertIn("frame - wornReadFrame_ < kWornSafetyFrames", worn_at)
+        self.assertIn("static constexpr int64_t kWornSafetyFrames = static_cast<int64_t>(kInstallPollFrames);", core)
+
+    def test_the_confirm_window_after_an_invalidation(self):
+        # Live 2's pick-up after an unequip (#216): every refresh through
+        # kWornConfirmFrames frames after the invalidating frame reads again.
+        # Its bound: at least 2 frames after the signal (a change landing one
+        # frame late is caught), at most 8 (a handful of reads per signal).
+        core = self.core()
+        m = re.search(r"static constexpr int64_t kWornConfirmFrames = (\d+);", core)
+        self.assertIsNotNone(m)
+        self.assertGreaterEqual(int(m.group(1)), 2)
+        self.assertLessEqual(int(m.group(1)), 8)
+        invalidate = strip_comments(function_body(core, "void InvalidateWorn(WornInvalidation why, int64_t frame)"))
+        self.assertIn("wornValid_ = false;", invalidate)
+        self.assertIn("wornConfirming_ = true;", invalidate)
+        self.assertIn("wornConfirmUntil_ = frame + kWornConfirmFrames;", invalidate)
+        worn_at = strip_comments(function_body(core, "unsigned WornAt(int64_t frame)"))
+        # The window closes once a refresh is past it, before the cache decides.
+        self.assertLess(worn_at.index("if (wornConfirming_ && frame > wornConfirmUntil_) wornConfirming_ = false;"),
+                        worn_at.index("return equippedMask_;"))
+        self.assertRegex(worn_at, r"wornValid_ && !wornConfirming_ && frame > wornReadFrame_")
+        # A confirm read that finds another mask counts late, never safety or stale.
+        late = worn_at.index("++wornCounters_.late;")
+        safety = worn_at.index("++wornCounters_.safety;")
+        self.assertLess(worn_at.index("if (wornValid_ && wornConfirming_) {"), late)
+        self.assertLess(late, worn_at.index("} else if (wornValid_) {"))
+        self.assertLess(worn_at.index("} else if (wornValid_) {"), safety)
+        # Turning the cache on or off closes any window.
+        self.assertIn("wornConfirming_ = false;",
+                      strip_comments(function_body(core, "void SetWornCache(bool on)")))
+        # The counter, and the adapter passing the frame its refreshes use.
+        self.assertIn("uint64_t late = 0;", core)
+        # Every invalidation passes it; negative control: all three are counted.
+        self.assertEqual(len(re.findall(r"\bInvalidateWorn\(", self.shipped)), 3)
+        self.assertEqual(len(re.findall(
+            r"g_Flight\.InvalidateWorn\(FcNs::WornInvalidation::\w+, \(int64_t\)g_RuntimeFrame\);", self.shipped)), 3)
+
+    def test_the_signal_runs_the_original_then_invalidates_and_reads_nothing(self):
+        hook = self.body("ucd")
+        lines = self.lines("ucd")
+        self.assertEqual(lines[0], "RValue& r = g_FlightOrigUcd(S, O, R, argc, A);")
+        self.assertEqual(lines[1], "g_Flight.InvalidateWorn(FcNs::WornInvalidation::UpdateCharmData, (int64_t)g_RuntimeFrame);")
+        self.assertEqual(lines[2], "return r;")
+        self.assertEqual(len(lines), 3)
+        for read in ("CallBuiltin", "FlightEquipped", "g_FlightPlayer", "if (", "g_FlightBusy"):
+            with self.subTest(read=read):
+                self.assertNotIn(read, hook)
+        self.assertEqual(self.shipped.count("WornInvalidation::UpdateCharmData"), 1)
+
+    def test_the_cache_is_invalidated_at_a_player_change(self):
+        confirm = self.body("confirm")
+        changed = confirm.index("if (g_FlightPlayer != was) {")
+        invalidate = confirm.index("g_Flight.InvalidateWorn(FcNs::WornInvalidation::Player, (int64_t)g_RuntimeFrame);")
+        self.assertLess(confirm.index("FlightRefreshPlayer();"), changed)
+        self.assertLess(changed, invalidate)
+        self.assertLess(confirm.index("++g_FlightConfirmChanged;"), invalidate)
+        self.assertEqual(self.shipped.count("WornInvalidation::Player"), 1)
+        # Negative control: the later calls of a frame return before it.
+        self.assertLess(confirm.index("else return g_FlightPlayer != nullptr;"), invalidate)
+        self.assertEqual(self.shipped.count("WornInvalidation::Dress"), 1)
+
+    def test_the_stat_prints_the_cache_line_after_the_drops_line(self):
+        command = strip_comments(function_body(self.plugin, "static void FlightCharmCommand(const std::string& rest)"))
+        self.assertIn("Out(FlightCacheLine());", command)
+        self.assertLess(command.index("Out(FlightDropTraceLine());"), command.index("Out(FlightCacheLine());"))
+        line = self.body("cache_line")
+        self.assertIn('"flightcharm cache: route=" + std::string(g_FlightUcdRoute) + " "', line)
+        self.assertIn("FcNs::CacheFields(g_Flight.WornCache(), g_Flight.EquippedMask(), freshRead, fresh & FcNs::kAllCharmBits)",
+                      line)
+        # The fresh read is the line's own: it never refreshes the core.
+        self.assertIn("const bool freshRead = FlightEquipped(fresh);", line)
+        for touch in ("Refresh", "InvalidateWorn", "SetWornCache", "StateAt"):
+            with self.subTest(touch=touch):
+                self.assertNotIn(touch, line)
+        fields = strip_comments(function_body(self.core(), "inline std::string CacheFields("))
+        for field in ('"reads="', '" invalidations=ucd:"', '",player:"', '",dress:"', '" safety="', '" stale="',
+                      '" late="', '" worn="', '" fresh="', '" agree="'):
+            with self.subTest(field=field):
+                self.assertIn(field, fields)
+        # Both builds.
+        self.assertIn("Out(FlightCacheLine());", strip_research_blocks(command))
+        self.assertIn(LEVER["cache_line"], strip_research_blocks(self.plugin))
+        self.assertIn(LEVER["ucd"], strip_research_blocks(self.plugin))
 
     # ---- the research build, both directions -------------------------------------------------
 
@@ -1007,6 +1309,42 @@ class FlightCharmsDropContract(unittest.TestCase):
         self.assertIn("FlightDropSwitch(c.charm, c.on);", command)
         self.assertEqual(self.all_code.count("FlightDropSwitch("), 2, "the definition and the command")
         self.assertNotIn("not available in this build", command)
+
+    def test_the_ground_route_is_reported_on_the_trace_and_once_when_it_refuses(self):
+        # #216 c5: the `flightcharm drops:` line names the route, and a route
+        # that refuses the icon prints one line a session, from whichever of
+        # flight's install points first learns it.
+        trace = self.body("trace")
+        self.assertIn('s += " ground-route=" + FlightGroundRoute();', trace)
+        self.assertLess(trace.index('" elf="'), trace.index('" ground-route="'))
+        self.assertLess(trace.index('" ground-route="'), trace.index('" | "'))
+        note = strip_comments(function_body(self.plugin, "static void FlightGroundRouteNote()"))
+        lines = [l.strip() for l in note.split("\n") if l.strip()]
+        self.assertEqual(lines[0], "if (g_FlightGroundRouteNoted || !g_HiddenLootInstallTried) return;")
+        self.assertIn("const std::string route = FlightGroundRoute();", note)
+        self.assertIn("if (M1sNs::GroundRouteAllowsArt(route)) return;", note)
+        self.assertIn("g_FlightGroundRouteNoted = true;", note)
+        self.assertIn('Out("flightcharm: ground icon off - " + route', note)
+        self.assertLess(note.index("GroundRouteAllowsArt(route)"), note.index("g_FlightGroundRouteNoted = true;"))
+        self.assertLess(note.index("g_FlightGroundRouteNoted = true;"), note.index("Out("))
+        self.assertIn("static bool g_FlightGroundRouteNoted = false;", self.all_code)
+        # Negative control: the note decides from the route, never from a
+        # `both` it wrote itself.
+        self.assertNotIn('"both"', note)
+        # Each of flight's install points notes right after the install.
+        install_points = {
+            "switch": self.body("switch"),
+            "install_if_ready": strip_comments(function_body(self.plugin, "static void FlightInstallIfReady()")),
+            "spawn": strip_comments(function_body(self.plugin, "static void FlpSpawn(const std::vector<std::string>& tail)")),
+        }
+        for name, body in install_points.items():
+            with self.subTest(install_point=name):
+                self.assertIn("FlightGroundIconInstall();\nFlightGroundRouteNote();",
+                              "\n".join(l.strip() for l in body.split("\n") if l.strip()))
+        # Mark 1's install is not flight's: it prints no flight line.
+        mark1 = strip_comments(function_body(self.plugin, "static void Mark1GroundIconInstall()"))
+        self.assertNotIn("FlightGroundRouteNote(", mark1)
+        self.assertEqual(self.all_code.count("FlightGroundRouteNote();"), 4, "the declaration and three install points")
 
     def test_nothing_runs_at_startup_or_every_frame(self):
         frame = strip_comments(function_body(self.plugin, "void FrameCallback(FWFrame& FrameContext)"))
@@ -1358,7 +1696,7 @@ class FlightCharmsProbeContract(unittest.TestCase):
                               ("unique", "FlpUnique(tail);"), ("pool", "FlpPool();"), ("stat", "FlpStat();")):
             with self.subTest(form=form):
                 self.assertIn('if (sub == "%s") { %s return; }' % (form, handler), command)
-        self.assertIn('static constexpr const char* kFlpMarker = "flp3";', self.code)
+        self.assertIn('static constexpr const char* kFlpMarker = "flp4";', self.code)
         usage = self.body("usage")
         self.assertIn('Out(std::string("flightprobe: marker=") + kFlpMarker);', usage)
         self.assertLess(usage.index("marker="), usage.index("spawn elf|wings|broom"))
@@ -1369,13 +1707,30 @@ class FlightCharmsProbeContract(unittest.TestCase):
 
     # ---- spawn and ground ----------------------------------------------------------------------
 
-    def test_the_marker_is_flp3_for_the_monster_rule(self):
-        # The monster scope moved the marker again, so Live 3's `marker` check proves the
-        # installed build carries the monster rule.
-        self.assertIn('static constexpr const char* kFlpMarker = "flp3";', self.code)
-        for old in ('"flp1"', '"flp2"'):
+    def test_the_marker_is_flp4_for_the_worn_charm_install(self):
+        # #216's follow-ups moved the marker again, so a live session's `marker` check proves
+        # the installed build carries the worn-charm install and its `perf` bucket.
+        self.assertIn('static constexpr const char* kFlpMarker = "flp4";', self.code)
+        for old in ('"flp1"', '"flp2"', '"flp3"'):
             with self.subTest(old=old):
                 self.assertNotIn(old, self.code)
+
+    def test_the_worn_charm_read_has_a_research_only_perf_bucket(self):
+        # `perf`'s "flight worn-charm read" times FlightEquipped's whole read (#216), so the
+        # cost of reading the worn charms is a number. The bucket and its scope are research
+        # only: the player build defines no PerfBucket, and PERF_SCOPE is empty there.
+        research = self.plugin[self.plugin.index("// ---- research profiler"):]
+        research = research[:research.index("#define PERF_SCOPE(bucket)\n#endif")]
+        self.assertIn('static PerfBucket g_PerfFlightWorn{ "flight worn-charm read" };', research)
+        listed = re.search(r"g_PerfAll\[\]\s*=\s*\{(?P<body>[^}]*)\}", research).group("body")
+        self.assertIn("&g_PerfFlightWorn", listed)
+        self.assertNotIn("g_PerfFlightWorn{", self.player)
+        self.assertNotIn("struct PerfBucket", self.player)
+        equipped = function_body(self.plugin, "static bool FlightEquipped(unsigned& mask)")
+        scope = equipped.index("PERF_SCOPE(g_PerfFlightWorn);")
+        # Before the read, so the scope covers FlightCharmArray and the whole walk.
+        self.assertLess(scope, equipped.index("FlightCharmArray(array, nullptr)"))
+        self.assertIn("#define PERF_SCOPE(bucket)\n#endif", self.plugin)
 
     def test_spawn_uses_charmprobes_loader_route_with_the_charms_own_seed(self):
         spawn = self.body("spawn")
@@ -1549,7 +1904,14 @@ class FlightCharmsProbeContract(unittest.TestCase):
         self.assertIn('RValue("itemBaseInfoStruct")', droppable)
         self.assertIn('TryStructNumber(info, "27", rarity)', droppable)
         self.assertIn('RValue("40")', droppable)
-        self.assertIn("rarity == 7.0 || rarity == 10.0", droppable)
+        # The two rarities are the named constant beside kAngelicListIndex, which the hub's
+        # tests/test_unique_pick_model.py pins to the model's ANGELIC_RARITIES.
+        self.assertIn("for (const int kept : kAngelicRarities)", droppable)
+        self.assertIn("if (rarity == (double)kept) return true;", droppable)
+        self.assertIn("if (hidden) return false;", droppable)
+        self.assertIsNone(re.search(r"\b(7|10)(\.0)?\b", droppable))
+        self.assertRegex(self.plugin, r"static const int kAngelicListIndex = 5;[^\n]*\n(//[^\n]*\n)*"
+                                      r"static constexpr int kAngelicRarities\[\] = \{ 7, 10 \};")
         # Refused while a roll's entries are on a list, since its sizes would count them.
         self.assertIn("g_SigRollPushed > 0 || g_FlightDrop.rollPushed > 0", pool)
         self.assertLess(pool.index("g_SigRollPushed > 0"), pool.index("SignatureController("))

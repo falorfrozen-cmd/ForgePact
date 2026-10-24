@@ -890,21 +890,15 @@ function bind(){
         const v=document.getElementById('mptval');v.textContent=e.target.checked?'on':'off';v.className='val '+(e.target.checked?'':'off');
         toast('Always show Chaos Pillar mods '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
     };
-    document.getElementById('mod_flight_elf').onchange=async(e)=>{
-        const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'mod_flight_elf',value:e.target.checked})});
-        const v=document.getElementById('mfeval');v.textContent=e.target.checked?'on':'off';v.className='val '+(e.target.checked?'':'off');
-        toast('Pocket Elf drops '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
-    };
-    document.getElementById('mod_flight_wings').onchange=async(e)=>{
-        const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'mod_flight_wings',value:e.target.checked})});
-        const v=document.getElementById('mfwval');v.textContent=e.target.checked?'on':'off';v.className='val '+(e.target.checked?'':'off');
-        toast('Gabriel Wings drops '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
-    };
-    document.getElementById('mod_flight_broom').onchange=async(e)=>{
-        const res=await j('/api/set',{method:'POST',body:JSON.stringify({key:'mod_flight_broom',value:e.target.checked})});
-        const v=document.getElementById('mfbval');v.textContent=e.target.checked?'on':'off';v.className='val '+(e.target.checked?'':'off');
-        toast("Witch's Broomstick drops "+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
-    };
+    // The three flight charms' drop switches share one handler: config key,
+    // value span, toast label.
+    for(const [key,valId,label] of [['mod_flight_elf','mfeval','Pocket Elf drops'],['mod_flight_wings','mfwval','Gabriel Wings drops'],['mod_flight_broom','mfbval',"Witch's Broomstick drops"]]){
+        document.getElementById(key).onchange=async(e)=>{
+            const res=await j('/api/set',{method:'POST',body:JSON.stringify({key,value:e.target.checked})});
+            const v=document.getElementById(valId);v.textContent=e.target.checked?'on':'off';v.className='val '+(e.target.checked?'':'off');
+            toast(label+' '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));
+        };
+    }
     // Gem mod filter: drawn from /api/state's gemAffixes ([stat, category, label])
     // with the World tab's Satanic pool classes, under six category headings.
     // The search and the All mods / Enabled / Disabled filter only show and

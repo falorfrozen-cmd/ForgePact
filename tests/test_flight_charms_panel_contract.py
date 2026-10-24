@@ -214,12 +214,25 @@ class FlightCharmsPanelRowTests(unittest.TestCase):
                     self.assertNotIn(jargon, text, jargon)
 
     def test_each_switch_posts_a_boolean_and_redraws_its_value(self):
+        # The three switches share one table-driven handler (#216): the table
+        # pins each key with its value span and toast label, and the handler
+        # posts the key as a boolean, redraws that span and toasts that label.
         panel = panel_file("panel.js")
+        # A label with an apostrophe (Witch's) is double-quoted in the source.
+        table = ",".join(f"['{key}','{val_id}',{json.dumps(title) if chr(39) in title else repr(title)}]"
+                         for key, _, val_id, title in CHARMS)
+        loop = f"for(const [key,valId,label] of [{table}]){{"
+        self.assertIn(loop, panel)
+        handler = panel.split(loop, 1)[1][:600]
+        self.assertIn("document.getElementById(key).onchange=async(e)=>{", handler)
+        self.assertIn("j('/api/set',{method:'POST',body:JSON.stringify({key,value:e.target.checked})})", handler)
+        self.assertIn("const v=document.getElementById(valId);v.textContent=e.target.checked?'on':'off';", handler)
+        self.assertIn("toast(label+' '+(e.target.checked?'ON':'OFF')+' - '+(res.ok||res.err));", handler)
+        # One handler: no switch keeps a handler of its own.
+        self.assertEqual(panel.count(loop), 1)
         for key, _, val_id, _ in CHARMS:
             with self.subTest(key=key):
-                handler = panel.split(f"document.getElementById('{key}').onchange", 1)[1][:500]
-                self.assertIn(f"{{key:'{key}',value:e.target.checked}}", handler)
-                self.assertIn(f"document.getElementById('{val_id}')", handler)
+                self.assertNotIn(f"document.getElementById('{key}').onchange", panel)
                 self.assertIn(f"{key}:'{key}'", panel)
                 self.assertIn(f"{val_id}:'{key}'", panel)
 

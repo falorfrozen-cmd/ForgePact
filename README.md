@@ -1720,6 +1720,9 @@ line too.
   game as scenery rather than as walls, such as the town church's, and those
   you would walk through: a game session measured that the church wall is
   scenery, not a wall, but nobody has walked it with a charm on yet.
+  Flight's checks start the first time you wear a flight charm in a session,
+  within about a second of putting it on; a charm you only carry in your bag
+  or stash leaves them off.
 - **One flight charm at a time.** The game itself counts only one flight charm
   at a time: wear two and only one of them works, stats included.
 - **Taking one off inside a prop.** Nothing moves you on its own. If you take

@@ -157,9 +157,14 @@ class CharmProbeContract(unittest.TestCase):
             short = name[len("gml_Script_"):]
             self.assertNotIn('"' + name + '"', self.code)
             self.assertNotIn('"' + short + '"', self.code)
+        # Controller_obj is read by flight's FlightCharmArray, the probe's worn-charm
+        # reader since #216, so that is where its SDK constant is pinned.
+        reader = self.body("static bool FlightCharmArray(RValue& array, std::string* why)")
         for name in SDK_OBJECTS:
             self.assertIsNotNone(re.search(r"\b" + name + r" = \d+,", objects))
-            self.assertIn("HeroSiege::Objects::GameObject::" + name, self.code)
+            where = reader if name == "Controller_obj" else self.code
+            self.assertIn("HeroSiege::Objects::GameObject::" + name, where)
+            self.assertNotIn('"' + name + '"', where)
             self.assertNotIn('"' + name + '"', self.code)
         self.assertNotIn('"gml_Script_', self.code)
         # Every by-name script call names an SDK constant.
@@ -178,13 +183,28 @@ class CharmProbeContract(unittest.TestCase):
             self.assertNotIn("reinterpret_cast<PFUNC", source)
 
     def test_the_charms_are_read_as_variables(self):
-        read = self.body("static bool FcpCharmArray(RValue& array, std::string& why)")
+        # One reader (#216): the probe reads the worn charms through flight's own
+        # FlightCharmArray, declared in the probe's block and asked for its `why`.
+        self.assertNotIn("FcpCharmArray", self.plugin)
+        self.assertIn("static bool FlightCharmArray(RValue& array, std::string* why);", self.block)
+        charms = self.body("static void FcpCharms()")
+        self.assertIn("if (!FlightCharmArray(array, &why)) { Out(\"charmprobe charms: count=0 source=missing(\" + why + \")\"); return; }",
+                      charms)
+        read = self.body("static bool FlightCharmArray(RValue& array, std::string* why)")
         self.assertIn("HeroSiege::Player::kRelicTabHolderField", read)          # inventoryData
         self.assertIn('"localCharmItemArray"', read)
         self.assertIn("HeroSiege::Player::kOnlineFlagGlobal", read)             # the relic tab's key rule
         self.assertIn('"mplr"', read)
         self.assertIn("key - 1", read)
         self.assertIn("HeroSiege::Player::IsInstanceHandle(controller)", read)  # never a kind check
+        # The probe's reasons, each written only when it is asked for.
+        for why in ('"online: the charms live on Client_obj there, this read is the offline route"',
+                    '"mplr " + Describe(mplr)', '"Controller_obj not resolved"', '"no Controller_obj instance"',
+                    '"no inventoryData"', '"inventoryData has no index "',
+                    '"inventoryData[" + std::to_string(key - 1) + "] has no localCharmItemArray ("',
+                    '"localCharmItemArray is " + Describe(array)'):
+            with self.subTest(why=why):
+                self.assertIn("if (why) *why = " + why, read)
         for getter in ("GetPlayerCharmData", "GetProfileInventoryData", "UpdateCharmData"):
             self.assertNotIn(getter, self.code)
 
