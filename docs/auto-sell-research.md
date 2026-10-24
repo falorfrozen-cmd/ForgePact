@@ -44,8 +44,8 @@ turned out to be something else. `CallbackMerchantSellPoolExit` and
 decrypt and hash it). `GetMerchantPrice` is a fixed table of 174 names to
 values, not an item's sale price. `GetItemBuyPrice` belongs to buying from the
 merchant: it sits beside the gold checks of a purchase. The `UiAMarket*`
-scripts are the player market. So there is nothing a mod could call by name to
-sell an item.
+scripts are the player market. So the name search found no script a mod could
+call to sell an item; a script under some other name was not ruled out.
 
 **The sale is one branch of a UI closure.** It lives in
 `UI_Inventory_Grid_obj`'s `m_MoveItemToGrid` closure, and is taken when an item
@@ -73,9 +73,12 @@ cannot be handed to it.
 - It makes one more call that looks like a sound; that call was not
   identified.
 
-A second branch credits the price through `PickUpGoldCheck` without the
-repeat flag the first branch passes, and writes no gold log. Its condition was
-**not read**, so when a sale takes that branch is **not established**.
+A second branch credits the price through `PickUpGoldCheck` without the third
+argument the first branch passes, and writes no gold log. `PickUpGoldCheck`
+replaces a missing third argument with 0 (below), so the two credits differ
+only in that argument; what the argument means was **not read**. The second
+branch's condition was **not read** either, so when a sale takes that branch
+is **not established**.
 
 **The price's two factors.** The first is `itemInfoStruct["9"]`. This reading
 confirms the key, the multiplication and the rounding up that AFK FARM's
@@ -87,17 +90,61 @@ rarity code (a base of 15, 30, 50, 225 or 450 by rarity, 5 otherwise) and
 writes item info through `SetItemInfo`; which key it writes is **not
 established**, though 9 is the natural guess.
 
-**What a sale changes, then:** the gold balance (through `PickUpGoldCheck`
-only, which on a hash mismatch reports the client and leaves the balance
-alone, RDM § 13.10), the UI gold log on the first branch, the buyback list, and
-the item's place (it leaves the bag).
+**What a sale changes, then**, as far as the reading went (the list is **not
+established as complete**): the gold balance (through `PickUpGoldCheck` only,
+which on a hash mismatch reports the client and leaves the balance alone, RDM
+§ 13.10), the UI gold log on the first branch, and the buyback list. The item
+also leaves the bag (measured in Live 1: the sold ring left its bag cell and
+showed in the merchant's grid), but how the closure takes it out of the bag and
+the player's item map was **not read**.
+
+**The credit's answer** (static reading, 2026-10-24, same build, from the
+local decompile of `PickUpGoldCheck` that `tools/decomp_index.py has
+PickUpGoldCheck` lists, made for #173). The script starts with its answer
+`undefined` and writes an answer in one place only: when the counter hash does
+not match, it reports the client and answers the boolean `false`. Every other
+path returns with the answer still `undefined`. So a credit that passes the
+hash check answers `undefined`, never `true`, and the answer cannot say whether
+gold was paid. The hash `GetCounterHash` makes and the check inside
+`PickUpGoldCheck` both read the game's global protected store
+(`gDataProtected`, the slot named with the decompile index's `slot-name`), not
+`self`, so which instance a caller passes as `self` does not decide the hash.
+A missing third argument becomes 0. What the rest of the body does after the
+hash check (its online calls, the balance write) was **not read**. The game's
+own gamba machine reads `GetGoldAmount` right after its own `PickUpGoldCheck`
+debit (RDM § 20.4, measured), which is why the mod can read the balance on
+either side of its own call in the same frame and take the difference as the
+payment.
+
+**The types the game will not buy** (static reading, 2026-10-24, same build).
+The tooltip line "Item cannot be sold" comes from the translation key
+`item_cannot_be_sold` (the game's `bin\translationsAttributes.csv`). Its one
+use in the exe is in `DrawInventoryItemV2`, the inventory tooltip script (RDM
+§ 16.6); the ghidra MCP project leaves that function unnamed, so the use was
+found by a byte scan and read from a local linear listing kept outside any
+repository. The tooltip takes the item's sale price from its `GetItemInfo(9)`
+answer, and a switch on the item's `itemType` sets that price to 0 for types
+12, 13, 14, 15 and 16: `HeroSiege::Items::ItemType::Key`, `Tarot`,
+`Material`, `Socketable` and `Relic` in the SDK's `item_type.hpp`. With the
+price at 0, under a condition on one of the script's arguments that was not
+identified (the merchant view is the natural reading), it draws "Item cannot
+be sold". Live 1 agrees on two of the five (§ Live 1 results): a Topaz
+(type 15) and a Destiny Shard (type 14) showed the line, and the merchant would
+not take the Topaz. Whether the sale closure itself refuses the same five types
+was **not read** (the closure times out); the mod follows the tooltip's rule,
+which is the owner's "anything not sellable is not sold" applied to what the
+game shows the player. `itemType` sits on the item instance struct beside
+`itemDefinitionStruct` (RDM § 9.3), the struct the mod reads as
+`itemInstance`, and is the item-map fingerprint's last field.
 
 **Sources.** The ghidra MCP answered the name search and decompiled
 `GenerateItemPrice`. It timed out on the closure at 240 s, so the sale was read
 from a call listing of that closure already on this machine (kept outside any
 repository), with its globals named by the decompile index's `slot-name` and
-its constants read with `tools/ghidra/DumpNear.java`. No decompiled text is
-quoted here.
+its constants read with `tools/ghidra/DumpNear.java`. The 2026-10-24 readings
+reused #173's local decompiles of `PickUpGoldCheck` and `GetCounterHash`
+(found through the decompile index) and a local linear listing of the
+tooltip's type switch. No decompiled text, listing or address is quoted here.
 
 ## The mod
 
@@ -106,33 +153,52 @@ default) cannot call the game's own sale for a ground item (above), so it
 performs the sale's three effects itself, every one by name: each script is
 resolved through its `hs-game-sdk` constant with `asset_get_index` and run
 through `script_execute` with `CallBuiltinEx`, the way `ApCallScript` runs a
-script, with the local player as self and other.
+script, with the local player as self and other. The credit's hash is read
+from the global protected store, not `self` (static reading, above), so that
+choice does not decide the hash.
 
 **What it mirrors, from the first branch:**
 
+- **Which items it will sell**: the five types the tooltip prices at 0
+  (above) are never sold. The item's `itemType` must read as a number and not
+  be `ItemType::Key`, `Tarot`, `Material`, `Socketable` or `Relic` (the SDK
+  enum, no literal numbers); an unreadable type is withheld the same way.
+  Such an item stays on the ground for hidden loot and counts `unsellable=`
+  and `type-unsellable=`. The check lives in the one function the sale and
+  `autosell quote` share, so the quote refuses what the sale would.
 - **The price**: the ground item's `itemInstance` struct gives
   `itemInfoStruct["9"]` and the definition's `o`; the price is the first
   times the second (a missing, non-positive or non-numeric `o` counts as 1),
   rounded up. Every field is checked for existence before it is read. A
   missing, non-numeric, non-finite or non-positive value makes the item
   unsellable: it stays on the ground and is counted `unsellable=`.
-- **The credit**: a fresh `GetCounterHash` read immediately before
-  `PickUpGoldCheck`, with the same arguments the sale's first branch passes.
-  Only a true answer counts as credited; anything else leaves the item where
-  it is and counts `credit-refused=`.
+- **The credit**: the balance read through `GetGoldAmount` first (unreadable:
+  `gold-unreadable=`, no credit call, the item stays), then a fresh
+  `GetCounterHash` immediately before `PickUpGoldCheck`, with the same
+  arguments the sale's first branch passes. **The balance decides whether the
+  player was paid**, not the answer, since the answer is `undefined` on every
+  path but the hash mismatch (static reading, above): the balance is read
+  again right after, and the credit is paid when it rose. If that second read
+  fails, a call that dispatched and did not answer `false` counts as paid and
+  also as `credit-unverified=`. An unpaid credit leaves the item where it is,
+  is not remembered, and counts one cause: `credit-call-failed=` (a script did
+  not dispatch), `credit-false=` (the call answered `false`, the hash check by
+  the static reading) or `credit-unpaid=` (it dispatched, did not answer
+  `false`, and the balance did not rise). `credit-refused=` is their sum.
 - **The gold log**: `GoldLogAdd` with entry kind 18 and the price, after a
-  credit, as the sale does. ForgePact's own `tracker` and the HS Offline
-  Tracker both count income through that log, so a sold drop shows up in
-  them as a vendor sale would.
+  paid credit, as the sale does; a dispatch failure or a throw there counts
+  `log-refused=` and the sale stands. ForgePact's own `tracker` and the HS
+  Offline Tracker both count income through that log; whether either one's
+  hook sees the mod's call, or a hand vendor sale's, was **not measured**.
 
 **What it does not mirror, and why:**
 
 - **The sell pool** (`sellPoolFingerprintList`): the owner ruled out buyback.
 - **The hash check of a bag item**: a fresh ground item is not in the
   player's item map, so there is nothing to check it against.
-- **The ownership change and the online inventory record**
-  (`InventoryUpdateExt`): both belong to the online inventory, not to an
-  offline ground item.
+- **The online inventory** (`ChangeItemOwner`, `InventoryUpdateExt`): the
+  recorded reading of the sale does not show either call, and the mod makes
+  neither, since a fresh ground item was never in the player's inventory.
 - **The sound**: not identified, and not needed for the sale.
 
 **When it runs.** The trigger is the shared both-route detour on
@@ -145,14 +211,17 @@ While on it only notes the call's handles; the decision runs at the end of the
 frame, before hidden loot's, because an item hidden loot has put to sleep can
 no longer be found. Per noted drop, the first test that fails decides its
 counter: a live `Loot_Ground_obj`, a verdict that says hidden, a readable room
-that is not persistent (town is never sold in), an item struct not credited
-before in this room, a price above 0, a local player, a true credit. Then the
-log, a second gold read (the balance must have risen by exactly the price,
-`exact=`, else `inexact=`), and `instance_destroy` on the item, the way the
-game's own pickup callers and ForgePact's pet relic collector remove a ground
-item. The credit comes before the destroy so that a refused credit never
-costs the player the item. A room change forgets every pending note and
-remembered struct, with no game call.
+that is not persistent (town is never sold in), an item struct with a key
+(else `no-key=`) not credited before in this room, a type the game will buy,
+a price above 0, a local player, a readable balance, a paid credit. A paid
+credit counts `exact=` when the balance rose by exactly the price, else
+`inexact=` (the 500,000,000 offline cap is one cause, and an unverified
+credit counts here too). Then the log, and `instance_destroy` on the item,
+the way the game's own pickup callers and ForgePact's pet relic collector
+remove a ground item. The credit comes before the destroy so that an unpaid
+credit never costs the player the item. Every credit attempt, paid or not,
+sets `last=`. A room change forgets every pending note and remembered struct,
+with no game call.
 
 **Sell supersedes hide.** With hidden loot also on, autosell runs first in
 the frame and tells hidden loot which instances it sold, and hidden loot
@@ -173,8 +242,8 @@ remembers every item struct it credited in the room and never credits one
 twice (`repeat-held=`). That guard stops a second payment only: in the second
 case it leaves the placed item where the burst put it, so the player would
 keep, hidden, an item they were already paid for (§ Live procedure 1, "What
-the outcomes mean"). Live 1's optional tower step says which of the two the
-counters show.
+the outcomes mean"). Live 1 did not run its optional tower step; Live 2's
+step 8 repeats it to say which of the two the counters show.
 
 **What it never does:** a game address, a struct layout read, a write to the
 verdict, a walk of what is already on the ground, a per-frame or periodic
@@ -187,17 +256,21 @@ town. Telling the two apart would need Loot announcements' creation guard;
 the owner's "the filter is the only gate" decides it for now, and the guide's
 Known Limitations say so.
 
-**Rejected alternatives.** Calling the game's own sale (it needs the merchant
-window open, takes the item from the drag state, expects the item in the
-player's map, appends it to the buyback list and sends an online inventory
-record, and its closure's name moves with every patch). `GetMerchantPrice` or
+**Rejected alternatives.** Calling the game's own sale (it is taken when an
+item is moved into the merchant's grid, takes the item from the drag state,
+checks the dragged item's integrity hash, appends its fingerprint to the
+buyback list, and its closure's name moves with every patch). Trusting the
+credit's answer (it is `undefined` whether or not gold was paid, static
+reading; Live 1's build did, and counted every credit refused). Selling
+whatever has a price (`autosell quote` priced a socketable and a material the
+game will not buy, Live 1). `GetMerchantPrice` or
 `GetItemBuyPrice` for the price (neither is the sale price). A second detour
 on `LootGroundInit`, or a ground scan (the first is refused, the second is
 ruled out by the issue). Destroying first and crediting after (a refused
 credit would lose the item). Selling after hidden loot (a slept item can no
 longer be found). Dropping the gold log (the sale writes it, and both
 trackers count income through it). A price model in `hs-game-sdk` (the
-arithmetic is one line; the harness pins it and Live 1 measures it).
+arithmetic is one line; the harness pins it and Live 1 measured it).
 
 ## Instrument
 
@@ -208,23 +281,38 @@ route: `both`, `table-only`, `none` or `not-installed`), then the counters:
 `notes=` (calls noted), `sold=` and `gold=` (items sold and the gold they
 brought), `exact=` and `inexact=` (whether the balance rose by exactly the
 price; the 500,000,000 offline cap is one cause of an inexact credit),
-`visible=` (shown drops, never touched), `no-filter-var=`, `unsellable=`,
-`skipped-persistent=`, `repeat-held=`, `no-player=`, `credit-refused=`,
-`destroy-failed=`, `gone=` (no live instance any more), `unidentified=`,
-`errors=`, `last=` (the last sale as price, balance before and balance after,
-or `none`), and `gold-now=`, the balance read on demand through `GetGoldAmount`
-(or `unreadable`). `autosell 1` answers with the route; `autosell 0` answers
-with the same counters. `hiddenloot stat` gains `sold=`.
+`visible=` (shown drops, never touched), `no-filter-var=`, `unsellable=` and,
+as a part of it, `type-unsellable=` (a type the game will not buy, or an
+unreadable type), `skipped-persistent=`, `repeat-held=`, `no-player=`,
+`gold-unreadable=` (the balance could not be read before the credit, so no
+credit was tried), `credit-refused=` and its three causes
+`credit-call-failed=`, `credit-false=` and `credit-unpaid=` (it equals their
+sum), `credit-unverified=` (paid by the call's outcome because the balance
+could not be read after it), `log-refused=` (the gold log call failed after a
+paid credit), `destroy-failed=`, `gone=` (no live instance any more),
+`unidentified=`, `no-key=` (an item struct without a key, counted under
+`errors=` before Replan 1), `errors=`, `last=` and `gold-now=`. `last=` is
+the last credit attempt, paid or not, as price, balance before, balance after
+(a number or `unreadable`) and the credit's answer, each after a colon, or
+`none`; the answer is `undefined`, `true`, `false`, `number`, `failed` (a
+script did not dispatch) or `other`. `gold-now=` is the balance read on demand
+through `GetGoldAmount` (or `unreadable`). `autosell 1` answers with the
+route; `autosell 0` answers with the same counters. `hiddenloot stat` gains
+`sold=`.
 
-`GetGoldAmount` takes no arguments. The game calls it itself (RDM § 20.4), but
-ForgePact has never called it by name before, so `gold-now=` is
-**unverified** until Live 1's `gold-read` check.
+`GetGoldAmount` takes no arguments. The game calls it itself (RDM § 20.4);
+ForgePact had never called it by name before #196. Live 1 measured it from
+the plugin ([gold-read], § Live 1 results): it answered whole numbers that
+matched the HUD's gold.
 
 **`autosell quote <fingerprint>`** (research build only) finds an item in the
 player's bag by its item-map fingerprint, the way `giveitem bag` finds its
-template, and prints its name (info key 28), its info key 9 value, its count
-and the price, through the same price function the sale uses. It changes
-nothing. It is how Live 1 compares the mod's price with the merchant's own.
+template, and prints its name (info key 28), its `itemType` as `type=`, its
+info key 9 value, its count and the price, through the same sellability and
+price function the sale uses. A type the game will not buy answers `autosell
+quote: refused - item type <n> is not sold by the game`. It changes nothing.
+It is how Live 1 compared the mod's price with the merchant's own, and how
+Live 2 checks the type rule against items in the bag.
 
 ## Live procedure 1
 
@@ -345,28 +433,212 @@ credited in the room is removed at the burst without a second credit. A
 failure of any other check is a defect in the build, and nothing is recorded
 as measured from it.
 
+## Live 1 results
+
+Capture `forgepact-196-autosell-filtered-live-1` (the hub's
+`.claude/workorders/forgepact-196-autosell-filtered-live-1.md`), 2026-10-24,
+research build of the branch as it stood before Replan 1, slot 14 "Sorak" in
+Fields of Battle (Act 1, Hell). No debugger. The session's saves were restored
+at the end, so nothing it paid or sold persisted. Measured unless labelled.
+
+- [dll-hash], [control], [marker]: pass.
+- [gold-read]: pass. `gold-now=` read 318545 before the hand sale and 318602
+  after it, whole numbers, and the HUD showed 318,602.
+- [merchant-parity]: pass. The operator sold a ring (Phasing Bronze Ring of
+  Rapidcasting, type 7) to the merchant by hand; the balance rose by 57, the
+  `price=` its `autosell quote` gave. Three bag items of type 11 were refused
+  by the quote with an info key 9 value not above 0.
+- [stack-parity]: not observed. The only stacks in the bag were socketables (a
+  Topaz x4 and a Diamond x10); moving the Topaz into the merchant's grid sold
+  nothing, and its tooltip, like a Destiny Shard's (a material), read "Item
+  cannot be sold". `autosell quote` still priced the Topaz at 692 and the
+  Diamond at 1350: the build had no type rule, which Replan 1 added (§ Static
+  reading, "The types the game will not buy").
+- [route]: pass (`route=both`). [kept-stays]: pass (`lootspawn` made a shown
+  set item; `visible=` rose by one, `sold=` did not, its label lay on the
+  ground).
+- [sold-some]: fail. Over the 120 s kill window `notes=` reached 45: one was
+  the step-4 shown item, and the other 44 all counted `credit-refused=`;
+  `sold=0`, `gold=0`, and the hidden items stayed on the ground.
+  [credit-exact]: not observed (no sale). [clean]: fail on
+  `credit-refused=44` alone. [no-hidden-left]: fail (`lootcensus` `hidden=47`
+  against a limit of 3).
+- [no-runner-errors]: pass (the YYError count did not change).
+- [supersedes]: fail, as a consequence: with nothing sold, hidden loot put
+  the hidden drops to sleep (`slept=` rose by 22 in the 60 s window) while
+  `credit-refused=` kept rising.
+- [off-stays]: pass (`sold=` and `notes=` unchanged while off, `hidden=` rose
+  from 71 to 95).
+- [tower-sold-at]: not observed (step 8 was not run: with every credit
+  counted refused the tower counters could show neither path).
+  [no-buyback]: not observed (the merchant window showed no buyback view;
+  its stock had refreshed and the step-2 ring was no longer listed).
+- [restored]: pass.
+
+Route token: `price-route: merchant-parity`. The tower's `fall-instance:` and
+`burst:` are both `not-observed`.
+
+**What `credit-refused=` meant in Live 1** (static reading, § Static reading,
+"The credit's answer"). Every one of the 44 hidden drops passed every earlier
+test and reached the credit. `PickUpGoldCheck` answers `undefined` whenever
+the hash check passes, and that build counted only a true bool or a non-zero
+number as credited, so `credit-refused=` counted every answer the build could
+not read as a payment, whether or not gold was paid; it was never evidence
+that the game refused the credit. Whether those credits paid the player is
+**not established**: the balance rose by 4,459 over the step-5 window with
+`gold=0` and by 314 over step 7's 30 s with the switch off, but coins dropped
+throughout and the kill rates differ, so the rise cannot be split between
+coins and credits. The rise fits the reading that they paid, and so would a
+player who keeps a hidden item they were paid for; Replan 1 decides payment
+from the balance around the call (§ The mod) and Live 2 measures it.
+
+## Live procedure 2
+
+Capture: `.claude/workorders/forgepact-196-autosell-filtered-live-2.md` in the
+hub (`forgepact-196-autosell-filtered-live-2`). Check names are in brackets.
+Written against the state before Live 1: Live 1 restored its backup, so the
+bag and the gold are as Live 1 found them.
+
+- **Build**: the research DLL from `plugin_build\build.bat dev` at the branch
+  head with Replan 1's credit and type changes, installed only once the owner
+  agrees; [dll-hash]: the installed DLL's sha256 equals the built file's.
+- **Character**: slot 14 "Sorak", with the owner's own loot filter, never
+  changed.
+- **Debugger**: none. Every question this session asks is a value, not which
+  code runs. Whether the mod's own credit paid is the balance read in-process
+  immediately before and after that call: the plugin calls the scripts one
+  after the other from its frame callback, so nothing of the game runs between
+  the two reads but the credit itself. What the call answered is the content of
+  its result, which a hardware logpoint at the function's entry cannot see, and
+  an item's type is a field the mod reads. A `PickUpGoldCheck` logpoint would
+  also fire for every coin picked up in the kill windows. The tower step keeps
+  Live 1's reason for having no `LootGroundInit` logpoint (§ Live procedure 1,
+  Debugger).
+- **Control and marker**: `ping` answers a line starting `pong (YYTK`
+  [control]. `autosell stat` answers a line starting `autosell stat: on=0`
+  that contains `credit-unpaid=` and `type-unsellable=` [marker], which also
+  proves the Replan 1 build is the one installed.
+- **Cases**: natural monster drops in an Act 1 outdoor zone (hidden ones sold,
+  shown ones kept). Outliers: the five types the game will not buy (two in
+  the bag, quoted; any that drop, counted); hidden loot on beside it; a Chaos
+  Tower floor (optional). Not run, and recorded not observed live: the hand
+  sale and the buyback (Live 1 measured [merchant-parity] and found no buyback
+  view), a sellable stack, persistent rooms (harness only), a bag drop, co-op,
+  the gold cap, the table-only route.
+- **Relies on**: what Live procedure 1 relies on; `GetGoldAmount` by name
+  (Live 1's [gold-read]); the credit's answer, the self-free hash and the five
+  types (§ Static reading, and RDM § 13.10 and § 16.6); the bag fingerprints
+  Live 1 recorded for the Topaz (`0-0-212850037745-15`), the Diamond
+  (`0-0-212850154515-15`) and the ring (`0-0-213716543158-7`).
+- **Person block**: reaching a Chaos Tower, if the operator cannot.
+
+Steps:
+
+0. Lease, self-check and a save backup with the game closed; the install
+   check [dll-hash]; note the YYError count in `bin\YYToolkit.log`; launch;
+   load slot 14.
+1. `ping` [control]; `autosell stat` [marker]; `autosell 0` and `hiddenloot 0`
+   so both start off whatever the panel pushed.
+2. In town, open the bag (C); `menulayout` on the main tab, the socket sub-tab
+   and the material sub-tab for fingerprints. `autosell quote` the ring, the
+   Topaz, the Diamond and one material item (any; record its key).
+   [quote-types]: the ring answers a line with `type=7` and `price=57`; the
+   Topaz and the Diamond each answer `autosell quote: refused - item type 15
+   is not sold by the game`; the material item answers the same with `item
+   type 14`. If a key from Live 1 is absent, use any item of the same sub-tab
+   and record its key.
+3. Waypoint to an Act 1 outdoor zone (Fields of Battle, as Live 1) and move
+   away from the waypoint. Note the YYError count. `autosell 1` answers
+   `route=both` [route]; `autosell stat` and `lootcensus` give the baseline
+   `gold-now=`, `ground=` and `hidden=`.
+4. `lootspawn 1`, then [kept-stays] exactly as Live procedure 1 step 4.
+5. Kill for about 120 s (`playerwarp` beside packs, right-click cast), no
+   `dropmult`. `autosell stat` about every 30 s, then at the end `autosell
+   stat` and `lootcensus`:
+   - [sold-some]: `sold=` at least 1;
+   - [credit-exact]: `exact=` rose by the window's `sold=` rise, with
+     `inexact=0` and `credit-unverified=0`;
+   - [clean]: `credit-refused=0 credit-call-failed=0 credit-false=0
+     credit-unpaid=0 gold-unreadable=0 log-refused=0 destroy-failed=0
+     no-player=0 unidentified=0 no-key=0 errors=0`;
+   - [gold-rose]: `gold-now=` rose over the window by at least the window's
+     `gold=` rise (coins only add to it);
+   - [no-hidden-left]: `lootcensus` `hidden=` no higher than its step-3 value
+     plus the window's `unsellable=` rise;
+   - [no-runner-errors]: the YYError count is unchanged since step 3;
+   - [credit-answer] (research): the answer field of `last=`, after its last
+     colon, is `undefined`; recorded whatever it is;
+   - [type-seen] (research): `pass` when `type-unsellable=` rose and
+     `hidden=` kept those items; `not-observed` when no drop of the five
+     types fell.
+6. `hiddenloot 1`, kill about 60 s, then `hiddenloot stat` and `autosell
+   stat`: hidden loot's `sold=` rose by as much as autosell's `sold=` over the
+   window, and hidden loot's `slept=` rose by no more than autosell's
+   `unsellable=` [supersedes]. `hiddenloot 0`.
+7. `autosell 0` (record the OFF line); kill about 30 s; `autosell stat`:
+   `sold=` unchanged, and `lootcensus` `hidden=` rose [off-stays].
+8. Optional, at most 10 minutes, with hidden loot still off: `autosell 1`,
+   then Live procedure 1 step 8 word for word (the T0, T1 and T2 readings and
+   [tower-sold-at] with its `fall-instance:` and `burst:` values).
+   `autosell 0`.
+9. Stop the game, inspect and restore the saves, release the lease
+   [restored].
+
+**What the outcomes mean.** `credit-route: paid` when [sold-some] and
+[credit-exact] pass. `credit-route: unpaid` when `sold=0` and
+`credit-unpaid=` rose: the by-name credit answers but pays nothing, so the
+payment route itself is wrong and the mod needs a replan. `credit-route:
+refused-false` when `credit-false=` rose: the hash check refused the mod's
+call, so the self-free reading of the hash is wrong, also a replan.
+`credit-route: call-failed` when only `credit-call-failed=` rose: a dispatch
+defect in the adapter, for a fix round. [type-seen] and [credit-answer] are
+research: their values are recorded, and `not-observed` is a finding, not a
+defect. A [credit-answer] other than `undefined` with [credit-exact] passing
+means the static reading of the answer is wrong while the payment rule still
+holds: it is recorded and the reading corrected, with no fix round. The tower
+step's values mean what they mean in Live procedure 1. A failure of any other
+check is a defect in the build, and nothing is recorded as measured from it.
+
 ## Not established
 
-- **The second sale branch's condition.** When the game credits a sale
-  without the gold log was not read. The mod mirrors the first branch.
+- **The second sale branch's condition**, and what `PickUpGoldCheck`'s third
+  argument means (the second branch leaves it out, which the script turns
+  into 0). The mod mirrors the first branch.
+- **The rest of `PickUpGoldCheck` after its hash check** (its online calls
+  and the balance write): not read. The mod does not rely on it, since it
+  decides payment from the balance.
+- **Whether Live 1's refused credits paid the player.** The balance rose
+  while they were counted, but coins dropped throughout (§ Live 1 results).
+  Live 2's [credit-exact] and [gold-rose] measure the payment directly.
+- **Whether the by-name credit pays at all, from the local player as `self`.**
+  The hash does not read `self` (static reading, made after Live 1); that
+  the call pays is Live 2's [credit-exact] and `credit-route:` token.
+- **The credit's answer in a live call.** `undefined` by the static reading;
+  Live 2's [credit-answer] records it.
+- **Whether the sale closure refuses the same five types** the tooltip prices
+  at 0: not read (the closure times out). The tooltip's own rule is static
+  reading, and Live 1 measured it for two types (a socketable and a material);
+  Live 2's [quote-types] checks the mod's rule against bag items, and
+  [type-seen] whether any such drop fell.
+- **The condition under which the tooltip shows "Item cannot be sold"** for a
+  price of 0: one of the script's arguments, not identified.
 - **The stack factor.** That the price's second factor is the definition's
-  `o` (absent counting as 1) is AFK FARM's reading, not re-read here; Live 1's
-  [stack-parity] measures it if the bag holds a stack.
+  `o` (absent counting as 1) is AFK FARM's reading, not re-read here. Live 1
+  found no sellable stack ([stack-parity] not observed), and Live 2 does not
+  look for one.
 - **Which key `GenerateItemPrice` writes.** Key 9 is the natural guess.
-- **Which `self` the game's credit needs.** The sale passes the grid node and
-  the gamba machine passes itself (RDM § 20.4); the mod passes the local
-  player. Live 1's [credit-exact] settles whether that credits.
-- **`GetGoldAmount` called by name from a plugin.** Unverified until Live 1's
-  [gold-read].
-- **The price against a real hand sale.** Never measured until Live 1's
-  [merchant-parity].
+- **The buyback list.** The mod never writes the sell pool, but Live 1 found
+  no buyback view to look at ([no-buyback] not observed), and Live 2 does not
+  look again.
+- **Whether a tracker's hook sees `GoldLogAdd`**, from the mod or from a hand
+  vendor sale: not measured.
 - **A Chaos Tower floor's held drops.** By the static reading in RDM § 16.14
   a hidden tower drop passes the detour both when it falls and at the burst.
   What is not established is whether its ground instance is still alive at
   the end of the frame after the first pass (that the tower branch destroys
   it is an inference), and so whether the mod sells it at the fall or at the
-  burst. Live 1's [tower-sold-at] reads which from the counters and the
-  census. The `repeat-held=` guard keeps a second credit out either way, but
+  burst. Live 1 did not reach a tower; Live 2's step 8 reads which from the
+  counters and the census ([tower-sold-at]). The `repeat-held=` guard keeps a second credit out either way, but
   if the sale comes at the fall the burst's placed item stays on the floor,
   paid for; whether that is acceptable is the owner's call, not settled here.
   The burst-window `LootGroundInit` logpoint that would show the passes
@@ -374,3 +646,9 @@ as measured from it.
 - **The unidentified call after the credit**, which looks like a sound.
 - **A player's own bag drop, co-op, the gold cap and the table-only route**
   were not run live.
+
+Settled by Live 1 (measured): `GetGoldAmount` called by name from a plugin
+answers the balance the HUD shows ([gold-read]), and the mod's price matches a
+real hand sale of an equipment item ([merchant-parity]). Settled after Live 1
+by static reading: the credit's hash does not depend on the `self` the mod
+passes, and the credit's answer cannot report a payment.
