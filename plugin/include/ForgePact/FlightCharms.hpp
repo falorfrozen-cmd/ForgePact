@@ -729,12 +729,17 @@ struct WornCacheCounters {
     uint64_t safety = 0;   // reads made only because the safety period was up
     uint64_t stale = 0;    // of those, the ones that found a mask other than the remembered one
     uint64_t late = 0;     // confirm reads (after an invalidation's first) that found another mask
+    uint64_t confirms = 0;    // confirm reads made at all: `late=` is out of these
+    uint64_t unconfirmed = 0; // confirm windows that closed with no confirm read, so tested nothing
 };
 
 // `flightcharm stat`'s cache line after its `route=`, which the adapter writes
 // (how the signal went in: not-installed, detour, table-only, not-found).
 // `late=` counts the confirm reads that found another mask than the remembered
-// one (the first read after a signal was too early). `worn=` is the mask the last refresh answered, `fresh=` a read made for the
+// one (the first read after a signal was too early). A zero there means
+// something only beside the counters it is out of: a window can close with no
+// confirm read at all (see Flight's confirm window), and then `late=` could not
+// have counted. `worn=` is the mask the last refresh answered, `fresh=` a read made for the
 // line alone (`unread` when it failed), and `agree=` whether the two match; a
 // failed fresh read never agrees. Live procedure 2 checks these field names.
 inline std::string CacheFields(const WornCacheCounters& c, unsigned worn, bool freshRead, unsigned fresh)
@@ -961,9 +966,18 @@ public:
     // every refresh through kWornConfirmFrames frames after the invalidating
     // frame reads again; a new invalidation inside the window restarts it.
     // A confirm read that finds a mask other than the remembered one takes it
-    // and counts as late, so `late=` stays 0 while the first read is already
-    // right. After the window, nothing changes: the remembered mask until the
-    // next invalidation or the safety read. A handful of reads per signal.
+    // and counts as late. After the window, nothing changes: the remembered
+    // mask until the next invalidation or the safety read. A handful of reads
+    // per signal.
+    //
+    // The window is counted in frames from the signal, not in refreshes, and
+    // only a hooked call or the stat refreshes: nothing measured shows one
+    // while the player stands. So a window can pass with no confirm read (an
+    // unequip from the bag while standing), and the first read, at the next
+    // step, is then an ordinary one that counts nothing. `late=0` therefore
+    // says the first read was right only when confirm reads ran: `confirms`
+    // counts the confirm reads made, and `unconfirmed` the windows that
+    // closed with none (counted when a later refresh finds the window past).
     static constexpr int64_t kWornSafetyFrames = static_cast<int64_t>(kInstallPollFrames);
     static constexpr int64_t kWornConfirmFrames = 4;
     void SetWornCache(bool on)
@@ -971,17 +985,20 @@ public:
         wornCacheOn_ = on;
         wornValid_ = false;
         wornConfirming_ = false;
+        wornWindowConfirms_ = 0;
     }
     bool WornCacheOn() const { return wornCacheOn_; }
     // Counted whether the cache is on or not; reads nothing. `frame` is the
     // frame the signal came in (the adapter's frame counter, as the hooks'
     // refreshes pass it): the confirm window runs through kWornConfirmFrames
-    // frames after it.
+    // frames after it. A restarted window is one window: its confirm reads
+    // are counted from the restart.
     void InvalidateWorn(WornInvalidation why, int64_t frame)
     {
         wornValid_ = false;
         wornConfirming_ = true;
         wornConfirmUntil_ = frame + kWornConfirmFrames;
+        wornWindowConfirms_ = 0;
         switch (why) {
         case WornInvalidation::UpdateCharmData: ++wornCounters_.ucd; break;
         case WornInvalidation::Player:          ++wornCounters_.player; break;
@@ -1252,9 +1269,12 @@ private:
     // remembered mask while it is valid, outside the confirm window, and the
     // last read is less than kWornSafetyFrames behind (a frame counter that
     // went backwards reads); otherwise one read: a confirm read inside the
-    // window, a safety read when the cache was valid outside it.
+    // window, a safety read when the cache was valid outside it. A window
+    // found past with no confirm read in it counts as unconfirmed.
     unsigned WornAt(int64_t frame)
     {
+        if (wornCacheOn_ && wornConfirming_ && frame > wornConfirmUntil_ && wornWindowConfirms_ == 0)
+            ++wornCounters_.unconfirmed;
         if (wornConfirming_ && frame > wornConfirmUntil_) wornConfirming_ = false;
         if (wornCacheOn_ && wornValid_ && !wornConfirming_ && frame > wornReadFrame_
             && frame - wornReadFrame_ < kWornSafetyFrames)
@@ -1265,6 +1285,8 @@ private:
         if (!wornCacheOn_) return mask;
         ++wornCounters_.reads;
         if (wornValid_ && wornConfirming_) {
+            ++wornCounters_.confirms;
+            ++wornWindowConfirms_;
             if (read && mask != equippedMask_) ++wornCounters_.late;
         } else if (wornValid_) {
             ++wornCounters_.safety;
@@ -1440,6 +1462,7 @@ private:
     int64_t wornReadFrame_ = 0;    // the frame of the cache's last read
     bool wornConfirming_ = false;  // an invalidation's confirm window is open
     int64_t wornConfirmUntil_ = 0; // ... through this frame (meaningful only while open)
+    uint64_t wornWindowConfirms_ = 0; // ... and the confirm reads made in it so far
     WornCacheCounters wornCounters_;
     State state_ = State::Off;
     LayerOps ops_;
