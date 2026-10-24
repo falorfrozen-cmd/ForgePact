@@ -2802,12 +2802,14 @@ int main()
         c.safety = 1;
         c.stale = 0;
         c.late = 1;
+        c.confirms = 5;
+        c.unconfirmed = 2;
         const std::string agree = CacheFields(c, CharmBit(Charm::Elf), true, CharmBit(Charm::Elf));
         const std::string differ = CacheFields(WornCacheCounters{}, 0, true, CharmBit(Charm::Wings));
         const std::string unread = CacheFields(WornCacheCounters{}, 0, false, 0);
-        const bool ok = agree == "reads=4 invalidations=ucd:2,player:1,dress:3 safety=1 stale=0 late=1 worn=elf fresh=elf agree=yes"
-            && differ == "reads=0 invalidations=ucd:0,player:0,dress:0 safety=0 stale=0 late=0 worn=none fresh=wings agree=no"
-            && unread == "reads=0 invalidations=ucd:0,player:0,dress:0 safety=0 stale=0 late=0 worn=none fresh=unread agree=no";
+        const bool ok = agree == "reads=4 invalidations=ucd:2,player:1,dress:3 safety=1 stale=0 late=1 confirms=5 unconfirmed=2 worn=elf fresh=elf agree=yes"
+            && differ == "reads=0 invalidations=ucd:0,player:0,dress:0 safety=0 stale=0 late=0 confirms=0 unconfirmed=0 worn=none fresh=wings agree=no"
+            && unread == "reads=0 invalidations=ucd:0,player:0,dress:0 safety=0 stale=0 late=0 confirms=0 unconfirmed=0 worn=none fresh=unread agree=no";
         check("worn_cache/the_cache_line_names_its_fields", ok, agree + " | " + differ + " | " + unread);
     }
 
