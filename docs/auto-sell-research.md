@@ -661,40 +661,104 @@ holds: it is recorded and the reading corrected, with no fix round. The tower
 step's values mean what they mean in Live procedure 1. A failure of any other
 check is a defect in the build, and nothing is recorded as measured from it.
 
+## Live 2 results
+
+Capture `forgepact-196-autosell-filtered-live-2` (the hub's
+`.claude/workorders/forgepact-196-autosell-filtered-live-2.md`), 2026-10-24,
+research build of the branch with Replan 1's credit and type changes, slot 14
+"Sorak" in Fields of Battle (Act 1, Hell, zone level 245). No debugger. The
+session's saves were restored at the end, so nothing it paid or sold
+persisted. Measured unless labelled.
+
+- [dll-hash], [control], [marker]: pass.
+- [quote-types]: pass. The ring (type 7) quoted `price=57`, what Live 1's hand
+  sale paid for it; the Topaz and the Diamond (socketables, type 15) and a
+  material (type 14, `0-0-212962406409-14`) were each refused as a type the
+  game does not sell.
+- [route]: pass (`route=both`). [kept-stays]: pass (a `lootspawn` copy of a
+  set sash the filter shows: `visible=` rose by one, `sold=` did not, its
+  label lay on the ground).
+- [write-sync]: not run. The procedure the session ran had no such step, so
+  the instrument got no controlled single sale before the kill window.
+  [credit-exact] answers what it was for: on each of the 81 credits the
+  balance read right after the call exceeded the one right before by exactly
+  the price, and over the window the balance rose 4,540 against 4,342
+  credited, so the payment lands inside the call and was not paid a second
+  time afterwards. [write-sync-window] did not apply: `credit-unpaid=` never
+  rose.
+- [sold-some]: pass. Over the 117 s kill window `sold=` reached 81 and
+  `gold=` 4,342.
+- [credit-exact]: pass (`exact=81`, `inexact=0`, `credit-unverified=0`).
+- [clean]: pass (every refusal, failure and error counter stayed 0).
+- [gold-rose]: pass (`gold-now=` from 318545 to 323085, +4,540, at least the
+  window's `gold=` rise of 4,342; coins make up the rest).
+- [no-hidden-left]: pass (`lootcensus` `hidden=0` at the end, as at step 3).
+- [no-runner-errors]: pass (the YYError count did not change).
+- [credit-answer] (research): `undefined`, on every `last=` read in steps 5
+  and 6, as the static reading said. A credit that passes the hash check
+  answers `undefined` (measured), so the reading needs no correction.
+- [type-seen] (research): not observed. `type-unsellable=` and
+  `unsellable=` stayed 0, so no drop of the five types fell in the window;
+  the type rule was measured only through `autosell quote` on bag items.
+- [supersedes]: pass. With hidden loot on beside it for about 60 s, hidden
+  loot's `sold=` rose by 30 and autosell's `sold=` by 30 (to 111, every one
+  exact), and hidden loot put nothing to sleep (`slept=` +0, `unsellable=`
+  +0).
+- [off-stays]: pass. After `autosell 0`, `sold=` stayed at 111 over about
+  30 s of kills, and `lootcensus` `hidden=` rose from 0 to 8.
+- [tower-sold-at] (research): not observed. Fields of Battle had no Chaos
+  Tower that run (`oget Chaos_Tower_obj` found no instance, while `oget
+  Player_obj` beside it read the player). After the operator raised
+  `specialrate chaostower` to 1000, a tower in Outskirts of Inoya (Hell, zone
+  level 243) was reached and Floor 1 entered with autosell on (T0: every
+  counter 0). The character died within seconds, which ended the run with no
+  T1 and no T2. Between T0 and the death the counters showed `notes=` +4,
+  `gone=` +4, `sold=` +0 and `repeat-held=` +0, with `lootcensus` `ground=`
+  and `hidden=` both still 0 (`gold-now=` read `unreadable` while the
+  character was dead). Whether those four drops were hidden is not shown, and
+  the window is not T0 to T1, so neither `fall-instance:` nor `burst:` is read
+  from them.
+- [restored]: pass.
+
+Route tokens: `credit-route: paid`. The tower's `fall-instance:` and `burst:`
+are both `not-observed`.
+
+Not run, and recorded not observed live: a hand sale and the buyback (Live 1
+measured [merchant-parity] and found no buyback view), a sellable stack,
+persistent rooms (harness only), a player's own bag drop, co-op, the gold cap
+and the table-only route.
+
 ## Not established
 
 - **The second sale branch's condition**, and what `PickUpGoldCheck`'s third
   argument means (the second branch leaves it out, which the script turns
   into 0). The mod mirrors the first branch.
 - **The rest of `PickUpGoldCheck` after its hash check** (its online calls
-  and the balance write): not read. That the write lands inside the call is
-  an inference from the gamba machine's order of calls (RDM § 13.10), not
-  established, and the mod relies on it, since it decides payment from the
-  balance read right before and right after its call in the same frame. Live
-  2 measures it on one controlled sale before the kill window ([write-sync],
-  `credit-route:`).
+  and how it writes the balance): not read. That the write lands inside the
+  call is measured, not read: in Live 2 the balance read right after each of
+  111 credits exceeded the one right before by exactly the price
+  ([credit-exact], § Live 2 results).
 - **Whether Live 1's refused credits paid the player.** The balance rose
   while they were counted, but coins dropped throughout (§ Live 1 results).
-  Live 2's [credit-exact] and [gold-rose] measure the payment directly.
-- **Whether the by-name credit pays at all, from the local player as `self`.**
-  The hash does not read `self` (static reading, made after Live 1); that
-  the call pays is Live 2's [credit-exact] and `credit-route:` token.
-- **The credit's answer in a live call.** `undefined` by the static reading;
-  Live 2's [credit-answer] records it.
+  Live 2 measured the by-name credit, from the local player as `self`, paying
+  exactly every time it ran, which fits; Live 1's own rise still cannot be
+  split between coins and credits.
 - **Whether the sale closure refuses the same five types** the tooltip prices
   at 0: not read (the closure times out). The tooltip's own rule is static
-  reading, and Live 1 measured it for two types (a socketable and a material);
-  Live 2's [quote-types] checks the mod's rule against bag items, and
-  [type-seen] whether any such drop fell.
+  reading, and Live 1 measured it for two types (a socketable and a material).
+  Live 2's [quote-types] measured the mod refusing a socketable and a material
+  from the bag; [type-seen] was not observed (no drop of the five types fell),
+  so the rule has not met a dropped key, tarot card, material, socketable or
+  relic in play.
 - **The condition under which the tooltip shows "Item cannot be sold"** for a
   price of 0: one of the script's arguments, not identified.
 - **The stack factor.** That the price's second factor is the definition's
   `o` (absent counting as 1) is AFK FARM's reading, not re-read here. Live 1
-  found no sellable stack ([stack-parity] not observed), and Live 2 does not
+  found no sellable stack ([stack-parity] not observed), and Live 2 did not
   look for one.
 - **Which key `GenerateItemPrice` writes.** Key 9 is the natural guess.
 - **The buyback list.** The mod never writes the sell pool, but Live 1 found
-  no buyback view to look at ([no-buyback] not observed), and Live 2 does not
+  no buyback view to look at ([no-buyback] not observed), and Live 2 did not
   look again.
 - **Whether a tracker's hook sees `GoldLogAdd`**, from the mod or from a hand
   vendor sale: not measured.
@@ -703,18 +767,27 @@ check is a defect in the build, and nothing is recorded as measured from it.
   What is not established is whether its ground instance is still alive at
   the end of the frame after the first pass (that the tower branch destroys
   it is an inference), and so whether the mod sells it at the fall or at the
-  burst. Live 1 did not reach a tower; Live 2's step 8 reads which from the
-  counters and the census ([tower-sold-at]). The `repeat-held=` guard keeps a second credit out either way, but
+  burst. Live 1 did not reach a tower, and Live 2's character died on its
+  first floor before the floor's end, so [tower-sold-at] read neither
+  (§ Live 2 results). The `repeat-held=` guard keeps a second credit out
+  either way, but
   if the sale comes at the fall the burst's placed item stays on the floor,
   paid for; whether that is acceptable is the owner's call, not settled here.
   The burst-window `LootGroundInit` logpoint that would show the passes
   directly has never run.
 - **The unidentified call after the credit**, which looks like a sound.
 - **A player's own bag drop, co-op, the gold cap and the table-only route**
-  were not run live.
+  were not run live, in Live 1 or Live 2.
 
 Settled by Live 1 (measured): `GetGoldAmount` called by name from a plugin
 answers the balance the HUD shows ([gold-read]), and the mod's price matches a
 real hand sale of an equipment item ([merchant-parity]). Settled after Live 1
 by static reading: the credit's hash does not depend on the `self` the mod
 passes, and the credit's answer cannot report a payment.
+
+Settled by Live 2 (measured): the by-name credit from the local player as
+`self` pays the player exactly the price, inside the call, every time it ran
+(111 of 111, [credit-exact]); its answer is `undefined` ([credit-answer]);
+the mod refuses to price a socketable or a material ([quote-types]); with
+hidden loot on beside it, selling comes first and nothing sellable is put to
+sleep ([supersedes]); and switched off, it sells nothing ([off-stays]).
