@@ -712,6 +712,42 @@ inline std::string StatLine(const StatFields& f)
     return s;
 }
 
+// ---- the worn-charm cache (#216 b1) ---------------------------------------------
+// What tells the cache the worn charms may have changed, each counted on its
+// own: an UpdateCharmData call (the script that rebuilds the worn-charm array:
+// a static reading, RDM § 23.1; Live 1 measured one call per equip change and
+// none while standing or walking), the local player becoming another instance
+// (a room or character change), and the Custom Forge dressing a charm (the
+// `fp_mechanic` the read tests is written then).
+enum class WornInvalidation { UpdateCharmData, Player, Dress };
+
+struct WornCacheCounters {
+    uint64_t reads = 0;    // the cache's own reads of the worn charms: invalid, or the safety period up
+    uint64_t ucd = 0;      // invalidations by an UpdateCharmData call
+    uint64_t player = 0;   // ... by the local player changing
+    uint64_t dress = 0;    // ... by a charm being dressed
+    uint64_t safety = 0;   // reads made only because the safety period was up
+    uint64_t stale = 0;    // of those, the ones that found a mask other than the remembered one
+};
+
+// `flightcharm stat`'s cache line after its `route=`, which the adapter writes
+// (how the signal went in: not-installed, detour, table-only, not-found).
+// `worn=` is the mask the last refresh answered, `fresh=` a read made for the
+// line alone (`unread` when it failed), and `agree=` whether the two match; a
+// failed fresh read never agrees. Live procedure 2 checks these field names.
+inline std::string CacheFields(const WornCacheCounters& c, unsigned worn, bool freshRead, unsigned fresh)
+{
+    std::string s = "reads=" + std::to_string(c.reads);
+    s += " invalidations=ucd:" + std::to_string(c.ucd) + ",player:" + std::to_string(c.player) + ",dress:"
+        + std::to_string(c.dress);
+    s += " safety=" + std::to_string(c.safety);
+    s += " stale=" + std::to_string(c.stale);
+    s += " worn=" + EquippedText(worn);
+    s += " fresh=" + (freshRead ? EquippedText(fresh) : std::string("unread"));
+    s += " agree=" + std::string(freshRead && fresh == worn ? "yes" : "no");
+    return s;
+}
+
 // ---- flight ----------------------------------------------------------------------
 
 class Flight {
@@ -858,15 +894,15 @@ public:
     // worn charms, and, only when none is worn after flight was on or
     // residual, whether the player still overlaps the family or a monster. `flightcharm
     // stat` refreshes too (RefreshForStat), so what it prints never depends on
-    // a hooked call having run since the last equip.
+    // a hooked call having run since the last equip. With the worn-charm
+    // cache on (SetWornCache, below), the worn charms are read only when the
+    // cache says so; the rest is the same either way.
     void Refresh(int64_t frame)
     {
         if (haveFrame_ && frame == frame_) return;
         haveFrame_ = true;
         frame_ = frame;
-        unsigned mask = 0;
-        if (!ReadEquipped(mask)) mask = 0;
-        mask &= kAllCharmBits;
+        const unsigned mask = WornAt(frame);
         equippedMask_ = mask;
         if (mask != 0) {
             state_ = State::On;
@@ -902,6 +938,37 @@ public:
 
     State CurrentState() const { return state_; }
     unsigned EquippedMask() const { return equippedMask_; }
+
+    // ---- the worn-charm cache (#216 b1) ----------------------------------------
+    // Off by default, and then Refresh reads the worn charms once a frame as
+    // above. The adapter turns it on only when its signal, UpdateCharmData,
+    // went in as an inline detour: a table-only hook would miss the game's own
+    // direct calls and leave a wrong mask standing. On, Refresh re-reads only
+    // after an invalidation (or before any read), and otherwise answers with
+    // the remembered mask; once the safety period has passed since the last
+    // read it reads anyway, since the array's other writers are not
+    // established. A safety read that finds another mask counts as stale and
+    // takes it. Everything after the mask is unchanged, so the residual overlap
+    // read still runs once a frame while residual. A failed read answers none,
+    // as before, and leaves the cache invalid, so the next frame reads again.
+    static constexpr int64_t kWornSafetyFrames = static_cast<int64_t>(kInstallPollFrames);
+    void SetWornCache(bool on)
+    {
+        wornCacheOn_ = on;
+        wornValid_ = false;
+    }
+    bool WornCacheOn() const { return wornCacheOn_; }
+    // Counted whether the cache is on or not; reads nothing.
+    void InvalidateWorn(WornInvalidation why)
+    {
+        wornValid_ = false;
+        switch (why) {
+        case WornInvalidation::UpdateCharmData: ++wornCounters_.ucd; break;
+        case WornInvalidation::Player:          ++wornCounters_.player; break;
+        case WornInvalidation::Dress:           ++wornCounters_.dress; break;
+        }
+    }
+    const WornCacheCounters& WornCache() const { return wornCounters_; }
 
     // ---- the local player, confirmed at the point of use (#216 c3) -----------
     // The adapter's frame counter advances at the end of a frame, but the
@@ -1161,6 +1228,28 @@ private:
         try { return equipped_(mask); } catch (...) { return false; }
     }
 
+    // The frame's worn mask. Cache off: one read, as always. Cache on: the
+    // remembered mask while it is valid and the last read is less than
+    // kWornSafetyFrames behind (a frame counter that went backwards reads);
+    // otherwise one read, a safety read when the cache was still valid.
+    unsigned WornAt(int64_t frame)
+    {
+        if (wornCacheOn_ && wornValid_ && frame > wornReadFrame_ && frame - wornReadFrame_ < kWornSafetyFrames)
+            return equippedMask_;
+        unsigned mask = 0;
+        const bool read = ReadEquipped(mask);
+        mask = read ? (mask & kAllCharmBits) : 0u;
+        if (!wornCacheOn_) return mask;
+        ++wornCounters_.reads;
+        if (wornValid_) {
+            ++wornCounters_.safety;
+            if (read && mask != equippedMask_) ++wornCounters_.stale;
+        }
+        wornValid_ = read;
+        wornReadFrame_ = frame;
+        return mask;
+    }
+
     bool ReadOverlap(bool& inside) const
     {
         if (!overlap_) return false;
@@ -1321,6 +1410,10 @@ private:
     bool havePlayerFrame_ = false;
     int64_t playerFrame_ = 0;
     unsigned equippedMask_ = 0;
+    bool wornCacheOn_ = false;     // SetWornCache: the adapter's signal went in inline
+    bool wornValid_ = false;       // a read since the last invalidation, and it succeeded
+    int64_t wornReadFrame_ = 0;    // the frame of the cache's last read
+    WornCacheCounters wornCounters_;
     State state_ = State::Off;
     LayerOps ops_;
     FlightLayerVisit visit_;

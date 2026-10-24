@@ -174,7 +174,12 @@ class FlightCharmsForgeContract(unittest.TestCase):
 
     def test_dressing_arms_flight_and_installs_nothing_inside_create_item_new(self):
         forge = self.body("forge")
-        self.assertIn('if (entry.mechanic == "flight") g_Flight.Arm();', forge)
+        # Arming, and the worn-charm cache told a charm was dressed (#216 b1),
+        # in the block that writes fp_mechanic.
+        self.assertRegex(forge, r'if \(entry\.mechanic == "flight"\) \{\s*g_Flight\.Arm\(\);\s*'
+                                r'g_Flight\.InvalidateWorn\(FcNs::WornInvalidation::Dress\);\s*\}')
+        self.assertLess(forge.index('RValue("fp_mechanic"), RValue(entry.mechanic)'),
+                        forge.index("g_Flight.InvalidateWorn(FcNs::WornInvalidation::Dress);"))
         for function in ("forge", "entry", "final", "icons_load", "icon_path"):
             text = self.body(function)
             for install in ("HookOneScript", "HookBuiltin", "HiddenLootInstall(", "MmCreateHook"):
@@ -467,6 +472,9 @@ LEVER = {
     "tallest": "static RValue& Hook_FlightInstancePlaceTallest(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)",
     "depth": "static RValue& Hook_FlightUpdateDepth(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)",
     "install": "static std::string FlightInstall()",
+    "ucd": "static RValue& Hook_FlightUpdateCharmData(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)",
+    "cache_line": "static std::string FlightCacheLine()",
+    "confirm": "static bool FlightConfirmPlayer()",
     "install_if_ready": "static void FlightInstallIfReady()",
     "tick": "static void FlightCharmTick()",
     "player": "static void FlightRefreshPlayer()",
@@ -1015,6 +1023,105 @@ class FlightCharmsLeverContract(unittest.TestCase):
         self.assertEqual(len(re.findall(r"\bFlightConfirmPlayer\(\)", self.shipped)), 5,
                          "the declaration, the definition and the three hooks")
         self.assertEqual(len(re.findall(r"\bConfirmsPlayer\(", self.shipped)), 1, "FlightConfirmPlayer alone")
+
+    # ---- the worn-charm cache (#216 b1) --------------------------------------------------------
+
+    UCD_HOOK = re.compile(r"HookOneScript(?P<table>Table)?\(\s*SdkShortScriptName\(\s*HeroSiege::Scripts::"
+                          r"gml_Script_UpdateCharmData\s*\)")
+
+    def test_the_cache_signal_is_update_charm_data_by_name_both_routes_after_flights_own_hooks(self):
+        install = self.body("install")
+        self.assertRegex(install, r"HookOneScript\(SdkShortScriptName\(HeroSiege::Scripts::gml_Script_UpdateCharmData\),"
+                                  r"[^;]*\(PVOID\)Hook_FlightUpdateCharmData, &g_FlightOrigUcd, &native\)")
+        # After every hook flight itself needs, so a charm only carried still
+        # costs nothing per frame, and a missing signal never refuses flight.
+        signal = install.index("gml_Script_UpdateCharmData")
+        for own in ("gml_Script_InstancePlaceTallest", "gml_Script_UpdateDepth", "CollisionBuiltinsInstall()"):
+            with self.subTest(after=own):
+                self.assertLess(install.index(own), signal)
+        tail = install[signal:]
+        self.assertNotRegex(tail, r'return\s+"[^"]')
+        self.assertIn('return "";', tail)
+        # Once in the whole plugin, by both routes; never table-only, never by a
+        # string. Negative control: the pattern does see a table-only install.
+        whole = strip_comments(self.plugin)
+        hooks = list(self.UCD_HOOK.finditer(whole))
+        self.assertEqual(len(hooks), 1)
+        self.assertIsNone(hooks[0].group("table"))
+        self.assertIsNotNone(self.UCD_HOOK.search(
+            "HookOneScriptTable(SdkShortScriptName(HeroSiege::Scripts::gml_Script_UpdateCharmData), \"x\", f, &o);"
+        ).group("table"))
+        self.assertNotIn('"UpdateCharmData"', whole)
+        self.assertNotIn('"gml_Script_UpdateCharmData"', whole)
+        self.assertEqual(whole.count('"fp_flight_ucd"'), 1)
+
+    def test_the_cache_is_on_only_when_its_signal_went_in_inline(self):
+        install = self.body("install")
+        self.assertIn("g_FlightUcdNative = native;", install)
+        self.assertIn('g_FlightUcdRoute = !g_FlightOrigUcd ? "not-found" : (g_FlightUcdNative ? "detour" : "table-only");',
+                      install)
+        self.assertIn("g_Flight.SetWornCache(g_FlightOrigUcd != nullptr && g_FlightUcdNative);", install)
+        self.assertLess(install.index("g_FlightUcdNative = native;"), install.index("g_Flight.SetWornCache("))
+        # The one SetWornCache; nothing turns the cache on unconditionally.
+        # Negative control: the call above is found by the same count.
+        self.assertEqual(len(re.findall(r"\bSetWornCache\(", self.shipped)), 1)
+        self.assertNotRegex(self.shipped, r"SetWornCache\(\s*true\s*\)")
+        self.assertIn('static const char* g_FlightUcdRoute = "not-installed";', self.code)
+        # The core: off by default, and off means a read every frame.
+        core = self.core()
+        self.assertIn("bool wornCacheOn_ = false;", core)
+        worn_at = strip_comments(function_body(self.core(), "unsigned WornAt(int64_t frame)"))
+        self.assertIn("if (!wornCacheOn_) return mask;", worn_at)
+        self.assertLess(worn_at.index("ReadEquipped(mask)"), worn_at.index("if (!wornCacheOn_) return mask;"))
+        self.assertIn("frame - wornReadFrame_ < kWornSafetyFrames", worn_at)
+        self.assertIn("static constexpr int64_t kWornSafetyFrames = static_cast<int64_t>(kInstallPollFrames);", core)
+
+    def test_the_signal_runs_the_original_then_invalidates_and_reads_nothing(self):
+        hook = self.body("ucd")
+        lines = self.lines("ucd")
+        self.assertEqual(lines[0], "RValue& r = g_FlightOrigUcd(S, O, R, argc, A);")
+        self.assertEqual(lines[1], "g_Flight.InvalidateWorn(FcNs::WornInvalidation::UpdateCharmData);")
+        self.assertEqual(lines[2], "return r;")
+        self.assertEqual(len(lines), 3)
+        for read in ("CallBuiltin", "FlightEquipped", "g_FlightPlayer", "if (", "g_FlightBusy"):
+            with self.subTest(read=read):
+                self.assertNotIn(read, hook)
+        self.assertEqual(self.shipped.count("WornInvalidation::UpdateCharmData"), 1)
+
+    def test_the_cache_is_invalidated_at_a_player_change(self):
+        confirm = self.body("confirm")
+        changed = confirm.index("if (g_FlightPlayer != was) {")
+        invalidate = confirm.index("g_Flight.InvalidateWorn(FcNs::WornInvalidation::Player);")
+        self.assertLess(confirm.index("FlightRefreshPlayer();"), changed)
+        self.assertLess(changed, invalidate)
+        self.assertLess(confirm.index("++g_FlightConfirmChanged;"), invalidate)
+        self.assertEqual(self.shipped.count("WornInvalidation::Player"), 1)
+        # Negative control: the later calls of a frame return before it.
+        self.assertLess(confirm.index("else return g_FlightPlayer != nullptr;"), invalidate)
+        self.assertEqual(self.shipped.count("WornInvalidation::Dress"), 1)
+
+    def test_the_stat_prints_the_cache_line_after_the_drops_line(self):
+        command = strip_comments(function_body(self.plugin, "static void FlightCharmCommand(const std::string& rest)"))
+        self.assertIn("Out(FlightCacheLine());", command)
+        self.assertLess(command.index("Out(FlightDropTraceLine());"), command.index("Out(FlightCacheLine());"))
+        line = self.body("cache_line")
+        self.assertIn('"flightcharm cache: route=" + std::string(g_FlightUcdRoute) + " "', line)
+        self.assertIn("FcNs::CacheFields(g_Flight.WornCache(), g_Flight.EquippedMask(), freshRead, fresh & FcNs::kAllCharmBits)",
+                      line)
+        # The fresh read is the line's own: it never refreshes the core.
+        self.assertIn("const bool freshRead = FlightEquipped(fresh);", line)
+        for touch in ("Refresh", "InvalidateWorn", "SetWornCache", "StateAt"):
+            with self.subTest(touch=touch):
+                self.assertNotIn(touch, line)
+        fields = strip_comments(function_body(self.core(), "inline std::string CacheFields("))
+        for field in ('"reads="', '" invalidations=ucd:"', '",player:"', '",dress:"', '" safety="', '" stale="',
+                      '" worn="', '" fresh="', '" agree="'):
+            with self.subTest(field=field):
+                self.assertIn(field, fields)
+        # Both builds.
+        self.assertIn("Out(FlightCacheLine());", strip_research_blocks(command))
+        self.assertIn(LEVER["cache_line"], strip_research_blocks(self.plugin))
+        self.assertIn(LEVER["ucd"], strip_research_blocks(self.plugin))
 
     # ---- the research build, both directions -------------------------------------------------
 

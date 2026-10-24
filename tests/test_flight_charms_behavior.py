@@ -419,6 +419,29 @@ class FlightCharmsCoreBehaviorTests(unittest.TestCase):
                              "player_point/later_calls_of_the_frame_confirm_nothing",
                              "player_point/a_new_frame_confirms_again")
 
+    # ---- the worn-charm cache (#216 b1) ---------------------------------------
+
+    def test_worn_cache_answers_from_the_remembered_mask(self):
+        # With the signal on, the worn charms are read once and remembered.
+        self.assertScenarios("worn_cache/answers_without_a_re_read")
+
+    def test_worn_cache_each_invalidation_reads_the_next_frame(self):
+        self.assertScenarios("worn_cache/an_update_charm_data_call_invalidates",
+                             "worn_cache/a_player_change_invalidates",
+                             "worn_cache/a_dress_invalidates")
+
+    def test_worn_cache_safety_re_read(self):
+        # The array's other writers are not established: one read a second
+        # whatever happens, and a read that finds another mask counts as stale.
+        self.assertScenarios("worn_cache/a_safety_re_read_every_60_frames",
+                             "worn_cache/a_stale_safety_read_is_counted_and_taken")
+
+    def test_worn_cache_baseline_signal_off_reads_once_a_frame(self):
+        self.assertScenarios("worn_cache/signal_off_reads_once_a_frame")
+
+    def test_worn_cache_stat_line(self):
+        self.assertScenarios("worn_cache/the_cache_line_names_its_fields")
+
     def test_command_forms(self):
         self.assertScenarios("command/accepted_forms", "command/refused_forms_name_the_usage")
 

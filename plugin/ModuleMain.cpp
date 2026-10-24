@@ -628,6 +628,7 @@ static bool g_FlightBusy = false;   // game thread only: the flight adapter's ow
 static const char* FlightPlayerCheck();   // the trace line's ` player=`; defined with the flight adapter
 static bool FlightConfirmPlayer();        // the player, once a frame at the point of use; defined with the adapter
 static bool FlightStatPlayerReady();      // whether the stat line may refresh; defined with the adapter
+static std::string FlightCacheLine();     // the stat's worn-charm cache line (#216 b1); defined with the adapter
 // The hooks' own confirms of the player (#216 c3), for `flightcharm stat`'s
 // `flightcharm player:` line. Only the hooks' once-a-frame confirm writes them,
 // never the tick or the stat line, so they say whether the hooks themselves
@@ -5076,7 +5077,12 @@ static bool TryApplyCustomForge(RValue* candidate, bool finalPass = false)
                 if (entry.mechanic == "miner") ForgePact::MinerHelmet::pending = true;
                 // Arming only sets a flag: the frame tick installs flight's
                 // hooks once a character wears a flight charm, never CreateItemNew.
-                if (entry.mechanic == "flight") g_Flight.Arm();
+                // The fp_mechanic just written is what the worn-charm read
+                // tests, so the worn-charm cache reads again (#216 b1).
+                if (entry.mechanic == "flight") {
+                    g_Flight.Arm();
+                    g_Flight.InvalidateWorn(FcNs::WornInvalidation::Dress);
+                }
                 if (entry.mechanic == ForgePact::SoulPieces::kMechanicTag) g_SoulPieceSeen = true;
             }
             if (finalPass) {
@@ -23707,6 +23713,10 @@ static void FlightCharmCommand(const std::string& rest)
     // The drops' own line: the detection, the lists and the stand-ins the
     // gate rests on, so a `gate=` other than on names where the drop stopped.
     Out(FlightDropTraceLine());
+    // The worn-charm cache's own line (#216 b1): its signal's route, its
+    // reads and invalidations, and whether the remembered mask agrees with a
+    // read made for this line alone.
+    Out(FlightCacheLine());
 }
 // ---- end of the flight charms forge adapter ------------------------------------
 
@@ -55421,6 +55431,11 @@ static PFUNC_YYGMLScript g_FlightOrigIpt = nullptr;     // InstancePlaceTallest
 static PFUNC_YYGMLScript g_FlightOrigDepth = nullptr;   // UpdateDepth
 static bool g_FlightIptNative = false;     // each got its inline detour, not only the table swap
 static bool g_FlightDepthNative = false;
+// UpdateCharmData: the worn-charm cache's signal (#216 b1). The cache is on
+// only when this went in as an inline detour; the route is the stat's.
+static PFUNC_YYGMLScript g_FlightOrigUcd = nullptr;
+static bool g_FlightUcdNative = false;
+static const char* g_FlightUcdRoute = "not-installed";   // not-installed, detour, table-only, not-found
 static bool g_FlightConfigured = false;    // the objects resolved and the core's callbacks set
 static CInstance* g_FlightPlayer = nullptr;   // the local player, confirmed at each frame's first hooked call (FlightConfirmPlayer)
 static int g_FlightFamilyIdx = -1;
@@ -55915,6 +55930,31 @@ static RValue& Hook_FlightUpdateDepth(CInstance* S, CInstance* O, RValue& R, int
     return r;
 }
 
+// The worn-charm cache's signal (#216 b1). UpdateCharmData rebuilds the array
+// FlightEquipped reads (RDM § 23.1, a static reading); Live 1 measured one
+// call per equip change and none while standing or walking. The game's own
+// call runs first, then the cache forgets the worn charms, so the next
+// frame's refresh reads them again. Nothing of the game is read here, and any
+// self invalidates: an extra invalidation costs one read.
+static RValue& Hook_FlightUpdateCharmData(CInstance* S, CInstance* O, RValue& R, int argc, RValue** A)
+{
+    RValue& r = g_FlightOrigUcd(S, O, R, argc, A);
+    g_Flight.InvalidateWorn(FcNs::WornInvalidation::UpdateCharmData);
+    return r;
+}
+
+// `flightcharm cache:`. Counters only, plus the line's own read of the worn
+// charms, which touches neither the cache nor its counters: `worn=` is what
+// the last refresh answered (the stat line refreshes first), `fresh=` what
+// the charm array holds now. Both builds.
+static std::string FlightCacheLine()
+{
+    unsigned fresh = 0;
+    const bool freshRead = FlightEquipped(fresh);
+    return "flightcharm cache: route=" + std::string(g_FlightUcdRoute) + " "
+        + FcNs::CacheFields(g_Flight.WornCache(), g_Flight.EquippedMask(), freshRead, fresh & FcNs::kAllCharmBits);
+}
+
 #ifndef FORGEPACT_RELEASE
 static std::string FlightHeldScripts()
 {
@@ -55997,6 +56037,18 @@ static std::string FlightInstall()
     if (!g_FlightDepthNative) return "UpdateDepth is hooked table-only, so the game's own calls would pass flight by; flight stays off";
     const std::string failed = CollisionBuiltinsInstall();
     if (!failed.empty()) return failed + " not hooked; flight stays off";
+    // The worn-charm cache's signal, after flight's own hooks, so a charm only
+    // carried still costs nothing per frame. It never refuses flight: not
+    // found or table-only (blind to the game's direct calls), the cache stays
+    // off and the worn charms are read once a frame, as before.
+    if (!g_FlightOrigUcd) {
+        bool native = false;
+        HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_UpdateCharmData), "fp_flight_ucd",
+                      (PVOID)Hook_FlightUpdateCharmData, &g_FlightOrigUcd, &native);
+        g_FlightUcdNative = native;
+    }
+    g_FlightUcdRoute = !g_FlightOrigUcd ? "not-found" : (g_FlightUcdNative ? "detour" : "table-only");
+    g_Flight.SetWornCache(g_FlightOrigUcd != nullptr && g_FlightUcdNative);
     return "";
 }
 
@@ -56043,7 +56095,12 @@ static bool FlightConfirmPlayer()
     else return g_FlightPlayer != nullptr;   // a later call of the frame
     ++g_FlightConfirms;
     g_FlightConfirmFrame = g_RuntimeFrame;
-    if (g_FlightPlayer != was) ++g_FlightConfirmChanged;
+    if (g_FlightPlayer != was) {
+        ++g_FlightConfirmChanged;
+        // Another instance (a room or character change): the worn-charm
+        // cache reads again before this frame's state.
+        g_Flight.InvalidateWorn(FcNs::WornInvalidation::Player);
+    }
     return g_FlightPlayer != nullptr;
 }
 
