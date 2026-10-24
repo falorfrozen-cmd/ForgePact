@@ -637,6 +637,10 @@ static void FlightDropNoteBuilt(FcNs::Charm charm);
 // counted here: the model has no ground.
 static int groundIconInstalls = 0;
 static void FlightGroundIconInstall() { ++groundIconInstalls; }
+// The detour's route (#216 c5) as the trace line names it, and its once-a-session note: the model
+// installs no real detour, so the route stays the one that allows the icon and the note is silent.
+static std::string FlightGroundRoute() { return "both"; }
+static void FlightGroundRouteNote() {}
 
 // The Mark 1 set's state the drop adapter (#166) reads: the set's core (whose art flag the drops'
 // switch-on arms), whether the pieces' one ground install was tried, setup, and whether the
