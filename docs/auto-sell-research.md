@@ -111,10 +111,14 @@ gold was paid. The hash `GetCounterHash` makes and the check inside
 `self`, so which instance a caller passes as `self` does not decide the hash.
 A missing third argument becomes 0. What the rest of the body does after the
 hash check (its online calls, the balance write) was **not read**. The game's
-own gamba machine reads `GetGoldAmount` right after its own `PickUpGoldCheck`
-debit (RDM § 20.4, measured), which is why the mod can read the balance on
-either side of its own call in the same frame and take the difference as the
-payment.
+own gamba machine calls `GetGoldAmount` after its own `PickUpGoldCheck` debit
+(RDM § 20.4, measured as an order of calls). Whether a balance read in the
+same frame, right after the call, already includes the credit is **not
+established**: the write could happen inside the call or be deferred behind
+its online calls. The mod reads the balance on either side of its own call
+and takes the difference as the payment, so it relies on the write being
+synchronous; Live procedure 2 measures that in the same session (step 5,
+[write-sync]).
 
 **The types the game will not buy** (static reading, 2026-10-24, same build).
 The tooltip line "Item cannot be sold" comes from the translation key
@@ -505,10 +509,15 @@ bag and the gold are as Live 1 found them.
 - **Character**: slot 14 "Sorak", with the owner's own loot filter, never
   changed.
 - **Debugger**: none. Every question this session asks is a value, not which
-  code runs. Whether the mod's own credit paid is the balance read in-process
-  immediately before and after that call: the plugin calls the scripts one
-  after the other from its frame callback, so nothing of the game runs between
-  the two reads but the credit itself. What the call answered is the content of
+  code runs. The mod decides whether its own credit paid from the balance read
+  in-process immediately before and after that call: the plugin calls the
+  scripts one after the other from its frame callback, so nothing of the game
+  runs between the two reads but the credit itself. That shows the calls run in
+  order, not that the balance write happens inside the credit: the write was
+  not read and could be deferred, and then the after-read would miss a payment
+  that does arrive. Step 5's [write-sync] proves this instrument in the same
+  session before an unpaid result is allowed to mean anything. What the call
+  answered is the content of
   its result, which a hardware logpoint at the function's entry cannot see, and
   an item's type is a field the mod reads. A `PickUpGoldCheck` logpoint would
   also fire for every coin picked up in the kill windows. The tower step keeps
@@ -570,7 +579,18 @@ Steps:
      colon, is `undefined`; recorded whatever it is;
    - [type-seen] (research): `pass` when `type-unsellable=` rose and
      `hidden=` kept those items; `not-observed` when no drop of the five
-     types fell.
+     types fell;
+   - [write-sync] (research, the instrument's own check): the first time an
+     `autosell stat` shows `credit-unpaid=` risen, stop killing at once, step
+     away from any coins on the ground, stand still for about 5 s and read
+     `autosell stat` again. Record `credit-unpaid=`'s rise, `last=`'s price
+     and after-balance, and the new `gold-now=`. `deferred` when `gold-now=`
+     exceeds `last=`'s after-balance by `last=`'s price (or by more, when
+     `credit-unpaid=` rose by more than one, which is recorded with it): the
+     credit paid, after the mod's same-frame read. `same-frame` when
+     `gold-now=` still equals `last=`'s after-balance: the balance did not
+     rise in the seconds after either. `not-observed` when `credit-unpaid=`
+     stayed 0. Any other gap is recorded as it is and settles nothing.
 6. `hiddenloot 1`, kill about 60 s, then `hiddenloot stat` and `autosell
    stat`: hidden loot's `sold=` rose by as much as autosell's `sold=` over the
    window, and hidden loot's `slept=` rose by no more than autosell's
@@ -585,9 +605,18 @@ Steps:
    [restored].
 
 **What the outcomes mean.** `credit-route: paid` when [sold-some] and
-[credit-exact] pass. `credit-route: unpaid` when `sold=0` and
-`credit-unpaid=` rose: the by-name credit answers but pays nothing, so the
-payment route itself is wrong and the mod needs a replan. `credit-route:
+[credit-exact] pass. When `sold=0` and `credit-unpaid=` rose, the balance
+did not rise across the call, and [write-sync] decides what that means.
+`credit-route: deferred` when [write-sync] is `deferred`: the by-name credit
+pays, but after the mod's same-frame read, so the player is paid while the
+mod counts the drop `credit-unpaid=` and leaves it on the ground; the payment
+route holds and the mod's payment check needs a replan. `credit-route:
+unpaid` only when [write-sync] is `same-frame`: the balance did not rise
+across the call nor in the seconds after it, so the by-name credit pays
+nothing, the payment route itself is wrong and the mod needs a replan. With
+[write-sync] neither of those, `credit-unpaid=` settles nothing about the
+game, no `credit-route:` token is recorded, and the session's other results
+stand. `credit-route:
 refused-false` when `credit-false=` rose: the hash check refused the mod's
 call, so the self-free reading of the hash is wrong, also a replan.
 `credit-route: call-failed` when only `credit-call-failed=` rose: a dispatch
@@ -605,8 +634,10 @@ check is a defect in the build, and nothing is recorded as measured from it.
   argument means (the second branch leaves it out, which the script turns
   into 0). The mod mirrors the first branch.
 - **The rest of `PickUpGoldCheck` after its hash check** (its online calls
-  and the balance write): not read. The mod does not rely on it, since it
-  decides payment from the balance.
+  and the balance write): not read. The mod relies on the balance write being
+  synchronous, since it decides payment from the balance read right before
+  and right after its call in the same frame; Live 2 measures that
+  ([write-sync], `credit-route:`).
 - **Whether Live 1's refused credits paid the player.** The balance rose
   while they were counted, but coins dropped throughout (§ Live 1 results).
   Live 2's [credit-exact] and [gold-rose] measure the payment directly.
