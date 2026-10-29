@@ -103,9 +103,9 @@ class AutoProspectContractTests(unittest.TestCase):
         install = self.body("static void AutoProspectInstall(")
         self.assertIn(
             "HookOneScript(SdkShortScriptName(HeroSiege::Scripts::"
-            "gml_Script_anon_15345_gml_Object_UI_Inventory_Grid_obj_Create_0)", collapse(install))
+            "gml_Script_anon_14878_gml_Object_UI_Inventory_Grid_obj_Create_0)", collapse(install))
         self.assertNotIn("HookOneScriptTable", install)
-        self.assertNotIn("anon@15345", install)   # no raw literal: the SDK constant fails the build if it moves
+        self.assertNotIn("anon@14878", install)   # no raw literal: the SDK constant fails the build if it moves
         # The installer reports whether its own inline detour went in.
         hook_one = self.body("static bool HookOneScript(")
         self.assertIn("if (nativeOut) *nativeOut = false;", hook_one)

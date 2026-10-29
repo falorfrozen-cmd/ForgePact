@@ -124,7 +124,7 @@ LIVE3_CHECKS = ("spawn-scp", "spawn-stamp", "stamp-readback", "natural-machine",
 # The rows the plan's instrument names (context "### The instrument"); the
 # table may carry more, never fewer. The closure is named by its SDK index
 # stem here only - the plugin spells it through the constant.
-PLAN_SCRIPT_ROWS = ("anon@1474", "GPV", "SPV", "InitPV", "FPV", "GetGoldAmount", "GoldOperationPending",
+PLAN_SCRIPT_ROWS = ("anon@1401", "GPV", "SPV", "InitPV", "FPV", "GetGoldAmount", "GoldOperationPending",
                     "GetGoldCounterHash", "PickUpGoldCheck", "LootBlocksUseKey", "CheckUseKey", "InputPressed",
                     "NetworkSendClientEffect", "PlaySound3D", "LootGroundCreate", "LootGroundCreateFromItem",
                     "CreateLootInFreePos", "CreateItemNew", "DropItem", "DropUniqueItems", "GetUniqueRepoStruct",

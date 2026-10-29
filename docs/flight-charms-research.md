@@ -105,7 +105,7 @@ movement mechanism.
 | `gml_Script_NetworkSendClientCharmData` | 492 | the co-op send of it (**name only**) |
 | `gml_Script_RunItemEquipped` | 3483 | a caller of `UpdateCharmData` |
 | `gml_Script_GetItemSize` | 1976 | an item's footprint in grid cells |
-| `GetItemInfo@anon@5277@s_ItemInstanceStruct@InventoryV2Funcs` | 2035 | the item method `GetItemSize` reads through |
+| `GetItemInfo@anon@5117@s_ItemInstanceStruct@InventoryV2Funcs` | 2035 | the item method `GetItemSize` reads through |
 | `gml_Script_GetItemStats` | 1682 | stat aggregation; reads the equipped charms |
 | `gml_Script_LoadSpecificStat` | 2296 | stat aggregation; reads the equipped charms |
 | `gml_Script_DefineItemNormalCharms` | 832 | the normal charm definitions (**name only**) |

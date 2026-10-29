@@ -825,8 +825,8 @@ class ReleaseHookContractTests(unittest.TestCase):
         self.assertLess(special.index("if (n > 1)"), special.index("InstallMechGateHooks();"))
 
         install = function_body(self.plugin, "static void InstallMechGateHooks()")
-        self.assertIn("HeroSiege::Scripts::gml_Script_anon_126_gml_Object_Spawn_Shadow_Realm_obj_Create_0", install)
-        self.assertIn("HeroSiege::Scripts::gml_Script_anon_102_gml_Object_Spawn_Chaos_Tower_obj_Create_0", install)
+        self.assertIn("HeroSiege::Scripts::gml_Script_anon_119_gml_Object_Spawn_Shadow_Realm_obj_Create_0", install)
+        self.assertIn("HeroSiege::Scripts::gml_Script_anon_97_gml_Object_Spawn_Chaos_Tower_obj_Create_0", install)
 
         sr = function_body(self.plugin, "static RValue& Hook_ShadowRealmGate(")
         orig = "g_Orig_ShadowRealmGate(S, O, R, argc, A)"
@@ -893,10 +893,10 @@ class ClosureNameContractTests(unittest.TestCase):
         self.assertGreaterEqual(len(entries), 6, entries)
         resolved = {full for _, full in entries if full}
         for expected in (
-            "gml_Script_GenerateItemHash@anon@4791@s_ItemInstanceStruct@InventoryV2Funcs",
-            "gml_Script_anon@126@gml_Object_Spawn_Shadow_Realm_obj_Create_0",
-            "gml_Script_anon@102@gml_Object_Spawn_Chaos_Tower_obj_Create_0",
-            "gml_Script_anon@126@gml_Object_Spawn_Abyss_obj_Create_0",
+            "gml_Script_GenerateItemHash@anon@4645@s_ItemInstanceStruct@InventoryV2Funcs",
+            "gml_Script_anon@119@gml_Object_Spawn_Shadow_Realm_obj_Create_0",
+            "gml_Script_anon@97@gml_Object_Spawn_Chaos_Tower_obj_Create_0",
+            "gml_Script_anon@119@gml_Object_Spawn_Abyss_obj_Create_0",
         ):
             self.assertIn(expected, resolved)
 
@@ -952,10 +952,12 @@ class ClosureNameContractTests(unittest.TestCase):
 
     def test_closure_check_rejects_a_stale_name(self):
         synthetic = "\n".join([
-            'const char* stale = "gml_Script_GenerateItemHash@anon@4645@s_ItemInstanceStruct@InventoryV2Funcs";',
-            'const char* wrong_offset = "anon@119@gml_Object_Spawn_Shadow_Realm_obj_Create_0";',
+            # A number that names no closure in either game build the hub's
+            # closure_renames map pairs, so the control stays stale after a port.
+            'const char* stale = "gml_Script_GenerateItemHash@anon@4700@s_ItemInstanceStruct@InventoryV2Funcs";',
+            'const char* wrong_offset = "anon@121@gml_Object_Spawn_Shadow_Realm_obj_Create_0";',
             "auto bogus_sdk = HeroSiege::Scripts::gml_Script_anon_1_gml_Object_Bogus_obj_Create_0;",
-            'const char* correct = "anon@126@gml_Object_Spawn_Shadow_Realm_obj_Create_0";',
+            'const char* correct = "anon@119@gml_Object_Spawn_Shadow_Realm_obj_Create_0";',
             "#ifndef FORGEPACT_RELEASE",
             'const char* research_bogus = "anon@2@gml_Object_Totally_Bogus_obj_Create_0";',
             "#endif",
@@ -964,11 +966,11 @@ class ClosureNameContractTests(unittest.TestCase):
             # SHAPE, not name validity (that part is already covered above).
             "using namespace HeroSiege::Scripts;",
             "namespace HSS = HeroSiege::Scripts;",
-            'HookOneScript(HeroSiege::Scripts::gml_Script_anon_126_gml_Object_Spawn_Shadow_Realm_obj_Create_0.data(), "id", nullptr, nullptr);',
-            "g_Yytk->CallGameScriptEx(res, SdkShortScriptName(HeroSiege::Scripts::gml_Script_anon_126_gml_Object_Spawn_Shadow_Realm_obj_Create_0), self, self, {});",
-            "g_Yytk->GetNamedRoutinePointer(SdkShortScriptName(HeroSiege::Scripts::gml_Script_anon_102_gml_Object_Spawn_Chaos_Tower_obj_Create_0), &p);",
+            'HookOneScript(HeroSiege::Scripts::gml_Script_anon_119_gml_Object_Spawn_Shadow_Realm_obj_Create_0.data(), "id", nullptr, nullptr);',
+            "g_Yytk->CallGameScriptEx(res, SdkShortScriptName(HeroSiege::Scripts::gml_Script_anon_119_gml_Object_Spawn_Shadow_Realm_obj_Create_0), self, self, {});",
+            "g_Yytk->GetNamedRoutinePointer(SdkShortScriptName(HeroSiege::Scripts::gml_Script_anon_97_gml_Object_Spawn_Chaos_Tower_obj_Create_0), &p);",
             # Correct usage of the same helper must NOT be flagged by any new rule.
-            'HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_anon_126_gml_Object_Spawn_Abyss_obj_Create_0), "id2", nullptr, nullptr);',
+            'HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_anon_119_gml_Object_Spawn_Abyss_obj_Create_0), "id2", nullptr, nullptr);',
         ])
         player_source = player_build_text(synthetic)
         entries = closure_names(player_source, self.sdk_constants)
@@ -981,7 +983,7 @@ class ClosureNameContractTests(unittest.TestCase):
         # misuse cases below reference - those calls are still shaped wrong,
         # but the identifiers themselves are real, so closure_names() alone
         # must not flag them; that is scanner_misuse_violations()'s job below.
-        self.assertIn("anon@126@gml_Object_Spawn_Shadow_Realm_obj_Create_0", matched)
+        self.assertIn("anon@119@gml_Object_Spawn_Shadow_Realm_obj_Create_0", matched)
 
         violations = scanner_misuse_violations(player_source)
         self.assertEqual(5, len(violations), violations)
@@ -1028,7 +1030,7 @@ class ClosureNameContractTests(unittest.TestCase):
         # HookOneScript needs instead, so handing its result to either of
         # these silently looks up the wrong name.
         v = scanner_misuse_violations
-        name = "HeroSiege::Scripts::gml_Script_anon_126_gml_Object_Spawn_Abyss_obj_Create_0"
+        name = "HeroSiege::Scripts::gml_Script_anon_119_gml_Object_Spawn_Abyss_obj_Create_0"
         call_game_script_short = f"g_Yytk->CallGameScript(SdkShortScriptName({name}), {{}});"
         hook_raw_short = f'HookRawNamedRoutine(SdkShortScriptName({name}), "id", nullptr, nullptr);'
         self.assertEqual(1, len(v(call_game_script_short)), v(call_game_script_short))
@@ -1085,7 +1087,7 @@ class ClosureNameContractTests(unittest.TestCase):
         # Before Trusting a Negative Result"). Written in both research
         # spellings this file uses, so `strip_research_blocks`'s handling of
         # both is exercised too.
-        name = "HeroSiege::Scripts::gml_Script_anon_126_gml_Object_Spawn_Shadow_Realm_obj_Create_0"
+        name = "HeroSiege::Scripts::gml_Script_anon_119_gml_Object_Spawn_Shadow_Realm_obj_Create_0"
         synthetic = "\n".join([
             "#ifndef FORGEPACT_RELEASE",
             f'HookOneScriptTable({name}.data(), "id1", nullptr, nullptr);',

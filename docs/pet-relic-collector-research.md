@@ -31,8 +31,8 @@ the reading this one extends.
 Read on 2026-10-02 from the scripts `PickupLoot`, `PickupRelic`,
 `RelicSetLevel`, `LootGroundRelicStep`, `PickupLootFunc` and
 `LootGroundCreateFuncs` (and the ground-item constructor it registers), the
-anonymous function `anon@11081@gml_Object_Loot_Ground_obj_Create_0`, the
-`Loot_Manager_obj` pickup closure `anon@11556@gml_Object_Loot_Manager_obj_Create_0`,
+anonymous function `anon@10795@gml_Object_Loot_Ground_obj_Create_0`, the
+`Loot_Manager_obj` pickup closure `anon@11280@gml_Object_Loot_Manager_obj_Create_0`,
 and the two unnamed event bodies that call `PickupLoot` directly. Variable names
 were recovered from the binary's own name-slot table (the technique in
 [pet-quest-collector-c-research.md](pet-quest-collector-c-research.md) § 2);
@@ -63,7 +63,7 @@ So, for a ground item:
   the `Loot_Manager_obj` closure read them off the instance, not off
   `itemInstance`).
 
-The function `anon@11081@gml_Object_Loot_Ground_obj_Create_0` (defined in the
+The function `anon@10795@gml_Object_Loot_Ground_obj_Create_0` (defined in the
 ground item's Create event) does this, while the ground item is visible: if
 `itemInstance.itemType` is 16 it sets the instance's **`isRelic`** to true and
 calls `LootGroundRelicStep`; it then advances an image counter by a fraction of

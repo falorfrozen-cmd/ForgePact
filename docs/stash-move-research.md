@@ -49,14 +49,14 @@ windows' own methods.
   `GetPlayerItemOwner`, `GetStashMaxTabs`.
 - **Drag state**: `InvStartDragging`, `InvCopyItemDragData`,
   `InvCopyItemToInvDragData`.
-- **`UI_Inventory_Grid_obj` closures**: `anon@15345` (the grid's
+- **`UI_Inventory_Grid_obj` closures**: `anon@14878` (the grid's
   `m_MoveItemToGrid`, named by `prospect-window-research.md`) and its six
-  `___struct___522..541@anon@15345` helpers, `anon@8881` (`m_DropItem`) and
-  its two `___struct___517/519` helpers, `anon@2143`, `anon@2971`,
-  `anon@34555`, `anon@36159`, `anon@4064`.
-- **`UI_Stash_obj` closures**: `anon@1649`, `anon@2245`, `anon@2483`,
-  `anon@3835`, `anon@4195`, `anon@4348`, `anon@5662`, `anon@6631`,
-  `anon@7091`, `anon@7525`, `anon@8329`, `anon@8574`.
+  `___struct___524..543@anon@14878` helpers, `anon@8601` (`m_DropItem`) and
+  its two `___struct___519/521` helpers, `anon@2066`, `anon@2869`,
+  `anon@33615`, `anon@35172`, `anon@3927`.
+- **`UI_Stash_obj` closures**: `anon@1604`, `anon@2180`, `anon@2408`,
+  `anon@3728`, `anon@4074`, `anon@4220`, `anon@5502`, `anon@6446`,
+  `anon@6891`, `anon@7309`, `anon@8091`, `anon@8325`.
 
 What earlier work already recorded, cited rather than repeated:
 
@@ -85,7 +85,7 @@ What earlier work already recorded, cited rather than repeated:
 
 ## Static reading
 
-Read on 2026-09-28. `ProcessInventoryGridInput` and `anon@15345` both time
+Read on 2026-09-28. `ProcessInventoryGridInput` and `anon@14878` both time
 out in the decompiler, the first also at a 1800-second limit, so both were
 read from their instruction listings: the order of named calls, each call's
 argument count, where an argument comes from, and which branch a call's
@@ -141,7 +141,7 @@ reading** unless it says otherwise.
   source-cell clear in that group either. Where the bag cell empties after a
   grid placement, and where the map owner changes, are **not read** in the
   processor.
-- **`m_MoveItemToGrid` (`anon@15345`) is where the owner changes.** It
+- **`m_MoveItemToGrid` (`anon@14878`) is where the owner changes.** It
   declares four arguments and turns a missing second, third or fourth into 0
   (the drag passes undefined then three zeros, `prospect-window-research.md`
   R12). It does not take the item from its arguments: it reads a struct
@@ -286,7 +286,7 @@ the save**; a body that was not read says so.
   processor clears the bag cell after a grid placement. Live 1b was to log
   all three from the game's own gesture; its scripted click never reached the
   pick-up, so Live 1c logged them from the owner's hand moves instead:
-  its armed row (`InvGrid15345`, the `anon@15345` closure) logged nothing in
+  its armed row (`InvGrid15345`, the `anon@15345` (7.0.13.0; `anon@14878` on 7.0.14.0) closure) logged nothing in
   any hand move, whose logged sequence is instead the processor's
   bag-to-stash group of § Static reading; the third `GridAddItem` argument was 0 on every tab
   kind (**measured**, Live 1c); and no armed row logged a clear after a hand
@@ -926,7 +926,7 @@ stash: the destination grid's own
 `m_MoveItemToGrid`, in the click-in shape the prospect research measured
 (self = the destination grid, other = the source grid, no argument), after
 arming its row (`InvGrid15345` is the row's short name for
-`UI_Inventory_Grid_obj anon@15345`). It takes the item from the drag state, not from an argument
+`UI_Inventory_Grid_obj anon@14878`). It takes the item from the drag state, not from an argument
 (§ Static reading), so a `dispatched` reply with nothing moved is recorded
 as `not-observed (the item comes from the drag state)`, never as a route
 negative:

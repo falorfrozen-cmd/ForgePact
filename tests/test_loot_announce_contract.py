@@ -480,7 +480,7 @@ class LootAnnouncePluginWiringTests(unittest.TestCase):
             self.assertIn(f"SdkShortScriptName(HeroSiege::Scripts::{script})", run, script)
         self.assertIn("InvokeMethodValue(lootInst, lootInst, method, {}, run.ret)", run)
         self.assertIn("kLaClosureShort", self.adapter)
-        self.assertIn("SdkShortScriptName(HeroSiege::Scripts::gml_Script_anon_1138_gml_Object_Loot_Ground_obj_Create_0)",
+        self.assertIn("SdkShortScriptName(HeroSiege::Scripts::gml_Script_anon_1084_gml_Object_Loot_Ground_obj_Create_0)",
                       self.adapter)
         # A refusal is logged naming the field, and counted.
         self.assertIn('"lootann: no line (sink "', sink)
@@ -660,13 +660,13 @@ class LootAnnouncePluginWiringTests(unittest.TestCase):
         table = code[start:code.index("};", start)]
         scripts = re.findall(r"SdkShortScriptName\(HeroSiege::Scripts::(\w+)\)", table)
         self.assertEqual(scripts, [
-            "gml_Script_anon_1138_gml_Object_Loot_Ground_obj_Create_0", "gml_Script_GetRareDropAnnouncement",
+            "gml_Script_anon_1084_gml_Object_Loot_Ground_obj_Create_0", "gml_Script_GetRareDropAnnouncement",
             "gml_Script_NetworkSendChatMessageIngame", "gml_Script_GetItemDropMessage", "gml_Script_ChatAddMessage",
             "gml_Script_ChatAddServerMessage", "gml_Script_ChatAddIngameMessageFiltered", "gml_Script_CA_chatIngame",
             "gml_Script_PacketSend", "gml_Script_ChatSendServerMessage", "gml_Script_ReportClient",
             "gml_Script_LootGroundInit", "gml_Script_LootGroundDrop", "gml_Script_LootGroundCreateFromItem",
-            "gml_Script_anon_6032_gml_Object_Loot_Ground_obj_Create_0",
-            "gml_Script_anon_11081_gml_Object_Loot_Ground_obj_Create_0",
+            "gml_Script_anon_5880_gml_Object_Loot_Ground_obj_Create_0",
+            "gml_Script_anon_10795_gml_Object_Loot_Ground_obj_Create_0",
         ])
         # LootGroundInit counts through the shared detour; LootGroundDrop is an
         # ordinary count-only row of its own, since the mod no longer hooks it.

@@ -62,7 +62,7 @@ The names that matter, from `hs-game-sdk` (`objects.hpp`, `scripts.hpp`):
 | `DialogChaosPillar` | script | 1143 | The activation dialog. Not part of the hover path. |
 | `CA_enemyCreateChaosPillar` | script | 269 | Co-op: a pillar created on a peer. |
 | `NetworkSendEnemyCreateChaosPillar` | script | 2536 | Co-op: the sending half. |
-| `anon@1604`, `anon@2325`, `anon@2616`, `anon@2777` `@gml_Object_Chaos_Pillar_obj_Create_0` | closures | 4744-4747 | The four closures the pillar's Create defines; one of them is the interact closure. None writes the tooltip's `visible`. |
+| `anon@1532`, `anon@2231`, `anon@2512`, `anon@2667` `@gml_Object_Chaos_Pillar_obj_Create_0` | closures | 4769-4772 | The four closures the pillar's Create defines; one of them is the interact closure. None writes the tooltip's `visible`. |
 
 The object events are rows of the compiled-code table, not named scripts:
 `gml_Object_Chaos_Pillar_obj_Create_0`, `_Alarm_0`, `_Step_0`, `_Draw_0`,

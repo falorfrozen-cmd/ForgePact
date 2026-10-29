@@ -4434,11 +4434,13 @@ static bool HashRouteMethod(const RValue& item, std::string& how, RValue* retOut
     return false;
 }
 
-// GenerateItemHash by its current hs-game-sdk name (scripts.hpp) - anon_4791
-// for this build. The plugin's earlier anon-4638/anon-4645 spellings named the
-// pre-patch game build's closure and are stale now that the game has been
-// patched and hs-game-sdk regenerated - see docs/angelic-drop-research.md for
-// the negative this replaces. Unlike the other routes, this one checks that
+// GenerateItemHash by its current hs-game-sdk name (scripts.hpp) - anon_4645
+// on game 7.0.14.0. The number moves between game builds: the plugin's earliest
+// anon-4638 spelling named no closure of its build, the build after the
+// pre-patch one used another number, and 7.0.14.0 is back on 4645 (the hub's
+// hs-game-sdk/curated/closure_renames_7_0_14_0.json) - so the name always comes
+// from the SDK constant. See docs/angelic-drop-research.md for the negative
+// this replaces. Unlike the other routes, this one checks that
 // the stored hash actually changed rather than just that the call succeeded:
 // refuses with "+direct-nohash" and falls through to +routine when it did not.
 static bool HashRouteDirect(const RValue& item, std::string& how, RValue* retOut = nullptr)
@@ -4447,7 +4449,7 @@ static bool HashRouteDirect(const RValue& item, std::string& how, RValue* retOut
         const std::string before = ReadItemHash(item);
         RValue res;
         CInstance* self = (CInstance*)item.m_Object;
-        AurieStatus st = g_Yytk->CallGameScriptEx(res, HeroSiege::Scripts::gml_Script_GenerateItemHash_anon_4791_s_ItemInstanceStruct_InventoryV2Funcs.data(), self, self, {});
+        AurieStatus st = g_Yytk->CallGameScriptEx(res, HeroSiege::Scripts::gml_Script_GenerateItemHash_anon_4645_s_ItemInstanceStruct_InventoryV2Funcs.data(), self, self, {});
         if (!AurieSuccess(st)) { how += "+direct-fail(" + std::to_string((int)st) + ")"; return false; }
         if (retOut) *retOut = res;
         const std::string after = ReadItemHash(item);
@@ -4482,7 +4484,7 @@ static bool RefreshItemHash(const RValue& item, std::string* howOut = nullptr, R
     // below is not a guard against a bad pointer - the check has to happen first.
     try {
         PVOID p = nullptr;
-        if (AurieSuccess(g_Yytk->GetNamedRoutinePointer(HeroSiege::Scripts::gml_Script_GenerateItemHash_anon_4791_s_ItemInstanceStruct_InventoryV2Funcs.data(), &p)) && p) {
+        if (AurieSuccess(g_Yytk->GetNamedRoutinePointer(HeroSiege::Scripts::gml_Script_GenerateItemHash_anon_4645_s_ItemInstanceStruct_InventoryV2Funcs.data(), &p)) && p) {
             CScript* sc = reinterpret_cast<CScript*>(p);
             PFUNC_YYGMLScript fnp = (sc && sc->m_Functions) ? sc->m_Functions->m_ScriptFunction : nullptr;
             if (fnp) {
@@ -12321,28 +12323,28 @@ CITRACE_HOOK(GetQuestHoverDescription)
 // g_OrigCi_*/g_CiCalls_*/Hook_Ci_* names built from them keep the numbers
 // they were first measured under, so renaming every reference was rejected -
 // see release-notes-v1.4.2.md.
-CITRACE_HOOK_NAMED(Anon1400, "anon@1468@gml_Object_Quest_Object_Parent_obj_Create_0")
-CITRACE_HOOK_NAMED(Anon1584, "anon@1661@gml_Object_Quest_Object_Parent_obj_Create_0")
-CITRACE_HOOK_NAMED(Anon2113, "anon@2209@gml_Object_Quest_Object_Parent_obj_Create_0")
-CITRACE_HOOK_NAMED(Anon2786, "anon@2910@gml_Object_Quest_Object_Parent_obj_Create_0")
-CITRACE_HOOK_NAMED(Anon3858, "anon@4014@gml_Object_Quest_Object_Parent_obj_Create_0")
-CITRACE_HOOK_NAMED(Anon4737, "anon@4922@gml_Object_Quest_Object_Parent_obj_Create_0")
-CITRACE_HOOK_NAMED(Anon5164, "anon@5366@gml_Object_Quest_Object_Parent_obj_Create_0")
+CITRACE_HOOK_NAMED(Anon1400, "anon@1400@gml_Object_Quest_Object_Parent_obj_Create_0")
+CITRACE_HOOK_NAMED(Anon1584, "anon@1584@gml_Object_Quest_Object_Parent_obj_Create_0")
+CITRACE_HOOK_NAMED(Anon2113, "anon@2113@gml_Object_Quest_Object_Parent_obj_Create_0")
+CITRACE_HOOK_NAMED(Anon2786, "anon@2786@gml_Object_Quest_Object_Parent_obj_Create_0")
+CITRACE_HOOK_NAMED(Anon3858, "anon@3858@gml_Object_Quest_Object_Parent_obj_Create_0")
+CITRACE_HOOK_NAMED(Anon4737, "anon@4737@gml_Object_Quest_Object_Parent_obj_Create_0")
+CITRACE_HOOK_NAMED(Anon5164, "anon@5164@gml_Object_Quest_Object_Parent_obj_Create_0")
 // MEASURED 2026-09-10, session 4: keyboard_check_pressed(70=F) fires with
 // Self=Profile_Manager_obj, not the quest item or the player - so whatever
 // this object does next with that "F just pressed" result is the real
 // dispatch point. Same technique as the Quest_Object_Parent_obj anons: every
 // script-table entry inside Profile_Manager_obj's own Create event.
-CITRACE_HOOK_NAMED(PmAnon1940, "anon@2012@gml_Object_Profile_Manager_obj_Create_0")
-CITRACE_HOOK_NAMED(PmAnon2426, "anon@2520@gml_Object_Profile_Manager_obj_Create_0")
-CITRACE_HOOK_NAMED(PmAnon3331, "anon@3454@gml_Object_Profile_Manager_obj_Create_0")
-CITRACE_HOOK_NAMED(PmAnon5032, "anon@5201@gml_Object_Profile_Manager_obj_Create_0")
-CITRACE_HOOK_NAMED(PmAnon5174, "anon@5349@gml_Object_Profile_Manager_obj_Create_0")
-CITRACE_HOOK_NAMED(PmAnon5646, "anon@5835@gml_Object_Profile_Manager_obj_Create_0")
-CITRACE_HOOK_NAMED(PmAnon6344, "anon@6549@gml_Object_Profile_Manager_obj_Create_0")
-CITRACE_HOOK_NAMED(PmAnon6662, "anon@6879@gml_Object_Profile_Manager_obj_Create_0")
-CITRACE_HOOK_NAMED(PmAnon7920, "anon@8168@gml_Object_Profile_Manager_obj_Create_0")
-CITRACE_HOOK_NAMED(PmAnon9698, "anon@9994@gml_Object_Profile_Manager_obj_Create_0")
+CITRACE_HOOK_NAMED(PmAnon1940, "anon@1940@gml_Object_Profile_Manager_obj_Create_0")
+CITRACE_HOOK_NAMED(PmAnon2426, "anon@2426@gml_Object_Profile_Manager_obj_Create_0")
+CITRACE_HOOK_NAMED(PmAnon3331, "anon@3331@gml_Object_Profile_Manager_obj_Create_0")
+CITRACE_HOOK_NAMED(PmAnon5032, "anon@5032@gml_Object_Profile_Manager_obj_Create_0")
+CITRACE_HOOK_NAMED(PmAnon5174, "anon@5174@gml_Object_Profile_Manager_obj_Create_0")
+CITRACE_HOOK_NAMED(PmAnon5646, "anon@5646@gml_Object_Profile_Manager_obj_Create_0")
+CITRACE_HOOK_NAMED(PmAnon6344, "anon@6344@gml_Object_Profile_Manager_obj_Create_0")
+CITRACE_HOOK_NAMED(PmAnon6662, "anon@6662@gml_Object_Profile_Manager_obj_Create_0")
+CITRACE_HOOK_NAMED(PmAnon7920, "anon@7920@gml_Object_Profile_Manager_obj_Create_0")
+CITRACE_HOOK_NAMED(PmAnon9698, "anon@9698@gml_Object_Profile_Manager_obj_Create_0")
 // MEASURED 2026-09-10, session 7: HookOneScript (used for every hook above)
 // always prepends "gml_Script_" - correct for script assets and the anon
 // closures above, but an object's own built-in event code is named
@@ -12758,25 +12760,25 @@ static bool InstallCiTraceHooks()
     HookOneScriptTable("KeyboardMouseInput",     "fp_ci_kmi",  (PVOID)Hook_Ci_KeyboardMouseInput,     &g_OrigCi_KeyboardMouseInput);
     HookOneScriptTable("RefreshMouseMove",       "fp_ci_rmm",  (PVOID)Hook_Ci_RefreshMouseMove,       &g_OrigCi_RefreshMouseMove);
     HookOneScriptTable("GetQuestHoverDescription", "fp_ci_gqhd", (PVOID)Hook_Ci_GetQuestHoverDescription, &g_OrigCi_GetQuestHoverDescription);
-    HookOneScriptTable("anon@1468@gml_Object_Quest_Object_Parent_obj_Create_0", "fp_ci_a1400", (PVOID)Hook_Ci_Anon1400, &g_OrigCi_Anon1400);
-    HookOneScriptTable("anon@1661@gml_Object_Quest_Object_Parent_obj_Create_0", "fp_ci_a1584", (PVOID)Hook_Ci_Anon1584, &g_OrigCi_Anon1584);
-    HookOneScriptTable("anon@2209@gml_Object_Quest_Object_Parent_obj_Create_0", "fp_ci_a2113", (PVOID)Hook_Ci_Anon2113, &g_OrigCi_Anon2113);
-    HookOneScriptTable("anon@2910@gml_Object_Quest_Object_Parent_obj_Create_0", "fp_ci_a2786", (PVOID)Hook_Ci_Anon2786, &g_OrigCi_Anon2786);
-    HookOneScriptTable("anon@4014@gml_Object_Quest_Object_Parent_obj_Create_0", "fp_ci_a3858", (PVOID)Hook_Ci_Anon3858, &g_OrigCi_Anon3858);
-    HookOneScriptTable("anon@4922@gml_Object_Quest_Object_Parent_obj_Create_0", "fp_ci_a4737", (PVOID)Hook_Ci_Anon4737, &g_OrigCi_Anon4737);
-    HookOneScriptTable("anon@5366@gml_Object_Quest_Object_Parent_obj_Create_0", "fp_ci_a5164", (PVOID)Hook_Ci_Anon5164, &g_OrigCi_Anon5164);
+    HookOneScriptTable("anon@1400@gml_Object_Quest_Object_Parent_obj_Create_0", "fp_ci_a1400", (PVOID)Hook_Ci_Anon1400, &g_OrigCi_Anon1400);
+    HookOneScriptTable("anon@1584@gml_Object_Quest_Object_Parent_obj_Create_0", "fp_ci_a1584", (PVOID)Hook_Ci_Anon1584, &g_OrigCi_Anon1584);
+    HookOneScriptTable("anon@2113@gml_Object_Quest_Object_Parent_obj_Create_0", "fp_ci_a2113", (PVOID)Hook_Ci_Anon2113, &g_OrigCi_Anon2113);
+    HookOneScriptTable("anon@2786@gml_Object_Quest_Object_Parent_obj_Create_0", "fp_ci_a2786", (PVOID)Hook_Ci_Anon2786, &g_OrigCi_Anon2786);
+    HookOneScriptTable("anon@3858@gml_Object_Quest_Object_Parent_obj_Create_0", "fp_ci_a3858", (PVOID)Hook_Ci_Anon3858, &g_OrigCi_Anon3858);
+    HookOneScriptTable("anon@4737@gml_Object_Quest_Object_Parent_obj_Create_0", "fp_ci_a4737", (PVOID)Hook_Ci_Anon4737, &g_OrigCi_Anon4737);
+    HookOneScriptTable("anon@5164@gml_Object_Quest_Object_Parent_obj_Create_0", "fp_ci_a5164", (PVOID)Hook_Ci_Anon5164, &g_OrigCi_Anon5164);
     HookBuiltin("keyboard_check_pressed",     "fp_ci_kcp",  (PVOID)Hook_Ci_KeyboardCheckPressed,     &g_OrigCi_KeyboardCheckPressed);
     HookBuiltin("mouse_check_button_pressed", "fp_ci_mcbp", (PVOID)Hook_Ci_MouseCheckButtonPressed,  &g_OrigCi_MouseCheckButtonPressed);
-    HookOneScriptTable("anon@2012@gml_Object_Profile_Manager_obj_Create_0", "fp_ci_p1940", (PVOID)Hook_Ci_PmAnon1940, &g_OrigCi_PmAnon1940);
-    HookOneScriptTable("anon@2520@gml_Object_Profile_Manager_obj_Create_0", "fp_ci_p2426", (PVOID)Hook_Ci_PmAnon2426, &g_OrigCi_PmAnon2426);
-    HookOneScriptTable("anon@3454@gml_Object_Profile_Manager_obj_Create_0", "fp_ci_p3331", (PVOID)Hook_Ci_PmAnon3331, &g_OrigCi_PmAnon3331);
-    HookOneScriptTable("anon@5201@gml_Object_Profile_Manager_obj_Create_0", "fp_ci_p5032", (PVOID)Hook_Ci_PmAnon5032, &g_OrigCi_PmAnon5032);
-    HookOneScriptTable("anon@5349@gml_Object_Profile_Manager_obj_Create_0", "fp_ci_p5174", (PVOID)Hook_Ci_PmAnon5174, &g_OrigCi_PmAnon5174);
-    HookOneScriptTable("anon@5835@gml_Object_Profile_Manager_obj_Create_0", "fp_ci_p5646", (PVOID)Hook_Ci_PmAnon5646, &g_OrigCi_PmAnon5646);
-    HookOneScriptTable("anon@6549@gml_Object_Profile_Manager_obj_Create_0", "fp_ci_p6344", (PVOID)Hook_Ci_PmAnon6344, &g_OrigCi_PmAnon6344);
-    HookOneScriptTable("anon@6879@gml_Object_Profile_Manager_obj_Create_0", "fp_ci_p6662", (PVOID)Hook_Ci_PmAnon6662, &g_OrigCi_PmAnon6662);
-    HookOneScriptTable("anon@8168@gml_Object_Profile_Manager_obj_Create_0", "fp_ci_p7920", (PVOID)Hook_Ci_PmAnon7920, &g_OrigCi_PmAnon7920);
-    HookOneScriptTable("anon@9994@gml_Object_Profile_Manager_obj_Create_0", "fp_ci_p9698", (PVOID)Hook_Ci_PmAnon9698, &g_OrigCi_PmAnon9698);
+    HookOneScriptTable("anon@1940@gml_Object_Profile_Manager_obj_Create_0", "fp_ci_p1940", (PVOID)Hook_Ci_PmAnon1940, &g_OrigCi_PmAnon1940);
+    HookOneScriptTable("anon@2426@gml_Object_Profile_Manager_obj_Create_0", "fp_ci_p2426", (PVOID)Hook_Ci_PmAnon2426, &g_OrigCi_PmAnon2426);
+    HookOneScriptTable("anon@3331@gml_Object_Profile_Manager_obj_Create_0", "fp_ci_p3331", (PVOID)Hook_Ci_PmAnon3331, &g_OrigCi_PmAnon3331);
+    HookOneScriptTable("anon@5032@gml_Object_Profile_Manager_obj_Create_0", "fp_ci_p5032", (PVOID)Hook_Ci_PmAnon5032, &g_OrigCi_PmAnon5032);
+    HookOneScriptTable("anon@5174@gml_Object_Profile_Manager_obj_Create_0", "fp_ci_p5174", (PVOID)Hook_Ci_PmAnon5174, &g_OrigCi_PmAnon5174);
+    HookOneScriptTable("anon@5646@gml_Object_Profile_Manager_obj_Create_0", "fp_ci_p5646", (PVOID)Hook_Ci_PmAnon5646, &g_OrigCi_PmAnon5646);
+    HookOneScriptTable("anon@6344@gml_Object_Profile_Manager_obj_Create_0", "fp_ci_p6344", (PVOID)Hook_Ci_PmAnon6344, &g_OrigCi_PmAnon6344);
+    HookOneScriptTable("anon@6662@gml_Object_Profile_Manager_obj_Create_0", "fp_ci_p6662", (PVOID)Hook_Ci_PmAnon6662, &g_OrigCi_PmAnon6662);
+    HookOneScriptTable("anon@7920@gml_Object_Profile_Manager_obj_Create_0", "fp_ci_p7920", (PVOID)Hook_Ci_PmAnon7920, &g_OrigCi_PmAnon7920);
+    HookOneScriptTable("anon@9698@gml_Object_Profile_Manager_obj_Create_0", "fp_ci_p9698", (PVOID)Hook_Ci_PmAnon9698, &g_OrigCi_PmAnon9698);
     // Raw object-event names (no "gml_Script_" prefix) - see the comment
     // above these hooks' CITRACE_HOOK_NAMED declarations for why this is a
     // genuinely new code path, not a repeat of anything tried before.
@@ -17139,13 +17141,13 @@ static constexpr long kCiNatLogBudget = 6;   // per target, so one hot hook cann
 CINATIVE_HOOK(PlayerMouseAction, "PlayerMouseAction")
 CINATIVE_HOOK(CheckPlayerInteraction, "CheckPlayerInteraction")
 CINATIVE_HOOK(UpdateQuest, "update_quest")
-CINATIVE_HOOK(Questpickup, "m_Questpickup(anon@2910)")
-CINATIVE_HOOK(QuestInteract, "m_QuestInteract(anon@4014)")
-CINATIVE_HOOK(QuestActivate, "m_QuestActivate(anon@1661)")
-CINATIVE_HOOK(QuestDestructible, "m_QuestDestructible(anon@2209)")
-CINATIVE_HOOK(QuestActive, "m_QuestActive(anon@4922)")
-CINATIVE_HOOK(QuestUseKey, "m_QuestUseKey(anon@1468)")
-CINATIVE_HOOK(LootGroundDeActiveStep, "m_LootGroundDeActiveStep(anon@5366)")
+CINATIVE_HOOK(Questpickup, "m_Questpickup(anon@2786)")
+CINATIVE_HOOK(QuestInteract, "m_QuestInteract(anon@3858)")
+CINATIVE_HOOK(QuestActivate, "m_QuestActivate(anon@1584)")
+CINATIVE_HOOK(QuestDestructible, "m_QuestDestructible(anon@2113)")
+CINATIVE_HOOK(QuestActive, "m_QuestActive(anon@4737)")
+CINATIVE_HOOK(QuestUseKey, "m_QuestUseKey(anon@1400)")
+CINATIVE_HOOK(LootGroundDeActiveStep, "m_LootGroundDeActiveStep(anon@5164)")
 #undef CINATIVE_HOOK
 
 struct CiNatTarget {
@@ -17173,19 +17175,19 @@ static CiNatTarget g_CiNatTargets[] = {
                 &g_OrigCi_CheckPlayerInteraction, &g_CiCalls_CheckPlayerInteraction),
     CINAT_ENTRY(UpdateQuest, "update_quest", "gml_Script_update_quest",
                 nullptr, nullptr),
-    CINAT_ENTRY(Questpickup, "m_Questpickup", "gml_Script_anon@2910@gml_Object_Quest_Object_Parent_obj_Create_0",
+    CINAT_ENTRY(Questpickup, "m_Questpickup", "gml_Script_anon@2786@gml_Object_Quest_Object_Parent_obj_Create_0",
                 &g_OrigCi_Anon2786, &g_CiCalls_Anon2786),
-    CINAT_ENTRY(QuestInteract, "m_QuestInteract", "gml_Script_anon@4014@gml_Object_Quest_Object_Parent_obj_Create_0",
+    CINAT_ENTRY(QuestInteract, "m_QuestInteract", "gml_Script_anon@3858@gml_Object_Quest_Object_Parent_obj_Create_0",
                 &g_OrigCi_Anon3858, &g_CiCalls_Anon3858),
-    CINAT_ENTRY(QuestActivate, "m_QuestActivate", "gml_Script_anon@1661@gml_Object_Quest_Object_Parent_obj_Create_0",
+    CINAT_ENTRY(QuestActivate, "m_QuestActivate", "gml_Script_anon@1584@gml_Object_Quest_Object_Parent_obj_Create_0",
                 &g_OrigCi_Anon1584, &g_CiCalls_Anon1584),
-    CINAT_ENTRY(QuestDestructible, "m_QuestDestructible", "gml_Script_anon@2209@gml_Object_Quest_Object_Parent_obj_Create_0",
+    CINAT_ENTRY(QuestDestructible, "m_QuestDestructible", "gml_Script_anon@2113@gml_Object_Quest_Object_Parent_obj_Create_0",
                 &g_OrigCi_Anon2113, &g_CiCalls_Anon2113),
-    CINAT_ENTRY(QuestActive, "m_QuestActive", "gml_Script_anon@4922@gml_Object_Quest_Object_Parent_obj_Create_0",
+    CINAT_ENTRY(QuestActive, "m_QuestActive", "gml_Script_anon@4737@gml_Object_Quest_Object_Parent_obj_Create_0",
                 &g_OrigCi_Anon4737, &g_CiCalls_Anon4737),
-    CINAT_ENTRY(QuestUseKey, "m_QuestUseKey", "gml_Script_anon@1468@gml_Object_Quest_Object_Parent_obj_Create_0",
+    CINAT_ENTRY(QuestUseKey, "m_QuestUseKey", "gml_Script_anon@1400@gml_Object_Quest_Object_Parent_obj_Create_0",
                 &g_OrigCi_Anon1400, &g_CiCalls_Anon1400),
-    CINAT_ENTRY(LootGroundDeActiveStep, "m_LootGroundDeActiveStep", "gml_Script_anon@5366@gml_Object_Quest_Object_Parent_obj_Create_0",
+    CINAT_ENTRY(LootGroundDeActiveStep, "m_LootGroundDeActiveStep", "gml_Script_anon@5164@gml_Object_Quest_Object_Parent_obj_Create_0",
                 &g_OrigCi_Anon5164, &g_CiCalls_Anon5164),
 };
 #undef CINAT_ENTRY
@@ -18002,60 +18004,60 @@ static void PpAfter(const char* label, long n, bool logged, const std::string& g
     /* objects enforces. The numbers move with every game patch, so a stale   */ \
     /* row fails the compile, never a live session.                           */ \
     /* UI_Prospect_obj (the window) */ \
-    X(Prospect1065, "UI_Prospect_obj anon@1065", gml_Script_anon_1065_gml_Object_UI_Prospect_obj_Create_0) \
-    X(Prospect2806, "UI_Prospect_obj anon@2806", gml_Script_anon_2806_gml_Object_UI_Prospect_obj_Create_0) \
-    X(Prospect3657, "UI_Prospect_obj anon@3657", gml_Script_anon_3657_gml_Object_UI_Prospect_obj_Create_0) \
+    X(Prospect1065, "UI_Prospect_obj anon@1038", gml_Script_anon_1038_gml_Object_UI_Prospect_obj_Create_0) \
+    X(Prospect2806, "UI_Prospect_obj anon@2729", gml_Script_anon_2729_gml_Object_UI_Prospect_obj_Create_0) \
+    X(Prospect3657, "UI_Prospect_obj anon@3551", gml_Script_anon_3551_gml_Object_UI_Prospect_obj_Create_0) \
     /* UI_Inventory_Grid_obj (the ProspectGrid node's object) */ \
-    X(InvGrid2143, "UI_Inventory_Grid_obj anon@2143", gml_Script_anon_2143_gml_Object_UI_Inventory_Grid_obj_Create_0) \
-    X(InvGrid2971, "UI_Inventory_Grid_obj anon@2971", gml_Script_anon_2971_gml_Object_UI_Inventory_Grid_obj_Create_0) \
-    X(InvGrid4064, "UI_Inventory_Grid_obj anon@4064", gml_Script_anon_4064_gml_Object_UI_Inventory_Grid_obj_Create_0) \
-    X(InvGridS517, "UI_Inventory_Grid_obj ___struct___517@anon@8881", gml_Script____struct___517_anon_8881_gml_Object_UI_Inventory_Grid_obj_Create_0) \
-    X(InvGridS519, "UI_Inventory_Grid_obj ___struct___519@anon@8881", gml_Script____struct___519_anon_8881_gml_Object_UI_Inventory_Grid_obj_Create_0) \
-    X(InvGrid8881, "UI_Inventory_Grid_obj anon@8881", gml_Script_anon_8881_gml_Object_UI_Inventory_Grid_obj_Create_0) \
-    X(InvGridS522, "UI_Inventory_Grid_obj ___struct___522@anon@15345", gml_Script____struct___522_anon_15345_gml_Object_UI_Inventory_Grid_obj_Create_0) \
-    X(InvGridS529, "UI_Inventory_Grid_obj ___struct___529@anon@15345", gml_Script____struct___529_anon_15345_gml_Object_UI_Inventory_Grid_obj_Create_0) \
-    X(InvGridS532, "UI_Inventory_Grid_obj ___struct___532@anon@15345", gml_Script____struct___532_anon_15345_gml_Object_UI_Inventory_Grid_obj_Create_0) \
-    X(InvGridS536, "UI_Inventory_Grid_obj ___struct___536@anon@15345", gml_Script____struct___536_anon_15345_gml_Object_UI_Inventory_Grid_obj_Create_0) \
-    X(InvGridS538, "UI_Inventory_Grid_obj ___struct___538@anon@15345", gml_Script____struct___538_anon_15345_gml_Object_UI_Inventory_Grid_obj_Create_0) \
-    X(InvGridS541, "UI_Inventory_Grid_obj ___struct___541@anon@15345", gml_Script____struct___541_anon_15345_gml_Object_UI_Inventory_Grid_obj_Create_0) \
-    X(InvGrid15345, "UI_Inventory_Grid_obj anon@15345", gml_Script_anon_15345_gml_Object_UI_Inventory_Grid_obj_Create_0) \
-    X(InvGrid34555, "UI_Inventory_Grid_obj anon@34555", gml_Script_anon_34555_gml_Object_UI_Inventory_Grid_obj_Create_0) \
-    X(InvGrid36159, "UI_Inventory_Grid_obj anon@36159", gml_Script_anon_36159_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGrid2143, "UI_Inventory_Grid_obj anon@2066", gml_Script_anon_2066_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGrid2971, "UI_Inventory_Grid_obj anon@2869", gml_Script_anon_2869_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGrid4064, "UI_Inventory_Grid_obj anon@3927", gml_Script_anon_3927_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGridS517, "UI_Inventory_Grid_obj ___struct___519@anon@8601", gml_Script____struct___519_anon_8601_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGridS519, "UI_Inventory_Grid_obj ___struct___521@anon@8601", gml_Script____struct___521_anon_8601_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGrid8881, "UI_Inventory_Grid_obj anon@8601", gml_Script_anon_8601_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGridS522, "UI_Inventory_Grid_obj ___struct___524@anon@14878", gml_Script____struct___524_anon_14878_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGridS529, "UI_Inventory_Grid_obj ___struct___531@anon@14878", gml_Script____struct___531_anon_14878_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGridS532, "UI_Inventory_Grid_obj ___struct___534@anon@14878", gml_Script____struct___534_anon_14878_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGridS536, "UI_Inventory_Grid_obj ___struct___538@anon@14878", gml_Script____struct___538_anon_14878_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGridS538, "UI_Inventory_Grid_obj ___struct___540@anon@14878", gml_Script____struct___540_anon_14878_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGridS541, "UI_Inventory_Grid_obj ___struct___543@anon@14878", gml_Script____struct___543_anon_14878_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGrid15345, "UI_Inventory_Grid_obj anon@14878", gml_Script_anon_14878_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGrid34555, "UI_Inventory_Grid_obj anon@33615", gml_Script_anon_33615_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGrid36159, "UI_Inventory_Grid_obj anon@35172", gml_Script_anon_35172_gml_Object_UI_Inventory_Grid_obj_Create_0) \
     /* UI_Inventory_Parent_obj (the window's parent) */ \
-    X(InvParent1621, "UI_Inventory_Parent_obj anon@1621", gml_Script_anon_1621_gml_Object_UI_Inventory_Parent_obj_Create_0) \
-    X(InvParent4028, "UI_Inventory_Parent_obj anon@4028", gml_Script_anon_4028_gml_Object_UI_Inventory_Parent_obj_Create_0) \
-    X(InvParent6164, "UI_Inventory_Parent_obj anon@6164", gml_Script_anon_6164_gml_Object_UI_Inventory_Parent_obj_Create_0) \
-    X(InvParent6272, "UI_Inventory_Parent_obj anon@6272", gml_Script_anon_6272_gml_Object_UI_Inventory_Parent_obj_Create_0) \
-    X(InvParent6754, "UI_Inventory_Parent_obj anon@6754", gml_Script_anon_6754_gml_Object_UI_Inventory_Parent_obj_Create_0) \
-    X(InvParent7597, "UI_Inventory_Parent_obj anon@7597", gml_Script_anon_7597_gml_Object_UI_Inventory_Parent_obj_Create_0) \
-    X(InvParent8615, "UI_Inventory_Parent_obj anon@8615", gml_Script_anon_8615_gml_Object_UI_Inventory_Parent_obj_Create_0) \
-    X(InvParent11250, "UI_Inventory_Parent_obj anon@11250", gml_Script_anon_11250_gml_Object_UI_Inventory_Parent_obj_Create_0) \
-    X(InvParent19615, "UI_Inventory_Parent_obj anon@19615", gml_Script_anon_19615_gml_Object_UI_Inventory_Parent_obj_Create_0) \
-    X(InvParent22055, "UI_Inventory_Parent_obj anon@22055", gml_Script_anon_22055_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    X(InvParent1621, "UI_Inventory_Parent_obj anon@1565", gml_Script_anon_1565_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    X(InvParent4028, "UI_Inventory_Parent_obj anon@3909", gml_Script_anon_3909_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    X(InvParent6164, "UI_Inventory_Parent_obj anon@5990", gml_Script_anon_5990_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    X(InvParent6272, "UI_Inventory_Parent_obj anon@6093", gml_Script_anon_6093_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    X(InvParent6754, "UI_Inventory_Parent_obj anon@6560", gml_Script_anon_6560_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    X(InvParent7597, "UI_Inventory_Parent_obj anon@7381", gml_Script_anon_7381_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    X(InvParent8615, "UI_Inventory_Parent_obj anon@8369", gml_Script_anon_8369_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    X(InvParent11250, "UI_Inventory_Parent_obj anon@10920", gml_Script_anon_10920_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    X(InvParent19615, "UI_Inventory_Parent_obj anon@19104", gml_Script_anon_19104_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    X(InvParent22055, "UI_Inventory_Parent_obj anon@21474", gml_Script_anon_21474_gml_Object_UI_Inventory_Parent_obj_Create_0) \
     /* UI_Node_Parent_obj (every node's parent) */ \
-    X(NodeParent1577, "UI_Node_Parent_obj anon@1577", gml_Script_anon_1577_gml_Object_UI_Node_Parent_obj_Create_0) \
-    X(NodeParent1997, "UI_Node_Parent_obj anon@1997", gml_Script_anon_1997_gml_Object_UI_Node_Parent_obj_Create_0) \
+    X(NodeParent1577, "UI_Node_Parent_obj anon@1508", gml_Script_anon_1508_gml_Object_UI_Node_Parent_obj_Create_0) \
+    X(NodeParent1997, "UI_Node_Parent_obj anon@1909", gml_Script_anon_1909_gml_Object_UI_Node_Parent_obj_Create_0) \
     /* UI_Grid_obj (sibling grid node) */ \
-    X(UiGrid933, "UI_Grid_obj anon@933", gml_Script_anon_933_gml_Object_UI_Grid_obj_Create_0) \
-    X(UiGrid1307, "UI_Grid_obj anon@1307", gml_Script_anon_1307_gml_Object_UI_Grid_obj_Create_0) \
-    X(UiGrid1577, "UI_Grid_obj anon@1577", gml_Script_anon_1577_gml_Object_UI_Grid_obj_Create_0) \
-    X(UiGrid2086, "UI_Grid_obj anon@2086", gml_Script_anon_2086_gml_Object_UI_Grid_obj_Create_0) \
-    X(UiGrid2244, "UI_Grid_obj anon@2244", gml_Script_anon_2244_gml_Object_UI_Grid_obj_Create_0) \
-    X(UiGrid2416, "UI_Grid_obj anon@2416", gml_Script_anon_2416_gml_Object_UI_Grid_obj_Create_0) \
+    X(UiGrid933, "UI_Grid_obj anon@898", gml_Script_anon_898_gml_Object_UI_Grid_obj_Create_0) \
+    X(UiGrid1307, "UI_Grid_obj anon@1257", gml_Script_anon_1257_gml_Object_UI_Grid_obj_Create_0) \
+    X(UiGrid1577, "UI_Grid_obj anon@1518", gml_Script_anon_1518_gml_Object_UI_Grid_obj_Create_0) \
+    X(UiGrid2086, "UI_Grid_obj anon@2010", gml_Script_anon_2010_gml_Object_UI_Grid_obj_Create_0) \
+    X(UiGrid2244, "UI_Grid_obj anon@2161", gml_Script_anon_2161_gml_Object_UI_Grid_obj_Create_0) \
+    X(UiGrid2416, "UI_Grid_obj anon@2325", gml_Script_anon_2325_gml_Object_UI_Grid_obj_Create_0) \
     /* UI_Container_obj (sibling container node) */ \
-    X(UiContainer197, "UI_Container_obj anon@197", gml_Script_anon_197_gml_Object_UI_Container_obj_Create_0) \
+    X(UiContainer197, "UI_Container_obj anon@190", gml_Script_anon_190_gml_Object_UI_Container_obj_Create_0) \
     /* UI_Parent_obj (the window's grandparent) */ \
-    X(UiParent255, "UI_Parent_obj anon@255", gml_Script_anon_255_gml_Object_UI_Parent_obj_Create_0) \
-    X(UiParent874, "UI_Parent_obj anon@874", gml_Script_anon_874_gml_Object_UI_Parent_obj_Create_0) \
-    X(UiParent2234, "UI_Parent_obj anon@2234", gml_Script_anon_2234_gml_Object_UI_Parent_obj_Create_0) \
-    X(UiParent8601, "UI_Parent_obj anon@8601", gml_Script_anon_8601_gml_Object_UI_Parent_obj_Create_0) \
-    X(UiParent10129, "UI_Parent_obj anon@10129", gml_Script_anon_10129_gml_Object_UI_Parent_obj_Create_0) \
+    X(UiParent255, "UI_Parent_obj anon@245", gml_Script_anon_245_gml_Object_UI_Parent_obj_Create_0) \
+    X(UiParent874, "UI_Parent_obj anon@839", gml_Script_anon_839_gml_Object_UI_Parent_obj_Create_0) \
+    X(UiParent2234, "UI_Parent_obj anon@2164", gml_Script_anon_2164_gml_Object_UI_Parent_obj_Create_0) \
+    X(UiParent8601, "UI_Parent_obj anon@8381", gml_Script_anon_8381_gml_Object_UI_Parent_obj_Create_0) \
+    X(UiParent10129, "UI_Parent_obj anon@9848", gml_Script_anon_9848_gml_Object_UI_Parent_obj_Create_0) \
     /* Prospect_Cube_obj (the world object) */ \
-    X(Cube337, "Prospect_Cube_obj anon@337", gml_Script_anon_337_gml_Object_Prospect_Cube_obj_Create_0) \
+    X(Cube337, "Prospect_Cube_obj anon@320", gml_Script_anon_320_gml_Object_Prospect_Cube_obj_Create_0) \
     /* UI_Button_Journal_Prospect_obj (journal row) */ \
-    X(JournalButton342, "UI_Button_Journal_Prospect_obj anon@342", gml_Script_anon_342_gml_Object_UI_Button_Journal_Prospect_obj_Create_0) \
+    X(JournalButton342, "UI_Button_Journal_Prospect_obj anon@324", gml_Script_anon_324_gml_Object_UI_Button_Journal_Prospect_obj_Create_0) \
     /* UI_Journal_Prospecting_obj (journal tab) */ \
-    X(JournalTab1039, "UI_Journal_Prospecting_obj anon@1039", gml_Script_anon_1039_gml_Object_UI_Journal_Prospecting_obj_Create_0) \
+    X(JournalTab1039, "UI_Journal_Prospecting_obj anon@1003", gml_Script_anon_1003_gml_Object_UI_Journal_Prospecting_obj_Create_0) \
     /* UI framework (UiFuncs) */ \
     X(UiCreate, "UiCreate", gml_Script_UiCreate) \
     X(UiCreateNode, "UiCreateNode", gml_Script_UiCreateNode) \
@@ -18070,10 +18072,10 @@ static void PpAfter(const char* label, long n, bool logged, const std::string& g
     X(UiSetRef, "UiSetRef", gml_Script_UiSetRef) \
     X(UiSetNodeScale, "UiSetNodeScale", gml_Script_UiSetNodeScale) \
     X(UiRemoveNode, "UiRemoveNode", gml_Script_UiRemoveNode) \
-    X(Struct408, "___struct___408@UiCreate", gml_Script____struct___408_UiCreate_UiFuncs) \
-    X(Struct409, "___struct___409@UiCreateNode", gml_Script____struct___409_UiCreateNode_UiFuncs) \
-    X(Struct410, "___struct___410@UiCreateContainer", gml_Script____struct___410_UiCreateContainer_UiFuncs) \
-    X(Struct411, "___struct___411@UiContainerChange", gml_Script____struct___411_UiContainerChange_UiFuncs) \
+    X(Struct408, "___struct___409@UiCreate", gml_Script____struct___409_UiCreate_UiFuncs) \
+    X(Struct409, "___struct___410@UiCreateNode", gml_Script____struct___410_UiCreateNode_UiFuncs) \
+    X(Struct410, "___struct___411@UiCreateContainer", gml_Script____struct___411_UiCreateContainer_UiFuncs) \
+    X(Struct411, "___struct___412@UiContainerChange", gml_Script____struct___412_UiContainerChange_UiFuncs) \
     /* inventory-grid family */ \
     X(InventoryResetTabs, "InventoryResetTabs", gml_Script_InventoryResetTabs) \
     X(InventoryInitGrids, "InventoryInitGrids", gml_Script_InventoryInitGrids) \
@@ -18155,13 +18157,13 @@ static void PpAfter(const char* label, long n, bool logged, const std::string& g
     X(CAPlayerItemPickupAccept, "CA_playerItemPickupAccept", gml_Script_CA_playerItemPickupAccept) \
     X(CAPlayerItemDrop, "CA_playerItemDrop", gml_Script_CA_playerItemDrop) \
     /* UI_Inventory_obj (the bag window) Create-event closures */ \
-    X(InvObj495, "UI_Inventory_obj anon@495", gml_Script_anon_495_gml_Object_UI_Inventory_obj_Create_0) \
-    X(InvObj2261, "UI_Inventory_obj anon@2261", gml_Script_anon_2261_gml_Object_UI_Inventory_obj_Create_0) \
-    X(InvObj2364, "UI_Inventory_obj anon@2364", gml_Script_anon_2364_gml_Object_UI_Inventory_obj_Create_0) \
-    X(InvObj4391, "UI_Inventory_obj anon@4391", gml_Script_anon_4391_gml_Object_UI_Inventory_obj_Create_0) \
-    X(InvObj5590, "UI_Inventory_obj anon@5590", gml_Script_anon_5590_gml_Object_UI_Inventory_obj_Create_0) \
-    X(InvObj7874, "UI_Inventory_obj anon@7874", gml_Script_anon_7874_gml_Object_UI_Inventory_obj_Create_0) \
-    X(InvObj14458, "UI_Inventory_obj anon@14458", gml_Script_anon_14458_gml_Object_UI_Inventory_obj_Create_0) \
+    X(InvObj495, "UI_Inventory_obj anon@479", gml_Script_anon_479_gml_Object_UI_Inventory_obj_Create_0) \
+    X(InvObj2261, "UI_Inventory_obj anon@2212", gml_Script_anon_2212_gml_Object_UI_Inventory_obj_Create_0) \
+    X(InvObj2364, "UI_Inventory_obj anon@2310", gml_Script_anon_2310_gml_Object_UI_Inventory_obj_Create_0) \
+    X(InvObj4391, "UI_Inventory_obj anon@4290", gml_Script_anon_4290_gml_Object_UI_Inventory_obj_Create_0) \
+    X(InvObj5590, "UI_Inventory_obj anon@5452", gml_Script_anon_5452_gml_Object_UI_Inventory_obj_Create_0) \
+    X(InvObj7874, "UI_Inventory_obj anon@7660", gml_Script_anon_7660_gml_Object_UI_Inventory_obj_Create_0) \
+    X(InvObj14458, "UI_Inventory_obj anon@14103", gml_Script_anon_14103_gml_Object_UI_Inventory_obj_Create_0) \
     /* PlayerMouseAction: expected to fire on a click, but its only earlier  */ \
     /* native measurement read 0 - a candidate, NOT a control. The control   */ \
     /* is CheckPlayerInteraction alone.                                      */ \
@@ -23315,7 +23317,7 @@ static RValue& Hook_TraceCreatorCheckSpawn(CInstance* S, CInstance* O, RValue& R
 static void InstallSpawnTraceHook()
 {
     if (g_OrigCreatorCheckSpawn) return;
-    HookOneScriptTable("anon@886@gml_Object_Enemy_Creator_obj_Create_0", "bp_tr_checkspawn", (PVOID)Hook_TraceCreatorCheckSpawn, &g_OrigCreatorCheckSpawn);
+    HookOneScriptTable("anon@849@gml_Object_Enemy_Creator_obj_Create_0", "bp_tr_checkspawn", (PVOID)Hook_TraceCreatorCheckSpawn, &g_OrigCreatorCheckSpawn);
 }
 #endif
 #ifndef FORGEPACT_RELEASE
@@ -28932,9 +28934,9 @@ static void InstallMechGateHooks()
     // The names now come from hs-game-sdk, so a closure the game moves fails
     // the build once the SDK is regenerated, rather than only failing this
     // lookup silently at runtime.
-    HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_anon_126_gml_Object_Spawn_Shadow_Realm_obj_Create_0),
+    HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_anon_119_gml_Object_Spawn_Shadow_Realm_obj_Create_0),
                   "fp_sr_gate", (PVOID)Hook_ShadowRealmGate, &g_Orig_ShadowRealmGate);
-    HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_anon_102_gml_Object_Spawn_Chaos_Tower_obj_Create_0),
+    HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_anon_97_gml_Object_Spawn_Chaos_Tower_obj_Create_0),
                   "fp_ct_gate", (PVOID)Hook_ChaosTowerGate, &g_Orig_ChaosTowerGate);
 }
 
@@ -29856,7 +29858,7 @@ static void MBuffTick()
 // touches the game, in two places:
 //
 //   - Hook_AutoProspectInsert, on m_MoveItemToGrid (UI_Inventory_Grid_obj
-//     anon@15345), which both a drag-in and a click-in go through (Phase 0c
+//     anon@14878), which both a drag-in and a click-in go through (Phase 0c
 //     R12). It runs the game's function first, then - only while the mod is
 //     on - asks whether `self` is the ProspectGrid node, and tells the core.
 //     It never invokes anything: inside the step the insert's own caller may
@@ -30903,7 +30905,7 @@ static void AutoProspectInstall()
 {
     g_AutoProspectInstallTried = true;
     bool native = false;
-    const bool ok = HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_anon_15345_gml_Object_UI_Inventory_Grid_obj_Create_0),
+    const bool ok = HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_anon_14878_gml_Object_UI_Inventory_Grid_obj_Create_0),
                                   "bp_autoprospect", (PVOID)Hook_AutoProspectInsert, &g_Orig_AutoProspectInsert, &native);
     if (ok && native) { Out("autoprospect: hook installed -> ON"); return; }
     g_AutoProspectBlind = true;
@@ -31009,7 +31011,7 @@ static bool HandleProspectCommand(const std::string& lc, const std::string& rest
 // inside the game's own call, like the core.
 static constexpr const char* kCmCountName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_CountInventoryItem);
 static constexpr const char* kCmAvailabilityName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_GetCraftItemsAvailable);
-static constexpr const char* kCmRecipeRowName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_anon_840_gml_Object_UI_Craft_Recipe_List_Item_obj_Create_0);
+static constexpr const char* kCmRecipeRowName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_anon_798_gml_Object_UI_Craft_Recipe_List_Item_obj_Create_0);
 static constexpr const char* kCmFindName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_CraftFindRecipeItems);
 static constexpr const char* kCmDecodeName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_PilipaliDecrypt);
 static constexpr const char* kCmPressName = SdkShortScriptName(HeroSiege::Scripts::gml_Script_DoCraftResult);
@@ -31766,7 +31768,7 @@ struct CmHook {
 static const CmHook g_CmHooks[] = {
     { kCmCountName, "fp_cm_count", (PVOID)CmHookCount, &g_CmOrigCount, HeroSiege::Scripts::gml_Script_CountInventoryItem },
     { kCmAvailabilityName, "fp_cm_availability", (PVOID)CmHookAvailability, &g_CmOrigAvailability, HeroSiege::Scripts::gml_Script_GetCraftItemsAvailable },
-    { kCmRecipeRowName, "fp_cm_reciperow", (PVOID)CmHookRecipeRow, &g_CmOrigRecipeRow, HeroSiege::Scripts::gml_Script_anon_840_gml_Object_UI_Craft_Recipe_List_Item_obj_Create_0 },
+    { kCmRecipeRowName, "fp_cm_reciperow", (PVOID)CmHookRecipeRow, &g_CmOrigRecipeRow, HeroSiege::Scripts::gml_Script_anon_798_gml_Object_UI_Craft_Recipe_List_Item_obj_Create_0 },
     { kCmFindName, "fp_cm_find", (PVOID)CmHookFind, &g_CmOrigFind, HeroSiege::Scripts::gml_Script_CraftFindRecipeItems },
     { kCmDecodeName, "fp_cm_decode", (PVOID)CmHookDecode, &g_CmOrigDecode, HeroSiege::Scripts::gml_Script_PilipaliDecrypt },
     { kCmPressName, "fp_cm_press", (PVOID)CmHookPress, &g_CmOrigPress, HeroSiege::Scripts::gml_Script_DoCraftResult },
@@ -32758,11 +32760,11 @@ struct CpRouteFrame {
 // instrument`). The owner's design puts the mod's own count into the game's own
 // availability check, so a short recipe stays disabled by the game rather than
 // refused at the press. The Ghidra reading places that check in three frames:
-// the recipe row's Create closure (UI_Craft_Recipe_List_Item_obj anon@840),
+// the recipe row's Create closure (UI_Craft_Recipe_List_Item_obj anon@798),
 // which counts each input with CountInventoryItem and stores whether it
 // reaches the amount; the window's own availability call,
-// GetCraftItemsAvailable, which UI_Craft_obj's anon@1834 runs (not inside
-// anon@840) and which counts with CountInventoryItem too; and
+// GetCraftItemsAvailable, which UI_Craft_obj's anon@1784 runs (not inside
+// anon@798) and which counts with CountInventoryItem too; and
 // CraftFindRecipeItems at the press (a craft-route row). Which of them the
 // window's display reads is what the session measures, so the injection must
 // reach all three: a count left out would read as "the game ignores the
@@ -32808,7 +32810,7 @@ static bool CpRowIsScript(const char* label, std::string_view runtimeName);
 
 static bool CpIsRecipeListRow(const char* label)
 {
-    return CpRowIsScript(label, HeroSiege::Scripts::gml_Script_anon_840_gml_Object_UI_Craft_Recipe_List_Item_obj_Create_0);
+    return CpRowIsScript(label, HeroSiege::Scripts::gml_Script_anon_798_gml_Object_UI_Craft_Recipe_List_Item_obj_Create_0);
 }
 
 static bool CpIsAvailabilityRow(const char* label)
@@ -33090,11 +33092,11 @@ static void SmaProbeSawCall(const char* label, CInstance* S)
     X(GetStashMaxTabs, "GetStashMaxTabs", gml_Script_GetStashMaxTabs) \
     X(LoadStash, "LoadStash", gml_Script_LoadStash) \
     X(SaveStash, "SaveStash", gml_Script_SaveStash) \
-    X(Struct357, "___struct___357@SaveStash", gml_Script____struct___357_SaveStash_SaveStashFunc) \
-    X(Struct359, "___struct___359@SaveStash", gml_Script____struct___359_SaveStash_SaveStashFunc) \
-    X(Struct361, "___struct___361@SaveStash", gml_Script____struct___361_SaveStash_SaveStashFunc) \
-    X(Struct363, "___struct___363@SaveStash", gml_Script____struct___363_SaveStash_SaveStashFunc) \
-    X(Struct364, "___struct___364@SaveStash", gml_Script____struct___364_SaveStash_SaveStashFunc) \
+    X(Struct357, "___struct___358@SaveStash", gml_Script____struct___358_SaveStash_SaveStashFunc) \
+    X(Struct359, "___struct___360@SaveStash", gml_Script____struct___360_SaveStash_SaveStashFunc) \
+    X(Struct361, "___struct___362@SaveStash", gml_Script____struct___362_SaveStash_SaveStashFunc) \
+    X(Struct363, "___struct___364@SaveStash", gml_Script____struct___364_SaveStash_SaveStashFunc) \
+    X(Struct364, "___struct___365@SaveStash", gml_Script____struct___365_SaveStash_SaveStashFunc) \
     /* Phase 1h: the save's per-item step - one entry per item SaveStash writes */ \
     X(CreateItemSaveStruct, "CreateItemSaveStruct", gml_Script_CreateItemSaveStruct) \
     X(GetStashMapPos, "GetStashMapPos", gml_Script_GetStashMapPos) \
@@ -33102,7 +33104,7 @@ static void SmaProbeSawCall(const char* label, CInstance* S)
     X(UiAStashMaterialTabClick, "UiAStashMaterialTabClick", gml_Script_UiAStashMaterialTabClick) \
     X(UiAStashTabMaterialBuy, "UiAStashTabMaterialBuy", gml_Script_UiAStashTabMaterialBuy) \
     X(UiAStashListBtnActivate, "UiAStashListBtnActivate", gml_Script_UiAStashListBtnActivate) \
-    X(StashListBtn1820, "UiAStashListBtnActivate anon@1820", gml_Script_anon_1820_UiAStashListBtnActivate_UiActivateFuncs) \
+    X(StashListBtn1820, "UiAStashListBtnActivate anon@1753", gml_Script_anon_1753_UiAStashListBtnActivate_UiActivateFuncs) \
     X(UiDrawStashTabBuy, "UiDrawStashTabBuy", gml_Script_UiDrawStashTabBuy) \
     /* the bag's materials tab and the click-move route issue #9 measured */ \
     X(UiAInventoryMaterialTabClick, "UiAInventoryMaterialTabClick", gml_Script_UiAInventoryMaterialTabClick) \
@@ -33125,41 +33127,41 @@ static void SmaProbeSawCall(const char* label, CInstance* S)
     /* Create_0, which test_craftprobe_table_covers_every_sdk_closure_of_its_ */ \
     /* objects enforces.                                                      */ \
     /* UI_Craft_obj (the cube window) */ \
-    X(Craft1834, "UI_Craft_obj anon@1834", gml_Script_anon_1834_gml_Object_UI_Craft_obj_Create_0) \
-    X(Craft4988, "UI_Craft_obj anon@4988", gml_Script_anon_4988_gml_Object_UI_Craft_obj_Create_0) \
-    X(Craft6782, "UI_Craft_obj anon@6782", gml_Script_anon_6782_gml_Object_UI_Craft_obj_Create_0) \
-    X(Craft7914, "UI_Craft_obj anon@7914", gml_Script_anon_7914_gml_Object_UI_Craft_obj_Create_0) \
+    X(Craft1834, "UI_Craft_obj anon@1784", gml_Script_anon_1784_gml_Object_UI_Craft_obj_Create_0) \
+    X(Craft4988, "UI_Craft_obj anon@4850", gml_Script_anon_4850_gml_Object_UI_Craft_obj_Create_0) \
+    X(Craft6782, "UI_Craft_obj anon@6587", gml_Script_anon_6587_gml_Object_UI_Craft_obj_Create_0) \
+    X(Craft7914, "UI_Craft_obj anon@7680", gml_Script_anon_7680_gml_Object_UI_Craft_obj_Create_0) \
     /* UI_Journal_Crafting_obj, UI_Craft_Recipe_List_Item_obj, Craft_Cube_obj, UI_Button_Journal_Craft_obj */ \
-    X(JournalCrafting1154, "UI_Journal_Crafting_obj anon@1154", gml_Script_anon_1154_gml_Object_UI_Journal_Crafting_obj_Create_0) \
-    X(RecipeItem840, "UI_Craft_Recipe_List_Item_obj anon@840", gml_Script_anon_840_gml_Object_UI_Craft_Recipe_List_Item_obj_Create_0) \
-    X(CraftCube436, "Craft_Cube_obj anon@436", gml_Script_anon_436_gml_Object_Craft_Cube_obj_Create_0) \
-    X(JournalCraftButton525, "UI_Button_Journal_Craft_obj anon@525", gml_Script_anon_525_gml_Object_UI_Button_Journal_Craft_obj_Create_0) \
+    X(JournalCrafting1154, "UI_Journal_Crafting_obj anon@1115", gml_Script_anon_1115_gml_Object_UI_Journal_Crafting_obj_Create_0) \
+    X(RecipeItem840, "UI_Craft_Recipe_List_Item_obj anon@798", gml_Script_anon_798_gml_Object_UI_Craft_Recipe_List_Item_obj_Create_0) \
+    X(CraftCube436, "Craft_Cube_obj anon@411", gml_Script_anon_411_gml_Object_Craft_Cube_obj_Create_0) \
+    X(JournalCraftButton525, "UI_Button_Journal_Craft_obj anon@498", gml_Script_anon_498_gml_Object_UI_Button_Journal_Craft_obj_Create_0) \
     /* UI_Stash_obj (the stash window) */ \
-    X(Stash1649, "UI_Stash_obj anon@1649", gml_Script_anon_1649_gml_Object_UI_Stash_obj_Create_0) \
-    X(Stash2245, "UI_Stash_obj anon@2245", gml_Script_anon_2245_gml_Object_UI_Stash_obj_Create_0) \
-    X(Stash2483, "UI_Stash_obj anon@2483", gml_Script_anon_2483_gml_Object_UI_Stash_obj_Create_0) \
-    X(Stash3835, "UI_Stash_obj anon@3835", gml_Script_anon_3835_gml_Object_UI_Stash_obj_Create_0) \
-    X(Stash4195, "UI_Stash_obj anon@4195", gml_Script_anon_4195_gml_Object_UI_Stash_obj_Create_0) \
-    X(Stash4348, "UI_Stash_obj anon@4348", gml_Script_anon_4348_gml_Object_UI_Stash_obj_Create_0) \
-    X(Stash5662, "UI_Stash_obj anon@5662", gml_Script_anon_5662_gml_Object_UI_Stash_obj_Create_0) \
-    X(Stash6631, "UI_Stash_obj anon@6631", gml_Script_anon_6631_gml_Object_UI_Stash_obj_Create_0) \
-    X(Stash7091, "UI_Stash_obj anon@7091", gml_Script_anon_7091_gml_Object_UI_Stash_obj_Create_0) \
-    X(Stash7525, "UI_Stash_obj anon@7525", gml_Script_anon_7525_gml_Object_UI_Stash_obj_Create_0) \
-    X(Stash8329, "UI_Stash_obj anon@8329", gml_Script_anon_8329_gml_Object_UI_Stash_obj_Create_0) \
-    X(Stash8574, "UI_Stash_obj anon@8574", gml_Script_anon_8574_gml_Object_UI_Stash_obj_Create_0) \
+    X(Stash1649, "UI_Stash_obj anon@1604", gml_Script_anon_1604_gml_Object_UI_Stash_obj_Create_0) \
+    X(Stash2245, "UI_Stash_obj anon@2180", gml_Script_anon_2180_gml_Object_UI_Stash_obj_Create_0) \
+    X(Stash2483, "UI_Stash_obj anon@2408", gml_Script_anon_2408_gml_Object_UI_Stash_obj_Create_0) \
+    X(Stash3835, "UI_Stash_obj anon@3728", gml_Script_anon_3728_gml_Object_UI_Stash_obj_Create_0) \
+    X(Stash4195, "UI_Stash_obj anon@4074", gml_Script_anon_4074_gml_Object_UI_Stash_obj_Create_0) \
+    X(Stash4348, "UI_Stash_obj anon@4220", gml_Script_anon_4220_gml_Object_UI_Stash_obj_Create_0) \
+    X(Stash5662, "UI_Stash_obj anon@5502", gml_Script_anon_5502_gml_Object_UI_Stash_obj_Create_0) \
+    X(Stash6631, "UI_Stash_obj anon@6446", gml_Script_anon_6446_gml_Object_UI_Stash_obj_Create_0) \
+    X(Stash7091, "UI_Stash_obj anon@6891", gml_Script_anon_6891_gml_Object_UI_Stash_obj_Create_0) \
+    X(Stash7525, "UI_Stash_obj anon@7309", gml_Script_anon_7309_gml_Object_UI_Stash_obj_Create_0) \
+    X(Stash8329, "UI_Stash_obj anon@8091", gml_Script_anon_8091_gml_Object_UI_Stash_obj_Create_0) \
+    X(Stash8574, "UI_Stash_obj anon@8325", gml_Script_anon_8325_gml_Object_UI_Stash_obj_Create_0) \
     /* UI_Stash_Tab_Bar_Container_obj (the stash's tab bar) */ \
-    X(TabBar125, "UI_Stash_Tab_Bar_Container_obj anon@125", gml_Script_anon_125_gml_Object_UI_Stash_Tab_Bar_Container_obj_Create_0) \
-    X(TabBar1018, "UI_Stash_Tab_Bar_Container_obj anon@1018", gml_Script_anon_1018_gml_Object_UI_Stash_Tab_Bar_Container_obj_Create_0) \
-    X(TabBar5497, "UI_Stash_Tab_Bar_Container_obj anon@5497", gml_Script_anon_5497_gml_Object_UI_Stash_Tab_Bar_Container_obj_Create_0) \
-    X(TabBar5778, "UI_Stash_Tab_Bar_Container_obj anon@5778", gml_Script_anon_5778_gml_Object_UI_Stash_Tab_Bar_Container_obj_Create_0) \
-    X(TabBar6037, "UI_Stash_Tab_Bar_Container_obj anon@6037", gml_Script_anon_6037_gml_Object_UI_Stash_Tab_Bar_Container_obj_Create_0) \
-    X(TabBar8477, "UI_Stash_Tab_Bar_Container_obj anon@8477", gml_Script_anon_8477_gml_Object_UI_Stash_Tab_Bar_Container_obj_Create_0) \
-    X(TabBar9733, "UI_Stash_Tab_Bar_Container_obj anon@9733", gml_Script_anon_9733_gml_Object_UI_Stash_Tab_Bar_Container_obj_Create_0) \
+    X(TabBar125, "UI_Stash_Tab_Bar_Container_obj anon@120", gml_Script_anon_120_gml_Object_UI_Stash_Tab_Bar_Container_obj_Create_0) \
+    X(TabBar1018, "UI_Stash_Tab_Bar_Container_obj anon@988", gml_Script_anon_988_gml_Object_UI_Stash_Tab_Bar_Container_obj_Create_0) \
+    X(TabBar5497, "UI_Stash_Tab_Bar_Container_obj anon@5358", gml_Script_anon_5358_gml_Object_UI_Stash_Tab_Bar_Container_obj_Create_0) \
+    X(TabBar5778, "UI_Stash_Tab_Bar_Container_obj anon@5628", gml_Script_anon_5628_gml_Object_UI_Stash_Tab_Bar_Container_obj_Create_0) \
+    X(TabBar6037, "UI_Stash_Tab_Bar_Container_obj anon@5877", gml_Script_anon_5877_gml_Object_UI_Stash_Tab_Bar_Container_obj_Create_0) \
+    X(TabBar8477, "UI_Stash_Tab_Bar_Container_obj anon@8254", gml_Script_anon_8254_gml_Object_UI_Stash_Tab_Bar_Container_obj_Create_0) \
+    X(TabBar9733, "UI_Stash_Tab_Bar_Container_obj anon@9479", gml_Script_anon_9479_gml_Object_UI_Stash_Tab_Bar_Container_obj_Create_0) \
     X(TabBarSort, "UI_Stash_Tab_Bar_Container_obj sortXAscending", gml_Script_sortXAscending_gml_Object_UI_Stash_Tab_Bar_Container_obj_Create_0) \
     /* Town_Stash_obj (the world object) */ \
-    X(TownStash663, "Town_Stash_obj anon@663", gml_Script_anon_663_gml_Object_Town_Stash_obj_Create_0) \
+    X(TownStash663, "Town_Stash_obj anon@642", gml_Script_anon_642_gml_Object_Town_Stash_obj_Create_0) \
     /* UI_Button_Stash_Tab_obj has no Create closure; its one Step closure */ \
-    X(StashTabButton503, "UI_Button_Stash_Tab_obj anon@503 (Step)", gml_Script_anon_503_gml_Object_UI_Button_Stash_Tab_obj_Step_0) \
+    X(StashTabButton503, "UI_Button_Stash_Tab_obj anon@488 (Step)", gml_Script_anon_488_gml_Object_UI_Button_Stash_Tab_obj_Step_0) \
     /* Phase 1b (research doc, Static search, "Phase 1b additions"): Phase 1's */ \
     /* hand move between the Socketable tab and the bag fired none of the rows */ \
     /* above while the control climbed, so every candidate of the widened     */ \
@@ -33173,7 +33175,7 @@ static void SmaProbeSawCall(const char* label, CInstance* S)
     X(InvCopyItemDragData, "InvCopyItemDragData", gml_Script_InvCopyItemDragData) \
     X(InvCopyItemToInvDragData, "InvCopyItemToInvDragData", gml_Script_InvCopyItemToInvDragData) \
     X(SInventoryDrag, "s_InventoryDrag", gml_Script_s_InventoryDrag) \
-    X(ResetDragState, "ResetDragState@s_InventoryDrag", gml_Script_ResetDragState_anon_47432_s_InventoryDrag_DefineStructs) \
+    X(ResetDragState, "ResetDragState@s_InventoryDrag", gml_Script_ResetDragState_anon_46243_s_InventoryDrag_DefineStructs) \
     X(InventorySwapItemsNew, "InventorySwapItemsNew", gml_Script_InventorySwapItemsNew) \
     X(InvGridEquipV2, "InvGridEquipV2", gml_Script_InvGridEquipV2) \
     X(InvGridEquipGamepad, "InvGridEquipGamepad", gml_Script_InvGridEquipGamepad) \
@@ -33207,7 +33209,7 @@ static void SmaProbeSawCall(const char* label, CInstance* S)
     X(UiAStashUniqueItemType, "UiAStashUniqueItemType", gml_Script_UiAStashUniqueItemType) \
     /* Phase 1b: node and tab plumbing */ \
     X(UiCreateNode, "UiCreateNode", gml_Script_UiCreateNode) \
-    X(Struct409, "___struct___409@UiCreateNode", gml_Script____struct___409_UiCreateNode_UiFuncs) \
+    X(Struct409, "___struct___410@UiCreateNode", gml_Script____struct___410_UiCreateNode_UiFuncs) \
     X(UiRemoveNode, "UiRemoveNode", gml_Script_UiRemoveNode) \
     X(UiMoveNode, "UiMoveNode", gml_Script_UiMoveNode) \
     X(ValidateInventoryNode, "ValidateInventoryNode", gml_Script_ValidateInventoryNode) \
@@ -33221,71 +33223,71 @@ static void SmaProbeSawCall(const char* label, CInstance* S)
     X(UiAInventoryTabClick, "UiAInventoryTabClick", gml_Script_UiAInventoryTabClick) \
     X(InventoryLogAddItem, "InventoryLogAddItem", gml_Script_InventoryLogAddItem) \
     X(InventoryUpdateExtAddItemStats, "InventoryUpdateExtAddItemStats", gml_Script_InventoryUpdateExtAddItemStats) \
-    X(InvTabButton403, "UI_Button_Inventory_Tab_obj anon@403 (Step)", gml_Script_anon_403_gml_Object_UI_Button_Inventory_Tab_obj_Step_0) \
-    X(LoadInventory448, "Load_Inventory_obj ___struct___448 (Other_62)", gml_Script____struct___448_gml_Object_Load_Inventory_obj_Other_62) \
-    /* Phase 1b: closures of UI_Inventory_Grid_obj (anon@15345 also sits in autoprospect's table) */ \
-    X(InvGrid2143, "UI_Inventory_Grid_obj anon@2143", gml_Script_anon_2143_gml_Object_UI_Inventory_Grid_obj_Create_0) \
-    X(InvGrid2971, "UI_Inventory_Grid_obj anon@2971", gml_Script_anon_2971_gml_Object_UI_Inventory_Grid_obj_Create_0) \
-    X(InvGrid4064, "UI_Inventory_Grid_obj anon@4064", gml_Script_anon_4064_gml_Object_UI_Inventory_Grid_obj_Create_0) \
-    X(InvGridS517, "UI_Inventory_Grid_obj ___struct___517@anon@8881", gml_Script____struct___517_anon_8881_gml_Object_UI_Inventory_Grid_obj_Create_0) \
-    X(InvGridS519, "UI_Inventory_Grid_obj ___struct___519@anon@8881", gml_Script____struct___519_anon_8881_gml_Object_UI_Inventory_Grid_obj_Create_0) \
-    X(InvGrid8881, "UI_Inventory_Grid_obj anon@8881", gml_Script_anon_8881_gml_Object_UI_Inventory_Grid_obj_Create_0) \
-    X(InvGridS522, "UI_Inventory_Grid_obj ___struct___522@anon@15345", gml_Script____struct___522_anon_15345_gml_Object_UI_Inventory_Grid_obj_Create_0) \
-    X(InvGridS529, "UI_Inventory_Grid_obj ___struct___529@anon@15345", gml_Script____struct___529_anon_15345_gml_Object_UI_Inventory_Grid_obj_Create_0) \
-    X(InvGridS532, "UI_Inventory_Grid_obj ___struct___532@anon@15345", gml_Script____struct___532_anon_15345_gml_Object_UI_Inventory_Grid_obj_Create_0) \
-    X(InvGridS536, "UI_Inventory_Grid_obj ___struct___536@anon@15345", gml_Script____struct___536_anon_15345_gml_Object_UI_Inventory_Grid_obj_Create_0) \
-    X(InvGridS538, "UI_Inventory_Grid_obj ___struct___538@anon@15345", gml_Script____struct___538_anon_15345_gml_Object_UI_Inventory_Grid_obj_Create_0) \
-    X(InvGridS541, "UI_Inventory_Grid_obj ___struct___541@anon@15345", gml_Script____struct___541_anon_15345_gml_Object_UI_Inventory_Grid_obj_Create_0) \
-    X(InvGrid15345, "UI_Inventory_Grid_obj anon@15345", gml_Script_anon_15345_gml_Object_UI_Inventory_Grid_obj_Create_0) \
-    X(InvGrid34555, "UI_Inventory_Grid_obj anon@34555", gml_Script_anon_34555_gml_Object_UI_Inventory_Grid_obj_Create_0) \
-    X(InvGrid36159, "UI_Inventory_Grid_obj anon@36159", gml_Script_anon_36159_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvTabButton403, "UI_Button_Inventory_Tab_obj anon@387 (Step)", gml_Script_anon_387_gml_Object_UI_Button_Inventory_Tab_obj_Step_0) \
+    X(LoadInventory448, "Load_Inventory_obj ___struct___449 (Other_62)", gml_Script____struct___449_gml_Object_Load_Inventory_obj_Other_62) \
+    /* Phase 1b: closures of UI_Inventory_Grid_obj (anon@14878 also sits in autoprospect's table) */ \
+    X(InvGrid2143, "UI_Inventory_Grid_obj anon@2066", gml_Script_anon_2066_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGrid2971, "UI_Inventory_Grid_obj anon@2869", gml_Script_anon_2869_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGrid4064, "UI_Inventory_Grid_obj anon@3927", gml_Script_anon_3927_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGridS517, "UI_Inventory_Grid_obj ___struct___519@anon@8601", gml_Script____struct___519_anon_8601_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGridS519, "UI_Inventory_Grid_obj ___struct___521@anon@8601", gml_Script____struct___521_anon_8601_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGrid8881, "UI_Inventory_Grid_obj anon@8601", gml_Script_anon_8601_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGridS522, "UI_Inventory_Grid_obj ___struct___524@anon@14878", gml_Script____struct___524_anon_14878_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGridS529, "UI_Inventory_Grid_obj ___struct___531@anon@14878", gml_Script____struct___531_anon_14878_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGridS532, "UI_Inventory_Grid_obj ___struct___534@anon@14878", gml_Script____struct___534_anon_14878_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGridS536, "UI_Inventory_Grid_obj ___struct___538@anon@14878", gml_Script____struct___538_anon_14878_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGridS538, "UI_Inventory_Grid_obj ___struct___540@anon@14878", gml_Script____struct___540_anon_14878_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGridS541, "UI_Inventory_Grid_obj ___struct___543@anon@14878", gml_Script____struct___543_anon_14878_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGrid15345, "UI_Inventory_Grid_obj anon@14878", gml_Script_anon_14878_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGrid34555, "UI_Inventory_Grid_obj anon@33615", gml_Script_anon_33615_gml_Object_UI_Inventory_Grid_obj_Create_0) \
+    X(InvGrid36159, "UI_Inventory_Grid_obj anon@35172", gml_Script_anon_35172_gml_Object_UI_Inventory_Grid_obj_Create_0) \
     /* Phase 1b: closures of UI_Grid_obj */ \
-    X(Grid933, "UI_Grid_obj anon@933", gml_Script_anon_933_gml_Object_UI_Grid_obj_Create_0) \
-    X(Grid1307, "UI_Grid_obj anon@1307", gml_Script_anon_1307_gml_Object_UI_Grid_obj_Create_0) \
-    X(Grid1577, "UI_Grid_obj anon@1577", gml_Script_anon_1577_gml_Object_UI_Grid_obj_Create_0) \
-    X(Grid2086, "UI_Grid_obj anon@2086", gml_Script_anon_2086_gml_Object_UI_Grid_obj_Create_0) \
-    X(Grid2244, "UI_Grid_obj anon@2244", gml_Script_anon_2244_gml_Object_UI_Grid_obj_Create_0) \
-    X(Grid2416, "UI_Grid_obj anon@2416", gml_Script_anon_2416_gml_Object_UI_Grid_obj_Create_0) \
+    X(Grid933, "UI_Grid_obj anon@898", gml_Script_anon_898_gml_Object_UI_Grid_obj_Create_0) \
+    X(Grid1307, "UI_Grid_obj anon@1257", gml_Script_anon_1257_gml_Object_UI_Grid_obj_Create_0) \
+    X(Grid1577, "UI_Grid_obj anon@1518", gml_Script_anon_1518_gml_Object_UI_Grid_obj_Create_0) \
+    X(Grid2086, "UI_Grid_obj anon@2010", gml_Script_anon_2010_gml_Object_UI_Grid_obj_Create_0) \
+    X(Grid2244, "UI_Grid_obj anon@2161", gml_Script_anon_2161_gml_Object_UI_Grid_obj_Create_0) \
+    X(Grid2416, "UI_Grid_obj anon@2325", gml_Script_anon_2325_gml_Object_UI_Grid_obj_Create_0) \
     /* Phase 1b: closures of UI_Node_Parent_obj */ \
-    X(NodeParent1577, "UI_Node_Parent_obj anon@1577", gml_Script_anon_1577_gml_Object_UI_Node_Parent_obj_Create_0) \
-    X(NodeParent1997, "UI_Node_Parent_obj anon@1997", gml_Script_anon_1997_gml_Object_UI_Node_Parent_obj_Create_0) \
+    X(NodeParent1577, "UI_Node_Parent_obj anon@1508", gml_Script_anon_1508_gml_Object_UI_Node_Parent_obj_Create_0) \
+    X(NodeParent1997, "UI_Node_Parent_obj anon@1909", gml_Script_anon_1909_gml_Object_UI_Node_Parent_obj_Create_0) \
     /* Phase 1b: closures of UI_Inventory_obj (the bag window) */ \
-    X(Inv495, "UI_Inventory_obj anon@495", gml_Script_anon_495_gml_Object_UI_Inventory_obj_Create_0) \
-    X(Inv2261, "UI_Inventory_obj anon@2261", gml_Script_anon_2261_gml_Object_UI_Inventory_obj_Create_0) \
-    X(Inv2364, "UI_Inventory_obj anon@2364", gml_Script_anon_2364_gml_Object_UI_Inventory_obj_Create_0) \
-    X(Inv4391, "UI_Inventory_obj anon@4391", gml_Script_anon_4391_gml_Object_UI_Inventory_obj_Create_0) \
-    X(Inv5590, "UI_Inventory_obj anon@5590", gml_Script_anon_5590_gml_Object_UI_Inventory_obj_Create_0) \
-    X(Inv7874, "UI_Inventory_obj anon@7874", gml_Script_anon_7874_gml_Object_UI_Inventory_obj_Create_0) \
-    X(Inv14458, "UI_Inventory_obj anon@14458", gml_Script_anon_14458_gml_Object_UI_Inventory_obj_Create_0) \
+    X(Inv495, "UI_Inventory_obj anon@479", gml_Script_anon_479_gml_Object_UI_Inventory_obj_Create_0) \
+    X(Inv2261, "UI_Inventory_obj anon@2212", gml_Script_anon_2212_gml_Object_UI_Inventory_obj_Create_0) \
+    X(Inv2364, "UI_Inventory_obj anon@2310", gml_Script_anon_2310_gml_Object_UI_Inventory_obj_Create_0) \
+    X(Inv4391, "UI_Inventory_obj anon@4290", gml_Script_anon_4290_gml_Object_UI_Inventory_obj_Create_0) \
+    X(Inv5590, "UI_Inventory_obj anon@5452", gml_Script_anon_5452_gml_Object_UI_Inventory_obj_Create_0) \
+    X(Inv7874, "UI_Inventory_obj anon@7660", gml_Script_anon_7660_gml_Object_UI_Inventory_obj_Create_0) \
+    X(Inv14458, "UI_Inventory_obj anon@14103", gml_Script_anon_14103_gml_Object_UI_Inventory_obj_Create_0) \
     /* Phase 1b: closures of UI_Inventory_Parent_obj */ \
-    X(InvParent1621, "UI_Inventory_Parent_obj anon@1621", gml_Script_anon_1621_gml_Object_UI_Inventory_Parent_obj_Create_0) \
-    X(InvParent4028, "UI_Inventory_Parent_obj anon@4028", gml_Script_anon_4028_gml_Object_UI_Inventory_Parent_obj_Create_0) \
-    X(InvParent6164, "UI_Inventory_Parent_obj anon@6164", gml_Script_anon_6164_gml_Object_UI_Inventory_Parent_obj_Create_0) \
-    X(InvParent6272, "UI_Inventory_Parent_obj anon@6272", gml_Script_anon_6272_gml_Object_UI_Inventory_Parent_obj_Create_0) \
-    X(InvParent6754, "UI_Inventory_Parent_obj anon@6754", gml_Script_anon_6754_gml_Object_UI_Inventory_Parent_obj_Create_0) \
-    X(InvParent7597, "UI_Inventory_Parent_obj anon@7597", gml_Script_anon_7597_gml_Object_UI_Inventory_Parent_obj_Create_0) \
-    X(InvParent8615, "UI_Inventory_Parent_obj anon@8615", gml_Script_anon_8615_gml_Object_UI_Inventory_Parent_obj_Create_0) \
-    X(InvParent11250, "UI_Inventory_Parent_obj anon@11250", gml_Script_anon_11250_gml_Object_UI_Inventory_Parent_obj_Create_0) \
-    X(InvParent19615, "UI_Inventory_Parent_obj anon@19615", gml_Script_anon_19615_gml_Object_UI_Inventory_Parent_obj_Create_0) \
-    X(InvParent22055, "UI_Inventory_Parent_obj anon@22055", gml_Script_anon_22055_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    X(InvParent1621, "UI_Inventory_Parent_obj anon@1565", gml_Script_anon_1565_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    X(InvParent4028, "UI_Inventory_Parent_obj anon@3909", gml_Script_anon_3909_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    X(InvParent6164, "UI_Inventory_Parent_obj anon@5990", gml_Script_anon_5990_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    X(InvParent6272, "UI_Inventory_Parent_obj anon@6093", gml_Script_anon_6093_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    X(InvParent6754, "UI_Inventory_Parent_obj anon@6560", gml_Script_anon_6560_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    X(InvParent7597, "UI_Inventory_Parent_obj anon@7381", gml_Script_anon_7381_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    X(InvParent8615, "UI_Inventory_Parent_obj anon@8369", gml_Script_anon_8369_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    X(InvParent11250, "UI_Inventory_Parent_obj anon@10920", gml_Script_anon_10920_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    X(InvParent19615, "UI_Inventory_Parent_obj anon@19104", gml_Script_anon_19104_gml_Object_UI_Inventory_Parent_obj_Create_0) \
+    X(InvParent22055, "UI_Inventory_Parent_obj anon@21474", gml_Script_anon_21474_gml_Object_UI_Inventory_Parent_obj_Create_0) \
     /* Phase 1b: the Socketable stash tab's window */ \
-    X(StashSocket1305, "UI_Stash_Socket_New_obj anon@1305", gml_Script_anon_1305_gml_Object_UI_Stash_Socket_New_obj_Create_0) \
+    X(StashSocket1305, "UI_Stash_Socket_New_obj anon@1265", gml_Script_anon_1265_gml_Object_UI_Stash_Socket_New_obj_Create_0) \
     /* Phase 1b: the Unique stash tab's window - candidates for a shared special-tab path only, never acted on */ \
-    X(StashUnique1081, "UI_Stash_Unique_Items_obj anon@1081", gml_Script_anon_1081_gml_Object_UI_Stash_Unique_Items_obj_Create_0) \
-    X(StashUnique3176, "UI_Stash_Unique_Items_obj anon@3176", gml_Script_anon_3176_gml_Object_UI_Stash_Unique_Items_obj_Create_0) \
-    X(StashUnique4465, "UI_Stash_Unique_Items_obj anon@4465", gml_Script_anon_4465_gml_Object_UI_Stash_Unique_Items_obj_Create_0) \
-    X(StashUnique4743, "UI_Stash_Unique_Items_obj anon@4743", gml_Script_anon_4743_gml_Object_UI_Stash_Unique_Items_obj_Create_0) \
-    X(StashUnique5014, "UI_Stash_Unique_Items_obj anon@5014", gml_Script_anon_5014_gml_Object_UI_Stash_Unique_Items_obj_Create_0) \
-    X(StashUnique5993, "UI_Stash_Unique_Items_obj anon@5993", gml_Script_anon_5993_gml_Object_UI_Stash_Unique_Items_obj_Create_0) \
-    X(StashUnique11861, "UI_Stash_Unique_Items_obj anon@11861", gml_Script_anon_11861_gml_Object_UI_Stash_Unique_Items_obj_Create_0) \
-    X(StashUnique15868, "UI_Stash_Unique_Items_obj anon@15868", gml_Script_anon_15868_gml_Object_UI_Stash_Unique_Items_obj_Create_0) \
+    X(StashUnique1081, "UI_Stash_Unique_Items_obj anon@1043", gml_Script_anon_1043_gml_Object_UI_Stash_Unique_Items_obj_Create_0) \
+    X(StashUnique3176, "UI_Stash_Unique_Items_obj anon@3071", gml_Script_anon_3071_gml_Object_UI_Stash_Unique_Items_obj_Create_0) \
+    X(StashUnique4465, "UI_Stash_Unique_Items_obj anon@4311", gml_Script_anon_4311_gml_Object_UI_Stash_Unique_Items_obj_Create_0) \
+    X(StashUnique4743, "UI_Stash_Unique_Items_obj anon@4580", gml_Script_anon_4580_gml_Object_UI_Stash_Unique_Items_obj_Create_0) \
+    X(StashUnique5014, "UI_Stash_Unique_Items_obj anon@4842", gml_Script_anon_4842_gml_Object_UI_Stash_Unique_Items_obj_Create_0) \
+    X(StashUnique5993, "UI_Stash_Unique_Items_obj anon@5795", gml_Script_anon_5795_gml_Object_UI_Stash_Unique_Items_obj_Create_0) \
+    X(StashUnique11861, "UI_Stash_Unique_Items_obj anon@11510", gml_Script_anon_11510_gml_Object_UI_Stash_Unique_Items_obj_Create_0) \
+    X(StashUnique15868, "UI_Stash_Unique_Items_obj anon@15406", gml_Script_anon_15406_gml_Object_UI_Stash_Unique_Items_obj_Create_0) \
     /* Phase 1b: closures of Load_Inventory_obj and UI_Split_Stack_obj */ \
-    X(LoadInv752, "Load_Inventory_obj anon@752", gml_Script_anon_752_gml_Object_Load_Inventory_obj_Create_0) \
-    X(LoadInv877, "Load_Inventory_obj anon@877", gml_Script_anon_877_gml_Object_Load_Inventory_obj_Create_0) \
-    X(SplitStack1285, "UI_Split_Stack_obj anon@1285", gml_Script_anon_1285_gml_Object_UI_Split_Stack_obj_Create_0) \
+    X(LoadInv752, "Load_Inventory_obj anon@723", gml_Script_anon_723_gml_Object_Load_Inventory_obj_Create_0) \
+    X(LoadInv877, "Load_Inventory_obj anon@842", gml_Script_anon_842_gml_Object_Load_Inventory_obj_Create_0) \
+    X(SplitStack1285, "UI_Split_Stack_obj anon@1243", gml_Script_anon_1243_gml_Object_UI_Split_Stack_obj_Create_0) \
     /* Phase 1c (research doc, Static search, "Phase 1c rows"): LoadStash ran  */ \
     /* at character load and returned true, so the stash went somewhere while */ \
-    /* its window is closed. Town_Stash_obj's only Create closure, anon@663,  */ \
+    /* its window is closed. Town_Stash_obj's only Create closure, anon@642,  */ \
     /* is already a row above and is armed again rather than added.           */ \
     X(GetItemMap, "GetItemMap", gml_Script_GetItemMap) \
     X(GetInventoryMapPos, "GetInventoryMapPos", gml_Script_GetInventoryMapPos) \
@@ -33293,23 +33295,23 @@ static void SmaProbeSawCall(const char* label, CInstance* S)
     X(LoadInventoryOrderNew, "LoadInventoryOrderNew", gml_Script_LoadInventoryOrderNew) \
     X(SSaveStashConstants, "s_SaveStashConstants", gml_Script_s_SaveStashConstants) \
     /* Phase 1c: closures of Console_Save_obj (LoadStash's self at load) */ \
-    X(ConsoleSave1640, "Console_Save_obj anon@1640", gml_Script_anon_1640_gml_Object_Console_Save_obj_Create_0) \
-    X(ConsoleSave1828, "Console_Save_obj anon@1828", gml_Script_anon_1828_gml_Object_Console_Save_obj_Create_0) \
-    X(ConsoleSave2004, "Console_Save_obj anon@2004", gml_Script_anon_2004_gml_Object_Console_Save_obj_Create_0) \
-    X(ConsoleSave2587, "Console_Save_obj anon@2587", gml_Script_anon_2587_gml_Object_Console_Save_obj_Create_0) \
-    X(ConsoleSave3249, "Console_Save_obj anon@3249", gml_Script_anon_3249_gml_Object_Console_Save_obj_Create_0) \
-    X(ConsoleSave3848, "Console_Save_obj anon@3848", gml_Script_anon_3848_gml_Object_Console_Save_obj_Create_0) \
+    X(ConsoleSave1640, "Console_Save_obj anon@1588", gml_Script_anon_1588_gml_Object_Console_Save_obj_Create_0) \
+    X(ConsoleSave1828, "Console_Save_obj anon@1768", gml_Script_anon_1768_gml_Object_Console_Save_obj_Create_0) \
+    X(ConsoleSave2004, "Console_Save_obj anon@1935", gml_Script_anon_1935_gml_Object_Console_Save_obj_Create_0) \
+    X(ConsoleSave2587, "Console_Save_obj anon@2493", gml_Script_anon_2493_gml_Object_Console_Save_obj_Create_0) \
+    X(ConsoleSave3249, "Console_Save_obj anon@3132", gml_Script_anon_3132_gml_Object_Console_Save_obj_Create_0) \
+    X(ConsoleSave3848, "Console_Save_obj anon@3708", gml_Script_anon_3708_gml_Object_Console_Save_obj_Create_0) \
     /* Phase 1c: closures of Profile_Manager_obj (citrace names them too: one instrument per session) */ \
-    X(ProfileManager2012, "Profile_Manager_obj anon@2012", gml_Script_anon_2012_gml_Object_Profile_Manager_obj_Create_0) \
-    X(ProfileManager2520, "Profile_Manager_obj anon@2520", gml_Script_anon_2520_gml_Object_Profile_Manager_obj_Create_0) \
-    X(ProfileManager3454, "Profile_Manager_obj anon@3454", gml_Script_anon_3454_gml_Object_Profile_Manager_obj_Create_0) \
-    X(ProfileManager5201, "Profile_Manager_obj anon@5201", gml_Script_anon_5201_gml_Object_Profile_Manager_obj_Create_0) \
-    X(ProfileManager5349, "Profile_Manager_obj anon@5349", gml_Script_anon_5349_gml_Object_Profile_Manager_obj_Create_0) \
-    X(ProfileManager5835, "Profile_Manager_obj anon@5835", gml_Script_anon_5835_gml_Object_Profile_Manager_obj_Create_0) \
-    X(ProfileManager6549, "Profile_Manager_obj anon@6549", gml_Script_anon_6549_gml_Object_Profile_Manager_obj_Create_0) \
-    X(ProfileManager6879, "Profile_Manager_obj anon@6879", gml_Script_anon_6879_gml_Object_Profile_Manager_obj_Create_0) \
-    X(ProfileManager8168, "Profile_Manager_obj anon@8168", gml_Script_anon_8168_gml_Object_Profile_Manager_obj_Create_0) \
-    X(ProfileManager9994, "Profile_Manager_obj anon@9994", gml_Script_anon_9994_gml_Object_Profile_Manager_obj_Create_0) \
+    X(ProfileManager2012, "Profile_Manager_obj anon@1940", gml_Script_anon_1940_gml_Object_Profile_Manager_obj_Create_0) \
+    X(ProfileManager2520, "Profile_Manager_obj anon@2426", gml_Script_anon_2426_gml_Object_Profile_Manager_obj_Create_0) \
+    X(ProfileManager3454, "Profile_Manager_obj anon@3331", gml_Script_anon_3331_gml_Object_Profile_Manager_obj_Create_0) \
+    X(ProfileManager5201, "Profile_Manager_obj anon@5032", gml_Script_anon_5032_gml_Object_Profile_Manager_obj_Create_0) \
+    X(ProfileManager5349, "Profile_Manager_obj anon@5174", gml_Script_anon_5174_gml_Object_Profile_Manager_obj_Create_0) \
+    X(ProfileManager5835, "Profile_Manager_obj anon@5646", gml_Script_anon_5646_gml_Object_Profile_Manager_obj_Create_0) \
+    X(ProfileManager6549, "Profile_Manager_obj anon@6344", gml_Script_anon_6344_gml_Object_Profile_Manager_obj_Create_0) \
+    X(ProfileManager6879, "Profile_Manager_obj anon@6662", gml_Script_anon_6662_gml_Object_Profile_Manager_obj_Create_0) \
+    X(ProfileManager8168, "Profile_Manager_obj anon@7920", gml_Script_anon_7920_gml_Object_Profile_Manager_obj_Create_0) \
+    X(ProfileManager9994, "Profile_Manager_obj anon@9698", gml_Script_anon_9698_gml_Object_Profile_Manager_obj_Create_0) \
     /* Phase 1e (research doc, Static search, "Phase 1e rows"): every name that */ \
     /* takes, removes, splits, validates or converts inventory or stash items   */ \
     /* the table did not carry. The online-suffixed stash Take family first -   */ \
@@ -33360,16 +33362,16 @@ static void SmaProbeSawCall(const char* label, CInstance* S)
     X(SaveFileGMAsync, "SaveFileGMAsync", gml_Script_SaveFileGMAsync) \
     X(EncryptStringSave, "EncryptStringSave", gml_Script_EncryptStringSave) \
     /* Phase 1j: the item struct's methods (UiASplitStack calls two of them and a third) */ \
-    X(ItemGenerateHash, "GenerateItemHash@s_ItemInstanceStruct", gml_Script_GenerateItemHash_anon_4791_s_ItemInstanceStruct_InventoryV2Funcs) \
-    X(ItemGetInfo, "GetItemInfo@s_ItemInstanceStruct", gml_Script_GetItemInfo_anon_5277_s_ItemInstanceStruct_InventoryV2Funcs) \
-    X(ItemGetStat, "GetItemStat@s_ItemInstanceStruct", gml_Script_GetItemStat_anon_5523_s_ItemInstanceStruct_InventoryV2Funcs) \
-    X(ItemGetStatArray, "GetItemStatArray@s_ItemInstanceStruct", gml_Script_GetItemStatArray_anon_5844_s_ItemInstanceStruct_InventoryV2Funcs) \
-    X(Struct240, "___struct___240@GetItemStatArray@s_ItemInstanceStruct", gml_Script____struct___240_GetItemStatArray_anon_5844_s_ItemInstanceStruct_InventoryV2Funcs) \
-    X(ItemGetDef, "GetItemDef@s_ItemInstanceStruct", gml_Script_GetItemDef_anon_7191_s_ItemInstanceStruct_InventoryV2Funcs) \
-    X(ItemSetDef, "SetItemDef@s_ItemInstanceStruct", gml_Script_SetItemDef_anon_7339_s_ItemInstanceStruct_InventoryV2Funcs) \
-    X(ItemSetStat, "SetItemStat@s_ItemInstanceStruct", gml_Script_SetItemStat_anon_7507_s_ItemInstanceStruct_InventoryV2Funcs) \
-    X(ItemAddStat, "AddStat@s_ItemInstanceStruct", gml_Script_AddStat_anon_7675_s_ItemInstanceStruct_InventoryV2Funcs) \
-    X(ItemSetInfo, "SetItemInfo@s_ItemInstanceStruct", gml_Script_SetItemInfo_anon_7965_s_ItemInstanceStruct_InventoryV2Funcs) \
+    X(ItemGenerateHash, "GenerateItemHash@s_ItemInstanceStruct", gml_Script_GenerateItemHash_anon_4645_s_ItemInstanceStruct_InventoryV2Funcs) \
+    X(ItemGetInfo, "GetItemInfo@s_ItemInstanceStruct", gml_Script_GetItemInfo_anon_5117_s_ItemInstanceStruct_InventoryV2Funcs) \
+    X(ItemGetStat, "GetItemStat@s_ItemInstanceStruct", gml_Script_GetItemStat_anon_5352_s_ItemInstanceStruct_InventoryV2Funcs) \
+    X(ItemGetStatArray, "GetItemStatArray@s_ItemInstanceStruct", gml_Script_GetItemStatArray_anon_5663_s_ItemInstanceStruct_InventoryV2Funcs) \
+    X(Struct240, "___struct___240@GetItemStatArray@s_ItemInstanceStruct", gml_Script____struct___240_GetItemStatArray_anon_5663_s_ItemInstanceStruct_InventoryV2Funcs) \
+    X(ItemGetDef, "GetItemDef@s_ItemInstanceStruct", gml_Script_GetItemDef_anon_6967_s_ItemInstanceStruct_InventoryV2Funcs) \
+    X(ItemSetDef, "SetItemDef@s_ItemInstanceStruct", gml_Script_SetItemDef_anon_7108_s_ItemInstanceStruct_InventoryV2Funcs) \
+    X(ItemSetStat, "SetItemStat@s_ItemInstanceStruct", gml_Script_SetItemStat_anon_7269_s_ItemInstanceStruct_InventoryV2Funcs) \
+    X(ItemAddStat, "AddStat@s_ItemInstanceStruct", gml_Script_AddStat_anon_7430_s_ItemInstanceStruct_InventoryV2Funcs) \
+    X(ItemSetInfo, "SetItemInfo@s_ItemInstanceStruct", gml_Script_SetItemInfo_anon_7709_s_ItemInstanceStruct_InventoryV2Funcs) \
     /* Phase 1j: creation and identity - candidates for the split unit's item at the drop */ \
     X(SItemInstanceStruct, "s_ItemInstanceStruct", gml_Script_s_ItemInstanceStruct) \
     X(StructCopy, "StructCopy", gml_Script_StructCopy) \
@@ -36037,7 +36039,7 @@ static void CpInjectCommand(const std::vector<std::string>& tok)
     CpTarget* avail = CpFindRow(SdkShortScriptName(HeroSiege::Scripts::gml_Script_GetCraftItemsAvailable));
     CpTarget* list = nullptr;
     for (CpTarget& t : g_CpTargets)
-        if (std::string_view(t.runtimeName) == HeroSiege::Scripts::gml_Script_anon_840_gml_Object_UI_Craft_Recipe_List_Item_obj_Create_0) list = &t;
+        if (std::string_view(t.runtimeName) == HeroSiege::Scripts::gml_Script_anon_798_gml_Object_UI_Craft_Recipe_List_Item_obj_Create_0) list = &t;
     if (tok.size() == 2 && Lower(tok[1]) == "off") {
         const bool was = g_CpInjectOn.exchange(false);
         Out(std::string("craftprobe inject: off") + (was ? " (it had raised " + std::to_string(g_CpInjected) + " return(s), left "
@@ -37049,14 +37051,14 @@ enum : long {
     X(GetPlayerTalentHudObj, HeroSiege::Scripts::gml_Script_GetPlayerTalentHudObj, "GetPlayerTalentHudObj", kTgArgs, nullptr, nullptr) \
     X(UiHudTalentNavigation, HeroSiege::Scripts::gml_Script_UiHudTalentNavigation, "UiHudTalentNavigation", kTgArgs, nullptr, nullptr) \
     X(DrawKeyBindSprites, HeroSiege::Scripts::gml_Script_DrawKeyBindSprites, "DrawKeyBindSprites", kTgArgs, nullptr, nullptr) \
-    X(HudTalentAnon1233, HeroSiege::Scripts::gml_Script_anon_1233_gml_Object_UI_Hud_Talent_obj_Create_0, "UI_Hud_Talent_obj.anon@1233", kTgArgs, nullptr, nullptr) \
-    X(HudTalentAnon2503, HeroSiege::Scripts::gml_Script_anon_2503_gml_Object_UI_Hud_Talent_obj_Create_0, "UI_Hud_Talent_obj.anon@2503", kTgArgs, nullptr, nullptr) \
-    X(HudTalentAnon10745, HeroSiege::Scripts::gml_Script_anon_10745_gml_Object_UI_Hud_Talent_obj_Create_0, "UI_Hud_Talent_obj.anon@10745", kTgArgs, nullptr, nullptr) \
-    X(HudTalentAnon11619, HeroSiege::Scripts::gml_Script_anon_11619_gml_Object_UI_Hud_Talent_obj_Create_0, "UI_Hud_Talent_obj.anon@11619", kTgArgs, nullptr, nullptr) \
-    X(HudTalentAnon12025, HeroSiege::Scripts::gml_Script_anon_12025_gml_Object_UI_Hud_Talent_obj_Create_0, "UI_Hud_Talent_obj.anon@12025", kTgArgs, nullptr, nullptr) \
-    X(HudTalentAnon12449, HeroSiege::Scripts::gml_Script_anon_12449_gml_Object_UI_Hud_Talent_obj_Create_0, "UI_Hud_Talent_obj.anon@12449", kTgArgs, nullptr, nullptr) \
-    X(HudTalentAnon12916, HeroSiege::Scripts::gml_Script_anon_12916_gml_Object_UI_Hud_Talent_obj_Create_0, "UI_Hud_Talent_obj.anon@12916", kTgArgs, nullptr, nullptr) \
-    X(HudTalentAnon13435, HeroSiege::Scripts::gml_Script_anon_13435_gml_Object_UI_Hud_Talent_obj_Create_0, "UI_Hud_Talent_obj.anon@13435", kTgArgs, nullptr, nullptr) \
+    X(HudTalentAnon1233, HeroSiege::Scripts::gml_Script_anon_1183_gml_Object_UI_Hud_Talent_obj_Create_0, "UI_Hud_Talent_obj.anon@1183", kTgArgs, nullptr, nullptr) \
+    X(HudTalentAnon2503, HeroSiege::Scripts::gml_Script_anon_2413_gml_Object_UI_Hud_Talent_obj_Create_0, "UI_Hud_Talent_obj.anon@2413", kTgArgs, nullptr, nullptr) \
+    X(HudTalentAnon10745, HeroSiege::Scripts::gml_Script_anon_10430_gml_Object_UI_Hud_Talent_obj_Create_0, "UI_Hud_Talent_obj.anon@10430", kTgArgs, nullptr, nullptr) \
+    X(HudTalentAnon11619, HeroSiege::Scripts::gml_Script_anon_11283_gml_Object_UI_Hud_Talent_obj_Create_0, "UI_Hud_Talent_obj.anon@11283", kTgArgs, nullptr, nullptr) \
+    X(HudTalentAnon12025, HeroSiege::Scripts::gml_Script_anon_11677_gml_Object_UI_Hud_Talent_obj_Create_0, "UI_Hud_Talent_obj.anon@11677", kTgArgs, nullptr, nullptr) \
+    X(HudTalentAnon12449, HeroSiege::Scripts::gml_Script_anon_12084_gml_Object_UI_Hud_Talent_obj_Create_0, "UI_Hud_Talent_obj.anon@12084", kTgArgs, nullptr, nullptr) \
+    X(HudTalentAnon12916, HeroSiege::Scripts::gml_Script_anon_12530_gml_Object_UI_Hud_Talent_obj_Create_0, "UI_Hud_Talent_obj.anon@12530", kTgArgs, nullptr, nullptr) \
+    X(HudTalentAnon13435, HeroSiege::Scripts::gml_Script_anon_13033_gml_Object_UI_Hud_Talent_obj_Create_0, "UI_Hud_Talent_obj.anon@13033", kTgArgs, nullptr, nullptr) \
     X(CheckPlayerInteraction, HeroSiege::Scripts::gml_Script_CheckPlayerInteraction, "CheckPlayerInteraction(control)", kTgCount, &g_OrigCi_CheckPlayerInteraction, nullptr) \
     X(InputPressed, HeroSiege::Scripts::gml_Script_InputPressed, "InputPressed", kTgCount, nullptr, nullptr) \
     X(LoadAura, HeroSiege::Scripts::gml_Script_LoadAura, "LoadAura(negctl)", kTgCount, nullptr, nullptr) \
@@ -47074,12 +47076,12 @@ enum : long {
     X(UiAIngameRestart, HeroSiege::Scripts::gml_Script_UiAIngameRestart, "UiAIngameRestart", kRpSample, nullptr, nullptr) \
     X(UiDrawIngameRestart, HeroSiege::Scripts::gml_Script_UiDrawIngameRestart, "UiDrawIngameRestart(control)", kRpSample | kRpControl, nullptr, nullptr) \
     X(ZoneGenRestart, HeroSiege::Scripts::gml_Script_ZoneGenRestart, "ZoneGenRestart", kRpCount, &g_OrigZg_ZoneGenRestart, "zonegenlog") \
-    X(PauseAnon1402, HeroSiege::Scripts::gml_Script_anon_1402_gml_Object_UI_Pause_obj_Create_0, "UI_Pause_obj.anon@1402", kRpCount, nullptr, nullptr) \
-    X(PauseAnon1714, HeroSiege::Scripts::gml_Script_anon_1714_gml_Object_UI_Pause_obj_Create_0, "UI_Pause_obj.anon@1714", kRpCount, nullptr, nullptr) \
-    X(PauseAnon1867, HeroSiege::Scripts::gml_Script_anon_1867_gml_Object_UI_Pause_obj_Create_0, "UI_Pause_obj.anon@1867", kRpCount, nullptr, nullptr) \
-    X(PauseAnon2018, HeroSiege::Scripts::gml_Script_anon_2018_gml_Object_UI_Pause_obj_Create_0, "UI_Pause_obj.anon@2018", kRpCount, nullptr, nullptr) \
-    X(PauseAnon2582, HeroSiege::Scripts::gml_Script_anon_2582_gml_Object_UI_Pause_obj_Create_0, "UI_Pause_obj.anon@2582", kRpCount, nullptr, nullptr) \
-    X(PauseAnon6013, HeroSiege::Scripts::gml_Script_anon_6013_gml_Object_UI_Pause_obj_Create_0, "UI_Pause_obj.anon@6013", kRpCount, nullptr, nullptr) \
+    X(PauseAnon1402, HeroSiege::Scripts::gml_Script_anon_1365_gml_Object_UI_Pause_obj_Create_0, "UI_Pause_obj.anon@1365", kRpCount, nullptr, nullptr) \
+    X(PauseAnon1714, HeroSiege::Scripts::gml_Script_anon_1670_gml_Object_UI_Pause_obj_Create_0, "UI_Pause_obj.anon@1670", kRpCount, nullptr, nullptr) \
+    X(PauseAnon1867, HeroSiege::Scripts::gml_Script_anon_1818_gml_Object_UI_Pause_obj_Create_0, "UI_Pause_obj.anon@1818", kRpCount, nullptr, nullptr) \
+    X(PauseAnon2018, HeroSiege::Scripts::gml_Script_anon_1964_gml_Object_UI_Pause_obj_Create_0, "UI_Pause_obj.anon@1964", kRpCount, nullptr, nullptr) \
+    X(PauseAnon2582, HeroSiege::Scripts::gml_Script_anon_2509_gml_Object_UI_Pause_obj_Create_0, "UI_Pause_obj.anon@2509", kRpCount, nullptr, nullptr) \
+    X(PauseAnon6013, HeroSiege::Scripts::gml_Script_anon_5854_gml_Object_UI_Pause_obj_Create_0, "UI_Pause_obj.anon@5854", kRpCount, nullptr, nullptr) \
     X(UiSetRowEnabled, HeroSiege::Scripts::gml_Script_UiSetRowEnabled, "UiSetRowEnabled", kRpCount, nullptr, nullptr) \
     X(SetGlobalUiEnable, HeroSiege::Scripts::gml_Script_SetGlobalUiEnable, "SetGlobalUiEnable", kRpCount, nullptr, nullptr) \
     X(EnableNav, HeroSiege::Scripts::gml_Script_EnableNav, "EnableNav", kRpCount, nullptr, nullptr) \
@@ -48510,38 +48512,38 @@ static void SpAfter(const char* label, long n, const RValue& result)
     /* every constant whose value names one of their Create_0, which          */ \
     /* test_skillprobe_table_covers_every_sdk_closure_of_its_objects enforces. */ \
     /* UI_Hud_Talent_obj (the skill bar; tgprobe's table names these too)     */ \
-    X(HudTalent1233, "UI_Hud_Talent_obj anon@1233", gml_Script_anon_1233_gml_Object_UI_Hud_Talent_obj_Create_0) \
-    X(HudTalent2503, "UI_Hud_Talent_obj anon@2503", gml_Script_anon_2503_gml_Object_UI_Hud_Talent_obj_Create_0) \
-    X(HudTalent10745, "UI_Hud_Talent_obj anon@10745", gml_Script_anon_10745_gml_Object_UI_Hud_Talent_obj_Create_0) \
-    X(HudTalent11619, "UI_Hud_Talent_obj anon@11619", gml_Script_anon_11619_gml_Object_UI_Hud_Talent_obj_Create_0) \
-    X(HudTalent12025, "UI_Hud_Talent_obj anon@12025", gml_Script_anon_12025_gml_Object_UI_Hud_Talent_obj_Create_0) \
-    X(HudTalent12449, "UI_Hud_Talent_obj anon@12449", gml_Script_anon_12449_gml_Object_UI_Hud_Talent_obj_Create_0) \
-    X(HudTalent12916, "UI_Hud_Talent_obj anon@12916", gml_Script_anon_12916_gml_Object_UI_Hud_Talent_obj_Create_0) \
-    X(HudTalent13435, "UI_Hud_Talent_obj anon@13435", gml_Script_anon_13435_gml_Object_UI_Hud_Talent_obj_Create_0) \
+    X(HudTalent1233, "UI_Hud_Talent_obj anon@1183", gml_Script_anon_1183_gml_Object_UI_Hud_Talent_obj_Create_0) \
+    X(HudTalent2503, "UI_Hud_Talent_obj anon@2413", gml_Script_anon_2413_gml_Object_UI_Hud_Talent_obj_Create_0) \
+    X(HudTalent10745, "UI_Hud_Talent_obj anon@10430", gml_Script_anon_10430_gml_Object_UI_Hud_Talent_obj_Create_0) \
+    X(HudTalent11619, "UI_Hud_Talent_obj anon@11283", gml_Script_anon_11283_gml_Object_UI_Hud_Talent_obj_Create_0) \
+    X(HudTalent12025, "UI_Hud_Talent_obj anon@11677", gml_Script_anon_11677_gml_Object_UI_Hud_Talent_obj_Create_0) \
+    X(HudTalent12449, "UI_Hud_Talent_obj anon@12084", gml_Script_anon_12084_gml_Object_UI_Hud_Talent_obj_Create_0) \
+    X(HudTalent12916, "UI_Hud_Talent_obj anon@12530", gml_Script_anon_12530_gml_Object_UI_Hud_Talent_obj_Create_0) \
+    X(HudTalent13435, "UI_Hud_Talent_obj anon@13033", gml_Script_anon_13033_gml_Object_UI_Hud_Talent_obj_Create_0) \
     /* UI_Talent_Screen_obj (the talent screen) */ \
-    X(TalentScreen4498, "UI_Talent_Screen_obj anon@4498", gml_Script_anon_4498_gml_Object_UI_Talent_Screen_obj_Create_0) \
-    X(TalentScreen9936, "UI_Talent_Screen_obj anon@9936", gml_Script_anon_9936_gml_Object_UI_Talent_Screen_obj_Create_0) \
+    X(TalentScreen4498, "UI_Talent_Screen_obj anon@4393", gml_Script_anon_4393_gml_Object_UI_Talent_Screen_obj_Create_0) \
+    X(TalentScreen9936, "UI_Talent_Screen_obj anon@9704", gml_Script_anon_9704_gml_Object_UI_Talent_Screen_obj_Create_0) \
     /* UI_Talent_Button_obj */ \
-    X(TalentButton1009, "UI_Talent_Button_obj anon@1009", gml_Script_anon_1009_gml_Object_UI_Talent_Button_obj_Create_0) \
-    X(TalentButton1751, "UI_Talent_Button_obj anon@1751", gml_Script_anon_1751_gml_Object_UI_Talent_Button_obj_Create_0) \
-    X(TalentButton2387, "UI_Talent_Button_obj anon@2387", gml_Script_anon_2387_gml_Object_UI_Talent_Button_obj_Create_0) \
-    X(TalentButton2973, "UI_Talent_Button_obj anon@2973", gml_Script_anon_2973_gml_Object_UI_Talent_Button_obj_Create_0) \
-    X(TalentButton3562, "UI_Talent_Button_obj anon@3562", gml_Script_anon_3562_gml_Object_UI_Talent_Button_obj_Create_0) \
-    X(TalentButton4068, "UI_Talent_Button_obj anon@4068", gml_Script_anon_4068_gml_Object_UI_Talent_Button_obj_Create_0) \
+    X(TalentButton1009, "UI_Talent_Button_obj anon@956", gml_Script_anon_956_gml_Object_UI_Talent_Button_obj_Create_0) \
+    X(TalentButton1751, "UI_Talent_Button_obj anon@1675", gml_Script_anon_1675_gml_Object_UI_Talent_Button_obj_Create_0) \
+    X(TalentButton2387, "UI_Talent_Button_obj anon@2286", gml_Script_anon_2286_gml_Object_UI_Talent_Button_obj_Create_0) \
+    X(TalentButton2973, "UI_Talent_Button_obj anon@2851", gml_Script_anon_2851_gml_Object_UI_Talent_Button_obj_Create_0) \
+    X(TalentButton3562, "UI_Talent_Button_obj anon@3417", gml_Script_anon_3417_gml_Object_UI_Talent_Button_obj_Create_0) \
+    X(TalentButton4068, "UI_Talent_Button_obj anon@3903", gml_Script_anon_3903_gml_Object_UI_Talent_Button_obj_Create_0) \
     /* UI_Button_Talent_Player_obj (the point allocation's button) */ \
-    X(TalentPlayer650, "UI_Button_Talent_Player_obj anon@650", gml_Script_anon_650_gml_Object_UI_Button_Talent_Player_obj_Create_0) \
-    X(TalentPlayer23088, "UI_Button_Talent_Player_obj anon@23088", gml_Script_anon_23088_gml_Object_UI_Button_Talent_Player_obj_Create_0) \
-    X(TalentPlayer23904, "UI_Button_Talent_Player_obj anon@23904", gml_Script_anon_23904_gml_Object_UI_Button_Talent_Player_obj_Create_0) \
+    X(TalentPlayer650, "UI_Button_Talent_Player_obj anon@622", gml_Script_anon_622_gml_Object_UI_Button_Talent_Player_obj_Create_0) \
+    X(TalentPlayer23088, "UI_Button_Talent_Player_obj anon@22726", gml_Script_anon_22726_gml_Object_UI_Button_Talent_Player_obj_Create_0) \
+    X(TalentPlayer23904, "UI_Button_Talent_Player_obj anon@23516", gml_Script_anon_23516_gml_Object_UI_Button_Talent_Player_obj_Create_0) \
     /* UI_Button_Subtalent_obj (the sub-talent node's button) */ \
-    X(Subtalent535, "UI_Button_Subtalent_obj anon@535", gml_Script_anon_535_gml_Object_UI_Button_Subtalent_obj_Create_0) \
-    X(Subtalent2428, "UI_Button_Subtalent_obj anon@2428", gml_Script_anon_2428_gml_Object_UI_Button_Subtalent_obj_Create_0) \
+    X(Subtalent535, "UI_Button_Subtalent_obj anon@507", gml_Script_anon_507_gml_Object_UI_Button_Subtalent_obj_Create_0) \
+    X(Subtalent2428, "UI_Button_Subtalent_obj anon@2350", gml_Script_anon_2350_gml_Object_UI_Button_Subtalent_obj_Create_0) \
     /* UI_Talent_Screen_Allocate_obj, UI_Sub_Talents_obj, UI_Talent_Node_Tree_Parent_obj */ \
-    X(ScreenAllocate643, "UI_Talent_Screen_Allocate_obj anon@643", gml_Script_anon_643_gml_Object_UI_Talent_Screen_Allocate_obj_Create_0) \
-    X(SubTalents6264, "UI_Sub_Talents_obj anon@6264", gml_Script_anon_6264_gml_Object_UI_Sub_Talents_obj_Create_0) \
-    X(SubTalents8060, "UI_Sub_Talents_obj anon@8060", gml_Script_anon_8060_gml_Object_UI_Sub_Talents_obj_Create_0) \
-    X(SubTalents8767, "UI_Sub_Talents_obj anon@8767", gml_Script_anon_8767_gml_Object_UI_Sub_Talents_obj_Create_0) \
-    X(NodeTree1596, "UI_Talent_Node_Tree_Parent_obj anon@1596", gml_Script_anon_1596_gml_Object_UI_Talent_Node_Tree_Parent_obj_Create_0) \
-    X(NodeTree2306, "UI_Talent_Node_Tree_Parent_obj anon@2306", gml_Script_anon_2306_gml_Object_UI_Talent_Node_Tree_Parent_obj_Create_0) \
+    X(ScreenAllocate643, "UI_Talent_Screen_Allocate_obj anon@607", gml_Script_anon_607_gml_Object_UI_Talent_Screen_Allocate_obj_Create_0) \
+    X(SubTalents6264, "UI_Sub_Talents_obj anon@6107", gml_Script_anon_6107_gml_Object_UI_Sub_Talents_obj_Create_0) \
+    X(SubTalents8060, "UI_Sub_Talents_obj anon@7874", gml_Script_anon_7874_gml_Object_UI_Sub_Talents_obj_Create_0) \
+    X(SubTalents8767, "UI_Sub_Talents_obj anon@8555", gml_Script_anon_8555_gml_Object_UI_Sub_Talents_obj_Create_0) \
+    X(NodeTree1596, "UI_Talent_Node_Tree_Parent_obj anon@1525", gml_Script_anon_1525_gml_Object_UI_Talent_Node_Tree_Parent_obj_Create_0) \
+    X(NodeTree2306, "UI_Talent_Node_Tree_Parent_obj anon@2213", gml_Script_anon_2213_gml_Object_UI_Talent_Node_Tree_Parent_obj_Create_0) \
     /* UI_Button_Sub_Skill_obj has no Create closure in the SDK */ \
     /* positive control: fires from every interactable's Step event */ \
     X(CheckPlayerInteraction, "CheckPlayerInteraction", gml_Script_CheckPlayerInteraction)
@@ -51584,7 +51586,7 @@ static PFUNC_YYGMLScript* GpDropItemHolder()
 // never spelled here.
 #define GAMBAPROBE_SCRIPTS(X) \
     /* the machine's Create closure */ \
-    X(Closure, gml_Script_anon_1474_gml_Object_Slot_Machine_01_obj_Create_0, nullptr) \
+    X(Closure, gml_Script_anon_1401_gml_Object_Slot_Machine_01_obj_Create_0, nullptr) \
     /* the protected variable store, where the machine keeps its state */ \
     X(GPV, gml_Script_GPV, &g_Orig_GPV_Trace) \
     X(SPV, gml_Script_SPV, nullptr) \
@@ -57211,12 +57213,12 @@ static std::string LaClockStamp()
 // "<undefined>" for every anon@ method while the named s_lootDrawData
 // resolved; the index printed beside each name keeps an unresolved row
 // readable instead of looking like an unbound variable.
-static constexpr const char* kLaClosureShort = SdkShortScriptName(HeroSiege::Scripts::gml_Script_anon_1138_gml_Object_Loot_Ground_obj_Create_0);
+static constexpr const char* kLaClosureShort = SdkShortScriptName(HeroSiege::Scripts::gml_Script_anon_1084_gml_Object_Loot_Ground_obj_Create_0);
 static bool LaFindClosure(CInstance* lootInst, RValue& method, std::string& variable, std::string& listing)
 {
     if (!lootInst) return false;
     const std::string shortName = kLaClosureShort;
-    const std::string fullName = std::string(HeroSiege::Scripts::gml_Script_anon_1138_gml_Object_Loot_Ground_obj_Create_0);
+    const std::string fullName = std::string(HeroSiege::Scripts::gml_Script_anon_1084_gml_Object_Loot_Ground_obj_Create_0);
     bool found = false;
     try {
         const RValue inst = lootInst->ToRValue();
@@ -63390,7 +63392,7 @@ static RValue& LaProbeDetour(CInstance* S, CInstance* O, RValue& R, int argc, RV
 }
 
 static LaProbeRow g_LaProbeRows[] = {
-    { SdkShortScriptName(HeroSiege::Scripts::gml_Script_anon_1138_gml_Object_Loot_Ground_obj_Create_0), "fp_lap_closure", LaShared::None, false, false },
+    { SdkShortScriptName(HeroSiege::Scripts::gml_Script_anon_1084_gml_Object_Loot_Ground_obj_Create_0), "fp_lap_closure", LaShared::None, false, false },
     { SdkShortScriptName(HeroSiege::Scripts::gml_Script_GetRareDropAnnouncement),       "fp_lap_rareann",   LaShared::None, false, true },
     { SdkShortScriptName(HeroSiege::Scripts::gml_Script_NetworkSendChatMessageIngame),  "fp_lap_netsend",   LaShared::None, false, false },
     { SdkShortScriptName(HeroSiege::Scripts::gml_Script_GetItemDropMessage),            "fp_lap_dropmsg",   LaShared::None, false, false },
@@ -63404,8 +63406,8 @@ static LaProbeRow g_LaProbeRows[] = {
     { SdkShortScriptName(HeroSiege::Scripts::gml_Script_LootGroundInit),                "fp_hiddenloot_init", LaShared::Init, false, false },
     { SdkShortScriptName(HeroSiege::Scripts::gml_Script_LootGroundDrop),                "fp_lap_lgdrop",    LaShared::None, false, false },
     { SdkShortScriptName(HeroSiege::Scripts::gml_Script_LootGroundCreateFromItem),      "fp_lap_lgcfi",     LaShared::None, false, false },
-    { SdkShortScriptName(HeroSiege::Scripts::gml_Script_anon_6032_gml_Object_Loot_Ground_obj_Create_0), "fp_lap_filter", LaShared::None, true, false },
-    { SdkShortScriptName(HeroSiege::Scripts::gml_Script_anon_11081_gml_Object_Loot_Ground_obj_Create_0), "fp_lap_step", LaShared::None, true, false },
+    { SdkShortScriptName(HeroSiege::Scripts::gml_Script_anon_5880_gml_Object_Loot_Ground_obj_Create_0), "fp_lap_filter", LaShared::None, true, false },
+    { SdkShortScriptName(HeroSiege::Scripts::gml_Script_anon_10795_gml_Object_Loot_Ground_obj_Create_0), "fp_lap_step", LaShared::None, true, false },
 };
 static constexpr int kLaProbeRowCount = (int)(sizeof(g_LaProbeRows) / sizeof(g_LaProbeRows[0]));
 static_assert(kLaProbeRowCount == 16, "one row per script in the research doc's Static search table, LaProbeDetour<0..15>");
@@ -63698,7 +63700,7 @@ static void LaProbeAnonControl(const std::string& listing, int& resolved, int& l
 // listing, `unresolved` the rows with no name - `<undefined>#<n>`, `?#?`,
 // `?#(<kind>)`, `(unreadable)#...`, an empty name, or a `(read threw)` entry
 // that is no row at all - and `text` lists those rows as printed, index
-// included. unresolved > 0 means no row naming anon@1138 is `not-observed`,
+// included. unresolved > 0 means no row naming anon@1084 is `not-observed`,
 // never `fail`.
 static void LaProbeUnresolvedRows(const std::string& listing, int& unresolved, int& total, std::string& text)
 {
@@ -70983,7 +70985,7 @@ static void RunCommand(const std::string& line)
         if (v == "off") { g_AbyssTraceOn = false; Out("abysstrace: KAPALI"); }
         else {
             if (!g_Orig_AbyssMech)
-                HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_anon_126_gml_Object_Spawn_Abyss_obj_Create_0),
+                HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_anon_119_gml_Object_Spawn_Abyss_obj_Create_0),
                               "bp_abyss", (PVOID)Hook_AbyssMech, &g_Orig_AbyssMech);
             if (!g_Orig_GPV_Trace)
                 HookOneScript("GPV", "bp_gpvtrace", (PVOID)Hook_GPV_Trace, &g_Orig_GPV_Trace);
@@ -71036,7 +71038,7 @@ static void RunCommand(const std::string& line)
             g_ForceObtain = false; Out("abyssforce: KAPALI");
         } else {
             if (!g_Orig_AbyssMech)
-                HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_anon_126_gml_Object_Spawn_Abyss_obj_Create_0),
+                HookOneScript(SdkShortScriptName(HeroSiege::Scripts::gml_Script_anon_119_gml_Object_Spawn_Abyss_obj_Create_0),
                               "bp_abyss", (PVOID)Hook_AbyssMech, &g_Orig_AbyssMech);
             if (!g_Orig_Obtain)
                 HookOneScript("IsObtainablePlace", "bp_obtain",

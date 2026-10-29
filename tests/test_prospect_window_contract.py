@@ -243,11 +243,11 @@ class ProspectWindowContractTests(unittest.TestCase):
             # Phase 0a read these off the live window's method values
             # (m_SetInventoryLocalPlayer, m_Resize, m_UpdateInventoryGrid) and
             # the ProspectGrid node's m_RefreshNode.
-            "gml_Script_anon@1065@gml_Object_UI_Prospect_obj_Create_0",
-            "gml_Script_anon@2806@gml_Object_UI_Prospect_obj_Create_0",
-            "gml_Script_anon@3657@gml_Object_UI_Prospect_obj_Create_0",
-            "gml_Script_anon@36159@gml_Object_UI_Inventory_Grid_obj_Create_0",
-            "gml_Script____struct___411@UiContainerChange@UiFuncs",
+            "gml_Script_anon@1038@gml_Object_UI_Prospect_obj_Create_0",
+            "gml_Script_anon@2729@gml_Object_UI_Prospect_obj_Create_0",
+            "gml_Script_anon@3551@gml_Object_UI_Prospect_obj_Create_0",
+            "gml_Script_anon@35172@gml_Object_UI_Inventory_Grid_obj_Create_0",
+            "gml_Script____struct___412@UiContainerChange@UiFuncs",
             "gml_Script_CheckPlayerInteraction",
             "gml_Script_PlayerMouseAction",
         ):
@@ -863,13 +863,13 @@ class ProspectWindowContractTests(unittest.TestCase):
         "gml_Script_InventoryUpdateExt", "gml_Script_InventoryUpdateExtNoQue", "gml_Script_InvGridEquipV2",
         "gml_Script_UiAInventoryMaterialTabClick", "gml_Script_UiDrawInventoryMaterialTab",
         "gml_Script_CA_playerItemPickup", "gml_Script_CA_playerItemPickupAccept", "gml_Script_CA_playerItemDrop",
-        "gml_Script_anon_495_gml_Object_UI_Inventory_obj_Create_0",
-        "gml_Script_anon_2261_gml_Object_UI_Inventory_obj_Create_0",
-        "gml_Script_anon_2364_gml_Object_UI_Inventory_obj_Create_0",
-        "gml_Script_anon_4391_gml_Object_UI_Inventory_obj_Create_0",
-        "gml_Script_anon_5590_gml_Object_UI_Inventory_obj_Create_0",
-        "gml_Script_anon_7874_gml_Object_UI_Inventory_obj_Create_0",
-        "gml_Script_anon_14458_gml_Object_UI_Inventory_obj_Create_0",
+        "gml_Script_anon_479_gml_Object_UI_Inventory_obj_Create_0",
+        "gml_Script_anon_2212_gml_Object_UI_Inventory_obj_Create_0",
+        "gml_Script_anon_2310_gml_Object_UI_Inventory_obj_Create_0",
+        "gml_Script_anon_4290_gml_Object_UI_Inventory_obj_Create_0",
+        "gml_Script_anon_5452_gml_Object_UI_Inventory_obj_Create_0",
+        "gml_Script_anon_7660_gml_Object_UI_Inventory_obj_Create_0",
+        "gml_Script_anon_14103_gml_Object_UI_Inventory_obj_Create_0",
     )
 
     STAGE_C_FUNCTIONS = ("static std::vector<PpGridNode> PpListGridNodes(", "static bool PpResolveGridSel(",
@@ -884,7 +884,7 @@ class ProspectWindowContractTests(unittest.TestCase):
             self.runtime_name(constant)   # exists in the SDK, or fails by name
             self.assertIn(constant, by_constant, constant + " is not a PROSPECTPROBE_TARGETS row")
         # The bag window's closures are labelled like every other object's.
-        for n in (495, 2261, 2364, 4391, 5590, 7874, 14458):
+        for n in (479, 2212, 2310, 4290, 5452, 7660, 14103):
             self.assertEqual(by_constant[f"gml_Script_anon_{n}_gml_Object_UI_Inventory_obj_Create_0"],
                              f"UI_Inventory_obj anon@{n}")
         self.assertEqual(by_constant["gml_Script_s_InventoryDrag"], "s_InventoryDrag")
@@ -1529,7 +1529,7 @@ class ProspectWindowContractTests(unittest.TestCase):
         self.assertIn("session 7", l4)
         # Round-1 N2: the stop condition covers the four names read live, not
         # the nested struct closures nothing has measured resolving.
-        for name in ("anon@1065", "anon@2806", "anon@3657", "anon@36159"):
+        for name in ("anon@1038", "anon@2729", "anon@3551", "anon@35172"):
             self.assertIn(name, l4)
         self.assertNotIn("**Every `UI_Prospect_obj anon@…` and `UI_Inventory_Grid_obj …` row", l4)
         # Round-1 N1: `detoured` proves resolution; a count needs invoked=yes.
