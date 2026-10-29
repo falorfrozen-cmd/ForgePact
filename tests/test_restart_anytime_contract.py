@@ -56,12 +56,12 @@ ROUND0_SCRIPTS = {
     "gml_Script_UiAIngameRestart",
     "gml_Script_UiDrawIngameRestart",
     "gml_Script_ZoneGenRestart",
-    "gml_Script_anon_1402_gml_Object_UI_Pause_obj_Create_0",
-    "gml_Script_anon_1714_gml_Object_UI_Pause_obj_Create_0",
-    "gml_Script_anon_1867_gml_Object_UI_Pause_obj_Create_0",
-    "gml_Script_anon_2018_gml_Object_UI_Pause_obj_Create_0",
-    "gml_Script_anon_2582_gml_Object_UI_Pause_obj_Create_0",
-    "gml_Script_anon_6013_gml_Object_UI_Pause_obj_Create_0",
+    "gml_Script_anon_1365_gml_Object_UI_Pause_obj_Create_0",
+    "gml_Script_anon_1670_gml_Object_UI_Pause_obj_Create_0",
+    "gml_Script_anon_1818_gml_Object_UI_Pause_obj_Create_0",
+    "gml_Script_anon_1964_gml_Object_UI_Pause_obj_Create_0",
+    "gml_Script_anon_2509_gml_Object_UI_Pause_obj_Create_0",
+    "gml_Script_anon_5854_gml_Object_UI_Pause_obj_Create_0",
 }
 
 # Round 2: the UI node API (§ Static search › Round 2), all count-only rows.
@@ -673,7 +673,7 @@ class RestartResearchDocTests(unittest.TestCase):
         self.assertIn("UiAIngameRestart calls=1", by_step["R4"])
         self.assertIn("wrote=yes changed=yes", by_step["C2"])
         self.assertIn("37710", by_step["R5"])
-        self.assertIn("anon@6013", by_step["R7"])
+        self.assertIn("anon@5854", by_step["R7"])
         self.assertIn("wasInCombat=bool:false", by_step["R1"])
         # Never a value the session did not print.
         self.assertIn("not run", by_step["R6"])

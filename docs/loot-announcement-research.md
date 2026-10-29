@@ -32,7 +32,7 @@ Every chat, announce and drop name in `hs-game-sdk/cpp/include/hs_game_sdk/scrip
 
 | SDK name | Role (static reading) | `lootannprobe on` |
 |---|---|---|
-| `gml_Script_anon@1138@gml_Object_Loot_Ground_obj_Create_0` | the rare-drop announcement closure bound on each ground item (hidden-loot research named it by role) | hooked, a 0-argument method |
+| `gml_Script_anon@1084@gml_Object_Loot_Ground_obj_Create_0` | the rare-drop announcement closure bound on each ground item (hidden-loot research named it by role) | hooked, a 0-argument method |
 | `gml_Script_GetRareDropAnnouncement` | "is this drop announced?" for the online path | hooked, its 3 arguments and return recorded |
 | `gml_Script_NetworkSendChatMessageIngame` | builds the item line, adds it locally, then sends | hooked |
 | `gml_Script_GetItemDropMessage` | the localized "found <item>" text | hooked |
@@ -41,7 +41,7 @@ Every chat, announce and drop name in `hs-game-sdk/cpp/include/hs_game_sdk/scrip
 | `gml_Script_ChatAddIngameMessageFiltered`, `gml_Script_CA_chatIngame` | the receiver side of an online announcement | hooked (expected 0 offline) |
 | `gml_Script_PacketSend`, `gml_Script_ChatSendServerMessage`, `gml_Script_ReportClient` | network sends the closure or the sender can reach | hooked, count only (a non-zero is a finding) |
 | `gml_Script_LootGroundInit`, `gml_Script_LootGroundDrop`, `gml_Script_LootGroundCreateFromItem` | the attachment points | counted (`LootGroundInit` through the detour it shares with hidden loot sleep, `LootGroundDrop` through its own count-only `fp_lap_lgdrop` detour) |
-| `gml_Script_anon@6032@...`, `gml_Script_anon@11081@gml_Object_Loot_Ground_obj_Create_0` | the loot-filter closure and the step dispatcher, same object | hooked, count only (controls) |
+| `gml_Script_anon@5880@...`, `gml_Script_anon@10795@gml_Object_Loot_Ground_obj_Create_0` | the loot-filter closure and the step dispatcher, same object | hooked, count only (controls) |
 
 Objects: `Loot_Ground_obj` 2513, `Ingame_Chat_obj` 2258, `Chat_obj` 911,
 `UI_Ingame_Chat_obj` 5107, `Menu_Controller_obj` 2674. No earlier
@@ -55,7 +55,7 @@ reading, not a measurement, and no decompiled line is kept in this repository.
 
 - **Static reading: the announcement is a closure bound on the ground item.**
   `Loot_Ground_obj`'s Create event binds three methods; the one named
-  `anon@1138@...` takes no arguments (self and other only). A search for
+  `anon@1084@...` takes no arguments (self and other only). A search for
   direct callers found none for it, while the same search found seven sites
   for the other targets of the same run (the positive control), so it is
   reached as a method value, not by a compiled direct call. Who invokes it,
@@ -238,7 +238,7 @@ Under `#ifndef FORGEPACT_RELEASE`, after `dungeonprobe`. Every form:
   (`self=<object> argc=<n> args=<kinds>`), logged as `lootannprobe <script>
   #<n> ...` for the first three. `GetRareDropAnnouncement` also records its
   three arguments' values and its return (`args->ret=a,b,c -> ret`). The two
-  `Loot_Ground_obj` controls (`anon@6032`, `anon@11081`) are recorded on their
+  `Loot_Ground_obj` controls (`anon@5880`, `anon@10795`) are recorded on their
   first three calls only, then counted.
 - **`lootannprobe status`** (or bare `lootannprobe`) prints `lootannprobe:
   on|off rows=16 attached=<n>`, then one `lootannprobe row <script>
@@ -282,13 +282,13 @@ Under `#ifndef FORGEPACT_RELEASE`, after `dungeonprobe`. Every form:
   (`<undefined>#<n>`, `?#?`, `?#(<kind>)`, `(unreadable)`, an empty name,
   or a `(read threw)` entry), followed by those rows in parentheses with
   their indexes. `method-found` is a `fail` only when `k` ≥ 1, `u` is 0
-  (every listed row resolved to a name) and no row names `anon@1138`;
+  (every listed row resolved to a name) and no row names `anon@1084`;
   with `k` ≥ 1 and `u` > 0 it is recorded `not-observed (row unresolved:
   <each unresolved row with its #index>)`. `s_lootDrawData` resolves in either case: it is a *named* method,
   so it is the control for named methods only and cannot tell a working
   listing from a blind one, since the failure being fixed touched only
   `anon@` methods. Then it prints `lootannprobe methods: SDK closure
-  anon@1138@gml_Object_Loot_Ground_obj_Create_0 found as variable <var>` or
+  anon@1084@gml_Object_Loot_Ground_obj_Create_0 found as variable <var>` or
   `not found`. The newest ground item is `place`'s return or `LootGroundInit`'s
   argument 0 while it is still a live `Loot_Ground_obj`, else the room's last
   one.
@@ -333,7 +333,7 @@ Every check, with what was supplied and what was seen:
 | `control` | `ping` | `pong (YYTK 4.0.1)` | pass |
 | `chat-call-control` | `dungeonprobe chat control` | `PASS defined->true undefined->false` | pass |
 | (install) | `lootannprobe on` | 16 of 16 rows attached, none `not installed`; `LootGroundInit` counted through `fp_hiddenloot_init` (both routes, shared), `LootGroundDrop` through `fp_lootann_drop` (both), `LootGroundCreateFromItem` detoured under the table-only `Hook_LootGroundCreateFromItem`. Census: `Loot_Ground_obj` 0, `Ingame_Chat_obj` 1, `Chat_obj` 0, `Menu_Controller_obj` 1 | recorded |
-| `init-counts-placed` | `lootannprobe place heroic` (`"27"`=9, `"28"`=Heavy Belt of Balance, itemType 8) | `LootGroundInit` 1 (arguments ref, bool), `LootGroundCreateFromItem` 1, the Create-event method `anon@6032` 1 with `self` `Loot_Ground_obj` | pass |
+| `init-counts-placed` | `lootannprobe place heroic` (`"27"`=9, `"28"`=Heavy Belt of Balance, itemType 8) | `LootGroundInit` 1 (arguments ref, bool), `LootGroundCreateFromItem` 1, the Create-event method `anon@5880` 1 with `self` `Loot_Ground_obj` | pass |
 | `closure-fires-offline` | the same placement, then about 450 natural drops | the closure 0, `GetRareDropAnnouncement` 0, `NetworkSendChatMessageIngame` 0; no line in chat | not observed |
 | `method-found` | `lootannprobe methods` on the placed item | four method-valued variables (each passed `is_method`): `m_AngelicMessage`, `m_LootFilter` and `m_LootGroundDeActiveStep` printed `<undefined>`, the string `script_get_name` returned for `method_get_index`'s raw, unconverted value; `s_lootDrawData` resolved to `Pickup_Parent_obj`'s Create method. No row matched the SDK closure's name | uninterpretable (instrument) |
 | `route-method` | `try 1`: the closure by name, `self` the ground item, no arguments | `refused: method` (no listed name matched), nothing called, no hook moved, no line | uninterpretable (instrument) |
@@ -355,7 +355,7 @@ What the session established, measured:
   `method_get_index`'s raw value instead of a number, and got `<undefined>`
   back for every `anon@` method, while the named `s_lootDrawData` resolved.
   The variables hold methods; which functions they are was not read. So
-  whether `m_AngelicMessage` wraps `anon@1138` is not established, and
+  whether `m_AngelicMessage` wraps `anon@1084` is not established, and
   `method-found` and `route-method` measured the probe, not the game (the
   instrument-blindness review of round 2). The probe now converts the index
   first, as `CiTryResolveMethod` does, and prints `#<index>` beside each
@@ -494,8 +494,8 @@ missing).
 | `natural-fresh` | panel switch on; the owner killed monsters in one zone for about five minutes (minimap clock), no boost, no bag drop, no portal | `seen` 4 → 219 (+215), `created` 5 → 220 (+215), `held-bag-drop` 1 → 1, `held-rarity` 1 → 216, `announced` unchanged | pass |
 | `natural-announce` | Magic Find x10 through the panel, Angelic / Unholy Drops at its saved 1; the owner played on in the same zone | `announced` 2 → 3 with no placement (`seen` 219 → 446, `held-rarity` 216 → 442, `held-no-rarity`, `held-duplicate` 0, `held-bag-drop` 1); the owner saw a red `SERVER:` line; the screenshot came after the line had gone, so the item and its rarity were not recorded | pass |
 | `anon-control` | `lootannprobe on` (16 of 16 rows attached, none table-only or missing; `LootGroundDrop` through its own count-only detour), `lootannprobe place heroic` (Heavy Belt of Wholeness), `lootannprobe methods` | `m_AngelicMessage -> ?#-1, m_LootFilter -> ?#-1, m_LootGroundDeActiveStep -> ?#-1, s_lootDrawData -> s_lootDrawData@gml_Object_Pickup_Parent_obj_Create_0#105134`; `anon rows resolved: 0 of 2`; `unresolved rows: 3 of 4`; `SDK closure ... not found` | fail |
-| `method-found-2` | the same listing | no row names `anon@1138` | not observed (instrument-blind: the three `anon@` rows read `?#-1`) |
-| `route-method-2` | `lootannprobe try 1` on the placed Heroic, switch off | `supplied script=anon@1138@gml_Object_Loot_Ground_obj_Create_0 self=Loot_Ground_obj args=none -> dispatched=0 ret=none refused: method`; `deltas: none`; no line; no game error | not observed (method not found) |
+| `method-found-2` | the same listing | no row names `anon@1084` | not observed (instrument-blind: the three `anon@` rows read `?#-1`) |
+| `route-method-2` | `lootannprobe try 1` on the placed Heroic, switch off | `supplied script=anon@1084@gml_Object_Loot_Ground_obj_Create_0 self=Loot_Ground_obj args=none -> dispatched=0 ret=none refused: method`; `deltas: none`; no line; no game error | not observed (method not found) |
 | `route-method-angelic-2` | `lootannprobe place angelic` (Headhunter), `lootannprobe try 1` | the same refusal, `deltas: none`, no line | not observed (method not found) |
 
 What the session established, measured:
@@ -532,7 +532,7 @@ What the session established, measured:
   `m_LootGroundDeActiveStep` as an `anon@` closure on a quest item on
   2026-09-11; why the same read gives -1 on this ground item is not
   established. The listing stays instrument-blind, so whether the ground
-  item holds `anon@1138` is still not known, and `method` was not called.
+  item holds `anon@1084` is still not known, and `method` was not called.
 - `route-method-2` did not pass, so by the owner's rule `server` stays the
   shipped route (Route, below).
 
@@ -832,7 +832,7 @@ what follows is the mechanism in our own words.
   calls they were was not separated, because the debugger logpoints on
   `LootExplosion` and `LootGroundInit` could not run through the floor.
 - **When it comes.** `LootExplosion` has two direct callers by the scan:
-  `Spawn_Next_obj`'s closure `anon@1312@gml_Object_Spawn_Next_obj_Create_0`,
+  `Spawn_Next_obj`'s closure `anon@1278@gml_Object_Spawn_Next_obj_Create_0`,
   which reads the floor's state (`chaosTowerFloorFinished`,
   `chaosTowerIsLastFloor`, `chaosTowerFloor`, `chaosTowerFloorList`,
   `nextFloorType`, `nextFloorNumber`), and `WormholeGiveReward`. So the
@@ -841,7 +841,7 @@ what follows is the mechanism in our own words.
   the loot landed when the floor was cleared ("Floor Cleared" on screen);
   that `LootExplosion` was the call that put it there is the static reading,
   not observed live.
-- **The reset.** `Controller_obj`'s closure `anon@16838` clears
+- **The reset.** `Controller_obj`'s closure `anon@16294` clears
   `lootExplosionList` and resets `lootExplosionGold`, `chaosTowerFloor`,
   `chaosTowerSpawnZone`, `chaosTowerStarted`, `chaosTowerBossState`,
   `lootExplosionGiven` (to false) and `chaosTowerRift`. That it is what
@@ -1226,7 +1226,7 @@ measured or inference.
   then becomes the text colour, and hovering the line shows the item's
   tooltip.
 - `DrawChatMessage`, a method of `s_ChatMessageData` (SDK name
-  `gml_Script_DrawChatMessage@anon@13887@s_ChatMessageData@DefineChatMessageData`;
+  `gml_Script_DrawChatMessage@anon@13546@s_ChatMessageData@DefineChatMessageData`;
   the anon number moves with each game patch, RDM § 5.3), draws the line
   with a black shadow under each part: the time stamp in 8421504 (#808080),
   the sender in `msgNameColor`, the platform badges, a separator in 7844807
@@ -1256,7 +1256,7 @@ measured or inference.
 
 **The online announcement's colours.**
 
-- The ground item's announcement closure (`anon@1138`) hands its line to
+- The ground item's announcement closure (`anon@1084`) hands its line to
   `NetworkSendChatMessageIngame` with 18687 and a colour. That script passes
   18687 (#FF4800, orange) as the sender colour, the closure's colour as the
   text colour, message type 3, and a sender name read from the game's

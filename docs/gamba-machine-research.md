@@ -136,10 +136,10 @@ Every line is labelled. **Static search** means the name or index is in
   `Relic_Casino_Dice_obj` to a relic. Neither is the machine, and neither is
   instrumented.
 - **Static search:** the object has one Create closure,
-  `gml_Script_anon_1474_gml_Object_Slot_Machine_01_obj_Create_0`
+  `gml_Script_anon_1401_gml_Object_Slot_Machine_01_obj_Create_0`
   (`HeroSiege::Scripts`, index 5343). Its name moves with every game patch, so
   the code spells it through the SDK constant only; this doc calls it
-  `anon@1474`.
+  `anon@1401`.
 - **Static search:** Goburin's Head is a unique charm, repository type 10 /
   sub 0 / base 98, key `charms_goburins_head`. It is the `kAngelicBases` row in
   `ModuleMain.cpp`, flagged not angelic. Its kill effect is
@@ -173,7 +173,7 @@ Every claim carries one of four labels, plus a source:
 
 - **Static reading:** the object has seven events, `Create_0`, `Alarm_0`,
   `Alarm_9`, `Step_0`, `Draw_0`, `Draw_64` and `CleanUp_0`, plus the closure
-  `anon@1474`. They were found through the compiled-code table (rows of 24
+  `anon@1401`. They were found through the compiled-code table (rows of 24
   bytes: name, function, variables), the same table `FrameProfiler.hpp`'s
   `FindGmlTable` walks at runtime.
 - **Static reading, not verified:** an object event takes two pointer
@@ -252,7 +252,7 @@ Every claim carries one of four labels, plus a source:
   `bp_ipc\gamelog.txt`, so this line is a cheap positive control for a spawned
   machine.
 - **Static reading:** `Alarm_0` calls builtins and `GPV`/`SPV` only; the
-  closure `anon@1474` calls `GPV` (23), `SPV` (9) and `PlaySound3D` (2).
+  closure `anon@1401` calls `GPV` (23), `SPV` (9) and `PlaySound3D` (2).
 - **Not established:** which of `Alarm_0`, `Step_0` and the closure is the reel
   stop, the spin and the explosion.
 - **Static reading:** neither 10,000 nor 750 appears as a literal in the
@@ -446,7 +446,7 @@ decision core in `plugin/include/ForgePact/GambaProbe.hpp` (namespace
     the toolkit's `AGENTS.md`: a runtime struct, validated, with a positive
     control (`step-fires` in § Live procedure 1).
 - **Script rows**, machine-self filter (`HookOneScript`, dual install): the
-  closure `anon@1474`, `GPV`, `SPV`, `InitPV`, `FPV`, `GetGoldAmount`,
+  closure `anon@1401`, `GPV`, `SPV`, `InitPV`, `FPV`, `GetGoldAmount`,
   `GoldOperationPending`, `GetGoldCounterHash`, `PickUpGoldCheck`,
   `LootBlocksUseKey`, `CheckUseKey`, `InputPressed`, `NetworkSendClientEffect`,
   `PlaySound3D`, `LootGroundCreate`, `LootGroundCreateFromItem`,
@@ -942,7 +942,7 @@ repeated here whole.
   1. `debuglog` -> `debuglog: ACIK` (game log on). `gambaprobe hook` -> one
      line per row ending `detoured`, `detoured-under`, `shared`, `table-only`
      or `missing`. The five event rows must read `detoured`. No script row
-     may read `table-only` or `missing`: the closure (`anon@1474`), `GPV`,
+     may read `table-only` or `missing`: the closure (`anon@1401`), `GPV`,
      `SPV`, `InitPV`, `FPV`, `GetGoldAmount`, `GoldOperationPending`,
      `GetGoldCounterHash`, `PickUpGoldCheck`, `LootBlocksUseKey`,
      `CheckUseKey`, `InputPressed`, `NetworkSendClientEffect`, `PlaySound3D`,

@@ -207,11 +207,11 @@ class ForgeHashTargetTests(unittest.TestCase):
         self.assertNotIn('"gml_Script_GenerateItemHash@', self.plugin)
 
     def test_sdk_constant_replaces_the_stale_literal(self):
-        # 4645 named the pre-patch game build's closure; the current build's
-        # hs-game-sdk (regenerated after "move closure names to the current
-        # game's hs-game-sdk") spells it 4791.
+        # The number moves between game builds: 4645 named the pre-patch
+        # build's closure, the next build used another number, and game
+        # 7.0.14.0 is back on 4645 (the hub's closure_renames_7_0_14_0.json).
         occurrences = self.plugin.count(
-            "gml_Script_GenerateItemHash_anon_4791_s_ItemInstanceStruct_InventoryV2Funcs"
+            "gml_Script_GenerateItemHash_anon_4645_s_ItemInstanceStruct_InventoryV2Funcs"
         )
         self.assertGreaterEqual(occurrences, 2)
 

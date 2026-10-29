@@ -731,7 +731,7 @@ class SkillActionsResearchDoc(unittest.TestCase):
                       procedure)
         self.assertIn("`skillprobe arm UiCreate 3`", procedure)
         self.assertIn("Judge a candidate by its `self`", procedure)
-        self.assertIn("`UI_Talent_Screen_Allocate_obj anon@643`", procedure)
+        self.assertIn("`UI_Talent_Screen_Allocate_obj anon@607`", procedure)
         self.assertNotIn("fires with no arguments on every action is not the "
                          "handler", " ".join(procedure.split()))
 

@@ -1614,12 +1614,14 @@ bayragi okuyor.  Ilk kopya bayragi kapatiyor, kalan kopyalar sessizce cikiyor.
 Eski ctauto/ChaosTowerKur yolu (oyuncunun yanina dogrudan Chaos_Tower_obj)
 bu yuzden gerekmisti; artik gerekmiyor.
 
-## Not (2026-09-18): anon@ numaralari bu derlemeye (2026-09-03) ait
+## Not (2026-09-18, oyun 7.0.14.0 icin guncellendi): anon@ numaralari bu derlemeye (2026-09-03) ait
 Bu bolumdeki anon@119 (Shadow Realm, Abyss) ve anon@97 (Chaos Tower)
-numaralari olculdukleri derlemeyi anlatir ve oyle birakildi.  ForgePact'in
-yayindaki kancalari artik hs-game-sdk'nin guncel uretiminden gelen anon@126
-(Shadow Realm, Abyss) ve anon@102 (Chaos Tower) adlarini kullaniyor - bkz.
-`fix/closure-names-current-game` dalindaki `release-notes-v1.4.2.md`.
+numaralari olculdukleri derlemeyi anlatir. Sonraki bir oyun derlemesi bunlari
+yeniden numaralamisti (bkz. `fix/closure-names-current-game` dalindaki
+`release-notes-v1.4.2.md`); oyun 7.0.14.0 ayni numaralara geri dondu ve
+ForgePact'in yayindaki kancalari yine anon@119 (Shadow Realm, Abyss) ve anon@97
+(Chaos Tower) adlarini kullaniyor (hub'daki
+`hs-game-sdk/curated/closure_renames_7_0_14_0.json`).
 
 ## Shadow Realm ve Chaos Tower kapilari
 Iki mekanigin `m_activateMechanic` kapanislari (bu derlemede

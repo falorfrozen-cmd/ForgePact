@@ -41,8 +41,8 @@ değil (hub `AGENTS.md` › "Legal: Decompiled Output Never Reaches Any Origin")
   "asla çözülmez" demek değil: denenen tam isim o zaman kayda geçmemişti. Eklentinin o
   anki GenerateItemHash kopyası `@anon@4638@` yazımıydı; bu isim o zamanki hs-game-sdk
   tablosunda yoktu (tabloda o zamanki (yama öncesi) oyun sürümü için sadece `@anon@4645@`
-  vardı). Oyun yaması sonrası hs-game-sdk yeniden üretildi; güncel sürümün adı
-  `@anon@4791@`. Yanlış bir isim zaten status 14 üretir - tek başına yeterli bir
+  vardı). Sonraki oyun yamasıyla ad bir kez değişti; oyun 7.0.14.0'da ad yine
+  `@anon@4645@` (hub'daki `closure_renames_7_0_14_0.json`). Yanlış bir isim zaten status 14 üretir - tek başına yeterli bir
   açıklama. `hashprobe direct` (research build) bunu yeniden test ediyor. Global
   scriptleri kullan.
 

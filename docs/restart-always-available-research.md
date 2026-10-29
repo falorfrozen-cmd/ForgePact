@@ -93,12 +93,12 @@ without a literal):
 | `UiAIngameRestart` | 3997 | The pause menu's Restart activation (`UiA*` names are activation functions, as `UiAProspectButton` was in the prospect research). `docs/S10-special-content-notes.md` already records that it clears `Controller_obj.shadowRealmSpawned`, so it is the restart itself, reached through the button. |
 | `UiDrawIngameRestart` | 4419 | Its draw function, the only `UiDraw*` with a per-button name; the hypothesis is that the "wait" state is drawn here. Also the instrument's positive control: a draw function of an open menu runs every frame. |
 | `ZoneGenRestart` | 3611 | The zone regeneration. A row so this document can say whether a refused press reaches it (the expectation is that it does not). The research-only `zonegenlog` tracer already table-hooks it, as a caller trace, not a gate read. |
-| `anon@1402@gml_Object_UI_Pause_obj_Create_0` | 6046 | One of the six closures `UI_Pause_obj` builds at Create; one of them may be the Restart button's activation wrapper. |
-| `anon@1714@gml_Object_UI_Pause_obj_Create_0` | 6047 | As above. |
-| `anon@1867@gml_Object_UI_Pause_obj_Create_0` | 6048 | As above. |
-| `anon@2018@gml_Object_UI_Pause_obj_Create_0` | 6049 | As above. |
-| `anon@2582@gml_Object_UI_Pause_obj_Create_0` | 6050 | As above. |
-| `anon@6013@gml_Object_UI_Pause_obj_Create_0` | 6051 | As above. |
+| `anon@1365@gml_Object_UI_Pause_obj_Create_0` | 6046 | One of the six closures `UI_Pause_obj` builds at Create; one of them may be the Restart button's activation wrapper. |
+| `anon@1670@gml_Object_UI_Pause_obj_Create_0` | 6047 | As above. |
+| `anon@1818@gml_Object_UI_Pause_obj_Create_0` | 6048 | As above. |
+| `anon@1964@gml_Object_UI_Pause_obj_Create_0` | 6049 | As above. |
+| `anon@2509@gml_Object_UI_Pause_obj_Create_0` | 6050 | As above. |
+| `anon@5854@gml_Object_UI_Pause_obj_Create_0` | 6051 | As above. |
 
 Objects: `UI_Pause_obj` (5206), `Controller_obj` (984), `Player_obj` (3553),
 `DPS_Meter_obj` (1357). No script named with `InCombat`, `Combat` (other than
@@ -163,7 +163,7 @@ present once:
 | `UiACloseButton` | 3973 | Candidate activation of the pause menu's Resume/close - the press-path positive control (a sibling press in combat that does reach its activation). That Resume uses it is not known; S3 measures it, and 0 on a Resume press makes that control `unmeasured`. |
 
 Not rows, and why: the `UiFuncs` struct constructors
-(`___struct___408@UiCreate@UiFuncs`, `409@UiCreateNode`,
+(`___struct___409@UiCreate@UiFuncs`, `409@UiCreateNode`,
 `410@UiCreateContainer`, `411@UiContainerChange`) run at construction, not
 per frame; `UiButtonDraws` (4410) and `UiFuncs` (4459) are container names,
 not callable scripts. No other `UiAIngame*` exists for Resume, Options or
@@ -620,7 +620,7 @@ nothing else. Round 2's rows follow round 1's, and round 3's follow round
 | C2 | `set player wasInCombat 1` / `0` and `set player combatRefresh 1` / `0`: all `wrote=yes changed=yes`. | Pass. The write stored a real where the game's own value is a bool. |
 | R5 | In combat, menu open: `combatRefresh` already `bool:false` in combat. `set player wasInCombat 0` `wrote=yes changed=yes` at frame 37710; the draw sample read `real:0` at 37710 and `bool:true` again by frame 37724; draw `a0` stayed `bool:false`; the press was refused, `UiAIngameRestart calls=0`. | `unmeasured (overwritten before use)`: the game recomputes `wasInCombat` while the pause menu is open (the world is not paused), so a command-time write cannot test it. `combatRefresh` is not the gate. |
 | R6 | not run - R5 was unmeasured, not a negative, so there was nothing to repeat with other names. | - |
-| R7 | `anon@6013` counted once at each menu open (`self=UI_Pause_obj#5206`); the session record names no count for the other five closures. | `anon@6013` runs once per open, not per frame, so it is not where the menu re-decides the button each frame; no per-frame count is recorded for the other five. The per-frame logic is in the object's own events (not hookable on this build) or in scripts round 0 did not list - hence round 2's node-API rows. |
+| R7 | `anon@5854` counted once at each menu open (`self=UI_Pause_obj#5206`); the session record names no count for the other five closures. | `anon@5854` runs once per open, not per frame, so it is not where the menu re-decides the button each frame; no per-frame count is recorded for the other five. The per-frame logic is in the object's own events (not hookable on this build) or in scripts round 0 did not list - hence round 2's node-API rows. |
 | R8 | not recorded - the session's `hs_saves_inspect` / `hs_saves_restore` output is not in the record. | - |
 
 Round 2's session ran on the evening of 2026-09-22 with the research DLL
@@ -634,7 +634,7 @@ a valid in-combat state; no `Act_*` room was used.
 | C3 | `hook`: 22 native / 0 blocked / 0 not found. Menu closed: `control=0` at frame 2610 and again at frame 3960. | Pass: the Restart draw does not run with the menu closed. |
 | S1 | In town, menu open: `control=450`; `selfIds=262247`, the id of the `menuprobe list UI_Button_obj` line whose `text="Restart"`; the draw's `a0=bool:false` in town too; button dump `names=85` with `enabled=bool:true`, `manualDisable=bool:false`, `buttonDrawFunc=UiDrawIngameRestart`, `uiNodeCallstack="PauseRestart"`, `updateFunc=undefined`; pause dump `names=64`; `path:global.tupm[1].in_combat` unresolved in town. | C1 pass. One Restart button reaches the draw, instance 262247. The draw's `a0` is false with Restart allowed, so it is not the gate. The button carries its own `enabled` and `manualDisable`. |
 | S2 | In combat, menu open: button diff town to fight `~ enabled: true -> false` and `~ manualDisable: false -> true`, plus instance, `masterUi` and parent ids (the menu is rebuilt on open); pause diff: only instance ids and `image_index`; `wasInCombat=true`; `global.tupm[1]` is an unrelated instance (a summon) with no `in_combat`. | The button's own two members flip with combat. The pause instance carries nothing combat-shaped. `global.tupm[1].in_combat` is not a candidate. |
-| S3 | Refused press: `UiAIngameRestart calls=0`; `UiSetRowEnabled`, `SetGlobalUiEnable`, `EnableNav` and `UiSetUpdateFunc` `calls=0`; `UiSetFocus` counts every frame while the cursor hovers Restart, with `self=UI_Pause_obj`, `a0` the Restart button and `a1` the pause instance. Resume press: `UiACloseButton calls=1` (`self=UI_Button_obj`, `a0=array`). Reopen: `anon@6013` once, `UiCreateNode` ×10 with `a2=UI_Button_obj`. | Press-path control pass: a sibling press does reach its activation in combat, so a refused Restart press is refused on the button's side. None of the four attached node-API setters was observed to be called (native rows, with `UiSetFocus` counting in the same window as the control). `UiSetFocus` is the one per-frame, step-time call handed the button - round 3's site. |
+| S3 | Refused press: `UiAIngameRestart calls=0`; `UiSetRowEnabled`, `SetGlobalUiEnable`, `EnableNav` and `UiSetUpdateFunc` `calls=0`; `UiSetFocus` counts every frame while the cursor hovers Restart, with `self=UI_Pause_obj`, `a0` the Restart button and `a1` the pause instance. Resume press: `UiACloseButton calls=1` (`self=UI_Button_obj`, `a0=array`). Reopen: `anon@5854` once, `UiCreateNode` ×10 with `a2=UI_Button_obj`. | Press-path control pass: a sibling press does reach its activation in combat, so a refused Restart press is refused on the button's side. None of the four attached node-API setters was observed to be called (native rows, with `UiSetFocus` counting in the same window as the control). `UiSetFocus` is the one per-frame, step-time call handed the button - round 3's site. |
 | C4 | `hold player wasInCombat 0` at the draw: `writes=1260 readbackOk=1260 entryHeld=1250 entryOther=10`. | Pass: the draw-time hold reaches the value, and the value stays in place between draws. |
 | S4 | Press with that hold still armed (final `writes=7230 entryHeld=7179 entryOther=51`): refused, `UiAIngameRestart calls=0`, the button still greyed. | `not observed (draw site, player, wasInCombat, false; entryHeld=7179 entryOther=51)` - held in place, and the press still refused. |
 | S5 | (b) `hold button enabled 1` at the draw: `writes=5010 readbackOk=5010 entryHeld=0 entryOther=5010`, press refused. (b) `hold button manualDisable 0` at the draw: `writes=10380 readbackOk=10380 entryHeld=0 entryOther=10380`, press refused. (a), (c) and (d) not run. | Both `unmeasured (overwritten before use, draw site)`: every write read back, and every next call found the game's value again, so the press never tested ours. (a) and (c) and (d) not run: no node-API row is called every frame in combat except `UiSetFocus`, on hover only, whose self is the pause menu - so scope `button` there would have written `UI_Pause_obj` - and no `path` root reaches the button. |

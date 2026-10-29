@@ -185,11 +185,11 @@ class CraftMatsContractTests(unittest.TestCase):
             "UiAInventoryConsumeItemConfirm", "GetItemFromFingerprint", "ReturnItemTypeFromFingerPrint",
             # stash
             "StashAddToStack", "StashGridAddItem", "s_StashTabData", "GetStashMaxTabs", "LoadStash", "SaveStash",
-            "___struct___357@SaveStash@SaveStashFunc", "___struct___359@SaveStash@SaveStashFunc",
-            "___struct___361@SaveStash@SaveStashFunc", "___struct___363@SaveStash@SaveStashFunc",
-            "___struct___364@SaveStash@SaveStashFunc", "GetStashMapPos", "UiAStashTabClick",
+            "___struct___358@SaveStash@SaveStashFunc", "___struct___360@SaveStash@SaveStashFunc",
+            "___struct___362@SaveStash@SaveStashFunc", "___struct___364@SaveStash@SaveStashFunc",
+            "___struct___365@SaveStash@SaveStashFunc", "GetStashMapPos", "UiAStashTabClick",
             "UiAStashMaterialTabClick", "UiAStashTabMaterialBuy", "UiAStashListBtnActivate",
-            "anon@1820@UiAStashListBtnActivate@UiActivateFuncs", "UiDrawStashTabBuy",
+            "anon@1753@UiAStashListBtnActivate@UiActivateFuncs", "UiDrawStashTabBuy",
             # the bag's materials tab and stack moves
             "UiAInventoryMaterialTabClick", "UiDrawInventoryMaterialTab", "InventoryGridAddToStack",
             "InventoryGridCanAddToStack", "InvGridClearItemNode", "GetItemPreferredGrid", "GridAddItem",
@@ -197,12 +197,12 @@ class CraftMatsContractTests(unittest.TestCase):
             # profile getters (capture only)
             "GetProfileInventoryData", "GetPlayerItemOwner", "GetInventoryArray", "GetPlayerProfileObj",
             # the positive control and the stash tab button's Step closure
-            "CheckPlayerInteraction", "anon@503@gml_Object_UI_Button_Stash_Tab_obj_Step_0",
+            "CheckPlayerInteraction", "anon@488@gml_Object_UI_Button_Stash_Tab_obj_Step_0",
             # Phase 1b: grid input and drag - the pick-up/place handling nobody had hooked
             "ProcessInventoryGridInput", "___struct___305@ProcessInventoryGridInput@ProcessInventoryGridInputFunc",
             "___struct___308@ProcessInventoryGridInput@ProcessInventoryGridInputFunc", "InvStartDragging",
             "InvCopyItemDragData", "InvCopyItemToInvDragData", "s_InventoryDrag",
-            "ResetDragState@anon@47432@s_InventoryDrag@DefineStructs", "InventorySwapItemsNew", "InvGridEquipV2",
+            "ResetDragState@anon@46243@s_InventoryDrag@DefineStructs", "InventorySwapItemsNew", "InvGridEquipV2",
             "InvGridEquipGamepad",
             # Phase 1b: adds and stacks outside the Phase 0 table
             "InventoryGridAddItem", "InventoryGridAddItemPos", "InventoryGridAddItemToTab", "InventoryGridHasSpace",
@@ -213,16 +213,16 @@ class CraftMatsContractTests(unittest.TestCase):
             "InventorySocketItem", "InventorySocketUpdateAndRemove", "InventorySocketUpdateAndSubtract",
             "___struct___169@InventorySocketUpdateAndSubtract@InventoryFuncs", "UiAInventorySocketTabClick",
             "UiDrawInventorySocketTab", "s_SocketData", "GetItemSocketDataStruct",
-            "anon@1305@gml_Object_UI_Stash_Socket_New_obj_Create_0",
+            "anon@1265@gml_Object_UI_Stash_Socket_New_obj_Create_0",
             # Phase 1b: stash tab buys and types
             "UiAStashTabSocketableBuy", "UiAStashTabUniqueBuy", "UiAStashTabBuy", "UiAStashUniqueItemType",
             # Phase 1b: node and tab plumbing
-            "UiCreateNode", "___struct___409@UiCreateNode@UiFuncs", "UiRemoveNode", "UiMoveNode",
+            "UiCreateNode", "___struct___410@UiCreateNode@UiFuncs", "UiRemoveNode", "UiMoveNode",
             "ValidateInventoryNode", "DetectInventoryDuplicateNode", "s_InvNode", "UiResizeInventoryNodes",
             "GetInventoryMaxTabs", "InventoryResetTabs", "InventorySortTab",
             "___struct___187@InventorySortTab@InventoryGrid", "UiAInventoryTabClick", "InventoryLogAddItem",
-            "InventoryUpdateExtAddItemStats", "anon@403@gml_Object_UI_Button_Inventory_Tab_obj_Step_0",
-            "___struct___448@gml_Object_Load_Inventory_obj_Other_62",
+            "InventoryUpdateExtAddItemStats", "anon@387@gml_Object_UI_Button_Inventory_Tab_obj_Step_0",
+            "___struct___449@gml_Object_Load_Inventory_obj_Other_62",
             # Phase 1c: where LoadStash may put the stash while its window is closed
             "GetItemMap", "GetInventoryMapPos", "SaveInventoryMap", "LoadInventoryOrderNew", "s_SaveStashConstants",
             # Phase 1e: every name that takes, removes, splits, validates or
@@ -911,7 +911,7 @@ class CraftMatsContractTests(unittest.TestCase):
         # Each sits in its group: the decoder after the crafting group's last
         # row, the save step after SaveStash's last struct method.
         self.assertEqual(labels.index("PilipaliDecrypt"), labels.index("s_CraftItem") + 1)
-        self.assertEqual(labels.index("CreateItemSaveStruct"), labels.index("___struct___364@SaveStash") + 1)
+        self.assertEqual(labels.index("CreateItemSaveStruct"), labels.index("___struct___365@SaveStash") + 1)
         shipped = strip_research_blocks(self.plugin)
         # Negative control: the strip keeps player code, so an absence below
         # is the strip working, not an empty string.
@@ -1113,16 +1113,16 @@ class CraftMatsContractTests(unittest.TestCase):
         "gml_Script_SaveLocalFile", "gml_Script_SaveStart", "gml_Script_SaveCommit", "gml_Script_SaveFileGMAsync",
         "gml_Script_EncryptStringSave",
         # the item struct's methods
-        "gml_Script_GenerateItemHash_anon_4791_s_ItemInstanceStruct_InventoryV2Funcs",
-        "gml_Script_GetItemInfo_anon_5277_s_ItemInstanceStruct_InventoryV2Funcs",
-        "gml_Script_GetItemStat_anon_5523_s_ItemInstanceStruct_InventoryV2Funcs",
-        "gml_Script_GetItemStatArray_anon_5844_s_ItemInstanceStruct_InventoryV2Funcs",
-        "gml_Script____struct___240_GetItemStatArray_anon_5844_s_ItemInstanceStruct_InventoryV2Funcs",
-        "gml_Script_GetItemDef_anon_7191_s_ItemInstanceStruct_InventoryV2Funcs",
-        "gml_Script_SetItemDef_anon_7339_s_ItemInstanceStruct_InventoryV2Funcs",
-        "gml_Script_SetItemStat_anon_7507_s_ItemInstanceStruct_InventoryV2Funcs",
-        "gml_Script_AddStat_anon_7675_s_ItemInstanceStruct_InventoryV2Funcs",
-        "gml_Script_SetItemInfo_anon_7965_s_ItemInstanceStruct_InventoryV2Funcs",
+        "gml_Script_GenerateItemHash_anon_4645_s_ItemInstanceStruct_InventoryV2Funcs",
+        "gml_Script_GetItemInfo_anon_5117_s_ItemInstanceStruct_InventoryV2Funcs",
+        "gml_Script_GetItemStat_anon_5352_s_ItemInstanceStruct_InventoryV2Funcs",
+        "gml_Script_GetItemStatArray_anon_5663_s_ItemInstanceStruct_InventoryV2Funcs",
+        "gml_Script____struct___240_GetItemStatArray_anon_5663_s_ItemInstanceStruct_InventoryV2Funcs",
+        "gml_Script_GetItemDef_anon_6967_s_ItemInstanceStruct_InventoryV2Funcs",
+        "gml_Script_SetItemDef_anon_7108_s_ItemInstanceStruct_InventoryV2Funcs",
+        "gml_Script_SetItemStat_anon_7269_s_ItemInstanceStruct_InventoryV2Funcs",
+        "gml_Script_AddStat_anon_7430_s_ItemInstanceStruct_InventoryV2Funcs",
+        "gml_Script_SetItemInfo_anon_7709_s_ItemInstanceStruct_InventoryV2Funcs",
         # creation and identity
         "gml_Script_s_ItemInstanceStruct", "gml_Script_StructCopy", "gml_Script_AddItemToMap", "gml_Script_ItemCheckHash",
         "gml_Script_LootTimestamp", "gml_Script_GetCounterHash", "gml_Script_EditItemData",
@@ -1282,7 +1282,7 @@ class CraftMatsContractTests(unittest.TestCase):
         # identity, and only for a call made while one of the game's three
         # counting frames is on the stack: the recipe row's closure, the
         # window's availability call (GetCraftItemsAvailable, which UI_Craft_obj's
-        # anon@1834 runs - not inside anon@840, and not a craft-route row), or a
+        # anon@1784 runs - not inside anon@798, and not a craft-route row), or a
         # craft-route row. The first two get their own depths - neither is added
         # to kCpCraftRouteRows, so `within=` is unchanged.
         detour = self.plugin[self.plugin.index("#define CRAFTPROBE_DETOUR(SAFE, LABEL)"):]
@@ -1303,7 +1303,7 @@ class CraftMatsContractTests(unittest.TestCase):
         self.assertLess(detour.index("CpAfter("), inject)
         # Every frame identified through its SDK constant, never a retyped name.
         self.assertIn("HeroSiege::Scripts::gml_Script_CountInventoryItem", self.body("static bool CpIsCountRow("))
-        self.assertIn("HeroSiege::Scripts::gml_Script_anon_840_gml_Object_UI_Craft_Recipe_List_Item_obj_Create_0",
+        self.assertIn("HeroSiege::Scripts::gml_Script_anon_798_gml_Object_UI_Craft_Recipe_List_Item_obj_Create_0",
                       self.body("static bool CpIsRecipeListRow("))
         self.assertIn("HeroSiege::Scripts::gml_Script_GetCraftItemsAvailable", self.body("static bool CpIsAvailabilityRow("))
         self.assertEqual(self.plugin.count('"CountInventoryItem"'), 1)
@@ -1311,7 +1311,7 @@ class CraftMatsContractTests(unittest.TestCase):
         self.assertIn("++*depth", guard)
         self.assertIn("--*depth", guard)
         self.assertNotIn("g_CpRouteDepth", guard)
-        self.assertNotIn("anon@840", "".join(self.CRAFT_ROUTE_ROWS))
+        self.assertNotIn("anon@798", "".join(self.CRAFT_ROUTE_ROWS))
         self.assertNotIn("GetCraftItemsAvailable", "".join(self.CRAFT_ROUTE_ROWS))
         body = self.body("static void CpInject(")
         on = body.index("g_CpInjectOn.load()")
@@ -1672,7 +1672,7 @@ class CraftMatsContractTests(unittest.TestCase):
     CM_HOOKS = (
         ("kCmCountName", "gml_Script_CountInventoryItem", "CmHookCount", "g_CmOrigCount"),
         ("kCmAvailabilityName", "gml_Script_GetCraftItemsAvailable", "CmHookAvailability", "g_CmOrigAvailability"),
-        ("kCmRecipeRowName", "gml_Script_anon_840_gml_Object_UI_Craft_Recipe_List_Item_obj_Create_0", "CmHookRecipeRow",
+        ("kCmRecipeRowName", "gml_Script_anon_798_gml_Object_UI_Craft_Recipe_List_Item_obj_Create_0", "CmHookRecipeRow",
          "g_CmOrigRecipeRow"),
         ("kCmFindName", "gml_Script_CraftFindRecipeItems", "CmHookFind", "g_CmOrigFind"),
         ("kCmDecodeName", "gml_Script_PilipaliDecrypt", "CmHookDecode", "g_CmOrigDecode"),
@@ -1705,7 +1705,7 @@ class CraftMatsContractTests(unittest.TestCase):
     def test_craftmats_hooks_install_through_hookonescript_by_sdk_constant(self):
         code = self.cm_code()
         for const, sdk, hook, orig in self.CM_HOOKS:
-            self.assertTrue(self.runtime_name(sdk).startswith("gml_Script_"), sdk)   # an SDK constant (anon@840 has `@`s)
+            self.assertTrue(self.runtime_name(sdk).startswith("gml_Script_"), sdk)   # an SDK constant (anon@798 has `@`s)
             self.assertIn(f"static constexpr const char* {const} = SdkShortScriptName(HeroSiege::Scripts::{sdk});", code)
             row = re.findall(r"\{ " + const + r', "fp_cm_\w+", \(PVOID\)' + hook + ", &" + orig
                              + r", HeroSiege::Scripts::" + sdk + r" \}", code)
@@ -2301,7 +2301,7 @@ class CraftMatsContractTests(unittest.TestCase):
         instrument = self.doc[at("### Phase 1j instrument"):at("### Phase 1k instrument")]
         # The additions, and where the reading came from.
         for token in ("phase1j rows=", "craftprobe callm", "craftprobe set", "craftprobe inject", "is_method",
-                      "InvokeMethodValue", "anon@840", "SaveLocalFile", "Unverified going in", "hs-decomp",
+                      "InvokeMethodValue", "anon@798", "SaveLocalFile", "Unverified going in", "hs-decomp",
                       "ghidra_projects", "DecompileTo.java", "FindCallers.java"):
             self.assertIn(token, instrument, token)
         procedure = self.doc[at("### Live procedure 1j"):at("### Live procedure 1k")]
@@ -2416,7 +2416,7 @@ class CraftMatsContractTests(unittest.TestCase):
         design = self.doc[at("## Ship design"):at("## Phase C live procedure")]
         for _, sdk, _, _ in self.CM_HOOKS:
             name = sdk[len("gml_Script_"):]
-            self.assertIn("anon@840" if name.startswith("anon_840") else name, design, name)
+            self.assertIn("anon@798" if name.startswith("anon_798") else name, design, name)
         for token in ("HookOneScript", "both-routes", "TABLE-ONLY", "stashMaterialTab", "stashSocketItemSlot",
                       "GetItemMap(9)", "GetItemMap(0)", "PilipaliDecrypt", "R, a static reading", "need - k",
                       "whole entries first", "SaveLocalFile(4, 1)", "Console_Save_obj", "ItemCheckHash",
