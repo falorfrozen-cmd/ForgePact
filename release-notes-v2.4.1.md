@@ -1,7 +1,7 @@
 # ForgePact 2.4.1
 
-A quick fix on 2.4.0 for Hero Siege's 7.0.14.0 update: four mods that stopped
-working after the update work again.
+A quick fix on 2.4.0 for Hero Siege's 7.0.14.0 update: four mods that could no
+longer find their place in the game after the update hook into it again.
 
 ## Fixed
 

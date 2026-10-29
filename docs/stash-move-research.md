@@ -286,7 +286,7 @@ the save**; a body that was not read says so.
   processor clears the bag cell after a grid placement. Live 1b was to log
   all three from the game's own gesture; its scripted click never reached the
   pick-up, so Live 1c logged them from the owner's hand moves instead:
-  its armed row (`InvGrid15345`, the `anon@14878` closure) logged nothing in
+  its armed row (`InvGrid15345`, the `anon@15345` (7.0.13.0; `anon@14878` on 7.0.14.0) closure) logged nothing in
   any hand move, whose logged sequence is instead the processor's
   bag-to-stash group of § Static reading; the third `GridAddItem` argument was 0 on every tab
   kind (**measured**, Live 1c); and no armed row logged a clear after a hand

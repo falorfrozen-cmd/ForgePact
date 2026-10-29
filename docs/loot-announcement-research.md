@@ -333,7 +333,7 @@ Every check, with what was supplied and what was seen:
 | `control` | `ping` | `pong (YYTK 4.0.1)` | pass |
 | `chat-call-control` | `dungeonprobe chat control` | `PASS defined->true undefined->false` | pass |
 | (install) | `lootannprobe on` | 16 of 16 rows attached, none `not installed`; `LootGroundInit` counted through `fp_hiddenloot_init` (both routes, shared), `LootGroundDrop` through `fp_lootann_drop` (both), `LootGroundCreateFromItem` detoured under the table-only `Hook_LootGroundCreateFromItem`. Census: `Loot_Ground_obj` 0, `Ingame_Chat_obj` 1, `Chat_obj` 0, `Menu_Controller_obj` 1 | recorded |
-| `init-counts-placed` | `lootannprobe place heroic` (`"27"`=9, `"28"`=Heavy Belt of Balance, itemType 8) | `LootGroundInit` 1 (arguments ref, bool), `LootGroundCreateFromItem` 1, the Create-event method `anon@5880` 1 with `self` `Loot_Ground_obj` | pass |
+| `init-counts-placed` | `lootannprobe place heroic` (`"27"`=9, `"28"`=Heavy Belt of Balance, itemType 8) | `LootGroundInit` 1 (arguments ref, bool), `LootGroundCreateFromItem` 1, the Create-event method `anon@6032` (7.0.13.0; `anon@5880` on 7.0.14.0) 1 with `self` `Loot_Ground_obj` | pass |
 | `closure-fires-offline` | the same placement, then about 450 natural drops | the closure 0, `GetRareDropAnnouncement` 0, `NetworkSendChatMessageIngame` 0; no line in chat | not observed |
 | `method-found` | `lootannprobe methods` on the placed item | four method-valued variables (each passed `is_method`): `m_AngelicMessage`, `m_LootFilter` and `m_LootGroundDeActiveStep` printed `<undefined>`, the string `script_get_name` returned for `method_get_index`'s raw, unconverted value; `s_lootDrawData` resolved to `Pickup_Parent_obj`'s Create method. No row matched the SDK closure's name | uninterpretable (instrument) |
 | `route-method` | `try 1`: the closure by name, `self` the ground item, no arguments | `refused: method` (no listed name matched), nothing called, no hook moved, no line | uninterpretable (instrument) |
@@ -355,7 +355,7 @@ What the session established, measured:
   `method_get_index`'s raw value instead of a number, and got `<undefined>`
   back for every `anon@` method, while the named `s_lootDrawData` resolved.
   The variables hold methods; which functions they are was not read. So
-  whether `m_AngelicMessage` wraps `anon@1084` is not established, and
+  whether `m_AngelicMessage` wraps `anon@1138` (7.0.13.0; `anon@1084` on 7.0.14.0) is not established, and
   `method-found` and `route-method` measured the probe, not the game (the
   instrument-blindness review of round 2). The probe now converts the index
   first, as `CiTryResolveMethod` does, and prints `#<index>` beside each
@@ -494,8 +494,8 @@ missing).
 | `natural-fresh` | panel switch on; the owner killed monsters in one zone for about five minutes (minimap clock), no boost, no bag drop, no portal | `seen` 4 → 219 (+215), `created` 5 → 220 (+215), `held-bag-drop` 1 → 1, `held-rarity` 1 → 216, `announced` unchanged | pass |
 | `natural-announce` | Magic Find x10 through the panel, Angelic / Unholy Drops at its saved 1; the owner played on in the same zone | `announced` 2 → 3 with no placement (`seen` 219 → 446, `held-rarity` 216 → 442, `held-no-rarity`, `held-duplicate` 0, `held-bag-drop` 1); the owner saw a red `SERVER:` line; the screenshot came after the line had gone, so the item and its rarity were not recorded | pass |
 | `anon-control` | `lootannprobe on` (16 of 16 rows attached, none table-only or missing; `LootGroundDrop` through its own count-only detour), `lootannprobe place heroic` (Heavy Belt of Wholeness), `lootannprobe methods` | `m_AngelicMessage -> ?#-1, m_LootFilter -> ?#-1, m_LootGroundDeActiveStep -> ?#-1, s_lootDrawData -> s_lootDrawData@gml_Object_Pickup_Parent_obj_Create_0#105134`; `anon rows resolved: 0 of 2`; `unresolved rows: 3 of 4`; `SDK closure ... not found` | fail |
-| `method-found-2` | the same listing | no row names `anon@1084` | not observed (instrument-blind: the three `anon@` rows read `?#-1`) |
-| `route-method-2` | `lootannprobe try 1` on the placed Heroic, switch off | `supplied script=anon@1084@gml_Object_Loot_Ground_obj_Create_0 self=Loot_Ground_obj args=none -> dispatched=0 ret=none refused: method`; `deltas: none`; no line; no game error | not observed (method not found) |
+| `method-found-2` | the same listing | no row names `anon@1138` (7.0.13.0; `anon@1084` on 7.0.14.0) | not observed (instrument-blind: the three `anon@` rows read `?#-1`) |
+| `route-method-2` | `lootannprobe try 1` on the placed Heroic, switch off | `supplied script=anon@1138@… self=Loot_Ground_obj args=none -> dispatched=0 ret=none refused: method` (7.0.13.0; `anon@1084` on 7.0.14.0); `deltas: none`; no line; no game error | not observed (method not found) |
 | `route-method-angelic-2` | `lootannprobe place angelic` (Headhunter), `lootannprobe try 1` | the same refusal, `deltas: none`, no line | not observed (method not found) |
 
 What the session established, measured:
@@ -532,7 +532,7 @@ What the session established, measured:
   `m_LootGroundDeActiveStep` as an `anon@` closure on a quest item on
   2026-09-11; why the same read gives -1 on this ground item is not
   established. The listing stays instrument-blind, so whether the ground
-  item holds `anon@1084` is still not known, and `method` was not called.
+  item holds `anon@1138` (7.0.13.0; `anon@1084` on 7.0.14.0) is still not known, and `method` was not called.
 - `route-method-2` did not pass, so by the owner's rule `server` stays the
   shipped route (Route, below).
 
