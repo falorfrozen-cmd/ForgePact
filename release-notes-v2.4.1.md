@@ -5,10 +5,10 @@ longer find their place in the game after the update hook into it again.
 
 ## Fixed
 
-- **Four mods did nothing after Hero Siege's 7.0.14.0 update (#249).** The
-  game's 7.0.14.0 update (2026-10-29) renamed parts of the game that
+- **Four mods could no longer hook into the game after Hero Siege's 7.0.14.0 update (#249).**
+  The game's 7.0.14.0 update (2026-10-29) renamed parts of the game that
   ForgePact 2.4.0 looks up by name, so after the update these mods turned on
-  but changed nothing:
+  in the panel but changed nothing:
   - **Craft from the stash**: recipes at the Crafting Cube no longer counted
     the materials and socketables in your stash;
   - **Auto-prospect**: items put in the Prospect Cube's grid were no longer
